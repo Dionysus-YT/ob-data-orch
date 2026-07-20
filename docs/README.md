@@ -64,6 +64,7 @@
 - [技术架构首版](03-technical/architecture.md)：模块化单体控制面、独立执行 Agent 和核心工程不变量候选。
 - [首条纵向切片](03-technical/first-vertical-slice.md)：数据源到基础 CSV 导出的范围、VS-P0-01～VS-P0-12 和验收条件。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
+- [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
 
 ## 文档状态
 
@@ -165,6 +166,7 @@
 46. [技术架构首版](03-technical/architecture.md)
 47. [首条纵向切片](03-technical/first-vertical-slice.md)
 48. [开发准入清单](03-technical/development-entry-checklist.md)
+49. [本地工具包证据](03-technical/evidence/tool-package-baseline.md)
 
 ## 维护规则
 
