@@ -1,0 +1,13 @@
+# Local vendor binaries and archives
+/ob-loader-dumper-4.3.5-RELEASE.zip
+
+# Local runtime output
+/tmp/
+/artifacts/
+*.log
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
