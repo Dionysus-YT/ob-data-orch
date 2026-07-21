@@ -20,7 +20,7 @@
 | 首条切片范围 | 已完成 | [首条纵向切片](first-vertical-slice.md) | 否 |
 | 首条切片 P0 | 已执行，存在阻断 | VS-P0-04/12 已通过；疑似 ODP、序列化特殊值、权限负例、凭据和未实现 Agent 仍阻断，见[P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md) | 是 |
 | 技术架构 | 已完成 | TD-001～TD-008 已确认，见[技术架构首版](architecture.md) | 否 |
-| 技术栈与部署 | 二次评审稿待确认 | 已按轻量要求改为 SQLite，并纳入 Windows/Linux 控制面与 Agent 双环境；Go、Vue 3、SQLite 边界和轻量 HTTP 通道仍需整体确认，见[技术路线评审稿](technology-stack.md) | 是 |
+| 技术栈与部署 | 三次评审稿待确认 | 已采用 SQLite 轻量边界，并纳入 Windows AMD64、Linux AMD64/ARM64 控制面与 Agent；Go、Vue 3、SQLite 驱动跨架构验证和轻量 HTTP 通道仍需整体确认，见[技术路线评审稿](technology-stack.md) | 是 |
 | 参数元数据与命令生成设计 | 未完成 | 版本、确定性、活动字段和脱敏契约待评审 | 是 |
 | Agent 协议与任务状态 | 未完成 | 认证、领取、心跳、幂等、失联和清理待评审 | 是 |
 | 凭据与权限安全 | 未完成 | 安全存储、短时注入、审计失败策略待评审 | 是 |

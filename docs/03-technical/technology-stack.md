@@ -1,6 +1,6 @@
 # 技术路线与部署选型评审稿
 
-> 文档状态：二次评审稿；SQLite 与 Windows/Linux 双环境约束已纳入
+> 文档状态：三次评审稿；SQLite、Windows AMD64、Linux AMD64/ARM64 约束已纳入
 > 适用范围：V1.0 与首条纵向切片
 > 依据：TD-001～TD-008、首条切片 P0 真实环境证据
 > 更新日期：2026-07-21
@@ -16,7 +16,7 @@ Go 模块化单体控制面
           ├── SQLite：业务元数据、任务租约、状态和审计索引
           └── 本机文件：分段后的原始脱敏日志
           ↑ Agent 主动发起 HTTPS 长轮询、心跳和批量日志上报
-Go Agent（Windows Service / Linux systemd）
+Go Agent（Windows AMD64 / Linux AMD64、ARM64）
           ↓ 受控子进程
 Java 8 + OB Loader/Dumper 4.3.5
 ```
@@ -25,7 +25,7 @@ Java 8 + OB Loader/Dumper 4.3.5
 
 SQLite 不需要独立数据库服务，符合当前轻量目标，但只在“单控制面实例 + 本机磁盘数据库文件 + 短写事务 + 原始日志文件化”的边界内成立。若未来要求多个控制面实例同时读写或数据库文件放在共享盘，必须重新评估客户端/服务端数据库，不能继续硬撑 SQLite。
 
-该方案仍是待确认推荐基线。数据库改为 SQLite、正式支持 Windows/Linux 两种环境是用户已明确提出的约束；语言、通信和安全实现确认前仍不进入工程骨架和业务代码。
+该方案仍是待确认推荐基线。数据库改为 SQLite、正式支持 Windows AMD64 与 Linux AMD64/ARM64 是用户已明确提出的约束；语言、通信和安全实现确认前仍不进入工程骨架和业务代码。
 
 ## 2. 第一性原理判断
 
@@ -36,7 +36,7 @@ SQLite 不需要独立数据库服务，符合当前轻量目标，但只在“�
 1. 浏览器中的复杂参数向导和管理页面；
 2. 保存数据源、任务快照、状态和审计事实；
 3. 在实际执行节点管理 Loader/Dumper 进程与文件；
-4. 让控制面与 Windows/Linux Agent 可靠交换任务和事实；
+4. 让控制面与 Windows AMD64、Linux AMD64/ARM64 Agent 可靠交换任务和事实；
 5. 保证凭据、命令、日志和任务终态安全可追溯。
 
 “轻量”不能删掉这些正确性要求，只能减少实现它们所需的独立组件和运维对象。
@@ -71,20 +71,20 @@ SQLite 官方将其定位为应用本地存储，并明确支持应用服务器�
 
 选型按以下顺序判断，不以框架热度为依据：
 
-1. 控制面和 Agent 必须正式支持 Windows x86-64 与 Linux x86-64；
+1. 控制面和 Agent 必须正式支持 Windows AMD64、Linux AMD64 与 Linux ARM64；Linux ARM64 是国产操作系统的主要部署目标，不是次级兼容项；
 2. 控制面是轻量模块化单体，不应因任务分发提前引入分布式中间件；
 3. 控制面与 Agent 应尽量共用一种后端语言、协议模型和测试方式；
 4. 任务提交、不可变快照、租约、状态事件和审计需要明确事务语义，但首版不需要独立数据库服务器；
 5. 参数条件多且存在复杂向导、表格和日志页面，前端需要成熟的类型与组件生态；
 6. OB Loader/Dumper 使用独立 Java 8 运行时，平台不能把自己的运行时与工具 Java 路径混为一谈；
-7. 首条切片应能在当前 Windows 环境验证，并能生成 Windows/Linux 两套控制面和 Agent 可发布产物。
+7. 首条切片应能在当前 Windows 环境开发，并生成 Windows AMD64、Linux AMD64、Linux ARM64 三套控制面和 Agent 可发布产物。
 
 ## 4. 推荐技术栈
 
 | 层级 | 推荐 | 版本策略 | 选择原因 |
 |---|---|---|---|
 | 控制面后端 | Go 标准库优先的模块化单体 | Go 1.26，构建时使用当前安全补丁 | 单二进制、跨平台、进程/并发模型直接；可与 Agent 共用协议和基础包 |
-| 执行 Agent | Go 跨平台服务 | 与控制面同一 Go 主版本 | 无需在节点再安装平台运行时；与工具 Java 8 隔离；分别适配 Windows Service 与 Linux systemd |
+| 执行 Agent | Go 跨平台服务 | 与控制面同一 Go 主版本 | 无需在节点再安装平台运行时；与工具 Java 8 隔离；正式覆盖 Windows AMD64、Linux AMD64/ARM64 |
 | Web 前端 | Vue 3 + TypeScript + Vite | Node.js 24 LTS；依赖锁文件固定 | 适合配置向导、条件表单和管理台；当前官方脚手架即采用 Vite |
 | 元数据存储 | SQLite 3 | 随应用固定并记录实际版本 | 无独立服务和账号运维；单文件适合单实例控制面；通过短事务承载快照、租约、状态与审计索引 |
 | 原始日志存储 | 控制面本机分段文件 | 格式版本化 | 避免持续日志写入与业务事务争用；SQLite 只保存任务、时间范围、级别、完整性和文件摘要索引 |
@@ -100,7 +100,7 @@ SQLite 官方将其定位为应用本地存储，并明确支持应用服务器�
 - 业务模块不得直接依赖 HTTP、数据库或进程实现，通过明确端口隔离领域规则；
 - 仅在必要处引入小型路由、SQLite 驱动、迁移和系统服务依赖，不选择一站式大框架；
 - SQL 保持显式、可审查，领域对象不与数据表结构一一强绑定；
-- Windows 和 Linux 使用各自的平台适配层，不能在业务层散落操作系统判断。
+- Windows 与 Linux 使用各自的平台适配层；CPU 架构只影响构建产物和环境事实，不能在业务层散落架构判断。
 
 ### 4.2 Java 运行时隔离
 
@@ -123,31 +123,40 @@ Agent 通过显式环境块启动工具，不修改机器级环境，也不把�
 - 任务领取采用短原子事务和租约，不依赖 PostgreSQL 的 `SELECT ... FOR UPDATE`；
 - 不把导出文件、原始凭据、完整命令明文或逐行原始日志写入 SQLite；
 - 备份使用 SQLite Online Backup API 或 `VACUUM INTO` 形成一致快照，不在服务运行时直接复制单个 `.db` 文件；
-- 数据库驱动必须在 Windows/Linux 上通过相同迁移、事务、崩溃恢复和备份恢复测试；是否采用无 CGO 驱动在工程骨架前做最小技术验证。
+- SQLite 驱动必须在 Windows AMD64、Linux AMD64/ARM64 上通过相同迁移、事务、崩溃恢复和备份恢复测试；优先选择能关闭 CGO 的实现，避免国产 ARM 系统额外依赖 C 运行库和交叉编译工具链，最终驱动仍需最小技术验证后确认。
 
-## 5. Windows/Linux 双环境基线
+## 5. Windows/Linux 多架构基线
 
 ### 5.1 交付矩阵
 
-首版至少交付并测试以下四个产物：
+前端静态资源与 CPU 架构无关，构建一次即可。首版至少交付并测试以下六个 Go 二进制：
 
-| 产物 | Windows x86-64 | Linux x86-64 |
-|---|---|---|
-| 控制面 | Windows Service 或前台受控进程 | systemd 服务或前台受控进程 |
-| Agent | Windows Service | systemd 服务 |
+| 产物 | Windows AMD64 | Linux AMD64 | Linux ARM64 |
+|---|---|---|---|
+| 控制面 | Windows Service 或前台受控进程 | systemd 或前台受控进程 | systemd 或前台受控进程 |
+| Agent | Windows Service | systemd 服务 | systemd 服务 |
 
-ARM64、macOS 和容器镜像不属于“Windows/Linux 双环境”的默认承诺，除非后续明确增加。
+Linux 32 位 ARM、LoongArch、RISC-V、macOS 和 Windows ARM64 不属于当前默认承诺，除非后续明确增加。
 
 ### 5.2 控制面
 
-- Windows 与 Linux 都是正式支持环境，使用同一份数据库迁移和 API 契约；
+- Windows AMD64、Linux AMD64 与 Linux ARM64 都是正式支持环境，使用同一份数据库迁移和 API 契约；
 - 每套部署都是一个控制面实例和一个本机 SQLite 数据库文件，不能让两台控制面共享同一个数据库文件；
 - 控制面进程同时提供 API 和构建后的静态前端资源；
 - 数据目录、配置目录、日志目录由平台适配层给出默认值，并允许部署时显式配置；
 - TLS 可由现有入口代理终止，若无入口代理则由控制面直接提供；具体证书来源在部署设计中确认；
 - 首版不要求容器，后续可以补充容器镜像作为一种交付方式，但容器不是架构前提。
 
-### 5.3 Agent 与工具启动
+### 5.3 国产 ARM Linux 适配边界
+
+- 平台以 `linux/arm64`（AArch64）作为构建目标，不把“Linux ARM”模糊处理成 32 位 ARM；
+- 控制面和 Agent 启动时记录操作系统、CPU 架构、发行版标识与版本、内核版本和平台构建版本；
+- 国产操作系统的具体名称和版本进入兼容认证清单。不能只在任意 ARM 虚拟机运行一次就声称支持所有国产系统；
+- 平台二进制优先关闭 CGO，减少对发行版 C 运行库的耦合；若 SQLite 驱动或后续依赖必须开启 CGO，则分别维护 Linux AMD64/ARM64 原生构建与运行测试；
+- systemd 是默认服务交付方式；目标系统不使用 systemd 时，必须保留前台受控运行方式，并为该发行版补充明确服务脚本；
+- 用户已确认目标国产 ARM 环境具备兼容的 OB Loader/Dumper 4.3.5、Java 8 和本地库。平台仍需验证环境发现、启动参数、日志采集、取消和终态核对集成，不再把官方工具的 ARM 能力本身列为待确认项。
+
+### 5.4 Agent 与工具启动
 
 - Windows Agent 调用工具包的 `bin/windows/obdumper.bat`、`obloader.bat` 或经验证的等价受控入口；
 - Linux Agent 调用工具包的 `bin/obdumper`、`bin/obloader` 或经验证的等价受控入口；
@@ -157,7 +166,23 @@ ARM64、macOS 和容器镜像不属于“Windows/Linux 双环境”的默认承�
 - Windows 导出实际参数中的 `--file-path` 原样使用任务快照保存的完整盘符绝对路径，例如 `E:\...\output-test`，不拆分工作目录、不改写成 URI、不自动追加子目录；
 - Linux 导出实际参数中的 `--file-path` 原样使用 `/...` 开头的绝对路径；
 - 控制面把任务路径作为不透明字符串保存，不跨操作系统转换；任务只能分配给路径类型匹配的 Agent；
+- 节点同时上报 `os` 和 `arch`；调度只能把任务分配给已通过对应平台环境检查的 Agent；
 - 目录存在性、可写性、剩余空间和非空判断由实际 Agent 完成，属于预检查，不得改变用户填写的路径。
+
+### 5.5 三平台最小验证门禁
+
+以下验证必须分别在 Windows AMD64、Linux AMD64、目标国产 Linux ARM64 实机或同等受控环境执行：
+
+1. 控制面启动、静态前端、SQLite 初始化、迁移、事务、备份和恢复；
+2. Agent 安装、服务启动、机器身份关联、心跳、重连和升级前版本核对；
+3. 操作系统、架构、发行版、Java 和工具环境事实采集；
+4. 本机绝对路径校验、目录权限、空间、非空目录和任务工作区隔离；
+5. OBDUMPER/OBLOADER 版本与帮助输出采集；
+6. 首条切片单表 CSV 导出、日志采集、工具终态、结果核对和重复执行；
+7. 启动失败、工具失败、Agent 中断、进程清理和控制面重启恢复；
+8. 平台与工具日志的用户名、密码和命令脱敏。
+
+其中平台和 Agent 的单元/契约测试可在交叉编译环境执行，但服务、文件权限、进程信号和工具集成必须在对应操作系统与 CPU 架构上运行，不能用“编译成功”代替。
 
 ## 6. 首版任务通道
 
@@ -240,14 +265,14 @@ contracts/
 | TS-R02 | 前端 | Vue 3 + TypeScript + Vite，Node.js 24 LTS | 待确认 |
 | TS-R03 | 元数据存储 | SQLite 3，本机磁盘单文件；单控制面实例 | 用户约束已确认，运行边界待确认 |
 | TS-R04 | 控制面形态 | 单实例模块化单体，前端静态资源一并交付 | 待确认 |
-| TS-R05 | Agent 平台 | Windows x86-64 Service 与 Linux x86-64 systemd 同期支持 | 用户约束已确认 |
+| TS-R05 | Agent 平台 | Windows AMD64、Linux AMD64 与 Linux ARM64 同期支持 | 用户约束已确认 |
 | TS-R06 | Agent 通道 | 出站 HTTPS 长轮询领取 + 心跳 + 批量事件上报 | 待确认 |
 | TS-R07 | 浏览器实时信息 | REST 查询 + SSE 增量，不引入 WebSocket | 待确认 |
 | TS-R08 | 首版基础设施 | 不引入 Redis、消息队列、搜索引擎和 Kubernetes | 待确认 |
 | TS-R09 | 工具运行时 | Agent 与工具 Java 8 完全隔离，使用显式绝对路径和环境块 | 待确认 |
 | TS-R10 | Windows 输出路径 | `--file-path` 原样使用用户配置的完整盘符绝对路径，检查与转换分离 | 待确认 |
 | TS-R11 | 数据访问与迁移 | 显式 SQL + 版本化迁移，不先采用重型 ORM | 待确认 |
-| TS-R12 | 正式支持环境 | Windows/Linux 控制面与 Agent；SQLite 均在控制面本机磁盘；容器可选 | 用户约束已确认，交付边界待确认 |
+| TS-R12 | 正式支持环境 | Windows AMD64、Linux AMD64/ARM64 控制面与 Agent；SQLite 均在控制面本机磁盘；容器可选 | 用户约束已确认，发行版认证清单待补充 |
 | TS-R13 | SQLite 并发边界 | WAL、短事务、单控制面、禁止网络共享盘 | 技术硬约束 |
 | TS-R14 | 日志存储 | 原始脱敏日志分段文件化，SQLite 保存索引和摘要 | 待确认 |
 
@@ -258,7 +283,8 @@ contracts/
 - 团队最熟悉并能长期维护的后端语言；
 - 是否已有统一登录、证书签发、反向代理和密钥管理设施；
 - 首版预计用户数、Agent 数、并发任务数、日志量和保留期；
-- Windows 是否允许标准 Service 安装，Linux 是否统一采用 systemd；
+- Windows 是否允许标准 Service 安装，目标国产 Linux 是否统一采用 systemd；
+- 首批国产 ARM Linux 的发行版名称、版本、内核和 ARM 服务器型号；
 - 是否接受 V1.0 单控制面、无自动高可用，故障时通过一致备份恢复。
 
 若团队明确只有成熟 Java 能力，备选方案应改为 Java 21/Spring Boot 控制面 + Go Agent，而不是为了语言统一强迫团队使用不熟悉的 Go。Agent 仍不建议基于工具所需 Java 8 构建。
@@ -266,7 +292,7 @@ contracts/
 ## 12. 官方依据
 
 - [Go 发布历史与支持策略](https://go.dev/doc/devel/release)：Go 1.26 为稳定版本，官方支持最近两个主版本并持续发布安全补丁。
-- [Go 支持的目标平台](https://go.dev/doc/install/source)：官方工具链支持 Windows 与 Linux 的 amd64/arm64 等目标组合。
+- [Go 支持的目标平台](https://go.dev/doc/install/source)：官方工具链明确支持 `windows/amd64`、`linux/amd64` 和 `linux/arm64`，ARM64 默认架构级别为 ARMv8.0。
 - [Go Windows Service 包](https://pkg.go.dev/golang.org/x/sys/windows/svc)：提供 Windows Service 会话识别和服务运行接口。
 - [Vue 3 官方快速开始](https://vuejs.org/guide/quick-start.html)：官方脚手架使用 Vite，并支持 TypeScript、Router、Pinia 和测试选项。
 - [Node.js 发布计划](https://nodejs.org/en/about/previous-releases)：生产应用应使用 LTS，Node.js 24 当前处于 LTS。
