@@ -57,3 +57,35 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("unexpected version response: %#v", body)
 	}
 }
+
+func TestAPIDomainsFailClosedWithSafeErrorEnvelope(t *testing.T) {
+	t.Parallel()
+	handler := NewHandler(buildinfo.Info{Version: "test"})
+	for _, testCase := range []struct {
+		path string
+		code string
+	}{
+		{path: "/api/v1/session", code: "AUTHENTICATION_NOT_CONFIGURED"},
+		{path: "/agent/v1/heartbeats", code: "AGENT_AUTHENTICATION_NOT_CONFIGURED"},
+		{path: "/unknown", code: "NOT_FOUND"},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, testCase.path, nil))
+			wantStatus := http.StatusServiceUnavailable
+			if testCase.code == "NOT_FOUND" {
+				wantStatus = http.StatusNotFound
+			}
+			if response.Code != wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, wantStatus)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if body["code"] != testCase.code || body["requestId"] == "" || body["retryable"] != false {
+				t.Fatalf("unsafe error body: %#v", body)
+			}
+		})
+	}
+}
