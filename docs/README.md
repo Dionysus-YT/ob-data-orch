@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-项目已完成总体需求讨论稿整理、十一个模块的产品/字段规则确认、产品设计语义基线收口，以及数据源、导出公共链路、普通导入、旁路导入、任务中心全状态、模板复用、高风险权限操作、执行节点、日志中心、系统设置和首页静态低保真评审。技术架构、首条切片和 TS-R01～TS-R14 技术路线已经确认，当前进入“首条切片最小实现契约设计与 P0 补齐阶段”；实现契约和相关 P0 通过前，不进入业务代码开发。
+项目已完成总体需求讨论稿整理、十一个模块的产品/字段规则确认、产品设计语义基线收口，以及数据源、导出公共链路、普通导入、旁路导入、任务中心全状态、模板复用、高风险权限操作、执行节点、日志中心、系统设置和首页静态低保真评审。首条切片架构、技术路线和最小实现契约已经确认，DR-R01～DR-R18 进一步确认 G1 工程骨架与 G2 隔离组件准入。当前进入 DEV-01；G3 Windows 真实集成、三个麒麟目标和生产发布继续阻断。
 
 ## 文档导航
 
@@ -70,6 +70,7 @@
 - [OBDUMPER 跨平台隔离启动入口契约](03-technical/tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化平台配置、任务私有目录、最小环境、进程恢复和清理规则；TL-R01～TL-R18 已确认。
 - [日志采集、双层脱敏与执行证据最小契约](03-technical/log-collection-evidence-contract.md)：日志来源、记录重组、双层脱敏、分段文件、SQLite 索引、游标、缺口与下载规则；LG-R01～LG-R20 已确认。
 - [API 与 SQLite 数据模型最小契约](03-technical/api-sqlite-data-contract.md)：首条切片浏览器/Agent API、提交前 Agent 预检查、20 张窄表、事务、迁移和备份规则；AD-R01～AD-R20 已确认。
+- [首条切片开发准入收口](03-technical/development-readiness-closure.md)：G0～G4 分层准入、P0 重新归类、Windows/麒麟门禁、外部输入和 DEV-01～DEV-09 顺序；DR-R01～DR-R18 已确认。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
 - [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
 - [安全文件兼容性验证](03-technical/evidence/secure-gen-compatibility-spike-2026-07-21.md)：Windows 上的官方兼容安全材料、无密码 argv、错误私钥、ACL 和三目标构建证据，以及仍待执行的 Linux/清理门禁。
@@ -125,7 +126,7 @@
 | 权限与安全基线专项评审稿 | 产品、字段与低保真规则已确认 | AC-R01～AC-R20、AC-FR01～AC-FR16、AC-LF-R01～AC-LF-R18 已确认；技术安全实现仍待设计 |
 | 权限配置字段与条件矩阵 | 字段规则已确认 | 已覆盖 AC-F001～AC-F080；AC-FR01～AC-FR16 已确认 |
 | 权限与安全高风险操作低保真基线 | 关键流程已确认 | 用户列表、角色、对象范围、原子保存、生产提交和敏感命令查看已覆盖；AC-LF-R01～AC-LF-R18 已确认 |
-| 技术设计 | 架构、首条切片和全部首条切片最小实现契约已确认，P0 与运行门禁仍有阻断 | TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18、TL-R01～TL-R18、LG-R01～LG-R20、AD-R01～AD-R20 和切片范围已确认；SQLite 核心约束 Windows 合成验证通过，三个麒麟目标、认证接入、正式迁移及既有 P0 仍待完成 |
+| 技术设计与开发准入 | 首条切片最小实现契约和分层开发准入已确认 | TD、TS、PC、AS、CS、TL、LG、AD、DR 已确认；G1 已准入、G2 按组件准入、G3/G4 阻断；SQLite 核心约束 Windows 合成验证通过，直连环境、三个麒麟目标、认证接入、正式迁移及既有 P0 仍待完成 |
 
 所有未通过 OB Loader/Dumper V4.3.5 官方命令行文档与实际 `--help` 核验的参数，统一标记为“待官方参数映射确认”。
 
@@ -186,6 +187,7 @@
 53. [日志流重组与双层脱敏验证](03-technical/evidence/log-stream-redaction-spike-2026-07-21.md)
 54. [API 与 SQLite 数据模型最小契约](03-technical/api-sqlite-data-contract.md)
 55. [API/数据模型 SQLite 约束验证](03-technical/evidence/api-data-model-sqlite-spike-2026-07-21.md)
+56. [首条切片开发准入收口](03-technical/development-readiness-closure.md)
 
 ## 维护规则
 
