@@ -4,7 +4,7 @@ set -eu
 pattern='(mysql|obclient)[[:space:]].*-[pP][^[:space:]]+|BEGIN[[:space:]]+(RSA[[:space:]]+|EC[[:space:]]+|OPENSSH[[:space:]]+)?PRIVATE[[:space:]]+KEY|AKIA[0-9A-Z]{16}'
 matches_file=$(mktemp)
 trap 'rm -f "$matches_file"' EXIT INT TERM
-git ls-files --cached --others --exclude-standard -- cmd internal web .github | while IFS= read -r file; do
+git ls-files --cached --others --exclude-standard -- cmd contracts internal migrations web .github | while IFS= read -r file; do
   if grep -nIH -E "$pattern" "$file" >> "$matches_file"; then
     :
   else

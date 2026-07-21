@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $pattern = '(mysql|obclient)\s+.*-[pP]\S+|BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY|AKIA[0-9A-Z]{16}'
-$files = git ls-files --cached --others --exclude-standard -- cmd internal web .github
+$files = git ls-files --cached --others --exclude-standard -- cmd contracts internal migrations web .github
 if ($LASTEXITCODE -ne 0) {
     throw "git ls-files failed with exit code $LASTEXITCODE"
 }

@@ -18,11 +18,11 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Check formatting
-        run: test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l cmd contracts internal migrations)"
       - name: Unit tests
-        run: go test ./cmd/... ./internal/...
+        run: go test ./cmd/... ./contracts/... ./internal/... ./migrations/...
       - name: Vet
-        run: go vet ./cmd/... ./internal/...
+        run: go vet ./cmd/... ./contracts/... ./internal/... ./migrations/...
 
   go-cross-build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -54,6 +54,7 @@ jobs:
         run: |
           go build -trimpath -o "${{ runner.temp }}/control-plane-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}" ./cmd/control-plane
           go build -trimpath -o "${{ runner.temp }}/agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}" ./cmd/agent
+          go test -c -o "${{ runner.temp }}/migration-test-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}" ./internal/migrate
 
   web-quality:
     name: Web quality

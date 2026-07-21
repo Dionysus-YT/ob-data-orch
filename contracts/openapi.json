@@ -1,0 +1,346 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OB Data Orch first vertical slice API",
+    "version": "0.1.0-dev02",
+    "description": "Structural and security-boundary contract for the direct OBServer, single-table CSV export slice. It does not make real execution available."
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "x-development-gate": "G2_CONTRACT_ONLY",
+  "x-real-execution-enabled": false,
+  "x-schema-completeness": "STRUCTURAL_BASELINE",
+  "x-authentication-blocker": "Browser identity provider, initial administrator and recovery identity remain deployment blockers.",
+  "tags": [
+    { "name": "Session" },
+    { "name": "ExecutionNodes" },
+    { "name": "DataSources" },
+    { "name": "ExportDrafts" },
+    { "name": "Tasks" },
+    { "name": "AgentEnrollment" },
+    { "name": "AgentHeartbeat" },
+    { "name": "AgentPrechecks" },
+    { "name": "AgentExecutions" }
+  ],
+  "paths": {
+    "/api/v1/session": {
+      "get": { "operationId": "getSession", "tags": ["Session"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/execution-nodes": {
+      "get": { "operationId": "listExecutionNodes", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/EligibleFor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/execution-nodes/{nodeId}": {
+      "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
+      "get": { "operationId": "getExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "operationId": "updateExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/execution-nodes/{nodeId}:create-enrollment": {
+      "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
+      "post": { "operationId": "createAgentEnrollment", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-secret-response": "DISPLAY_ONCE", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources": {
+      "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources/{dataSourceId}": {
+      "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
+      "get": { "operationId": "getDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "operationId": "updateDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "deleteOrArchiveDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources/{dataSourceId}:test-connection": {
+      "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
+      "post": { "operationId": "testDataSourceConnection", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources/{dataSourceId}:disable": {
+      "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
+      "post": { "operationId": "disableDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources/{dataSourceId}:enable": {
+      "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
+      "post": { "operationId": "enableDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-drafts": {
+      "post": { "operationId": "createExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportDraftWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-drafts/{draftId}": {
+      "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
+      "get": { "operationId": "getExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "operationId": "updateExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportDraftWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-drafts/{draftId}:precheck": {
+      "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
+      "post": { "operationId": "startExportPrecheck", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "202": { "$ref": "#/components/responses/Accepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/prechecks/{precheckId}": {
+      "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
+      "get": { "operationId": "getPrecheck", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-drafts/{draftId}:preview-command": {
+      "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
+      "post": { "operationId": "previewExportCommand", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-secret-resolution": "FORBIDDEN", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-drafts/{draftId}:submit": {
+      "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
+      "post": { "operationId": "submitExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "DISABLED_UNTIL_G3", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks": {
+      "get": { "operationId": "listTasks", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "getTask", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/snapshot": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/command-evidence": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "getTaskCommandEvidence", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-redaction": "ALWAYS", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/execution": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "getTaskExecution", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/logs": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "getTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/logs/stream": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "streamTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/EventStream" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/logs:download": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "post": { "operationId": "downloadTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "requestBody": { "$ref": "#/components/requestBodies/LogDownload" }, "responses": { "200": { "$ref": "#/components/responses/Download" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/enrollments:exchange": {
+      "post": { "operationId": "exchangeAgentEnrollment", "tags": ["AgentEnrollment"], "security": [], "requestBody": { "$ref": "#/components/requestBodies/EnrollmentExchange" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/heartbeats": {
+      "post": { "operationId": "agentHeartbeat", "tags": ["AgentHeartbeat"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions:claim": {
+      "post": { "operationId": "claimExecution", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}:acknowledge-lease": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "acknowledgeExecutionLease", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}:renew-lease": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "renewExecutionLease", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}/secret-slots:resolve": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "resolveExecutionSecretSlots", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "x-secret-response": "NO_STORE", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}/events:append": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "appendExecutionEvents", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}/logs:append": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "appendExecutionLogs", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "x-redaction": "AGENT_BEFORE_UPLOAD", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}:reconcile": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "reconcileExecution", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}:release": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "releaseTerminalExecution", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/prechecks:claim": {
+      "post": { "operationId": "claimPrecheck", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-capability": "EXPORT_PREFLIGHT", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/prechecks/{precheckId}:acknowledge-lease": {
+      "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
+      "post": { "operationId": "acknowledgePrecheckLease", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/prechecks/{precheckId}/secret-slots:resolve": {
+      "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
+      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-secret-response": "NO_STORE", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/prechecks/{precheckId}:complete": {
+      "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
+      "post": { "operationId": "completePrecheck", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-forbidden-inputs": ["shell", "arbitrarySql", "arbitraryFile"], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BrowserSession": { "type": "apiKey", "in": "cookie", "name": "__Host-ob_data_orch_session", "description": "Secure, HttpOnly, SameSite browser session. Identity provider and initial administrator integration are not defined by this contract." },
+      "AgentCredential": { "type": "http", "scheme": "bearer", "bearerFormat": "Opaque-Agent-Credential", "description": "Revocable opaque machine credential generated and protected by the Agent. Never accepted in a URL." }
+    },
+    "parameters": {
+      "NodeId": { "name": "nodeId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "DataSourceId": { "name": "dataSourceId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "DraftId": { "name": "draftId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "PrecheckId": { "name": "precheckId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "ExecutionId": { "name": "executionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 2048 }, "description": "Opaque, authorization-bound cursor." },
+      "EligibleFor": { "name": "eligibleFor", "in": "query", "required": false, "schema": { "type": "string", "enum": ["OBDUMPER_EXPORT"] } },
+      "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 200 } },
+      "IfMatch": { "name": "If-Match", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^\\\"rev-[1-9][0-9]*\\\"$" } }
+    },
+    "requestBodies": {
+      "EmptyAction": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 } } } },
+      "ExecutionNodeWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeWrite" } } } },
+      "DataSourceWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceWrite" } } } },
+      "ExportDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportDraftWrite" } } } },
+      "LogDownload": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LogDownloadRequest" } } } },
+      "EnrollmentExchange": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrollmentExchange" } } } },
+      "AgentEnvelope": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentEnvelope" } } } }
+    },
+    "responses": {
+      "Ok": { "description": "Authorized, non-cacheable resource response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceEnvelope" } } } },
+      "Collection": { "description": "Authorized cursor page without a global count.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CollectionEnvelope" } } } },
+      "Created": { "description": "Resource created.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MutationEnvelope" } } } },
+      "Accepted": { "description": "Asynchronous precheck accepted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MutationEnvelope" } } } },
+      "AgentOk": { "description": "Machine-authenticated protocol response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResponseEnvelope" } } } },
+      "NoWork": { "description": "No eligible work is currently available.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } } },
+      "EventStream": { "description": "Persisted, double-redacted log events only.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "text/event-stream": { "schema": { "type": "string" } } }, "x-heartbeat-required": true },
+      "Download": { "description": "Synchronous redacted log download, limited to 100000 records and 100 MiB.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/x-ndjson": { "schema": { "type": "string", "format": "binary" } } } },
+      "Error": { "description": "Stable safe error. Unauthorized objects use 404 semantics.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+    },
+    "headers": {
+      "NoStore": { "description": "Sensitive responses are never cached.", "schema": { "type": "string", "const": "no-store" } }
+    },
+    "schemas": {
+      "OpaqueId": { "type": "string", "format": "uuid" },
+      "ExecutionNodeWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "platform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
+          "managementState": { "type": "string", "enum": ["ENABLED", "DISABLED", "MAINTENANCE"] },
+          "allowedRoots": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+        }
+      },
+      "DataSourceWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "environment": { "type": "string", "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"] },
+          "connectionKind": { "type": "string", "enum": ["OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE"] },
+          "host": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "username": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "defaultDatabase": { "type": ["string", "null"], "maxLength": 512 },
+          "password": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true },
+          "state": { "type": "string", "enum": ["ENABLED", "DISABLED"] }
+        },
+        "description": "Create requires name, environment, connection kind, host, port, username and password. Patch uses presence semantics; an omitted password is unchanged."
+      },
+      "ExportDraftWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "database": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "table": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^*,]+$" },
+          "format": { "type": "string", "const": "CSV" },
+          "filePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }
+        },
+        "description": "Only direct OBServer, one explicit table, CSV and one node-local absolute output path belong to this slice."
+      },
+      "GatedCsvOptions": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "skipHeader": { "type": "boolean" },
+          "columnSeparator": { "type": "string" },
+          "columnQuote": { "type": "string" },
+          "columnQuoteMode": { "type": "string", "enum": ["all", "all_not_null", "minimal", "non_numeric", "none"] },
+          "escapeCharacter": { "type": "string" },
+          "lineSeparator": { "type": "string" },
+          "nullString": { "type": "string" },
+          "fileEncoding": { "type": "string" }
+        },
+        "x-support-state": "VALIDATION_GATED",
+        "description": "Any explicit value remains blocked until VS-P0-05 evidence passes."
+      },
+      "LogDownloadRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": { "type": ["string", "null"], "maxLength": 2048 },
+          "sourceKinds": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["STDOUT", "STDERR", "TOOL_FILE", "AGENT_EVENT"] } }
+        }
+      },
+      "EnrollmentExchange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "enrollmentId", "enrollmentMaterial", "agentId", "nodeId", "machineCredential"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "enrollmentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "enrollmentMaterial": { "type": "string", "minLength": 32, "maxLength": 4096, "writeOnly": true },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "machineCredential": { "type": "string", "minLength": 32, "maxLength": 4096, "writeOnly": true },
+          "protocolVersion": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "AgentEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "payload": { "type": "object", "description": "Operation-specific strict payload schema must replace this structural placeholder before DEV-04 endpoint implementation." }
+        }
+      },
+      "ResourceEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "data"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "data": { "type": "object", "description": "Resource-specific response schema is completed before its DEV-04 endpoint is implemented." } }
+      },
+      "CollectionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "items"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "items": { "type": "array", "items": { "type": "object" } }, "nextCursor": { "type": ["string", "null"] } }
+      },
+      "MutationEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "resourceId", "status"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "resourceId": { "$ref": "#/components/schemas/OpaqueId" }, "status": { "type": "string" }, "revision": { "type": ["integer", "null"], "minimum": 1 } }
+      },
+      "AgentResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "serverTime": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "payload": { "type": "object" } }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "code", "message", "retryable", "fieldErrors", "safeDetails"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "message": { "type": "string", "maxLength": 1000 },
+          "retryable": { "type": "boolean" },
+          "fieldErrors": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["field", "code"], "properties": { "field": { "type": "string" }, "code": { "type": "string" }, "message": { "type": "string" } } } },
+          "safeDetails": { "type": "object" }
+        }
+      }
+    }
+  }
+}

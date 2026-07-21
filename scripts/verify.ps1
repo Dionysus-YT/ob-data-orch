@@ -1,13 +1,13 @@
 $ErrorActionPreference = 'Stop'
 
-$unformatted = gofmt -l cmd internal
+$unformatted = gofmt -l cmd contracts internal migrations
 if ($unformatted) {
     throw "Go files need formatting:`n$unformatted"
 }
 
-go test ./cmd/... ./internal/...
+go test ./cmd/... ./contracts/... ./internal/... ./migrations/...
 if ($LASTEXITCODE -ne 0) { throw "Go tests failed with exit code $LASTEXITCODE" }
-go vet ./cmd/... ./internal/...
+go vet ./cmd/... ./contracts/... ./internal/... ./migrations/...
 if ($LASTEXITCODE -ne 0) { throw "Go vet failed with exit code $LASTEXITCODE" }
 
 $buildRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ob-data-orch-verify-" + [guid]::NewGuid().ToString('N'))
@@ -26,6 +26,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Control plane build failed for $($target.OS)/$($target.Arch)" }
         go build -trimpath -o (Join-Path $buildRoot ("agent-{0}-{1}{2}" -f $target.OS, $target.Arch, $target.Extension)) ./cmd/agent
         if ($LASTEXITCODE -ne 0) { throw "Agent build failed for $($target.OS)/$($target.Arch)" }
+        go test -c -o (Join-Path $buildRoot ("migration-test-{0}-{1}{2}" -f $target.OS, $target.Arch, $target.Extension)) ./internal/migrate
+        if ($LASTEXITCODE -ne 0) { throw "Migration test build failed for $($target.OS)/$($target.Arch)" }
     }
 }
 finally {

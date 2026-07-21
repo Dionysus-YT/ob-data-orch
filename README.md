@@ -1,16 +1,19 @@
 # OB Data Orch
 
-OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。本仓库当前处于 **DEV-01 / G1 工程骨架**，尚不是可执行真实导出任务的产品版本。
+OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。本仓库已完成 **DEV-02 / G2 契约与迁移基线**的本地合成验证，尚不是可执行真实导出任务的产品版本。
 
 ## 当前可用内容
 
 - Go 控制面空入口：只提供 `/healthz`、`/readyz` 和 `/version`；
 - Go Agent 空入口：不联网、不领取任务、不启动 OB Loader/Dumper；
 - Vue 3 + TypeScript + Vite 路由壳：只展示工程阶段和真实执行关闭状态；
+- OpenAPI 3.1 结构基线：覆盖 29 个浏览器操作和 14 个 Agent 操作，真实执行仍关闭；
+- SQLite `0001` 前向迁移草案：20 张首条切片窄表及关键约束，仅在临时数据库使用合成数据验证；
+- OBDUMPER 4.3.5 首条切片只读参数资源：8 个可用参数、8 个验证门禁参数；
 - Windows AMD64、Linux AMD64、Linux ARM64 交叉构建；
 - Go/前端测试、静态检查和基础敏感信息扫描。
 
-`/readyz` 只表示控制面进程本身可响应，不表示数据库、Agent 或 OB Loader/Dumper 已可使用。交叉构建成功也不等于三个麒麟目标环境已经认证通过。
+`/readyz` 只表示控制面进程本身可响应。迁移器尚未接入控制面启动，Agent 尚未联网，OB Loader/Dumper 尚未接入。交叉构建成功也不等于三个麒麟目标环境已经认证通过。
 
 ## 本地启动
 
@@ -49,11 +52,13 @@ Linux：
 
 ```text
 cmd/                  控制面和 Agent 启动入口
-internal/             当前仅含工程基础设施，不含业务模块
+contracts/            OpenAPI 3.1 结构与安全边界基线
+internal/             工程基础设施、迁移器和参数元数据读取器
+migrations/           SQLite 前向迁移草案
 web/                  最小 Vue 路由壳
 scripts/              本地一致性验证
 docs/                 产品、设计与技术基线
 .github/workflows/    持续集成
 ```
 
-下一阶段是 DEV-02：OpenAPI、正式 `0001` SQLite 迁移草案和参数元数据只读资源。真实数据库连接、真实凭据和 OBDUMPER 执行仍需等待 G3 授权集成门禁通过。
+下一阶段是 DEV-03：分别实现并独立验收参数生成、SQLite 核心仓储、凭据、状态机和日志纯核心组件，只使用合成数据与假依赖。真实数据库连接、真实凭据和 OBDUMPER 执行仍需等待 G3 授权集成门禁通过。

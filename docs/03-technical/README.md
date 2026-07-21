@@ -1,7 +1,7 @@
 # 技术设计入口
 
 > 文档状态：工程启动架构、首条切片范围与技术路线已确认
-> 当前阶段：DEV-01 已通过本地验证，远端 CI 首次运行待代码进入托管分支；下一步 DEV-02；G3/G4 真实集成和发布继续阻断
+> 当前阶段：DEV-01/DEV-02 已通过本地合成验证，远端 CI 首次运行待代码进入托管分支；下一步 DEV-03；G3/G4 真实集成和发布继续阻断
 > 更新日期：2026-07-21
 
 ## 1. 目录用途
@@ -13,7 +13,7 @@
 - [技术架构首版](architecture.md)：控制面、执行 Agent、参数元数据、命令生成、任务状态、日志、权限和凭据的职责边界。
 - [首条纵向切片](first-vertical-slice.md)：数据源管理到基础 CSV 导出的最小开发范围、P0 证据和验收条件。
 - [技术路线与部署选型基线](technology-stack.md)：已确认的 Go、Vue 3、SQLite、Windows AMD64，以及麒麟 V10 SP1/V11 ARM64、V10 SP3 C86 三个国产 Linux 目标和轻量任务通道，记录 TS-R01～TS-R14。
-- [参数元数据与确定性命令生成契约](parameter-command-contract.md)：首条切片的值状态、最小参数集合、稳定顺序、指纹、跨平台路径和秘密槽位边界；PC-R01～PC-R15 已确认，契约测试待执行。
+- [参数元数据与确定性命令生成契约](parameter-command-contract.md)：首条切片的值状态、最小参数集合、稳定顺序、指纹、跨平台路径和秘密槽位边界；PC-R01～PC-R15 已确认，16 项只读资源结构测试已执行，确定性命令生成测试留在 DEV-03。
 - [Agent 协议与任务状态最小契约](agent-task-state-contract.md)：首条切片的机器认证、心跳、长轮询、租约、幂等事件、进程证据、状态投影和失联恢复；AS-R01～AS-R16 已确认，契约测试待执行。
 - [凭据、权限与安全最小契约](credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时槽位解析、权限、审计和 OBDUMPER 进程暴露边界；CS-R01～CS-R18 已确认。
 - [OBDUMPER 跨平台隔离启动入口契约](tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化启动配置、execution 私有目录、最小环境、进程恢复和清理边界；TL-R01～TL-R18 已确认。
@@ -28,6 +28,12 @@
 - [API/数据模型 SQLite 约束验证](evidence/api-data-model-sqlite-spike-2026-07-21.md)：本地合成验证乐观锁、不可变任务、同任务唯一领取、复合租约外键、幂等和日志批次冲突。
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)：连接、只读查询、Windows OBDUMPER 运行、脱敏和 VS-P0-02～VS-P0-12 状态。
 - [SQLite 跨平台最小技术验证](evidence/sqlite-cross-platform-spike-2026-07-21.md)：纯 Go SQLite 候选的 Windows AMD64、Linux AMD64/ARM64 构建证据和 Windows 事务/备份运行结果。
+
+## 2.1 当前工程资源
+
+- [OpenAPI 结构基线](../../contracts/README.md)：覆盖 29 个浏览器操作和 14 个 Agent 操作；复杂响应和 operation-specific Agent payload 仍须在 DEV-04 实现前收紧。
+- [SQLite 迁移](../../migrations/README.md)：`0001` 建立首条切片 20 张 `STRICT` 表、校验和和关键不可变约束，只在临时 SQLite 合成验证。
+- [首条切片参数资源](../../internal/parammeta/resources/obdumper-4.3.5-slice-v1.json)：8 个 `ENABLED` 和 8 个 `VALIDATION_GATED` 参数，不代表完整 109 参数已进入实现。
 
 ## 3. 阶段结论
 
