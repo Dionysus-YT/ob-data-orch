@@ -61,7 +61,7 @@
 ### 技术设计
 
 - [技术设计入口](03-technical/README.md)：工程启动阶段、文档范围和维护门禁。
-- [技术架构首版](03-technical/architecture.md)：模块化单体控制面、独立执行 Agent 和核心工程不变量候选。
+- [技术架构首版](03-technical/architecture.md)：已确认的模块化单体控制面、独立执行 Agent 和核心工程不变量基线。
 - [首条纵向切片](03-technical/first-vertical-slice.md)：数据源到基础 CSV 导出的范围、VS-P0-01～VS-P0-12 和验收条件。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
 - [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
@@ -112,7 +112,7 @@
 | 权限与安全基线专项评审稿 | 产品、字段与低保真规则已确认 | AC-R01～AC-R20、AC-FR01～AC-FR16、AC-LF-R01～AC-LF-R18 已确认；技术安全实现仍待设计 |
 | 权限配置字段与条件矩阵 | 字段规则已确认 | 已覆盖 AC-F001～AC-F080；AC-FR01～AC-FR16 已确认 |
 | 权限与安全高风险操作低保真基线 | 关键流程已确认 | 用户列表、角色、对象范围、原子保存、生产提交和敏感命令查看已覆盖；AC-LF-R01～AC-LF-R18 已确认 |
-| 技术设计 | 首版待评审 | 已建立架构、首条纵向切片和开发准入清单；实现级 API、数据模型、Agent 与安全协议待 P0 和技术评审 |
+| 技术设计 | 架构与首条切片已确认 | TD-001～TD-008 和“直连 OBServer 单表 CSV 导出”范围已确认；P0、技术选型、实现级 API、数据模型、Agent 与安全协议仍待完成 |
 
 所有未通过 OB Loader/Dumper V4.3.5 官方命令行文档与实际 `--help` 核验的参数，统一标记为“待官方参数映射确认”。
 
