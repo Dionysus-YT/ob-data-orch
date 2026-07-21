@@ -68,3 +68,25 @@ type ExecutionEvent struct {
 	PayloadJSON string
 	ReceivedAt  time.Time
 }
+
+// DataSourceSummary is the non-sensitive projection available to API list and
+// detail handlers. It intentionally excludes credential ciphertext, nonce,
+// plaintext, and any field from which a password length can be inferred.
+type DataSourceSummary struct {
+	DataSourceID            string
+	DisplayName             string
+	Environment             string
+	ConnectionKind          string
+	CompatibilityMode       string
+	Host                    string
+	Port                    int
+	Username                string
+	DefaultDatabase         string
+	State                   string
+	Revision                int64
+	CredentialRevision      int64
+	LastTestStatus          string
+	LastTestedAt            *time.Time
+	LastTestSafeSummaryJSON string
+	UpdatedAt               time.Time
+}

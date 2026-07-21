@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -230,6 +231,34 @@ func TestAppendExecutionEventRejectsDuplicateAndWrongLease(t *testing.T) {
 		t.Fatalf("secret payload error = %v", err)
 	}
 	assertCount(t, store.db, "SELECT COUNT(*) FROM execution_events", 2)
+}
+
+func TestListDataSourceSummariesExcludesCredentialMaterial(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `
+        INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'OBSERVER_DIRECT', 'MYSQL', ?, 2882, ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?)
+    `, "source-archived", "Archived", "archived", "127.0.0.2", "synthetic_user", "synthetic_db", "credential-archived", "subject-1", utcText(testTime), utcText(testTime)); err != nil {
+		t.Fatalf("seed archived data source: %v", err)
+	}
+	summaries, err := store.ListDataSourceSummaries(ctx)
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("ListDataSourceSummaries() = %#v, %v", summaries, err)
+	}
+	summary := summaries[0]
+	if summary.DataSourceID != "source-1" || summary.CredentialRevision != 1 || summary.UpdatedAt.IsZero() {
+		t.Fatalf("unexpected data source summary: %#v", summary)
+	}
+	serialized, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	for _, forbidden := range []string{"key-1", "nonce", "ciphertext", "synthetic-secret"} {
+		if strings.Contains(string(serialized), forbidden) {
+			t.Fatalf("summary contains credential material %q: %s", forbidden, serialized)
+		}
+	}
 }
 
 func openTestStore(t *testing.T) (*Store, string) {
