@@ -1,7 +1,7 @@
 # 技术设计入口
 
 > 文档状态：工程启动架构、首条切片范围与技术路线已确认
-> 当前阶段：DEV-01/DEV-02 已通过本地合成验证，DEV-03 参数生成与 SQLite 核心仓储组件已通过纯合成契约测试，下一项为凭据加密与安全目录；G3/G4 真实集成和发布继续阻断
+> 当前阶段：DEV-01/DEV-02 已通过本地合成验证，DEV-03 参数生成、SQLite 核心仓储与凭据/安全目录组件已通过纯合成契约测试，下一项为 Agent 协议与状态机；G3/G4 真实集成和发布继续阻断
 > 更新日期：2026-07-21
 
 ## 1. 目录用途
@@ -15,7 +15,7 @@
 - [技术路线与部署选型基线](technology-stack.md)：已确认的 Go、Vue 3、SQLite、Windows AMD64，以及麒麟 V10 SP1/V11 ARM64、V10 SP3 C86 三个国产 Linux 目标和轻量任务通道，记录 TS-R01～TS-R14。
 - [参数元数据与确定性命令生成契约](parameter-command-contract.md)：首条切片的值状态、最小参数集合、稳定顺序、指纹、跨平台路径和秘密槽位边界；PC-R01～PC-R15 已确认，参数元数据 `v2` 和确定性生成器子集已通过纯合成契约测试，Agent 全链路仍待后续组件。
 - [Agent 协议与任务状态最小契约](agent-task-state-contract.md)：首条切片的机器认证、心跳、长轮询、租约、幂等事件、进程证据、状态投影和失联恢复；AS-R01～AS-R16 已确认，契约测试待执行。
-- [凭据、权限与安全最小契约](credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时槽位解析、权限、审计和 OBDUMPER 进程暴露边界；CS-R01～CS-R18 已确认。
+- [凭据、权限与安全最小契约](credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时槽位解析、权限、审计和 OBDUMPER 进程暴露边界；CS-R01～CS-R18 已确认，AES-GCM/AAD、Windows DPAPI/ACL、Linux 权限实现和官方兼容材料生成已通过纯核心测试，真实 Agent/工具链路仍待验证。
 - [OBDUMPER 跨平台隔离启动入口契约](tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化启动配置、execution 私有目录、最小环境、进程恢复和清理边界；TL-R01～TL-R18 已确认。
 - [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)：定义日志来源、记录重组、双层脱敏、分段存储、游标、缺口和下载边界；LG-R01～LG-R20 已确认。
 - [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)：定义首条切片浏览器/Agent API、提交前远端预检查、20 张窄表、事务、迁移和备份边界；AD-R01～AD-R20 已确认，SQLite 核心仓储已通过本地合成事务、并发领取与备份恢复测试，API/Agent 仍待后续组件。

@@ -3,6 +3,7 @@
 > 文档状态：首条纵向切片安全基线，CS-R01～CS-R18 已确认
 > 适用范围：数据源业务密码、Agent 机器凭据、控制面根密钥与首条 CSV 导出
 > 对应门禁：VS-P0-09，以及开发准入中的凭据与权限安全项
+> 实现状态：AES-GCM/AAD、根密钥载体、私有目录与官方兼容材料已通过纯核心测试；槽位协议、真实服务账户、Linux 实机和 OBDUMPER 全链路继续阻断
 > 更新日期：2026-07-21
 
 ## 1. 目标与边界
@@ -412,6 +413,18 @@ Windows 验证还发现：官方 `.bat` 没有主动设置 `security.configurati
 - 日志分段、双层脱敏和完整性协议；
 - OBDUMPER 4.3.5 官方脚本产物交叉核对、Linux 读取、任务并发隔离和清理受控实测；
 - V1.0 未来是否开放受控未脱敏命令查看。
+
+## 20.1 DEV-03 凭据核心实现状态
+
+`internal/credential` 已用运行时随机合成秘密验证以下边界：
+
+- 版本化根密钥通过 Windows 当前进程 DPAPI 或 Linux 私有 `0600` 文件载体保存；根密钥文件与 SQLite 备份分离；
+- 每个凭据封套使用标准 AES-256-GCM、随机 nonce 和绑定 `credentialId/revision/secretType/dataSourceId/formatVersion` 的 AAD；密文、nonce、keyId、格式或绑定事实被篡改时拒绝解密；
+- execution 私有目录拒绝复用和路径穿越；Windows 通过受保护 DACL 仅授予当前服务主体、SYSTEM、Administrators，Linux 实现并核对 `0700/0600`；
+- 任务级 PKCS#8 私钥、RSA/PKCS#1 v1.5 `secure.rsa` 与 `security.properties` 在不创建明文属性文件的情况下生成；实际命令仍不生成 `--password`；
+- 正常清理只删除本 execution 已知材料并拒绝复用残留目录；测试树和错误信息不包含运行时合成秘密。
+
+这些是纯核心验证，不能替代 CS-R10 的 Agent/租约/HTTPS 槽位协议、Windows 正式服务账户部署、三个麒麟目标实机权限、官方脚本交叉读取、并发/崩溃清理或完整 VS-P0-09。
 
 ## 21. 本轮评审项
 

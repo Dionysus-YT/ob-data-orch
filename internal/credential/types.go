@@ -1,0 +1,69 @@
+// Package credential contains the isolated secret-handling primitives for the
+// first vertical slice. It intentionally has no HTTP, database, task, or tool
+// execution entry points.
+package credential
+
+import "errors"
+
+const (
+	FormatVersion       = "credential-aes-gcm-v1"
+	DatabasePassword    = "DATABASE_PASSWORD"
+	SecurityPropertyKey = "oceanbase.jdbc.password"
+)
+
+var (
+	ErrInvalidReference = errors.New("credential reference is invalid")
+	ErrUnknownKey       = errors.New("credential key is unavailable")
+	ErrDecryptDenied    = errors.New("credential decryption was rejected")
+	ErrWorkspaceExists  = errors.New("execution security workspace already exists")
+)
+
+type Reference struct {
+	CredentialID string
+	Revision     int64
+	SecretType   string
+	DataSourceID string
+}
+
+// Envelope is safe to persist in credential_revisions. It never carries a
+// plaintext secret or a root key.
+type Envelope struct {
+	FormatVersion string
+	KeyID         string
+	Reference     Reference
+	Nonce         []byte
+	Ciphertext    []byte
+}
+
+type Keyring struct {
+	keys map[string][]byte
+}
+
+type Workspace struct {
+	executionRoot string
+	securityDir   string
+	runtimeDir    string
+	rawLogDir     string
+	evidenceDir   string
+}
+
+type MaterialPaths struct {
+	SecurityConfiguration string
+}
+
+// SecurityMaterial keeps key and ciphertext bytes private to the package so
+// callers cannot accidentally format them into logs or API responses.
+type SecurityMaterial struct {
+	privateKeyPEM []byte
+	ciphertext    []byte
+}
+
+func (m *SecurityMaterial) Destroy() {
+	if m == nil {
+		return
+	}
+	Zero(m.privateKeyPEM)
+	Zero(m.ciphertext)
+	m.privateKeyPEM = nil
+	m.ciphertext = nil
+}
