@@ -14,6 +14,7 @@
 - [首条纵向切片](first-vertical-slice.md)：数据源管理到基础 CSV 导出的最小开发范围、P0 证据和验收条件。
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
+- [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)：连接、只读查询、Windows OBDUMPER 运行、脱敏和 VS-P0-02～VS-P0-12 状态。
 
 ## 3. 阶段结论
 
@@ -22,6 +23,7 @@
 - 可以开展技术设计、验证工具和测试夹具准备；
 - TD-001～TD-008 与“直连 OBServer 单表 CSV 导出”首条切片范围已经确认；
 - 首条切片相关 P0 证据、技术选型和实现级契约尚未完成，因此暂不进入业务代码实现；
+- 当前测试端点疑似 ODP，且 Windows OBDUMPER 本地 CSV 输出受 `file://null` 路径问题阻断；
 - 不要求等待全部 83 个 P0 用例完成，采用“切片相关 P0 通过后开放对应实现”的增量准入方式。
 
 ## 4. 维护规则
