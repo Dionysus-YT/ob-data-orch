@@ -229,7 +229,7 @@ Agent 短时取得密码原值
 
 这不是重新设计工具的密码输入协议，而是用 Go 在 Windows/Linux 上生成与包内 `secure-gen + security.properties` 完全兼容的官方输入格式。Windows 上“4.3.5 读取平台生成产物”已经通过；“读取官方脚本产物”、Linux AMD64/ARM64 工具读取、并发隔离和清理仍未通过。目标 Linux 上必须继续用包内 `secure-gen` 与平台产物交叉核对；无法证明时不得实现。
 
-Windows 验证还发现：官方 `.bat` 没有主动设置 `security.configurationFile`，每进程 `JAVA_OPTS` 注入配置路径可以生效，但批处理继续掩盖 Java 失败退出码。Linux 脚本则把该配置固定到共享 `conf/security.properties`。因此正式 Agent 的跨平台隔离启动入口仍需专项定版，不能修改共享配置，也不能只看 `.bat` 返回值。
+Windows 验证还发现：官方 `.bat` 没有主动设置 `security.configurationFile`，每进程 `JAVA_OPTS` 注入配置路径可以生效，但批处理继续掩盖 Java 失败退出码。Linux 脚本则把该配置固定到共享 `conf/security.properties`。因此正式 Agent 的跨平台隔离启动入口仍需专项定版，不能修改共享配置，也不能只看 `.bat` 返回值。当前专项建议和 TL-R01～TL-R18 见[跨平台隔离启动入口契约](tool-launch-isolation-contract.md)。
 
 ### 11.3 隔离与清理要求
 

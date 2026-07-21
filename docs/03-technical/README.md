@@ -16,9 +16,11 @@
 - [参数元数据与确定性命令生成契约](parameter-command-contract.md)：首条切片的值状态、最小参数集合、稳定顺序、指纹、跨平台路径和秘密槽位边界；PC-R01～PC-R15 已确认，契约测试待执行。
 - [Agent 协议与任务状态最小契约](agent-task-state-contract.md)：首条切片的机器认证、心跳、长轮询、租约、幂等事件、进程证据、状态投影和失联恢复；AS-R01～AS-R16 已确认，契约测试待执行。
 - [凭据、权限与安全最小契约](credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时槽位解析、权限、审计和 OBDUMPER 进程暴露边界；CS-R01～CS-R18 已确认。
+- [OBDUMPER 跨平台隔离启动入口契约](tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化启动配置、execution 私有目录、最小环境、进程恢复和清理边界；TL-R01～TL-R18 已确认。
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
 - [安全文件兼容性验证](evidence/secure-gen-compatibility-spike-2026-07-21.md)：平台内存生成的 PKCS#8/RSA 材料被 Windows 4.3.5 解密器与 OBDUMPER 读取、错误私钥负例、ACL 和三目标构建证据；Linux 运行与清理仍阻断。
+- [直接 Java 隔离启动验证](evidence/direct-java-launch-spike-2026-07-21.md)：Windows 结构化 argv、任务级安全配置、含空格路径、最小环境、直接父子进程和真实退出码证据；Linux 与成功路径待验证。
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)：连接、只读查询、Windows OBDUMPER 运行、脱敏和 VS-P0-02～VS-P0-12 状态。
 - [SQLite 跨平台最小技术验证](evidence/sqlite-cross-platform-spike-2026-07-21.md)：纯 Go SQLite 候选的 Windows AMD64、Linux AMD64/ARM64 构建证据和 Windows 事务/备份运行结果。
 
@@ -28,7 +30,7 @@
 - 项目已经初始化独立 Git 工作区，官方工具压缩包仅作为本地验证输入，不纳入版本控制；
 - 可以开展技术设计、验证工具和测试夹具准备；
 - TD-001～TD-008 与“直连 OBServer 单表 CSV 导出”首条切片范围已经确认；
-- TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16 和 CS-R01～CS-R18 已确认；参数及 Agent 契约测试、安全路线剩余跨平台门禁、日志、API 和数据模型最小契约仍有阻断，因此暂不进入业务代码实现；
+- TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18 和 TL-R01～TL-R18 已确认；参数及 Agent 契约测试、安全路线剩余跨平台门禁、日志、API 和数据模型最小契约仍有阻断，因此暂不进入业务代码实现；
 - 当前测试端点疑似 ODP；Windows 实际参数采用用户确认的完整盘符绝对路径，早期 `file://null` 结果保留为正式 Agent 环境回归项；
 - 不要求等待全部 83 个 P0 用例完成，采用“切片相关 P0 通过后开放对应实现”的增量准入方式。
 
