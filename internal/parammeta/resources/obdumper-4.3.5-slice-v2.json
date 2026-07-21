@@ -1,0 +1,15 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v2",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "revisionReason": "CS-R12 and TL-R08 require the database password as a logical secret input but forbid --password and the secret value from argv and environment.",
+  "overrides": [
+    {
+      "definitionId": "obdumper.connection.password",
+      "emissionTarget": "SECURITY_FILE",
+      "securityProperty": "oceanbase.jdbc.password",
+      "appendEvidence": ["CS-R12", "TL-R08", "SG-P02"]
+    }
+  ]
+}

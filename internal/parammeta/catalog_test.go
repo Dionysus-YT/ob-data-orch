@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestLoadDefaultCatalog(t *testing.T) {
@@ -12,8 +13,11 @@ func TestLoadDefaultCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDefault(): %v", err)
 	}
-	if catalog.ToolVersion() != "4.3.5-RELEASE" || catalog.MetadataVersion() != "obdumper-4.3.5-slice-v1" {
+	if catalog.ToolVersion() != "4.3.5-RELEASE" || catalog.MetadataVersion() != "obdumper-4.3.5-slice-v2" {
 		t.Fatalf("unexpected catalog identity: %s / %s", catalog.ToolVersion(), catalog.MetadataVersion())
+	}
+	if catalog.BaseVersion() != "obdumper-4.3.5-slice-v1" || catalog.RevisionReason() == "" {
+		t.Fatalf("missing compatibility revision trace: %s / %s", catalog.BaseVersion(), catalog.RevisionReason())
 	}
 	definitions := catalog.Definitions()
 	if len(definitions) != 16 {
@@ -23,7 +27,7 @@ func TestLoadDefaultCatalog(t *testing.T) {
 		t.Fatalf("unexpected category order: %#v", got)
 	}
 	password, ok := catalog.Definition("--password")
-	if !ok || password.ValueType != "secret-slot" || password.Sensitivity != "SECRET" {
+	if !ok || password.ValueType != "secret-slot" || password.Sensitivity != "SECRET" || password.EmissionTarget != "SECURITY_FILE" || password.SecurityProperty != "oceanbase.jdbc.password" {
 		t.Fatalf("unsafe password metadata: %#v", password)
 	}
 }
@@ -43,10 +47,22 @@ func TestCatalogReturnsDefensiveCopies(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsDuplicateParameter(t *testing.T) {
+func TestLoadRejectsTamperedBaseResource(t *testing.T) {
 	t.Parallel()
-	tampered := bytes.Replace(defaultResource, []byte(`"--port"`), []byte(`"--host"`), 1)
-	if _, err := load(tampered); err == nil || !strings.Contains(err.Error(), "duplicate parameter") {
-		t.Fatalf("load() error = %v, want duplicate parameter failure", err)
+	manifest, err := resourceFiles.ReadFile(defaultRevisionResource)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	base, err := resourceFiles.ReadFile("resources/obdumper-4.3.5-slice-v1.json")
+	if err != nil {
+		t.Fatalf("read base: %v", err)
+	}
+	tampered := bytes.Replace(base, []byte(`"--port"`), []byte(`"--host"`), 1)
+	files := fstest.MapFS{
+		defaultRevisionResource:                  &fstest.MapFile{Data: manifest},
+		"resources/obdumper-4.3.5-slice-v1.json": &fstest.MapFile{Data: tampered},
+	}
+	if _, err := loadFromFS(files, defaultRevisionResource); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("loadFromFS() error = %v, want checksum mismatch", err)
 	}
 }

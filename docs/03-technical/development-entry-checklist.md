@@ -22,13 +22,13 @@
 | 首条切片 P0 | 已执行，存在阻断 | VS-P0-04/12 已通过；疑似 ODP、序列化特殊值、权限负例、凭据和未实现 Agent 仍阻断，见[P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md) | 是 |
 | 技术架构 | 已完成 | TD-001～TD-008 已确认，见[技术架构首版](architecture.md) | 否 |
 | 技术栈与部署 | 已确认 | TS-R01～TS-R14 已确认；SQLite 三架构构建和 Windows 运行通过，三个麒麟目标运行待测，见[技术路线基线](technology-stack.md)和[SQLite 验证证据](evidence/sqlite-cross-platform-spike-2026-07-21.md) | 否 |
-| 参数元数据与命令生成设计 | 已确认，测试待执行 | [参数元数据与确定性命令生成契约](parameter-command-contract.md)的 PC-R01～PC-R15 已确认；仍需执行 VS-P0-08/09 契约测试 | 是 |
+| 参数元数据与命令生成设计 | 生成器子集已通过 | [参数元数据与确定性命令生成契约](parameter-command-contract.md)的 PC-R01～PC-R15 已确认；参数元数据 `v2` 与纯核心生成器已通过合成契约测试，Agent 信封、预检查及 VS-P0-09 全链路仍待后续组件 | 是 |
 | Agent 协议与任务状态 | 已确认，测试待执行 | [Agent 协议与任务状态最小契约](agent-task-state-contract.md)的 AS-R01～AS-R16 已确认；仍需执行 VS-P0-07/10/11 契约测试 | 是 |
 | 凭据与权限安全 | 安全契约已确认，Windows 核心格式部分通过 | [凭据、权限与安全最小契约](credential-access-security-contract.md)的 CS-R01～CS-R18 已确认；Windows 已验证官方兼容安全文件与无密码 argv，见[兼容性证据](evidence/secure-gen-compatibility-spike-2026-07-21.md)；Linux、并发清理与跨机器根密钥恢复仍需验证 | 是 |
 | 跨平台隔离启动入口 | 启动契约已确认，Windows 负例部分通过 | [启动入口契约](tool-launch-isolation-contract.md)的 TL-R01～TL-R18 已确认；Windows 已验证任务级安全配置、结构化路径、直接 PID/退出码和最小环境，见[验证记录](evidence/direct-java-launch-spike-2026-07-21.md)；Linux、成功执行、并发、恢复与清理仍待验证 | 是 |
 | 日志采集与执行证据 | 契约已确认，合成验证部分通过 | [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)的 LG-R01～LG-R20 已确认；跨读取块秘密、UTF-8 重组、幂等批次和超长记录缺口已通过本地合成验证，真实并发、断网、崩溃恢复和三目标运行仍待测，见[验证记录](evidence/log-stream-redaction-spike-2026-07-21.md) | 是 |
 | API 与数据模型 | 契约已确认，核心 SQLite 约束合成验证通过 | [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)的 AD-R01～AD-R20 已确认，`EXPORT_PREFLIGHT` 已同步补充 Agent/安全契约；乐观锁、不可变任务、唯一领取、事件/租约和日志冲突约束已通过 Windows 合成验证，正式迁移、OpenAPI、认证接入和三目标运行仍待测，见[验证记录](evidence/api-data-model-sqlite-spike-2026-07-21.md) | 是 |
-| 自动化测试与 CI | 未开始 | 按已确认技术栈随工程骨架建立 | 是 |
+| 自动化测试与 CI | 已建立 | 本地一致性脚本和跨目标构建已建立；远端 CI 首次运行待代码进入托管分支 | 是 |
 
 ## 3. 分层准入建议
 

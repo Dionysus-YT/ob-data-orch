@@ -75,7 +75,7 @@ VS-P0 不替代现有 EVT-P0、NIV-P0 和 DLV-P0；它从已有计划中抽取�
 
 - 提供的 `2883` 端点和组合用户名疑似经过 ODP，不能直接证明“直连 OBServer”；
 - Windows 实际命令按用户确认的盘符绝对路径格式执行；早期自动化出现的 `file://nullE:/...` 作为环境差异回归项，仍需在正式 Agent 环境验证；
-- 参数生成器、正式凭据方案和执行 Agent 尚未实现。VS-P0-09 的 Windows 安全文件核心格式已取得[部分通过证据](evidence/secure-gen-compatibility-spike-2026-07-21.md)，但 Linux、并发隔离、清理和正式 Agent 仍未验证；VS-P0-08、VS-P0-09、VS-P0-11 不能获得实现级整体通过。
+- 参数元数据 `v2` 和确定性命令生成器已完成纯合成实现，VS-P0-08 的生成器子集通过；正式凭据组件和执行 Agent 尚未实现。VS-P0-09 的 Windows 安全文件核心格式已取得[部分通过证据](evidence/secure-gen-compatibility-spike-2026-07-21.md)，但 Linux、并发隔离、清理和正式 Agent 仍未验证；VS-P0-08、VS-P0-09、VS-P0-11 仍不能获得全链路通过。
 
 因此首条切片采用分层准入：G1 工程骨架和 G2 合成数据隔离组件可以推进；未通过的 P0 继续阻断 G3 真实任务链路和 G4 正式发布，不阻断其验证对象本身的隔离实现。完整边界见[开发准入收口](development-readiness-closure.md)。
 

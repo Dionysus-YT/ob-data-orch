@@ -2,17 +2,24 @@ package parammeta
 
 import (
 	"bytes"
-	_ "embed"
+	"crypto/sha256"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"sort"
 	"strings"
 )
 
-//go:embed resources/obdumper-4.3.5-slice-v1.json
-var defaultResource []byte
+const (
+	defaultRevisionResource = "resources/obdumper-4.3.5-slice-v2.json"
+	currentMetadataVersion  = "obdumper-4.3.5-slice-v2"
+)
+
+//go:embed resources/*.json
+var resourceFiles embed.FS
 
 type Rule struct {
 	Kind  string `json:"kind"`
@@ -37,6 +44,8 @@ type Definition struct {
 	Sensitivity      string   `json:"sensitivity"`
 	RiskLevel        string   `json:"riskLevel"`
 	ConfirmationRule string   `json:"confirmationRule"`
+	EmissionTarget   string   `json:"emissionTarget,omitempty"`
+	SecurityProperty string   `json:"securityProperty,omitempty"`
 	OfficialEvidence []string `json:"officialEvidence"`
 }
 
@@ -50,8 +59,26 @@ type resource struct {
 	Definitions       []Definition `json:"definitions"`
 }
 
+type revisionManifest struct {
+	MetadataVersion string               `json:"metadataVersion"`
+	BaseVersion     string               `json:"baseVersion"`
+	BaseResource    string               `json:"baseResource"`
+	BaseSHA256      string               `json:"baseSha256"`
+	RevisionReason  string               `json:"revisionReason"`
+	Overrides       []definitionOverride `json:"overrides"`
+}
+
+type definitionOverride struct {
+	DefinitionID     string   `json:"definitionId"`
+	EmissionTarget   string   `json:"emissionTarget"`
+	SecurityProperty string   `json:"securityProperty,omitempty"`
+	AppendEvidence   []string `json:"appendEvidence"`
+}
+
 type Catalog struct {
 	metadataVersion   string
+	baseVersion       string
+	revisionReason    string
 	tool              string
 	toolVersion       string
 	capabilityVersion string
@@ -61,10 +88,46 @@ type Catalog struct {
 }
 
 func LoadDefault() (*Catalog, error) {
-	return load(defaultResource)
+	return loadFromFS(resourceFiles, defaultRevisionResource)
+}
+
+func loadFromFS(files fs.FS, revisionResource string) (*Catalog, error) {
+	manifestContent, err := fs.ReadFile(files, revisionResource)
+	if err != nil {
+		return nil, fmt.Errorf("read parameter metadata revision: %w", err)
+	}
+	manifest, err := decodeManifest(manifestContent)
+	if err != nil {
+		return nil, err
+	}
+	baseContent, err := fs.ReadFile(files, "resources/"+manifest.BaseResource)
+	if err != nil {
+		return nil, fmt.Errorf("read parameter metadata base: %w", err)
+	}
+	digest := sha256.Sum256(baseContent)
+	if fmt.Sprintf("%x", digest) != manifest.BaseSHA256 {
+		return nil, errors.New("parameter metadata base checksum mismatch")
+	}
+	raw, err := decodeResource(baseContent)
+	if err != nil {
+		return nil, err
+	}
+	if raw.MetadataVersion != manifest.BaseVersion {
+		return nil, errors.New("parameter metadata base version mismatch")
+	}
+	for index := range raw.Definitions {
+		raw.Definitions[index].EmissionTarget = "ARGV"
+	}
+	if err := applyOverrides(&raw, manifest.Overrides); err != nil {
+		return nil, err
+	}
+	raw.MetadataVersion = manifest.MetadataVersion
+	return buildCatalog(raw, manifest.BaseVersion, manifest.RevisionReason)
 }
 
 func (c *Catalog) MetadataVersion() string   { return c.metadataVersion }
+func (c *Catalog) BaseVersion() string       { return c.baseVersion }
+func (c *Catalog) RevisionReason() string    { return c.revisionReason }
 func (c *Catalog) Tool() string              { return c.tool }
 func (c *Catalog) ToolVersion() string       { return c.toolVersion }
 func (c *Catalog) CapabilityVersion() string { return c.capabilityVersion }
@@ -89,20 +152,24 @@ func (c *Catalog) Definition(longName string) (Definition, bool) {
 	return cloneDefinition(c.definitions[index]), true
 }
 
-func load(content []byte) (*Catalog, error) {
+func decodeResource(content []byte) (resource, error) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var raw resource
 	if err := decoder.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("decode parameter metadata: %w", err)
+		return resource{}, fmt.Errorf("decode parameter metadata: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return nil, errors.New("parameter metadata contains trailing JSON values")
+			return resource{}, errors.New("parameter metadata contains trailing JSON values")
 		}
-		return nil, fmt.Errorf("decode parameter metadata trailer: %w", err)
+		return resource{}, fmt.Errorf("decode parameter metadata trailer: %w", err)
 	}
+	return raw, nil
+}
+
+func buildCatalog(raw resource, baseVersion string, revisionReason string) (*Catalog, error) {
 	if err := validateResource(raw); err != nil {
 		return nil, err
 	}
@@ -114,6 +181,8 @@ func load(content []byte) (*Catalog, error) {
 	}
 	return &Catalog{
 		metadataVersion:   raw.MetadataVersion,
+		baseVersion:       baseVersion,
+		revisionReason:    revisionReason,
 		tool:              raw.Tool,
 		toolVersion:       raw.ToolVersion,
 		capabilityVersion: raw.CapabilityVersion,
@@ -123,8 +192,53 @@ func load(content []byte) (*Catalog, error) {
 	}, nil
 }
 
+func decodeManifest(content []byte) (revisionManifest, error) {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	var manifest revisionManifest
+	if err := decoder.Decode(&manifest); err != nil {
+		return revisionManifest{}, fmt.Errorf("decode parameter metadata revision: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return revisionManifest{}, errors.New("parameter metadata revision contains trailing JSON values")
+	}
+	if manifest.MetadataVersion != currentMetadataVersion || manifest.BaseVersion != "obdumper-4.3.5-slice-v1" {
+		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
+	}
+	if manifest.BaseResource != "obdumper-4.3.5-slice-v1.json" || len(manifest.BaseSHA256) != 64 {
+		return revisionManifest{}, errors.New("parameter metadata revision base is invalid")
+	}
+	if manifest.RevisionReason == "" || len(manifest.Overrides) != 1 {
+		return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
+	}
+	return manifest, nil
+}
+
+func applyOverrides(raw *resource, overrides []definitionOverride) error {
+	byID := make(map[string]int, len(raw.Definitions))
+	for index, definition := range raw.Definitions {
+		byID[definition.DefinitionID] = index
+	}
+	seen := make(map[string]struct{}, len(overrides))
+	for _, override := range overrides {
+		if _, duplicate := seen[override.DefinitionID]; duplicate {
+			return fmt.Errorf("duplicate parameter metadata override %q", override.DefinitionID)
+		}
+		seen[override.DefinitionID] = struct{}{}
+		index, ok := byID[override.DefinitionID]
+		if !ok {
+			return fmt.Errorf("parameter metadata override %q is unknown", override.DefinitionID)
+		}
+		raw.Definitions[index].EmissionTarget = override.EmissionTarget
+		raw.Definitions[index].SecurityProperty = override.SecurityProperty
+		raw.Definitions[index].OfficialEvidence = append(raw.Definitions[index].OfficialEvidence, override.AppendEvidence...)
+	}
+	return nil
+}
+
 func validateResource(raw resource) error {
-	if raw.MetadataVersion != "obdumper-4.3.5-slice-v1" || raw.Tool != "OBDUMPER" || raw.ToolVersion != "4.3.5-RELEASE" {
+	if raw.MetadataVersion != currentMetadataVersion || raw.Tool != "OBDUMPER" || raw.ToolVersion != "4.3.5-RELEASE" {
 		return errors.New("parameter metadata identity does not match the confirmed slice")
 	}
 	if raw.CapabilityVersion != "export-direct-single-table-csv-v1" {
@@ -188,6 +302,15 @@ func validateResource(raw resource) error {
 		if !oneOf(definition.ConfirmationRule, "NONE", "SECRET_REFERENCE_ONLY") {
 			return fmt.Errorf("parameter %q has unsupported confirmation rule", definition.LongName)
 		}
+		if !oneOf(definition.EmissionTarget, "ARGV", "SECURITY_FILE") {
+			return fmt.Errorf("parameter %q has unsupported emission target", definition.LongName)
+		}
+		if definition.EmissionTarget == "SECURITY_FILE" && definition.SecurityProperty == "" {
+			return fmt.Errorf("parameter %q has no security property", definition.LongName)
+		}
+		if definition.EmissionTarget != "SECURITY_FILE" && definition.SecurityProperty != "" {
+			return fmt.Errorf("parameter %q has an unexpected security property", definition.LongName)
+		}
 		if len(definition.OfficialEvidence) == 0 {
 			return fmt.Errorf("parameter %q has no evidence reference", definition.LongName)
 		}
@@ -236,6 +359,15 @@ func validateResource(raw resource) error {
 	}
 	if passwordIndex < 0 || raw.Definitions[passwordIndex].ValueType != "secret-slot" || raw.Definitions[passwordIndex].Sensitivity != "SECRET" {
 		return errors.New("password metadata must be a secret slot")
+	}
+	password := raw.Definitions[passwordIndex]
+	if password.EmissionTarget != "SECURITY_FILE" || password.SecurityProperty != "oceanbase.jdbc.password" {
+		return errors.New("password metadata must target the official security file")
+	}
+	for _, definition := range raw.Definitions {
+		if definition.LongName != "--password" && definition.EmissionTarget != "ARGV" {
+			return fmt.Errorf("parameter %q must remain an argv target", definition.LongName)
+		}
 	}
 	return nil
 }
