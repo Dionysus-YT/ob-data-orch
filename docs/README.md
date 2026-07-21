@@ -68,10 +68,12 @@
 - [Agent 协议与任务状态最小契约](03-technical/agent-task-state-contract.md)：首条切片的机器认证、租约、幂等事件、进程证据、状态投影和失联恢复；AS-R01～AS-R16 已确认。
 - [凭据、权限与安全最小契约](03-technical/credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时解析、权限、审计和工具进程暴露边界；CS-R01～CS-R18 已确认。
 - [OBDUMPER 跨平台隔离启动入口契约](03-technical/tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化平台配置、任务私有目录、最小环境、进程恢复和清理规则；TL-R01～TL-R18 已确认。
+- [日志采集、双层脱敏与执行证据最小契约](03-technical/log-collection-evidence-contract.md)：日志来源、记录重组、双层脱敏、分段文件、SQLite 索引、游标、缺口与下载规则；LG-R01～LG-R20 已确认。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
 - [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
 - [安全文件兼容性验证](03-technical/evidence/secure-gen-compatibility-spike-2026-07-21.md)：Windows 上的官方兼容安全材料、无密码 argv、错误私钥、ACL 和三目标构建证据，以及仍待执行的 Linux/清理门禁。
 - [直接 Java 隔离启动验证](03-technical/evidence/direct-java-launch-spike-2026-07-21.md)：Windows 候选入口的结构化路径、最小环境、直接进程身份和真实退出码证据。
+- [日志流重组与双层脱敏验证](03-technical/evidence/log-stream-redaction-spike-2026-07-21.md)：跨读取块秘密、UTF-8 重组、双层脱敏、批次幂等和超长记录缺口的本地合成证据。
 - [SQLite 跨平台最小技术验证](03-technical/evidence/sqlite-cross-platform-spike-2026-07-21.md)：Windows AMD64、Linux AMD64/ARM64 纯 Go 构建和 Windows 事务、WAL、完整性及备份证据。
 - [首条纵向切片 P0 执行记录](03-technical/evidence/first-vertical-slice-p0-2026-07-21.md)：VS-P0-02～VS-P0-12 的连接、查询、导出尝试、环境阻断和安全结论。
 
@@ -109,7 +111,7 @@
 | 执行节点管理评审稿 | 产品、字段与低保真规则已确认 | EN-R01～EN-R19、EN-FR01～EN-FR14、EN-LF-R01～EN-LF-R16 已确认；Agent 安全和阈值/调度技术边界仍待设计 |
 | 执行节点字段与条件矩阵 | 字段规则已确认 | 已覆盖 EN-F001～EN-F072；EN-FR01～EN-FR14 已确认，技术待设计项状态不变 |
 | 执行节点管理低保真基线 | 关键流程已确认 | 节点列表、注册关联、四维状态、只读环境检查、维护确认和失联任务关系已覆盖；EN-LF-R01～EN-LF-R16 已确认 |
-| 日志中心模块评审稿 | 产品、字段与低保真规则已确认 | LC-R01～LC-R20、LC-FR01～LC-FR15、LC-LF-R01～LC-LF-R18 已确认；采集协议、查询限制和保留实现仍待技术设计 |
+| 日志中心模块评审稿 | 产品、字段、低保真和日志技术契约已确认 | LC-R01～LC-R20、LC-FR01～LC-FR15、LC-LF-R01～LC-LF-R18、LG-R01～LG-R20 已确认；真实并发、崩溃恢复和三个麒麟目标仍待验证 |
 | 日志中心字段与条件矩阵 | 字段规则已确认 | 已覆盖 LC-F001～LC-F075；LC-FR01～LC-FR15 已确认，技术待设计项状态不变 |
 | 日志中心低保真基线 | 关键流程已确认 | 首次进入、任务聚合、审计查询、同来源上下文、持续加载与缺口、脱敏下载均已覆盖；LC-LF-R01～LC-LF-R18 已确认 |
 | 模板中心模块评审稿 | 产品、字段与低保真规则已确认 | TP-R01～TP-R20、TP-FR01～TP-FR15、TP-LF-R01～TP-LF-R16 已确认；技术实现边界仍待设计 |
@@ -121,7 +123,7 @@
 | 权限与安全基线专项评审稿 | 产品、字段与低保真规则已确认 | AC-R01～AC-R20、AC-FR01～AC-FR16、AC-LF-R01～AC-LF-R18 已确认；技术安全实现仍待设计 |
 | 权限配置字段与条件矩阵 | 字段规则已确认 | 已覆盖 AC-F001～AC-F080；AC-FR01～AC-FR16 已确认 |
 | 权限与安全高风险操作低保真基线 | 关键流程已确认 | 用户列表、角色、对象范围、原子保存、生产提交和敏感命令查看已覆盖；AC-LF-R01～AC-LF-R18 已确认 |
-| 技术设计 | 架构、首条切片、技术路线、参数/命令、Agent/状态、凭据/安全和跨平台启动契约已确认，P0 和其余实现契约存在阻断 | TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18、TL-R01～TL-R18 和切片范围已确认；SQLite 三架构构建和 Windows 运行已通过，安全文件及直接 Java 入口的 Windows 核心负例部分通过，三个麒麟目标运行待测，API、数据模型与日志协议仍待完成 |
+| 技术设计 | 架构、首条切片、技术路线、参数/命令、Agent/状态、凭据/安全、跨平台启动和日志契约已确认，P0 和其余实现契约存在阻断 | TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18、TL-R01～TL-R18、LG-R01～LG-R20 和切片范围已确认；SQLite 三架构构建和 Windows 运行已通过，三个麒麟目标运行、API 与数据模型仍待完成 |
 
 所有未通过 OB Loader/Dumper V4.3.5 官方命令行文档与实际 `--help` 核验的参数，统一标记为“待官方参数映射确认”。
 
@@ -178,6 +180,8 @@
 49. [开发准入清单](03-technical/development-entry-checklist.md)
 50. [本地工具包证据](03-technical/evidence/tool-package-baseline.md)
 51. [SQLite 跨平台最小技术验证](03-technical/evidence/sqlite-cross-platform-spike-2026-07-21.md)
+52. [日志采集、双层脱敏与执行证据最小契约](03-technical/log-collection-evidence-contract.md)
+53. [日志流重组与双层脱敏验证](03-technical/evidence/log-stream-redaction-spike-2026-07-21.md)
 
 ## 维护规则
 

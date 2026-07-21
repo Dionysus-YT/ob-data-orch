@@ -25,6 +25,7 @@
 | Agent 协议与任务状态 | 已确认，测试待执行 | [Agent 协议与任务状态最小契约](agent-task-state-contract.md)的 AS-R01～AS-R16 已确认；仍需执行 VS-P0-07/10/11 契约测试 | 是 |
 | 凭据与权限安全 | 安全契约已确认，Windows 核心格式部分通过 | [凭据、权限与安全最小契约](credential-access-security-contract.md)的 CS-R01～CS-R18 已确认；Windows 已验证官方兼容安全文件与无密码 argv，见[兼容性证据](evidence/secure-gen-compatibility-spike-2026-07-21.md)；Linux、并发清理与跨机器根密钥恢复仍需验证 | 是 |
 | 跨平台隔离启动入口 | 启动契约已确认，Windows 负例部分通过 | [启动入口契约](tool-launch-isolation-contract.md)的 TL-R01～TL-R18 已确认；Windows 已验证任务级安全配置、结构化路径、直接 PID/退出码和最小环境，见[验证记录](evidence/direct-java-launch-spike-2026-07-21.md)；Linux、成功执行、并发、恢复与清理仍待验证 | 是 |
+| 日志采集与执行证据 | 契约已确认，合成验证部分通过 | [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)的 LG-R01～LG-R20 已确认；跨读取块秘密、UTF-8 重组、幂等批次和超长记录缺口已通过本地合成验证，真实并发、断网、崩溃恢复和三目标运行仍待测，见[验证记录](evidence/log-stream-redaction-spike-2026-07-21.md) | 是 |
 | API 与数据模型 | 未开始 | 在架构与切片 P0 后设计 | 是 |
 | 自动化测试与 CI | 未开始 | 按已确认技术栈随工程骨架建立 | 是 |
 

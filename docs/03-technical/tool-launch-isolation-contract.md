@@ -237,6 +237,8 @@ LD_PRELOAD
 → 监管 stdout/stderr、工具原生日志、进程和结果事实
 ```
 
+日志记录重组、双层脱敏、分段和缺口的实现边界见[日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)；LG-R01～LG-R20 已确认。
+
 进程创建失败时必须确认没有 Java 进程再上报 `START_REJECTED`。不能因为秘密已经解析就重建另一套 execution 或自动改走官方脚本。
 
 ## 13. 进程身份、退出和恢复
