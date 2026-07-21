@@ -136,7 +136,17 @@ Agent 通过显式环境块启动工具，不修改机器级环境，也不把�
 | 控制面 | Windows Service 或前台受控进程 | systemd 或前台受控进程 | systemd 或前台受控进程 |
 | Agent | Windows Service | systemd 服务 | systemd 服务 |
 
-Linux 32 位 ARM、LoongArch、RISC-V、macOS 和 Windows ARM64 不属于当前默认承诺，除非后续明确增加。
+上述是构建产物矩阵，不等于支持所有 Linux 发行版。V1.0 国产 Linux 支持范围严格限定为以下三个认证目标：
+
+| ID | 操作系统与版本 | 构建信息 | CPU/架构 | 已提供内核基线 | 当前状态 |
+|---|---|---|---|---|---|
+| OS-KY10-ARM | Kylin Linux Advanced Server V10 SP1（Tercel） | aarch64 Build20，2021-05-18 | Kunpeng 920 / `aarch64` | `4.19.90-23.8.v2101.ky10.aarch64` | 已纳入首版；平台集成待实测 |
+| OS-KY11-ARM | Kylin Linux Advanced Server V11 2503（Swan25） | aarch64 Build20.01，2025-07-15 | Kunpeng 920 / `aarch64` | `6.6.0-32.7.v2505.ky11.aarch64` | 已纳入首版；平台集成待实测 |
+| OS-KY10-C86 | Kylin Linux Advanced Server V10 SP3 2403（Halberd） | x86_64 Build20.01，2024-04-26 | Hygon C86-4G / `x86_64` | `4.19.90-89.30.v2401.ky10.x86_64` | 已纳入首版；平台集成待实测 |
+
+海光 C86 对 Go 和 Linux 用户空间呈现为 `x86_64`，因此使用 `linux/amd64` 产物；两套鲲鹏系统都使用同一份 `linux/arm64` 产物，但必须分别完成系统集成验证。
+
+除上述三个麒麟目标外，其他麒麟版本、统信、openEuler、其他 Linux 发行版、Linux 32 位 ARM、LoongArch、RISC-V、macOS 和 Windows ARM64 均不属于当前承诺。后续新增必须先补充兼容目标和验证记录。
 
 ### 5.2 控制面
 
@@ -147,11 +157,11 @@ Linux 32 位 ARM、LoongArch、RISC-V、macOS 和 Windows ARM64 不属于当前�
 - TLS 可由现有入口代理终止，若无入口代理则由控制面直接提供；具体证书来源在部署设计中确认；
 - 首版不要求容器，后续可以补充容器镜像作为一种交付方式，但容器不是架构前提。
 
-### 5.3 国产 ARM Linux 适配边界
+### 5.3 国产 Linux 适配边界
 
 - 平台以 `linux/arm64`（AArch64）作为构建目标，不把“Linux ARM”模糊处理成 32 位 ARM；
 - 控制面和 Agent 启动时记录操作系统、CPU 架构、发行版标识与版本、内核版本和平台构建版本；
-- 国产操作系统的具体名称和版本进入兼容认证清单。不能只在任意 ARM 虚拟机运行一次就声称支持所有国产系统；
+- 国产操作系统以 5.1 节三个目标为白名单。不能只在任意 AMD64/ARM64 虚拟机运行一次就声称支持其他国产系统；
 - 平台二进制优先关闭 CGO，减少对发行版 C 运行库的耦合；若 SQLite 驱动或后续依赖必须开启 CGO，则分别维护 Linux AMD64/ARM64 原生构建与运行测试；
 - systemd 是默认服务交付方式；目标系统不使用 systemd 时，必须保留前台受控运行方式，并为该发行版补充明确服务脚本；
 - 用户已确认目标国产 ARM 环境具备兼容的 OB Loader/Dumper 4.3.5、Java 8 和本地库。平台仍需验证环境发现、启动参数、日志采集、取消和终态核对集成，不再把官方工具的 ARM 能力本身列为待确认项。
@@ -169,9 +179,9 @@ Linux 32 位 ARM、LoongArch、RISC-V、macOS 和 Windows ARM64 不属于当前�
 - 节点同时上报 `os` 和 `arch`；调度只能把任务分配给已通过对应平台环境检查的 Agent；
 - 目录存在性、可写性、剩余空间和非空判断由实际 Agent 完成，属于预检查，不得改变用户填写的路径。
 
-### 5.5 三平台最小验证门禁
+### 5.5 四类目标环境最小验证门禁
 
-以下验证必须分别在 Windows AMD64、Linux AMD64、目标国产 Linux ARM64 实机或同等受控环境执行：
+以下验证必须分别在 Windows AMD64 以及 `OS-KY10-ARM`、`OS-KY11-ARM`、`OS-KY10-C86` 实机或同等受控环境执行：
 
 1. 控制面启动、静态前端、SQLite 初始化、迁移、事务、备份和恢复；
 2. Agent 安装、服务启动、机器身份关联、心跳、重连和升级前版本核对；
@@ -265,14 +275,14 @@ contracts/
 | TS-R02 | 前端 | Vue 3 + TypeScript + Vite，Node.js 24 LTS | 待确认 |
 | TS-R03 | 元数据存储 | SQLite 3，本机磁盘单文件；单控制面实例 | 用户约束已确认，运行边界待确认 |
 | TS-R04 | 控制面形态 | 单实例模块化单体，前端静态资源一并交付 | 待确认 |
-| TS-R05 | Agent 平台 | Windows AMD64、Linux AMD64 与 Linux ARM64 同期支持 | 用户约束已确认 |
+| TS-R05 | Agent 平台 | Windows AMD64，以及 OS-KY10-ARM、OS-KY11-ARM、OS-KY10-C86 同期支持 | 用户约束已确认 |
 | TS-R06 | Agent 通道 | 出站 HTTPS 长轮询领取 + 心跳 + 批量事件上报 | 待确认 |
 | TS-R07 | 浏览器实时信息 | REST 查询 + SSE 增量，不引入 WebSocket | 待确认 |
 | TS-R08 | 首版基础设施 | 不引入 Redis、消息队列、搜索引擎和 Kubernetes | 待确认 |
 | TS-R09 | 工具运行时 | Agent 与工具 Java 8 完全隔离，使用显式绝对路径和环境块 | 待确认 |
 | TS-R10 | Windows 输出路径 | `--file-path` 原样使用用户配置的完整盘符绝对路径，检查与转换分离 | 待确认 |
 | TS-R11 | 数据访问与迁移 | 显式 SQL + 版本化迁移，不先采用重型 ORM | 待确认 |
-| TS-R12 | 正式支持环境 | Windows AMD64、Linux AMD64/ARM64 控制面与 Agent；SQLite 均在控制面本机磁盘；容器可选 | 用户约束已确认，发行版认证清单待补充 |
+| TS-R12 | 正式支持环境 | Windows AMD64；国产 Linux 仅限 5.1 节三个麒麟目标；SQLite 均在控制面本机磁盘；容器可选 | 用户约束已确认，平台实测待执行 |
 | TS-R13 | SQLite 并发边界 | WAL、短事务、单控制面、禁止网络共享盘 | 技术硬约束 |
 | TS-R14 | 日志存储 | 原始脱敏日志分段文件化，SQLite 保存索引和摘要 | 待确认 |
 
@@ -284,7 +294,6 @@ contracts/
 - 是否已有统一登录、证书签发、反向代理和密钥管理设施；
 - 首版预计用户数、Agent 数、并发任务数、日志量和保留期；
 - Windows 是否允许标准 Service 安装，目标国产 Linux 是否统一采用 systemd；
-- 首批国产 ARM Linux 的发行版名称、版本、内核和 ARM 服务器型号；
 - 是否接受 V1.0 单控制面、无自动高可用，故障时通过一致备份恢复。
 
 若团队明确只有成熟 Java 能力，备选方案应改为 Java 21/Spring Boot 控制面 + Go Agent，而不是为了语言统一强迫团队使用不熟悉的 Go。Agent 仍不建议基于工具所需 Java 8 构建。

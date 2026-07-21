@@ -77,11 +77,15 @@ Windows `obdumper.bat` 还表现出以下行为：
 - 正式验证节点应使用满足项目技术基线且优先符合官方建议的 Java 版本，并实际验证本地库、输出路径和结果文件；
 - 工具包来源仍需通过官方发布页、发布校验值或可信交付记录补齐，之后才能将 VS-P0-01 标记为通过。
 
-### 5.1 Linux ARM64 部署事实
+### 5.1 国产 Linux 部署事实
 
-2026-07-21，用户明确确认目标国产 ARM64 Linux 环境已具备兼容的 OB Loader/Dumper 4.3.5、Java 8 和相关本地库。本项目据此不再把官方工具的 ARM64 能力作为平台技术选型阻断，平台交付范围调整为 Windows AMD64、Linux AMD64 与 Linux ARM64。
+2026-07-21，用户明确确认三个目标国产 Linux 环境已具备兼容的 OB Loader/Dumper 4.3.5、Java 8 和相关本地库。本项目据此不再把官方工具的 CPU 架构能力作为平台技术选型阻断。用户提供的 `nkvers` 与 `lscpu` 摘要形成以下目标清单：
 
-该确认不替代平台集成测试。控制面、Agent、SQLite 驱动、服务安装、环境事实、绝对路径、工具启动、日志采集、取消和终态核对仍需在目标国产 ARM64 系统执行。具体门禁见[技术路线与部署选型评审稿](../technology-stack.md)。
+- Kylin Linux Advanced Server V10 SP1（Tercel），Kunpeng 920，`aarch64`；
+- Kylin Linux Advanced Server V11 2503（Swan25），Kunpeng 920，`aarch64`；
+- Kylin Linux Advanced Server V10 SP3 2403（Halberd），Hygon C86-4G，`x86_64`。
+
+海光 C86 使用 `linux/amd64` 平台产物，两套鲲鹏系统使用 `linux/arm64` 平台产物。该确认不替代平台集成测试；控制面、Agent、SQLite 驱动、服务安装、环境事实、绝对路径、工具启动、日志采集、取消和终态核对仍需在三个目标系统分别执行。具体版本和门禁见[技术路线与部署选型评审稿](../technology-stack.md)。
 
 ## 6. 当前结论
 

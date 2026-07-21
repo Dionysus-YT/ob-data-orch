@@ -12,7 +12,7 @@
 
 - [技术架构首版](architecture.md)：控制面、执行 Agent、参数元数据、命令生成、任务状态、日志、权限和凭据的职责边界。
 - [首条纵向切片](first-vertical-slice.md)：数据源管理到基础 CSV 导出的最小开发范围、P0 证据和验收条件。
-- [技术路线与部署选型评审稿](technology-stack.md)：从第一性原理评估 Go、Vue 3、SQLite、Windows AMD64、Linux AMD64/ARM64 和轻量任务通道，记录 TS-R01～TS-R14。
+- [技术路线与部署选型评审稿](technology-stack.md)：从第一性原理评估 Go、Vue 3、SQLite、Windows AMD64，以及麒麟 V10 SP1/V11 ARM64、V10 SP3 C86 三个国产 Linux 目标和轻量任务通道，记录 TS-R01～TS-R14。
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)：连接、只读查询、Windows OBDUMPER 运行、脱敏和 VS-P0-02～VS-P0-12 状态。
