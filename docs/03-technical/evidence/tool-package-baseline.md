@@ -85,7 +85,7 @@ Windows `obdumper.bat` 还表现出以下行为：
 - Kylin Linux Advanced Server V11 2503（Swan25），Kunpeng 920，`aarch64`；
 - Kylin Linux Advanced Server V10 SP3 2403（Halberd），Hygon C86-4G，`x86_64`。
 
-海光 C86 使用 `linux/amd64` 平台产物，两套鲲鹏系统使用 `linux/arm64` 平台产物。该确认不替代平台集成测试；控制面、Agent、SQLite 驱动、服务安装、环境事实、绝对路径、工具启动、日志采集、取消和终态核对仍需在三个目标系统分别执行。具体版本和门禁见[技术路线与部署选型评审稿](../technology-stack.md)。
+海光 C86 使用 `linux/amd64` 平台产物，两套鲲鹏系统使用 `linux/arm64` 平台产物。该确认不替代平台集成测试；控制面、Agent、SQLite 驱动、服务安装、环境事实、绝对路径、工具启动、日志采集、取消和终态核对仍需在三个目标系统分别执行。具体版本和门禁见[技术路线与部署选型基线](../technology-stack.md)。
 
 ## 6. 当前结论
 
