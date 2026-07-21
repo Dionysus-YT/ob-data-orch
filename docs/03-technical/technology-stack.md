@@ -123,7 +123,7 @@ Agent 通过显式环境块启动工具，不修改机器级环境，也不把�
 - 任务领取采用短原子事务和租约，不依赖 PostgreSQL 的 `SELECT ... FOR UPDATE`；
 - 不把导出文件、原始凭据、完整命令明文或逐行原始日志写入 SQLite；
 - 备份使用 SQLite Online Backup API 或 `VACUUM INTO` 形成一致快照，不在服务运行时直接复制单个 `.db` 文件；
-- SQLite 驱动必须在 Windows AMD64、Linux AMD64/ARM64 上通过相同迁移、事务、崩溃恢复和备份恢复测试；优先选择能关闭 CGO 的实现，避免国产 ARM 系统额外依赖 C 运行库和交叉编译工具链，最终驱动仍需最小技术验证后确认。
+- SQLite 驱动必须在 Windows AMD64、Linux AMD64/ARM64 上通过相同迁移、事务、崩溃恢复和备份恢复测试。2026-07-21 已验证 `modernc.org/sqlite v1.54.0` 在关闭 CGO 时可生成三目标产物，Windows 事务与备份运行通过；三套麒麟运行、升级和并发门禁通过后再最终锁定驱动，详见[SQLite 跨平台最小技术验证](evidence/sqlite-cross-platform-spike-2026-07-21.md)。
 
 ## 5. Windows/Linux 多架构基线
 
@@ -273,7 +273,7 @@ contracts/
 |---|---|---|---|
 | TS-R01 | 后端语言 | 控制面和 Agent 统一使用 Go 1.26 | 待确认 |
 | TS-R02 | 前端 | Vue 3 + TypeScript + Vite，Node.js 24 LTS | 待确认 |
-| TS-R03 | 元数据存储 | SQLite 3，本机磁盘单文件；单控制面实例 | 用户约束已确认，运行边界待确认 |
+| TS-R03 | 元数据存储 | SQLite 3，本机磁盘单文件；单控制面实例 | 用户约束已确认；三架构构建与 Windows 运行通过，麒麟运行待验证 |
 | TS-R04 | 控制面形态 | 单实例模块化单体，前端静态资源一并交付 | 待确认 |
 | TS-R05 | Agent 平台 | Windows AMD64，以及 OS-KY10-ARM、OS-KY11-ARM、OS-KY10-C86 同期支持 | 用户约束已确认 |
 | TS-R06 | Agent 通道 | 出站 HTTPS 长轮询领取 + 心跳 + 批量事件上报 | 待确认 |

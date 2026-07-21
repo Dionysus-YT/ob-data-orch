@@ -16,6 +16,7 @@
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)：连接、只读查询、Windows OBDUMPER 运行、脱敏和 VS-P0-02～VS-P0-12 状态。
+- [SQLite 跨平台最小技术验证](evidence/sqlite-cross-platform-spike-2026-07-21.md)：纯 Go SQLite 候选的 Windows AMD64、Linux AMD64/ARM64 构建证据和 Windows 事务/备份运行结果。
 
 ## 3. 阶段结论
 
