@@ -64,6 +64,7 @@
 - [技术架构首版](03-technical/architecture.md)：已确认的模块化单体控制面、独立执行 Agent 和核心工程不变量基线。
 - [首条纵向切片](03-technical/first-vertical-slice.md)：数据源到基础 CSV 导出的范围、VS-P0-01～VS-P0-12 和验收条件。
 - [技术路线与部署选型基线](03-technical/technology-stack.md)：已确认的 Go 控制面/Agent、Vue 3、SQLite、Windows AMD64，以及两个麒麟 ARM64 和一个麒麟 C86 目标与轻量通信方案。
+- [参数元数据与确定性命令生成契约](03-technical/parameter-command-contract.md)：首条切片的结构化参数、稳定命令、跨平台路径、指纹和脱敏边界；PC-R01～PC-R15 已确认。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
 - [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
 - [SQLite 跨平台最小技术验证](03-technical/evidence/sqlite-cross-platform-spike-2026-07-21.md)：Windows AMD64、Linux AMD64/ARM64 纯 Go 构建和 Windows 事务、WAL、完整性及备份证据。
@@ -115,7 +116,7 @@
 | 权限与安全基线专项评审稿 | 产品、字段与低保真规则已确认 | AC-R01～AC-R20、AC-FR01～AC-FR16、AC-LF-R01～AC-LF-R18 已确认；技术安全实现仍待设计 |
 | 权限配置字段与条件矩阵 | 字段规则已确认 | 已覆盖 AC-F001～AC-F080；AC-FR01～AC-FR16 已确认 |
 | 权限与安全高风险操作低保真基线 | 关键流程已确认 | 用户列表、角色、对象范围、原子保存、生产提交和敏感命令查看已覆盖；AC-LF-R01～AC-LF-R18 已确认 |
-| 技术设计 | 架构、首条切片与技术路线已确认，P0 和实现契约存在阻断 | TD-001～TD-008、TS-R01～TS-R14 和切片范围已确认；SQLite 三架构构建和 Windows 运行已通过、三个麒麟目标运行待测，实现级 API、数据模型、Agent、状态、日志与安全协议仍待完成 |
+| 技术设计 | 架构、首条切片、技术路线和参数/命令契约已确认，P0 和其余实现契约存在阻断 | TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15 和切片范围已确认；SQLite 三架构构建和 Windows 运行已通过、三个麒麟目标运行待测，API、数据模型、Agent、状态、日志与凭据协议仍待完成 |
 
 所有未通过 OB Loader/Dumper V4.3.5 官方命令行文档与实际 `--help` 核验的参数，统一标记为“待官方参数映射确认”。
 
