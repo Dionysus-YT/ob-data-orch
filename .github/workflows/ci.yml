@@ -1,0 +1,82 @@
+name: Engineering skeleton CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go-quality:
+    name: Go quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check formatting
+        run: test -z "$(gofmt -l cmd internal)"
+      - name: Unit tests
+        run: go test ./cmd/... ./internal/...
+      - name: Vet
+        run: go vet ./cmd/... ./internal/...
+
+  go-cross-build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            extension: .exe
+          - goos: linux
+            goarch: amd64
+            extension: ''
+          - goos: linux
+            goarch: arm64
+            extension: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build control plane and agent
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -o "${{ runner.temp }}/control-plane-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}" ./cmd/control-plane
+          go build -trimpath -o "${{ runner.temp }}/agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}" ./cmd/agent
+
+  web-quality:
+    name: Web quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  secret-scan:
+    name: Source secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/check-secrets.sh
