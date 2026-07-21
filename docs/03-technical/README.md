@@ -1,7 +1,7 @@
 # 技术设计入口
 
 > 文档状态：工程启动架构、首条切片范围与技术路线已确认
-> 当前阶段：DEV-01/DEV-02 已通过本地合成验证，DEV-03 参数生成组件已通过纯合成契约测试，下一项为 SQLite 核心仓储；G3/G4 真实集成和发布继续阻断
+> 当前阶段：DEV-01/DEV-02 已通过本地合成验证，DEV-03 参数生成与 SQLite 核心仓储组件已通过纯合成契约测试，下一项为凭据加密与安全目录；G3/G4 真实集成和发布继续阻断
 > 更新日期：2026-07-21
 
 ## 1. 目录用途
@@ -18,7 +18,7 @@
 - [凭据、权限与安全最小契约](credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时槽位解析、权限、审计和 OBDUMPER 进程暴露边界；CS-R01～CS-R18 已确认。
 - [OBDUMPER 跨平台隔离启动入口契约](tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化启动配置、execution 私有目录、最小环境、进程恢复和清理边界；TL-R01～TL-R18 已确认。
 - [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)：定义日志来源、记录重组、双层脱敏、分段存储、游标、缺口和下载边界；LG-R01～LG-R20 已确认。
-- [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)：定义首条切片浏览器/Agent API、提交前远端预检查、20 张窄表、事务、迁移和备份边界；AD-R01～AD-R20 已确认。
+- [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)：定义首条切片浏览器/Agent API、提交前远端预检查、20 张窄表、事务、迁移和备份边界；AD-R01～AD-R20 已确认，SQLite 核心仓储已通过本地合成事务、并发领取与备份恢复测试，API/Agent 仍待后续组件。
 - [首条切片开发准入收口](development-readiness-closure.md)：按 G0～G4 分层工程骨架、隔离组件、Windows 集成和正式平台门禁；DR-R01～DR-R18 已确认。
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。

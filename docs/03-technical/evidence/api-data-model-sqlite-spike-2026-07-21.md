@@ -97,4 +97,17 @@ log_batches
 - schema 升级、校验和、Online Backup/VACUUM INTO 与应用回退；
 - Windows 服务和三个麒麟目标的真实运行。
 
-AD-R01～AD-R20 已确认；本证据只证明其中核心 SQLite 约束候选在 Windows 合成环境可行，不代表正式 API/数据模型门禁、VS-P0 或业务代码开发准入已经通过。
+AD-R01～AD-R20 已确认；本证据最初只证明核心 SQLite 约束候选在 Windows 合成环境可行，不代表正式 API/数据模型门禁、VS-P0 或业务代码开发准入已经通过。
+
+## 7. DEV-03 核心仓储后续验证
+
+后续实现已将正式 `0001` 迁移与显式 SQLite 仓储接入同一套本地合成夹具，新增验证：
+
+- 启动时固定 `foreign_keys=ON`、WAL、`synchronous=FULL` 和 5 秒 `busy_timeout`，并拒绝未启用外键的数据库；
+- 通过 `VACUUM INTO` 创建新备份文件，快速完整性核对后重新打开并应用同一迁移集合；
+- 草稿 revision 更新只允许一个正确期望版本成功；
+- 提交任务与审计事件同一短事务，审计主键冲突时任务插入一并回滚；
+- 同一任务两个并发领取请求只有一个 `task_executions`、lease 和初始事件成功；
+- 任务快照保持不可变；错误 lease、重复 eventSeq、`--password` argv 与含密码值的通用 JSON 均被拒绝。
+
+这些均是临时数据库和合成 ID/字节的纯核心测试。未实现 API、认证、真实 Agent、凭据解密、日志文件 fsync/恢复或目标麒麟运行；因此 G3/G4 和真实业务链路继续阻断。

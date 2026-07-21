@@ -27,7 +27,7 @@
 | 凭据与权限安全 | 安全契约已确认，Windows 核心格式部分通过 | [凭据、权限与安全最小契约](credential-access-security-contract.md)的 CS-R01～CS-R18 已确认；Windows 已验证官方兼容安全文件与无密码 argv，见[兼容性证据](evidence/secure-gen-compatibility-spike-2026-07-21.md)；Linux、并发清理与跨机器根密钥恢复仍需验证 | 是 |
 | 跨平台隔离启动入口 | 启动契约已确认，Windows 负例部分通过 | [启动入口契约](tool-launch-isolation-contract.md)的 TL-R01～TL-R18 已确认；Windows 已验证任务级安全配置、结构化路径、直接 PID/退出码和最小环境，见[验证记录](evidence/direct-java-launch-spike-2026-07-21.md)；Linux、成功执行、并发、恢复与清理仍待验证 | 是 |
 | 日志采集与执行证据 | 契约已确认，合成验证部分通过 | [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)的 LG-R01～LG-R20 已确认；跨读取块秘密、UTF-8 重组、幂等批次和超长记录缺口已通过本地合成验证，真实并发、断网、崩溃恢复和三目标运行仍待测，见[验证记录](evidence/log-stream-redaction-spike-2026-07-21.md) | 是 |
-| API 与数据模型 | 契约已确认，核心 SQLite 约束合成验证通过 | [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)的 AD-R01～AD-R20 已确认，`EXPORT_PREFLIGHT` 已同步补充 Agent/安全契约；乐观锁、不可变任务、唯一领取、事件/租约和日志冲突约束已通过 Windows 合成验证，正式迁移、OpenAPI、认证接入和三目标运行仍待测，见[验证记录](evidence/api-data-model-sqlite-spike-2026-07-21.md) | 是 |
+| API 与数据模型 | SQLite 核心仓储已通过；API 仍待实现 | [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)的 AD-R01～AD-R20 已确认，`EXPORT_PREFLIGHT` 已同步补充 Agent/安全契约；正式 20 表迁移、运行配置、乐观锁、不可变任务、唯一领取、事件/租约、事务回滚及备份恢复已通过本地合成测试。OpenAPI 行为、认证接入、日志文件恢复和三目标运行仍待后续组件 | 是 |
 | 自动化测试与 CI | 已建立 | 本地一致性脚本和跨目标构建已建立；远端 CI 首次运行待代码进入托管分支 | 是 |
 
 ## 3. 分层准入建议

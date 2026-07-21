@@ -3,6 +3,7 @@
 > 文档状态：首条纵向切片专项契约已确认，AD-R01～AD-R20 已确认
 > 适用范围：直连 OBServer 单表 CSV 导出首条切片
 > 关联基线：TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18、TL-R01～TL-R18、LG-R01～LG-R20
+> 实现状态：20 表迁移与 SQLite 核心仓储已通过本地合成测试；API、凭据、Agent 状态投影和日志文件恢复仍待后续组件
 > 更新日期：2026-07-21
 
 ## 1. 目标与范围
@@ -365,7 +366,7 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 11. 迁移校验和变化、数据库版本过高、外键关闭和完整性失败均拒绝启动；
 12. Windows AMD64、麒麟 V10 SP3 C86、V10 SP1 ARM64、V11 ARM64 完成初始化、迁移、并发领取、事件、备份和恢复。
 
-当前已完成核心约束的 Windows 合成验证，详见[API/数据模型 SQLite 约束验证](evidence/api-data-model-sqlite-spike-2026-07-21.md)。
+当前已完成核心约束及仓储短事务的本地合成验证，详见[API/数据模型 SQLite 约束验证](evidence/api-data-model-sqlite-spike-2026-07-21.md)。该结果不开放浏览器 API、Agent 协议或真实任务。
 
 ## 18. 明确禁止
 
