@@ -10,6 +10,7 @@
 
 - [OceanBase 导数工具 V4.3.5 文档概览](https://www.oceanbase.com/docs/common-oceanbase-dumper-loader-1000000004997287)
 - [OceanBase 导数工具 V4.3.5 快速入门](https://www.oceanbase.com/docs/common-oceanbase-dumper-loader-1000000004997304)
+- [OceanBase Loader/Dumper Security Features](https://en.oceanbase.com/docs/common-oceanbase-dumper-loader-10000000002265507)
 
 ## 1. 文件身份
 
@@ -69,12 +70,26 @@ Windows `obdumper.bat` 还表现出以下行为：
 3. 仅凭脚本退出码无法判断工具是否真正启动；
 4. 初次采集只完成版本和帮助核对；2026-07-21 已执行数据库连接和导出尝试，详见[首条纵向切片 P0 执行记录](first-vertical-slice-p0-2026-07-21.md)。
 
+### 4.1 官方敏感信息文件能力
+
+本地 4.3.5 压缩包包含：
+
+```text
+ob-loader-dumper-4.3.5-RELEASE/tools/secure-gen
+ob-loader-dumper-4.3.5-RELEASE/conf/security.properties
+```
+
+`security.properties` 提供 `encrypt.filePath`、`secretKey.filePath` 和 `security.className` 配置键。包内 `secure-gen` 是依赖 Bash、OpenSSL 和用户目录的 Shell 脚本，没有对应 Windows `.bat/.cmd` 生成器；其 `-n` 模式需要明文属性文件输入。
+
+官网说明 V4.2.0 起可以使用该机制加密业务密码、sys 密码和对象存储密钥，并在工具命令中省略 `--password`/`--sys-password`。2026-07-21 已证明平台在内存中生成的任务级材料可被 Windows 上的 4.3.5 解密器和 OBDUMPER 读取，命令不带 `--password`；错误私钥会被拒绝。Linux 目标读取、官方脚本产物交叉核对、正式并发隔离和终态清理仍未通过，因此 VS-P0-09 仍不能整体判定通过。详见[安全文件兼容性验证](secure-gen-compatibility-spike-2026-07-21.md)和[凭据、权限与安全最小契约](../credential-access-security-contract.md)。
+
 ## 5. 技术影响
 
 - Agent 环境检查必须独立验证 Java 路径、版本、工具主类和版本输出；
 - 不能只以启动脚本退出码为工具可用判断；
 - 启动成功至少需要同时满足进程创建、预期版本输出或后续受控握手证据；
 - 正式验证节点应使用满足项目技术基线且优先符合官方建议的 Java 版本，并实际验证本地库、输出路径和结果文件；
+- `secure-gen` 官方安全文件路线应优先于明文命令参数；Windows 核心格式已通过，但跨平台读取、任务隔离和清理实测通过前，VS-P0-09 继续阻断；
 - 工具包来源仍需通过官方发布页、发布校验值或可信交付记录补齐，之后才能将 VS-P0-01 标记为通过。
 
 ### 5.1 国产 Linux 部署事实

@@ -23,7 +23,7 @@
 | 技术栈与部署 | 已确认 | TS-R01～TS-R14 已确认；SQLite 三架构构建和 Windows 运行通过，三个麒麟目标运行待测，见[技术路线基线](technology-stack.md)和[SQLite 验证证据](evidence/sqlite-cross-platform-spike-2026-07-21.md) | 否 |
 | 参数元数据与命令生成设计 | 已确认，测试待执行 | [参数元数据与确定性命令生成契约](parameter-command-contract.md)的 PC-R01～PC-R15 已确认；仍需执行 VS-P0-08/09 契约测试 | 是 |
 | Agent 协议与任务状态 | 已确认，测试待执行 | [Agent 协议与任务状态最小契约](agent-task-state-contract.md)的 AS-R01～AS-R16 已确认；仍需执行 VS-P0-07/10/11 契约测试 | 是 |
-| 凭据与权限安全 | 未完成 | 安全存储、短时注入、审计失败策略待评审 | 是 |
+| 凭据与权限安全 | 安全契约已确认，Windows 核心格式部分通过 | [凭据、权限与安全最小契约](credential-access-security-contract.md)的 CS-R01～CS-R18 已确认；Windows 已验证官方兼容安全文件与无密码 argv，见[兼容性证据](evidence/secure-gen-compatibility-spike-2026-07-21.md)；Linux、并发清理与跨机器根密钥恢复仍需验证 | 是 |
 | API 与数据模型 | 未开始 | 在架构与切片 P0 后设计 | 是 |
 | 自动化测试与 CI | 未开始 | 按已确认技术栈随工程骨架建立 | 是 |
 

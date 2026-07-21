@@ -66,8 +66,10 @@
 - [技术路线与部署选型基线](03-technical/technology-stack.md)：已确认的 Go 控制面/Agent、Vue 3、SQLite、Windows AMD64，以及两个麒麟 ARM64 和一个麒麟 C86 目标与轻量通信方案。
 - [参数元数据与确定性命令生成契约](03-technical/parameter-command-contract.md)：首条切片的结构化参数、稳定命令、跨平台路径、指纹和脱敏边界；PC-R01～PC-R15 已确认。
 - [Agent 协议与任务状态最小契约](03-technical/agent-task-state-contract.md)：首条切片的机器认证、租约、幂等事件、进程证据、状态投影和失联恢复；AS-R01～AS-R16 已确认。
+- [凭据、权限与安全最小契约](03-technical/credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时解析、权限、审计和工具进程暴露边界；CS-R01～CS-R18 已确认。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
 - [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
+- [安全文件兼容性验证](03-technical/evidence/secure-gen-compatibility-spike-2026-07-21.md)：Windows 上的官方兼容安全材料、无密码 argv、错误私钥、ACL 和三目标构建证据，以及仍待执行的 Linux/清理门禁。
 - [SQLite 跨平台最小技术验证](03-technical/evidence/sqlite-cross-platform-spike-2026-07-21.md)：Windows AMD64、Linux AMD64/ARM64 纯 Go 构建和 Windows 事务、WAL、完整性及备份证据。
 - [首条纵向切片 P0 执行记录](03-technical/evidence/first-vertical-slice-p0-2026-07-21.md)：VS-P0-02～VS-P0-12 的连接、查询、导出尝试、环境阻断和安全结论。
 
@@ -117,7 +119,7 @@
 | 权限与安全基线专项评审稿 | 产品、字段与低保真规则已确认 | AC-R01～AC-R20、AC-FR01～AC-FR16、AC-LF-R01～AC-LF-R18 已确认；技术安全实现仍待设计 |
 | 权限配置字段与条件矩阵 | 字段规则已确认 | 已覆盖 AC-F001～AC-F080；AC-FR01～AC-FR16 已确认 |
 | 权限与安全高风险操作低保真基线 | 关键流程已确认 | 用户列表、角色、对象范围、原子保存、生产提交和敏感命令查看已覆盖；AC-LF-R01～AC-LF-R18 已确认 |
-| 技术设计 | 架构、首条切片、技术路线、参数/命令和 Agent/状态契约已确认，P0 和其余实现契约存在阻断 | TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16 和切片范围已确认；SQLite 三架构构建和 Windows 运行已通过、三个麒麟目标运行待测，API、数据模型、日志与凭据协议仍待完成 |
+| 技术设计 | 架构、首条切片、技术路线、参数/命令、Agent/状态和凭据/安全契约已确认，P0 和其余实现契约存在阻断 | TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18 和切片范围已确认；SQLite 三架构构建和 Windows 运行已通过，安全文件 Windows 核心格式部分通过，三个麒麟目标运行待测，API、数据模型与日志协议仍待完成 |
 
 所有未通过 OB Loader/Dumper V4.3.5 官方命令行文档与实际 `--help` 核验的参数，统一标记为“待官方参数映射确认”。
 
