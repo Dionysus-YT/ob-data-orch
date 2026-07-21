@@ -3,7 +3,7 @@
 > 文档状态：首条纵向切片专项契约已确认  
 > 适用范围：单控制面、用户显式选择的一个执行节点、单表 CSV 导出  
 > 对应门禁：VS-P0-07、VS-P0-10、VS-P0-11  
-> 评审结论：AS-R01～AS-R16 已于 2026-07-21 确认  
+> 评审结论：AS-R01～AS-R16 已于 2026-07-21 确认；AD-R09 已补充提交前预检查协议
 > 更新日期：2026-07-21
 
 ## 1. 目标与非目标
@@ -44,6 +44,9 @@ Agent 主动认证连接
 | `bootId` | Agent 每次进程启动 | 区分 Agent 重启前后的内存状态 |
 | `taskId` | 一个已提交任务 | 对应产品中的一次不可变执行意图 |
 | `executionId` | 一次任务执行记录 | 首条切片与 `taskId` 一对一，仍单独标识执行事实 |
+| `precheckId` | 一次提交前预检查 | 绑定草稿 revision、配置指纹、数据源/凭据和节点，不是 task/execution |
+| `precheckLeaseId` | 一次预检查领取 | 只授权固定 `EXPORT_PREFLIGHT` 检查，不授权启动工具 |
+| `precheckLeaseEpoch` | 预检查单调隔离令牌 | 拒绝旧 Agent、旧领取和延迟检查结果 |
 | `leaseId` | 一次有效领取 | 标识当前租约 |
 | `leaseEpoch` | 单调递增整数 | 拒绝旧租约和延迟消息的隔离令牌 |
 | `eventId` | 全局唯一 | 事件去重 |
@@ -109,6 +112,24 @@ Agent 主动认证连接
 | `ReleaseTerminalExecution` | Agent → 控制面 | 终态事件已确认后释放本地执行上下文 | 是 |
 
 心跳、长轮询和事件上传都由 Agent 主动出站发起。控制面不主动连接 Agent，不开放 Agent 入站管理端口。
+
+### 6.1 提交前预检查补充
+
+AD-R09 补充以下固定操作，但不改变正式任务的 `ClaimExecution` 和 eventSeq：
+
+| 操作 | 方向 | 作用 | 是否允许重发 |
+|---|---|---|---:|
+| `ClaimPrecheck` | Agent → 控制面 | 领取明确绑定本节点的 `EXPORT_PREFLIGHT` | 是；同 requestId/预检查租约返回原结果 |
+| `AcknowledgePrecheckLease` | Agent → 控制面 | 确认草稿 revision、指纹、检查清单和短租约 | 是 |
+| `ResolvePrecheckSecretSlots` | Agent → 控制面 | 在有效预检查租约内解析固定数据库凭据槽位 | 是；不缓存明文 |
+| `CompletePrecheck` | Agent → 控制面 | 返回结构化检查项、脱敏证据摘要和完整性 | 是；同摘要返回原确认 |
+
+- 预检查只执行登记的数据库连接、对象存在/可访问、工具/Java、允许根目录、路径可写/非空和空间检查；
+- 不接受任意 SQL、Shell、自由命令、任意文件路径或 OBDUMPER 启动请求；
+- 预检查短租约由控制面时间控制，结果绑定 precheckId、lease/epoch、Agent、草稿 revision、配置指纹、credential revision 和节点事实版本；
+- 预检查不创建 taskId、executionId 或 execution event，不生成正式输出，也不改变任务状态；
+- 首条切片 Agent 有活动 execution 时不领取预检查，避免检查争用正式执行的唯一容量；
+- 失联或租约过期的预检查结果标为未知/过期，不能据此提交任务，也不自动改派后合并两个结果。
 
 ## 7. 心跳与节点在线事实
 
@@ -193,7 +214,7 @@ Agent 领取到的任务信封至少包含：
 - 日志和状态事件的脱敏策略版本；
 - 创建、领取和租约到期的控制面时间。
 
-Agent 只能执行已知能力类型 `OBDUMPER_EXPORT`，且本切片只接受已确认的单表 CSV 参数模板。未知字段可以按协议兼容规则忽略的前提是明确标记为非关键；未知关键字段、未知槽位、任意命令文本、shell 运算符或摘要不一致必须拒绝启动。
+Agent 只接受已知能力类型 `OBDUMPER_EXPORT` 和 `EXPORT_PREFLIGHT`。前者只接受已确认的单表 CSV 参数模板；后者只接受 6.1 节固定检查清单且永不启动 OBDUMPER。未知字段可以按协议兼容规则忽略的前提是明确标记为非关键；未知关键字段、未知槽位、任意命令文本、shell 运算符或摘要不一致必须拒绝。
 
 ## 10. Agent 本地执行状态
 
