@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/identity"
 )
 
 func TestHealthAndReadinessExposeG1Boundary(t *testing.T) {
@@ -36,6 +37,42 @@ func TestHealthAndReadinessExposeG1Boundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
+	t.Parallel()
+	provider := staticIdentityProvider{}
+	handler := NewHandlerWithIdentity(buildinfo.Info{Version: "test"}, provider)
+	for _, testCase := range []struct {
+		path       string
+		wantStatus int
+		wantCode   string
+	}{
+		{path: "/api/v1/data-sources", wantStatus: http.StatusNotFound, wantCode: "NOT_FOUND"},
+		{path: "/agent/v1/heartbeats", wantStatus: http.StatusUnauthorized, wantCode: "AGENT_AUTHENTICATION_FAILED"},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, testCase.path, nil))
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Code != testCase.wantStatus || body["code"] != testCase.wantCode {
+				t.Fatalf("response status=%d body=%#v", response.Code, body)
+			}
+		})
+	}
+}
+
+type staticIdentityProvider struct{}
+
+func (staticIdentityProvider) AuthenticateBrowser(*http.Request) (identity.Principal, error) {
+	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-subject"}, nil
+}
+
+func (staticIdentityProvider) AuthenticateAgent(*http.Request) (identity.Principal, error) {
+	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-subject"}, nil
 }
 
 func TestVersion(t *testing.T) {

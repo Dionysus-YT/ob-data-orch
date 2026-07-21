@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/identity"
 )
 
 type Server struct {
@@ -14,6 +15,13 @@ type Server struct {
 }
 
 func NewHandler(build buildinfo.Info) http.Handler {
+	return NewHandlerWithIdentity(build, nil)
+}
+
+// NewHandlerWithIdentity exists for integration tests and future deployment
+// adapters. Passing nil is the production default until a real identity source
+// is selected and configured.
+func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) http.Handler {
 	server := &Server{build: build}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
@@ -21,10 +29,37 @@ func NewHandler(build buildinfo.Info) http.Handler {
 	mux.HandleFunc("GET /version", server.version)
 	// DEV-04 starts with executable API-domain boundaries. No request may be
 	// treated as authenticated until the deployment identity contract exists.
-	mux.HandleFunc("/api/", server.browserUnavailable)
-	mux.HandleFunc("/agent/", server.agentUnavailable)
+	if provider == nil {
+		mux.HandleFunc("/api/", server.browserUnavailable)
+		mux.HandleFunc("/agent/", server.agentUnavailable)
+	} else {
+		mux.HandleFunc("/api/", server.browserAuthenticated(provider))
+		mux.HandleFunc("/agent/", server.agentAuthenticated(provider))
+	}
 	mux.HandleFunc("/", notFound)
 	return securityHeaders(mux)
+}
+
+func (s *Server) browserAuthenticated(provider identity.Provider) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, err := provider.AuthenticateBrowser(r)
+		if err != nil || identity.Validate(principal, identity.BrowserPrincipal) != nil {
+			writeError(w, http.StatusUnauthorized, "AUTHENTICATION_FAILED", "身份认证失败", false)
+			return
+		}
+		notFound(w, r)
+	}
+}
+
+func (s *Server) agentAuthenticated(provider identity.Provider) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, err := provider.AuthenticateAgent(r)
+		if err != nil || identity.Validate(principal, identity.AgentPrincipal) != nil {
+			writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+			return
+		}
+		notFound(w, r)
+	}
 }
 
 func (s *Server) browserUnavailable(w http.ResponseWriter, _ *http.Request) {
