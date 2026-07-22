@@ -232,6 +232,59 @@ func (s *Store) CreateDataSource(ctx context.Context, input DataSourceCreate) (D
 	return result, err
 }
 
+// ChangeDataSourceState 在短事务中原子切换启用或禁用状态。
+// 同一目标状态会返回当前 revision，且不会重复写入审计事件。
+func (s *Store) ChangeDataSourceState(ctx context.Context, input DataSourceStateChange) (DataSourceStateChangeResult, error) {
+	if err := validateDataSourceStateChange(input); err != nil {
+		return DataSourceStateChangeResult{}, err
+	}
+	result := DataSourceStateChangeResult{}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var currentState string
+		var currentRevision int64
+		err := tx.QueryRowContext(ctx, `
+            SELECT state, revision
+            FROM data_sources
+            WHERE data_source_id = ? AND state != 'ARCHIVED'
+        `, input.DataSourceID).Scan(&currentState, &currentRevision)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrDataSourceNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("read data source state: %w", err)
+		}
+		if currentState == input.TargetState {
+			result.State, result.Revision, result.Replayed = currentState, currentRevision, true
+			return nil
+		}
+		update, err := tx.ExecContext(ctx, `
+            UPDATE data_sources
+            SET state = ?, revision = revision + 1, updated_at = ?
+            WHERE data_source_id = ? AND revision = ?
+        `, input.TargetState, utcText(input.ChangedAt), input.DataSourceID, currentRevision)
+		if err != nil {
+			return fmt.Errorf("change data source state: %w", err)
+		}
+		affected, err := update.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read data source state result: %w", err)
+		}
+		if affected != 1 {
+			return ErrRevisionConflict
+		}
+		action := "DATA_SOURCE_DISABLED"
+		if input.TargetState == "ENABLED" {
+			action = "DATA_SOURCE_ENABLED"
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, action, "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.ChangedAt); err != nil {
+			return err
+		}
+		result.State, result.Revision = input.TargetState, currentRevision+1
+		return nil
+	})
+	return result, err
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")
@@ -505,6 +558,18 @@ func validateDataSourceCreate(input DataSourceCreate) error {
 	}
 	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || !oneOf(input.ConnectionKind, "OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE") || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
 		return errors.New("data source create enum is invalid")
+	}
+	return nil
+}
+
+// validateDataSourceStateChange 将状态动作限制为产品已确认的两个可逆状态。
+// 归档属于独立删除/归档流程，不能通过此入口触发。
+func validateDataSourceStateChange(input DataSourceStateChange) error {
+	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.RequestID == "" || input.ChangedAt.IsZero() {
+		return errors.New("data source state change identity is invalid")
+	}
+	if !oneOf(input.TargetState, "ENABLED", "DISABLED") {
+		return errors.New("data source state change target is invalid")
 	}
 	return nil
 }

@@ -123,3 +123,20 @@ type DataSourceCreateResult struct {
 	DataSourceID string
 	Replayed     bool
 }
+
+// DataSourceStateChange 只表达启用或禁用这一受控状态动作。
+// 它不携带连接字段或凭据，因此不能被误用为通用数据源更新入口。
+type DataSourceStateChange struct {
+	DataSourceID   string
+	ActorSubjectID string
+	TargetState    string
+	RequestID      string
+	ChangedAt      time.Time
+}
+
+// DataSourceStateChangeResult 让重复状态动作返回当前事实，避免重复审计。
+type DataSourceStateChangeResult struct {
+	State    string
+	Revision int64
+	Replayed bool
+}

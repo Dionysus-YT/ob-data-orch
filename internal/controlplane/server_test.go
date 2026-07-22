@@ -121,6 +121,34 @@ func TestGetDataSourceHidesUnauthorizedAndMissingObjects(t *testing.T) {
 	}
 }
 
+func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
+	t.Parallel()
+	changer := &recordingStateChanger{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		StateChanger: changer, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:disable", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || changer.input.TargetState != "DISABLED" || changer.input.DataSourceID != "source-allowed" {
+		t.Fatalf("disable response=%d input=%#v", response.Code, changer.input)
+	}
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-denied:enable", nil))
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("denied status=%d, want 404", denied.Code)
+	}
+	withoutCSRF := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true}, StateChanger: changer,
+	})
+	missingCSRF := httptest.NewRecorder()
+	withoutCSRF.ServeHTTP(missingCSRF, httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:disable", nil))
+	if missingCSRF.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing CSRF status=%d, want 503", missingCSRF.Code)
+	}
+}
+
 func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
 	t.Parallel()
 	provider := staticIdentityProvider{}
@@ -169,10 +197,13 @@ func (browserOnlyIdentityProvider) AuthenticateAgent(*http.Request) (identity.Pr
 	return identity.Principal{}, errors.New("synthetic agent authentication denied")
 }
 
-type sourceAuthorizer struct{ allowedID string }
+type sourceAuthorizer struct {
+	allowedID  string
+	allowWrite bool
+}
 
 func (a sourceAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
-	if scope == identity.ScopeDataSourceRead && objectID == a.allowedID {
+	if objectID == a.allowedID && (scope == identity.ScopeDataSourceRead || (scope == identity.ScopeDataSourceWrite && a.allowWrite)) {
 		return nil
 	}
 	return errors.New("synthetic object scope denied")
@@ -220,6 +251,13 @@ type recordingCreator struct{ input store.DataSourceCreate }
 func (c *recordingCreator) CreateDataSource(_ context.Context, input store.DataSourceCreate) (store.DataSourceCreateResult, error) {
 	c.input = input
 	return store.DataSourceCreateResult{DataSourceID: input.DataSourceID}, nil
+}
+
+type recordingStateChanger struct{ input store.DataSourceStateChange }
+
+func (c *recordingStateChanger) ChangeDataSourceState(_ context.Context, input store.DataSourceStateChange) (store.DataSourceStateChangeResult, error) {
+	c.input = input
+	return store.DataSourceStateChangeResult{State: input.TargetState, Revision: 2}, nil
 }
 
 func TestVersion(t *testing.T) {

@@ -298,6 +298,38 @@ func TestCreateDataSourceAtomicallyPersistsEncryptedCredentialAuditAndIdempotenc
 	assertCount(t, store.db, "SELECT COUNT(*) FROM request_idempotency WHERE operation = 'CREATE_DATA_SOURCE'", 1)
 }
 
+func TestChangeDataSourceStateIsAtomicAndIdempotent(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	input := DataSourceStateChange{
+		DataSourceID: "source-1", ActorSubjectID: "subject-1", TargetState: "DISABLED",
+		RequestID: "request-disable-1", ChangedAt: testTime.Add(time.Minute),
+	}
+	changed, err := store.ChangeDataSourceState(context.Background(), input)
+	if err != nil || changed.State != "DISABLED" || changed.Revision != 2 || changed.Replayed {
+		t.Fatalf("ChangeDataSourceState() = %#v, %v", changed, err)
+	}
+	replayed, err := store.ChangeDataSourceState(context.Background(), input)
+	if err != nil || !replayed.Replayed || replayed.Revision != 2 {
+		t.Fatalf("replayed ChangeDataSourceState() = %#v, %v", replayed, err)
+	}
+	var state string
+	var revision int64
+	if err := store.db.QueryRow("SELECT state, revision FROM data_sources WHERE data_source_id = 'source-1'").Scan(&state, &revision); err != nil {
+		t.Fatalf("read changed data source: %v", err)
+	}
+	if state != "DISABLED" || revision != 2 {
+		t.Fatalf("stored state=%s revision=%d", state, revision)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'DATA_SOURCE_DISABLED'", 1)
+	missing := input
+	missing.DataSourceID = "source-missing"
+	missing.RequestID = "request-disable-missing"
+	if _, err := store.ChangeDataSourceState(context.Background(), missing); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("missing ChangeDataSourceState() error = %v", err)
+	}
+}
+
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "metadata.db")

@@ -20,15 +20,16 @@ import (
 )
 
 type Server struct {
-	build      buildinfo.Info
-	provider   identity.Provider
-	authorizer identity.Authorizer
-	roles      identity.RoleAuthorizer
-	dataSource DataSourceReader
-	creator    DataSourceCreator
-	encryptor  CredentialEncryptor
-	csrf       CSRFValidator
-	keyID      string
+	build        buildinfo.Info
+	provider     identity.Provider
+	authorizer   identity.Authorizer
+	roles        identity.RoleAuthorizer
+	dataSource   DataSourceReader
+	creator      DataSourceCreator
+	stateChanger DataSourceStateChanger
+	encryptor    CredentialEncryptor
+	csrf         CSRFValidator
+	keyID        string
 }
 
 // DataSourceReader exposes only a non-sensitive data-source projection. The
@@ -42,6 +43,12 @@ type DataSourceReader interface {
 // with its encrypted credential, audit event, and idempotency record.
 type DataSourceCreator interface {
 	CreateDataSource(context.Context, store.DataSourceCreate) (store.DataSourceCreateResult, error)
+}
+
+// DataSourceStateChanger 将启停动作收敛为独立的原子存储边界。
+// HTTP 层不能自行更新状态或绕过审计。
+type DataSourceStateChanger interface {
+	ChangeDataSourceState(context.Context, store.DataSourceStateChange) (store.DataSourceStateChangeResult, error)
 }
 
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
@@ -63,6 +70,7 @@ type Dependencies struct {
 	Roles           identity.RoleAuthorizer
 	DataSources     DataSourceReader
 	Creator         DataSourceCreator
+	StateChanger    DataSourceStateChanger
 	Encryptor       CredentialEncryptor
 	CSRF            CSRFValidator
 	CredentialKeyID string
@@ -82,7 +90,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -114,6 +122,12 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		s.createDataSource(w, r, principal)
 		return
 	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
+		if dataSourceID, targetState, ok := parseDataSourceStateAction(r.URL.Path); ok {
+			s.changeDataSourceState(w, r, principal, dataSourceID, targetState)
+			return
+		}
+	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
 		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
@@ -122,6 +136,20 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	notFound(w, r)
+}
+
+// parseDataSourceStateAction 只识别已登记的启停动作，避免把路径后缀解释成通用命令。
+func parseDataSourceStateAction(path string) (string, string, bool) {
+	const prefix = "/api/v1/data-sources/"
+	for suffix, targetState := range map[string]string{":disable": "DISABLED", ":enable": "ENABLED"} {
+		if strings.HasPrefix(path, prefix) && strings.HasSuffix(path, suffix) {
+			dataSourceID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+			if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
+				return dataSourceID, targetState, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 type dataSourceCreateRequest struct {
@@ -203,6 +231,43 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(), "id": result.DataSourceID, "replayed": result.Replayed})
+}
+
+// changeDataSourceState 执行幂等的启停动作。对象授权先于存储读取，
+// 因此无权主体无法通过状态接口枚举数据源是否存在。
+func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID, targetState string) {
+	if s.stateChanger == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源状态依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	result, err := s.stateChanger.ChangeDataSourceState(r.Context(), store.DataSourceStateChange{
+		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, TargetState: targetState,
+		RequestID: requestID(), ChangedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusConflict, "DATA_SOURCE_STATE_CONFLICT", "数据源状态已发生变化，请刷新后重试", true)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_STATE_UNAVAILABLE", "数据源状态暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(), "id": dataSourceID, "state": result.State,
+		"revision": result.Revision, "replayed": result.Replayed,
+	})
 }
 
 func normalizeName(displayName string) string { return strings.ToLower(strings.TrimSpace(displayName)) }
