@@ -7,9 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/store"
@@ -179,6 +181,34 @@ func TestUpdateDataSourceEncryptsPasswordAndKeepsItOutOfResponses(t *testing.T) 
 	}
 }
 
+func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
+	t.Parallel()
+	generator, err := commandgen.NewDefault()
+	if err != nil {
+		t.Fatalf("NewDefault() error = %v", err)
+	}
+	drafts := &recordingDraftStore{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Generator: generator, CSRF: allowedCSRF{},
+	})
+	body := `{"dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"E:\\workespace\\ob-data-orch\\tmp\\synthetic-output"}`
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	create.Header.Set("Idempotency-Key", "synthetic-draft-idempotency-key")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated || drafts.created.DraftID == "" || strings.Contains(drafts.created.ConfigJSON, "password") {
+		t.Fatalf("create response=%d draft=%#v", created.Code, drafts.created)
+	}
+	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:preview-command", nil)
+	preview.Header.Set("If-Match", `"rev-1"`)
+	previewed := httptest.NewRecorder()
+	handler.ServeHTTP(previewed, preview)
+	if previewed.Code != http.StatusOK || !bytes.Contains(previewed.Body.Bytes(), []byte("******")) || bytes.Contains(previewed.Body.Bytes(), []byte("synthetic_user")) || bytes.Contains(previewed.Body.Bytes(), []byte("--password")) {
+		t.Fatalf("unsafe preview response=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+}
+
 func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
 	t.Parallel()
 	provider := staticIdentityProvider{}
@@ -230,6 +260,15 @@ func (browserOnlyIdentityProvider) AuthenticateAgent(*http.Request) (identity.Pr
 type sourceAuthorizer struct {
 	allowedID  string
 	allowWrite bool
+}
+
+type sliceAuthorizer struct{}
+
+func (sliceAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
+	if (scope == identity.ScopeDataSourceRead && objectID == "source-allowed") || (scope == identity.ScopeNodeUse && objectID == "node-1") {
+		return nil
+	}
+	return errors.New("synthetic slice scope denied")
 }
 
 func (a sourceAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
@@ -305,6 +344,30 @@ func (u *recordingUpdater) UpdateDataSource(_ context.Context, input store.DataS
 		credentialRevision = 1
 	}
 	return store.DataSourceUpdateResult{Revision: input.ExpectedRevision + 1, CredentialRevision: credentialRevision}, nil
+}
+
+type staticNodeReader struct{}
+
+func (staticNodeReader) GetExecutionNodeFact(context.Context, string) (ExecutionNodeFact, error) {
+	return ExecutionNodeFact{NodeID: "node-1", Platform: commandgen.PlatformWindowsAMD64, FactsVersion: "node-facts-1"}, nil
+}
+
+type recordingDraftStore struct{ created store.ExportDraft }
+
+func (s *recordingDraftStore) CreateExportDraft(_ context.Context, input store.ExportDraftCreate) (store.ExportDraftCreateResult, error) {
+	s.created = input.ExportDraft
+	s.created.DraftID = "draft-synthetic"
+	s.created.Revision = 1
+	return store.ExportDraftCreateResult{DraftID: s.created.DraftID}, nil
+}
+
+func (s *recordingDraftStore) GetExportDraft(context.Context, string) (store.ExportDraft, error) {
+	return s.created, nil
+}
+
+func (s *recordingDraftStore) UpdateDraft(_ context.Context, input store.DraftUpdate) (int64, error) {
+	s.created.ConfigJSON, s.created.ConfigFingerprint, s.created.Revision = input.ConfigJSON, input.ConfigFingerprint, input.ExpectedRevision+1
+	return s.created.Revision, nil
 }
 
 func TestVersion(t *testing.T) {

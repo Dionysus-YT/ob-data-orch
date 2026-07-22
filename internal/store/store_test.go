@@ -374,6 +374,34 @@ func TestUpdateDataSourceAtomicallyRotatesOptionalCredential(t *testing.T) {
 	}
 }
 
+func TestCreateExportDraftBindsEnabledSourceAndNodeWithIdempotency(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	input := ExportDraftCreate{
+		ExportDraft: ExportDraft{DraftID: "draft-create", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v2", CapabilityVersion: "export-direct-single-table-csv-v1", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
+		RequestID:   "request-draft-create-1", IdempotencyKey: "idempotency-draft-create-1", RequestDigest: testFingerprint,
+	}
+	created, err := store.CreateExportDraft(context.Background(), input)
+	if err != nil || created.DraftID != input.DraftID || created.Replayed {
+		t.Fatalf("CreateExportDraft() = %#v, %v", created, err)
+	}
+	replayed, err := store.CreateExportDraft(context.Background(), input)
+	if err != nil || !replayed.Replayed || replayed.DraftID != input.DraftID {
+		t.Fatalf("replayed CreateExportDraft() = %#v, %v", replayed, err)
+	}
+	draft, err := store.GetExportDraft(context.Background(), input.DraftID)
+	if err != nil || draft.Revision != 1 || draft.ConfigJSON != input.ConfigJSON {
+		t.Fatalf("GetExportDraft() = %#v, %v", draft, err)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM export_drafts WHERE draft_id = 'draft-create'", 1)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'EXPORT_DRAFT_CREATED'", 1)
+	conflict := input
+	conflict.RequestDigest = strings.Repeat("b", 64)
+	if _, err := store.CreateExportDraft(context.Background(), conflict); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting CreateExportDraft() error = %v", err)
+	}
+}
+
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "metadata.db")

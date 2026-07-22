@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/store"
@@ -30,6 +31,9 @@ type Server struct {
 	stateChanger DataSourceStateChanger
 	updater      DataSourceUpdater
 	credentials  DataSourceCredentialReferenceReader
+	drafts       ExportDraftStore
+	nodes        ExecutionNodeReader
+	generator    ExportCommandGenerator
 	encryptor    CredentialEncryptor
 	csrf         CSRFValidator
 	keyID        string
@@ -65,6 +69,30 @@ type DataSourceCredentialReferenceReader interface {
 	GetDataSourceCredentialReference(context.Context, string) (store.DataSourceCredentialReference, error)
 }
 
+// ExportDraftStore 组合草稿创建、读取和乐观锁更新能力。
+type ExportDraftStore interface {
+	CreateExportDraft(context.Context, store.ExportDraftCreate) (store.ExportDraftCreateResult, error)
+	GetExportDraft(context.Context, string) (store.ExportDraft, error)
+	UpdateDraft(context.Context, store.DraftUpdate) (int64, error)
+}
+
+// ExecutionNodeFact 是命令生成需要的最小、非敏感节点事实。
+type ExecutionNodeFact struct {
+	NodeID       string
+	Platform     commandgen.Platform
+	FactsVersion string
+}
+
+// ExecutionNodeReader 只读取选中节点的生成事实，不执行任何节点操作。
+type ExecutionNodeReader interface {
+	GetExecutionNodeFact(context.Context, string) (ExecutionNodeFact, error)
+}
+
+// ExportCommandGenerator 约束预览与提交共用确定性命令生成器。
+type ExportCommandGenerator interface {
+	Generate(commandgen.Request) (commandgen.Result, error)
+}
+
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
@@ -87,6 +115,9 @@ type Dependencies struct {
 	StateChanger    DataSourceStateChanger
 	Updater         DataSourceUpdater
 	CredentialRefs  DataSourceCredentialReferenceReader
+	Drafts          ExportDraftStore
+	Nodes           ExecutionNodeReader
+	Generator       ExportCommandGenerator
 	Encryptor       CredentialEncryptor
 	CSRF            CSRFValidator
 	CredentialKeyID string
@@ -106,7 +137,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, nodes: dependencies.Nodes, generator: dependencies.Generator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -137,6 +168,25 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/data-sources" {
 		s.createDataSource(w, r, principal)
 		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/export-drafts" {
+		s.createExportDraft(w, r, principal)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/export-drafts/") {
+		if draftID, action, ok := parseExportDraftAction(r.URL.Path); ok {
+			switch {
+			case r.Method == http.MethodPost && action == "preview-command":
+				s.previewExportDraft(w, r, principal, draftID)
+				return
+			case r.Method == http.MethodPatch && action == "":
+				s.updateExportDraft(w, r, principal, draftID)
+				return
+			case r.Method == http.MethodGet && action == "":
+				s.getExportDraft(w, r, principal, draftID)
+				return
+			}
+		}
 	}
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		if dataSourceID, targetState, ok := parseDataSourceStateAction(r.URL.Path); ok {
@@ -206,6 +256,16 @@ type dataSourceUpdateRequest struct {
 	Username          *string         `json:"username"`
 	DefaultDatabase   json.RawMessage `json:"defaultDatabase"`
 	Password          *string         `json:"password"`
+}
+
+// exportDraftWriteRequest 固定首条切片的单表 CSV 输入，不接收任意参数文本。
+type exportDraftWriteRequest struct {
+	DataSourceID string `json:"dataSourceId"`
+	NodeID       string `json:"nodeId"`
+	Database     string `json:"database"`
+	Table        string `json:"table"`
+	Format       string `json:"format"`
+	FilePath     string `json:"filePath"`
 }
 
 // createDataSource never renders or persists the password itself. Its
@@ -417,6 +477,226 @@ func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.D
 		}
 	}
 	return merged, nil
+}
+
+// parseExportDraftAction 仅识别固定草稿资源和已登记的命令预览动作。
+func parseExportDraftAction(path string) (string, string, bool) {
+	const prefix = "/api/v1/export-drafts/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", "", false
+	}
+	value := strings.TrimPrefix(path, prefix)
+	if strings.HasSuffix(value, ":preview-command") {
+		id := strings.TrimSuffix(value, ":preview-command")
+		return id, "preview-command", id != "" && !strings.Contains(id, "/")
+	}
+	return value, "", value != "" && !strings.Contains(value, "/")
+}
+
+// createExportDraft 在入库前使用同一命令生成器校验单表 CSV 配置。
+func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.drafts == nil || s.dataSource == nil || s.nodes == nil || s.credentials == nil || s.generator == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置导出草稿依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	request, ok := decodeExportDraftRequest(w, r)
+	if !ok {
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, request.DataSourceID) != nil || identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, request.NodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	preview, source, node, err := s.generateExportDraft(r.Context(), request)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	configJSON, _ := json.Marshal(request)
+	draftID := newOpaqueID()
+	if draftID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.drafts.CreateExportDraft(r.Context(), store.ExportDraftCreate{ExportDraft: store.ExportDraft{
+		DraftID: draftID, OwnerSubjectID: principal.ID, DataSourceID: source.DataSourceID, NodeID: node.NodeID, ToolVersion: preview.ToolVersion,
+		MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion, ConfigJSON: string(configJSON), ConfigFingerprint: preview.ConfigFingerprint,
+		InvalidationJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+	}, RequestID: requestID(), IdempotencyKey: key, RequestDigest: exportDraftDigest(request)})
+	if errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(), "id": result.DraftID, "replayed": result.Replayed})
+}
+
+// getExportDraft 仅允许草稿所有者读取，避免新增未确认的草稿共享规则。
+func (s *Server) getExportDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
+	draft, ok := s.loadOwnedDraft(w, r, principal, draftID)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": draftResponse(draft)})
+}
+
+// updateExportDraft 用乐观锁替换整个固定切片配置，并重新计算指纹。
+func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
+	if s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置草稿更新依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expected, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的草稿版本号", false)
+		return
+	}
+	draft, ok := s.loadOwnedDraft(w, r, principal, draftID)
+	if !ok {
+		return
+	}
+	request, ok := decodeExportDraftRequest(w, r)
+	if !ok {
+		return
+	}
+	if request.DataSourceID != draft.DataSourceID || request.NodeID != draft.NodeID {
+		writeError(w, http.StatusUnprocessableEntity, "DRAFT_BINDING_IMMUTABLE", "首条切片草稿不能通过更新更换数据源或执行节点", false)
+		return
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	configJSON, _ := json.Marshal(request)
+	newRevision, err := s.drafts.UpdateDraft(r.Context(), store.DraftUpdate{DraftID: draftID, ExpectedRevision: expected, ConfigJSON: string(configJSON), ConfigFingerprint: preview.ConfigFingerprint, InvalidationJSON: `{}`, UpdatedAt: time.Now().UTC()})
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	draft.Revision, draft.ConfigJSON, draft.ConfigFingerprint = newRevision, string(configJSON), preview.ConfigFingerprint
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": draftResponse(draft)})
+}
+
+// previewExportDraft 只重算脱敏命令，不解析凭据或创建任何执行任务。
+func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
+	if s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置命令预览依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expected, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的草稿版本号", false)
+		return
+	}
+	draft, ok := s.loadOwnedDraft(w, r, principal, draftID)
+	if !ok {
+		return
+	}
+	if draft.Revision != expected {
+		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
+		return
+	}
+	var request exportDraftWriteRequest
+	if err := json.Unmarshal([]byte(draft.ConfigJSON), &request); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
+		return
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "command": preview.RedactedCommand, "argvTemplate": preview.ArgvTemplate, "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
+}
+
+func (s *Server) loadOwnedDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) (store.ExportDraft, bool) {
+	if s.drafts == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置导出草稿依赖", false)
+		return store.ExportDraft{}, false
+	}
+	draft, err := s.drafts.GetExportDraft(r.Context(), draftID)
+	if errors.Is(err, store.ErrDataSourceNotFound) || (err == nil && draft.OwnerSubjectID != principal.ID) {
+		notFound(w, r)
+		return store.ExportDraft{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXPORT_DRAFT_QUERY_UNAVAILABLE", "导出草稿暂时不可用", true)
+		return store.ExportDraft{}, false
+	}
+	return draft, true
+}
+
+func decodeExportDraftRequest(w http.ResponseWriter, r *http.Request) (exportDraftWriteRequest, bool) {
+	var request exportDraftWriteRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return exportDraftWriteRequest{}, false
+	}
+	return request, true
+}
+
+func (s *Server) generateExportDraft(ctx context.Context, request exportDraftWriteRequest) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
+	if request.DataSourceID == "" || request.NodeID == "" || request.Database == "" || request.Table == "" || request.Format != "CSV" || request.FilePath == "" {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft fields are incomplete")
+	}
+	source, err := s.dataSource.GetDataSourceSummary(ctx, request.DataSourceID)
+	if err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
+	}
+	node, err := s.nodes.GetExecutionNodeFact(ctx, request.NodeID)
+	if err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
+	}
+	credentialReference, err := s.credentials.GetDataSourceCredentialReference(ctx, request.DataSourceID)
+	if err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
+	}
+	result, err := s.generator.Generate(commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v2", CapabilityVersion: "export-direct-single-table-csv-v1", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, Fields: []commandgen.FieldInput{
+		{Name: "--host", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Host}}, {Name: "--port", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(source.Port)}}, {Name: "--user", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Username}}, {Name: "--password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: credentialReference.CredentialID, Revision: credentialReference.Revision}}}, {Name: "--database", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Database}}, {Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Table}}, {Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}}, {Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.FilePath}},
+	}})
+	return result, source, node, err
+}
+
+func draftResponse(draft store.ExportDraft) map[string]any {
+	return map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
+}
+
+func exportDraftDigest(request exportDraftWriteRequest) string {
+	raw, _ := json.Marshal(request)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
 }
 
 // changeDataSourceState 执行幂等的启停动作。对象授权先于存储读取，

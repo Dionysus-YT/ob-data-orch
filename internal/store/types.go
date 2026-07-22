@@ -183,3 +183,35 @@ type DataSourceUpdateResult struct {
 	Revision           int64
 	CredentialRevision int64
 }
+
+// ExportDraft 是首条 CSV 导出链路可持久化的非敏感草稿投影。
+// 它不保存密码、密文、秘密槽位解析结果或可执行进程信息。
+type ExportDraft struct {
+	DraftID           string
+	OwnerSubjectID    string
+	DataSourceID      string
+	NodeID            string
+	Revision          int64
+	ToolVersion       string
+	MetadataVersion   string
+	CapabilityVersion string
+	ConfigJSON        string
+	ConfigFingerprint string
+	InvalidationJSON  string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// ExportDraftCreate 将草稿、审计与创建幂等记录绑定在同一事务内。
+type ExportDraftCreate struct {
+	ExportDraft
+	RequestID      string
+	IdempotencyKey string
+	RequestDigest  string
+}
+
+// ExportDraftCreateResult 为相同幂等请求提供稳定的草稿标识。
+type ExportDraftCreateResult struct {
+	DraftID  string
+	Replayed bool
+}

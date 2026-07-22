@@ -382,6 +382,104 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
 	return result, err
 }
 
+// CreateExportDraft 原子保存首条切片草稿、审计和创建幂等结果。
+// 数据源必须仍处于启用状态，归档或禁用数据源不能形成新的导出草稿。
+func (s *Store) CreateExportDraft(ctx context.Context, input ExportDraftCreate) (ExportDraftCreateResult, error) {
+	if err := validateExportDraftCreate(input); err != nil {
+		return ExportDraftCreateResult{}, err
+	}
+	result := ExportDraftCreateResult{DraftID: input.DraftID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var digest, existingID string
+		err := tx.QueryRowContext(ctx, `
+            SELECT request_digest, COALESCE(resource_id, '')
+            FROM request_idempotency
+            WHERE subject_id = ? AND operation = 'CREATE_EXPORT_DRAFT' AND idempotency_key = ?
+        `, input.OwnerSubjectID, input.IdempotencyKey).Scan(&digest, &existingID)
+		if err == nil {
+			if digest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.DraftID, result.Replayed = existingID, true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read export draft idempotency: %w", err)
+		}
+		insert, err := tx.ExecContext(ctx, `
+            INSERT INTO export_drafts(
+                draft_id, owner_subject_id, data_source_id, node_id, revision,
+                tool_version, metadata_version, capability_version, config_json,
+                config_fingerprint, invalidation_json, created_at, updated_at
+            )
+            SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (
+                SELECT 1 FROM data_sources WHERE data_source_id = ? AND state = 'ENABLED'
+            )
+              AND EXISTS (SELECT 1 FROM execution_nodes WHERE node_id = ? AND management_state = 'ENABLED')
+        `, input.DraftID, input.OwnerSubjectID, input.DataSourceID, input.NodeID,
+			input.ToolVersion, input.MetadataVersion, input.CapabilityVersion, input.ConfigJSON,
+			input.ConfigFingerprint, input.InvalidationJSON, utcText(input.CreatedAt), utcText(input.UpdatedAt),
+			input.DataSourceID, input.NodeID)
+		if err != nil {
+			return fmt.Errorf("insert export draft: %w", err)
+		}
+		affected, err := insert.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read export draft insert result: %w", err)
+		}
+		if affected != 1 {
+			return ErrDataSourceNotFound
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "EXPORT_DRAFT_CREATED", "EXPORT_DRAFT", input.DraftID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO request_idempotency(
+                subject_id, operation, idempotency_key, request_digest, result_status,
+                resource_kind, resource_id, response_json, created_at, expires_at
+            ) VALUES (?, 'CREATE_EXPORT_DRAFT', ?, ?, 201, 'EXPORT_DRAFT', ?, '{}', ?, ?)
+        `, input.OwnerSubjectID, input.IdempotencyKey, input.RequestDigest, input.DraftID,
+			utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write export draft idempotency: %w", err)
+		}
+		return nil
+	})
+	return result, err
+}
+
+// GetExportDraft 返回草稿配置与版本事实；对象范围校验由控制面完成。
+func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft, error) {
+	if s == nil || s.db == nil {
+		return ExportDraft{}, errors.New("SQLite store is nil")
+	}
+	var draft ExportDraft
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+        SELECT draft_id, owner_subject_id, data_source_id, COALESCE(node_id, ''), revision,
+               tool_version, metadata_version, capability_version, config_json,
+               COALESCE(config_fingerprint, ''), invalidation_json, created_at, updated_at
+        FROM export_drafts WHERE draft_id = ?
+    `, draftID).Scan(&draft.DraftID, &draft.OwnerSubjectID, &draft.DataSourceID, &draft.NodeID, &draft.Revision,
+		&draft.ToolVersion, &draft.MetadataVersion, &draft.CapabilityVersion, &draft.ConfigJSON,
+		&draft.ConfigFingerprint, &draft.InvalidationJSON, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ExportDraft{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return ExportDraft{}, fmt.Errorf("read export draft: %w", err)
+	}
+	var parseErr error
+	if draft.CreatedAt, parseErr = time.Parse(time.RFC3339Nano, createdAt); parseErr != nil {
+		return ExportDraft{}, fmt.Errorf("parse export draft create time: %w", parseErr)
+	}
+	if draft.UpdatedAt, parseErr = time.Parse(time.RFC3339Nano, updatedAt); parseErr != nil {
+		return ExportDraft{}, fmt.Errorf("parse export draft update time: %w", parseErr)
+	}
+	draft.CreatedAt, draft.UpdatedAt = draft.CreatedAt.UTC(), draft.UpdatedAt.UTC()
+	return draft, nil
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")
@@ -680,6 +778,24 @@ func validateDataSourceUpdate(input DataSourceUpdate) error {
 	}
 	if input.Password != nil && (input.Password.CredentialID == "" || input.Password.Revision < 2 || input.Password.KeyID == "" || len(input.Password.Nonce) == 0 || len(input.Password.Ciphertext) == 0) {
 		return errors.New("data source rotated credential is invalid")
+	}
+	return nil
+}
+
+// validateExportDraftCreate 拒绝秘密字段和未完成的生成指纹，确保草稿只保存
+// 可重算的非敏感配置。
+func validateExportDraftCreate(input ExportDraftCreate) error {
+	if input.DraftID == "" || input.OwnerSubjectID == "" || input.DataSourceID == "" || input.NodeID == "" || input.ToolVersion == "" || input.MetadataVersion == "" || input.CapabilityVersion == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.UpdatedAt.IsZero() {
+		return errors.New("export draft create identity is invalid")
+	}
+	if !isSHA256(input.ConfigFingerprint) || !isSHA256(input.RequestDigest) {
+		return errors.New("export draft create fingerprint is invalid")
+	}
+	if err := validateSafeObjectJSON(input.ConfigJSON); err != nil {
+		return fmt.Errorf("export draft configuration is invalid: %w", err)
+	}
+	if err := validateSafeObjectJSON(input.InvalidationJSON); err != nil {
+		return fmt.Errorf("export draft invalidation is invalid: %w", err)
 	}
 	return nil
 }
