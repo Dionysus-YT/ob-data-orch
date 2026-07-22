@@ -136,20 +136,30 @@ func (w Workspace) Cleanup() error {
 			return errors.New("security material cleanup failed")
 		}
 	}
-	// 原始工具日志只能位于 execution 私有目录；终态证据完成后的清理必须先移除其内容，
-	// 否则目录非空会永久阻断材料回收并留下不应长期保留的原始输出。
-	entries, err := os.ReadDir(w.rawLogDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.New("raw log cleanup failed")
+	// 原始工具日志和运行时资产都只能位于 execution 私有目录；终态证据完成后的清理必须先移除其内容，
+	// 否则目录非空会永久阻断材料回收，并留下原始输出或可替换的受控子进程资产。
+	if err := clearPrivateDirectory(w.rawLogDir, "raw log cleanup failed"); err != nil {
+		return err
 	}
-	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(w.rawLogDir, entry.Name())); err != nil {
-			return errors.New("raw log cleanup failed")
-		}
+	if err := clearPrivateDirectory(w.runtimeDir, "runtime asset cleanup failed"); err != nil {
+		return err
 	}
 	for _, directory := range []string{w.securityDir, w.runtimeDir, w.rawLogDir, w.evidenceDir, w.executionRoot} {
 		if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.New("security workspace cleanup failed")
+		}
+	}
+	return nil
+}
+
+func clearPrivateDirectory(directory, failureMessage string) error {
+	entries, err := os.ReadDir(directory)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New(failureMessage)
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(directory, entry.Name())); err != nil {
+			return errors.New(failureMessage)
 		}
 	}
 	return nil

@@ -2,9 +2,15 @@ package jdbcprobe
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"ob-data-orch/internal/credential"
 )
 
 func Test连接探针请求使用网络字节序且不含额外字段(t *testing.T) {
@@ -18,6 +24,37 @@ func Test连接探针请求使用网络字节序且不含额外字段(t *testing
 	if !bytes.Contains(encoded, request.Password) || !bytes.Contains(encoded, request.Username) {
 		t.Fatal("请求没有保留短时标准输入字段")
 	}
+}
+
+func Test连接探针只释放到预检查私有运行目录(t *testing.T) {
+	workspace, err := credential.CreateWorkspace(t.TempDir(), "precheck-1")
+	if err != nil {
+		t.Fatalf("CreateWorkspace() 错误 = %v", err)
+	}
+	t.Cleanup(func() { _ = workspace.Cleanup() })
+	path, digest, err := Install(workspace)
+	if err != nil {
+		t.Fatalf("Install() 错误 = %v", err)
+	}
+	if filepath.Dir(path) != workspace.RuntimeDirectory() || len(digest) != 64 {
+		t.Fatalf("探针位置或摘要错误: %q, %q", path, digest)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取探针错误 = %v", err)
+	}
+	defer zero(content)
+	if got := sha256Digest(content); got != digest {
+		t.Fatalf("探针摘要 = %q，期望 %q", got, digest)
+	}
+	if _, _, err := Install(workspace); !errors.Is(err, ErrProbeFailed) {
+		t.Fatalf("重复释放错误 = %v", err)
+	}
+}
+
+func sha256Digest(content []byte) string {
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:])
 }
 
 func Test连接探针拒绝不安全运行时和请求(t *testing.T) {

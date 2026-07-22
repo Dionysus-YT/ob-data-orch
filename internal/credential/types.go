@@ -59,6 +59,12 @@ func (w Workspace) RawLogDirectory() string {
 	return w.rawLogDir
 }
 
+// RuntimeDirectory 返回 execution 私有的运行时资产目录。
+// 受控子进程所需的探针 JAR 等非秘密资产只能写入此目录，不能写入共享工具包或公共临时目录。
+func (w Workspace) RuntimeDirectory() string {
+	return w.runtimeDir
+}
+
 type MaterialPaths struct {
 	SecurityConfiguration string
 }

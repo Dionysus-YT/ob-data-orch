@@ -167,6 +167,24 @@ func TestSecurityWorkspaceContainsOnlyEncryptedMaterialAndCleansUp(t *testing.T)
 	}
 }
 
+func TestWorkspaceCleanupRemovesPrivateRuntimeAssets(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "agent-security")
+	workspace, err := CreateWorkspace(root, "precheck-1")
+	if err != nil {
+		t.Fatalf("CreateWorkspace(): %v", err)
+	}
+	asset := filepath.Join(workspace.RuntimeDirectory(), "synthetic-probe.jar")
+	if err := os.WriteFile(asset, []byte("synthetic-runtime-asset"), 0o600); err != nil {
+		t.Fatalf("write runtime asset: %v", err)
+	}
+	if err := workspace.Cleanup(); err != nil {
+		t.Fatalf("Cleanup(): %v", err)
+	}
+	if _, err := os.Stat(workspace.executionRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("execution workspace still exists after runtime cleanup: %v", err)
+	}
+}
+
 func TestSecurityMaterialRejectsLineBreakSecret(t *testing.T) {
 	if _, err := GenerateSecurityMaterial([]byte{'a', '\n', 'b'}); err == nil {
 		t.Fatal("line-break secret unexpectedly accepted")

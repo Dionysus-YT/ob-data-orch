@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ob-data-orch/internal/credential"
 )
 
 const (
@@ -74,6 +76,18 @@ type probeResponse struct {
 	ProductVersion string `json:"productVersion"`
 	DriverName     string `json:"driverName"`
 	DriverVersion  string `json:"driverVersion"`
+}
+
+// TestConnectionInWorkspace 在预检查专属工作区中释放固定探针后执行基础连接测试。
+// 调用方仍须提供已核验的 Java 与 OBDUMPER 包内 Connector/J；该函数不接受其他本地资产路径。
+func TestConnectionInWorkspace(ctx context.Context, workspace credential.Workspace, runtime Runtime, request Request) (Result, error) {
+	probePath, probeDigest, err := Install(workspace)
+	if err != nil {
+		return Result{}, err
+	}
+	runtime.ProbePath = probePath
+	runtime.ProbeSHA256 = probeDigest
+	return TestConnection(ctx, runtime, request)
 }
 
 // TestConnection 直接启动固定 Java 主类，完成 ODP 基础 JDBC 连接测试。
