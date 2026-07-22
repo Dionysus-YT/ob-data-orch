@@ -47,6 +47,12 @@ type Workspace struct {
 	evidenceDir   string
 }
 
+// EvidenceDirectory 返回 execution 私有的无秘密证据目录。
+// 调用方只能把已验证的非敏感事实写入此目录，绝不能把凭据或原始日志放入其中。
+func (w Workspace) EvidenceDirectory() string {
+	return w.evidenceDir
+}
+
 type MaterialPaths struct {
 	SecurityConfiguration string
 }
