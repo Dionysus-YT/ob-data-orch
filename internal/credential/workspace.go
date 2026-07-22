@@ -114,6 +114,15 @@ func (w Workspace) WriteSecurityMaterial(material *SecurityMaterial) (MaterialPa
 	return MaterialPaths{SecurityConfiguration: configPath}, nil
 }
 
+// OwnsSecurityConfiguration 判断给定路径是否正好是当前 execution 的私有安全配置。
+// 启动适配不能接受调用方提供的任意配置路径，否则会把共享或外部文件错误地交给工具进程。
+func (w Workspace) OwnsSecurityConfiguration(path string) bool {
+	if !w.valid() || path == "" {
+		return false
+	}
+	return filepath.Clean(path) == filepath.Join(w.securityDir, "security.properties")
+}
+
 func (w Workspace) Cleanup() error {
 	if !w.valid() {
 		return errors.New("security workspace cleanup target is invalid")
