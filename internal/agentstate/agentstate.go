@@ -49,6 +49,7 @@ func (s ProductState) Terminal() bool {
 type EventType string
 
 const (
+	EventScheduled          EventType = "SCHEDULED"
 	EventLeaseAcknowledged  EventType = "LEASE_ACKNOWLEDGED"
 	EventStartRejected      EventType = "START_REJECTED"
 	EventProcessStarted     EventType = "PROCESS_STARTED"
@@ -392,6 +393,8 @@ func (e *execution) matches(leaseID string, epoch int64) bool {
 
 func applyEvent(snapshot *Snapshot, event Event) error {
 	switch event.Type {
+	case EventScheduled:
+		return nil
 	case EventLeaseAcknowledged:
 		return nil
 	case EventProcessStarted:
