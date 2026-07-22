@@ -1,5 +1,6 @@
 # Local vendor binaries and archives
 /ob-loader-dumper-4.3.5-RELEASE.zip
+/.codegraph/
 
 # Local runtime output
 /tmp/
