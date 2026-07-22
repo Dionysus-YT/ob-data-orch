@@ -1,13 +1,16 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/identity"
+	"ob-data-orch/internal/store"
 )
 
 func TestHealthAndReadinessExposeG1Boundary(t *testing.T) {
@@ -39,6 +42,33 @@ func TestHealthAndReadinessExposeG1Boundary(t *testing.T) {
 	}
 }
 
+func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing.T) {
+	t.Parallel()
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity:    browserOnlyIdentityProvider{},
+		Authorizer:  sourceAuthorizer{allowedID: "source-allowed"},
+		DataSources: staticDataSourceReader{},
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/data-sources", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var body struct {
+		RequestID string               `json:"requestId"`
+		Items     []dataSourceResponse `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if body.RequestID == "" || len(body.Items) != 1 || body.Items[0].ID != "source-allowed" {
+		t.Fatalf("unexpected data source list: %#v", body)
+	}
+	if body.Items[0].CredentialRevision != 2 || body.Items[0].Username != "synthetic-user" {
+		t.Fatalf("unexpected safe projection: %#v", body.Items[0])
+	}
+}
+
 func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
 	t.Parallel()
 	provider := staticIdentityProvider{}
@@ -48,7 +78,7 @@ func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T
 		wantStatus int
 		wantCode   string
 	}{
-		{path: "/api/v1/data-sources", wantStatus: http.StatusNotFound, wantCode: "NOT_FOUND"},
+		{path: "/api/v1/data-sources", wantStatus: http.StatusServiceUnavailable, wantCode: "API_DEPENDENCY_NOT_CONFIGURED"},
 		{path: "/agent/v1/heartbeats", wantStatus: http.StatusUnauthorized, wantCode: "AGENT_AUTHENTICATION_FAILED"},
 	} {
 		t.Run(testCase.path, func(t *testing.T) {
@@ -73,6 +103,36 @@ func (staticIdentityProvider) AuthenticateBrowser(*http.Request) (identity.Princ
 
 func (staticIdentityProvider) AuthenticateAgent(*http.Request) (identity.Principal, error) {
 	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-subject"}, nil
+}
+
+// browserOnlyIdentityProvider represents an injected synthetic test identity;
+// it is not registered by the production composition root.
+type browserOnlyIdentityProvider struct{}
+
+func (browserOnlyIdentityProvider) AuthenticateBrowser(*http.Request) (identity.Principal, error) {
+	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-subject"}, nil
+}
+
+func (browserOnlyIdentityProvider) AuthenticateAgent(*http.Request) (identity.Principal, error) {
+	return identity.Principal{}, errors.New("synthetic agent authentication denied")
+}
+
+type sourceAuthorizer struct{ allowedID string }
+
+func (a sourceAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
+	if scope == identity.ScopeDataSourceRead && objectID == a.allowedID {
+		return nil
+	}
+	return errors.New("synthetic object scope denied")
+}
+
+type staticDataSourceReader struct{}
+
+func (staticDataSourceReader) ListDataSourceSummaries(context.Context) ([]store.DataSourceSummary, error) {
+	return []store.DataSourceSummary{
+		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
+		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
+	}, nil
 }
 
 func TestVersion(t *testing.T) {
