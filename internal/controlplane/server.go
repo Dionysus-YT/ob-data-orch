@@ -1545,8 +1545,8 @@ func (s *Server) listDataSources(w http.ResponseWriter, r *http.Request, princip
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "items": items})
 }
 
-// dataSourceResponse keeps JSON camelCase and cannot inherit credential-only
-// fields if the persistence model later grows additional columns.
+// dataSourceResponse 仅保留浏览器选择数据源所需的脱敏摘要字段。
+// 即使底层模型新增凭据或连接身份字段，也不得经由该投影返回浏览器。
 type dataSourceResponse struct {
 	ID                 string `json:"id"`
 	DisplayName        string `json:"displayName"`
@@ -1555,7 +1555,6 @@ type dataSourceResponse struct {
 	CompatibilityMode  string `json:"compatibilityMode"`
 	Host               string `json:"host"`
 	Port               int    `json:"port"`
-	Username           string `json:"username"`
 	DefaultDatabase    string `json:"defaultDatabase,omitempty"`
 	State              string `json:"state"`
 	Revision           int64  `json:"revision"`
@@ -1567,7 +1566,7 @@ func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
 	return dataSourceResponse{
 		ID: summary.DataSourceID, DisplayName: summary.DisplayName, Environment: summary.Environment,
 		ConnectionKind: summary.ConnectionKind, CompatibilityMode: summary.CompatibilityMode,
-		Host: summary.Host, Port: summary.Port, Username: summary.Username,
+		Host: summary.Host, Port: summary.Port,
 		DefaultDatabase: summary.DefaultDatabase, State: summary.State, Revision: summary.Revision,
 		CredentialRevision: summary.CredentialRevision, LastTestStatus: summary.LastTestStatus,
 	}

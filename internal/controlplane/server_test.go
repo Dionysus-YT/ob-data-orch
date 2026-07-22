@@ -97,8 +97,11 @@ func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing
 	if body.RequestID == "" || len(body.Items) != 1 || body.Items[0].ID != "source-allowed" {
 		t.Fatalf("unexpected data source list: %#v", body)
 	}
-	if body.Items[0].CredentialRevision != 2 || body.Items[0].Username != "synthetic-user" {
+	if body.Items[0].CredentialRevision != 2 {
 		t.Fatalf("unexpected safe projection: %#v", body.Items[0])
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("synthetic-user")) {
+		t.Fatal("浏览器数据源响应不得包含用户名")
 	}
 }
 
