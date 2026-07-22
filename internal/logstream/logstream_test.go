@@ -199,3 +199,23 @@ func TestPolicyFailsClosedWithoutVersionOrWithEmptySecret(t *testing.T) {
 		t.Fatalf("empty secret error = %v", err)
 	}
 }
+
+func TestBytePolicyDestroyInvalidatesFutureRedaction(t *testing.T) {
+	secret := []byte("synthetic-byte-policy-secret")
+	policy, err := NewBytePolicy("agent-v1", [][]byte{secret}, nil)
+	if err != nil {
+		t.Fatalf("NewBytePolicy() error = %v", err)
+	}
+	for index := range secret {
+		secret[index] = 0
+	}
+	redacted, err := policy.RedactBytes([]byte("password=synthetic-byte-policy-secret"))
+	if err != nil || strings.Contains(string(redacted), "synthetic-byte-policy-secret") {
+		t.Fatalf("RedactBytes() = %q, %v", redacted, err)
+	}
+	zero(redacted)
+	policy.Destroy()
+	if _, err := policy.RedactBytes([]byte("later record")); err != ErrPolicyRejected {
+		t.Fatalf("Destroy() 后 RedactBytes() error = %v", err)
+	}
+}

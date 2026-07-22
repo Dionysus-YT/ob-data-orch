@@ -1,6 +1,5 @@
-// Package logstream contains the pure, synthetic-data log pipeline shared by
-// the future Agent and control-plane adapters. It never reads a tool log,
-// starts a process, or accepts raw data for persistence.
+// Package logstream 提供 Agent 与控制面共享的日志记录、脱敏和批次纯核心。
+// 本包不自行读取工具日志、不启动进程，也不接受未完成脱敏的内容持久化。
 package logstream
 
 import (
