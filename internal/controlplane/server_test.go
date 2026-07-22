@@ -163,6 +163,20 @@ func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
 	}
 }
 
+func TestDataSourceConnectionTestOnlyDelegatesToAuthorizedAgentPath(t *testing.T) {
+	t.Parallel()
+	tester := &recordingConnectionTester{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true}, CSRF: allowedCSRF{}, ConnectionTester: tester,
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:test-connection", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || tester.dataSourceID != "source-allowed" || bytes.Contains(response.Body.Bytes(), []byte("synthetic-user")) {
+		t.Fatalf("connection test response=%d body=%s input=%#v", response.Code, response.Body.String(), tester)
+	}
+}
+
 func TestUpdateDataSourceEncryptsPasswordAndKeepsItOutOfResponses(t *testing.T) {
 	t.Parallel()
 	keyring, err := credential.NewKeyring(map[string][]byte{"test-key": bytes.Repeat([]byte{9}, 32)})
@@ -468,6 +482,13 @@ func (c *recordingCreator) CreateDataSource(_ context.Context, input store.DataS
 }
 
 type recordingStateChanger struct{ input store.DataSourceStateChange }
+
+type recordingConnectionTester struct{ dataSourceID, subjectID string }
+
+func (t *recordingConnectionTester) RequestDataSourceConnectionTest(_ context.Context, dataSourceID, subjectID string) (DataSourceConnectionTestResult, error) {
+	t.dataSourceID, t.subjectID = dataSourceID, subjectID
+	return DataSourceConnectionTestResult{Status: "PENDING", Code: "AGENT_CONNECTION_TEST_QUEUED"}, nil
+}
 
 func (c *recordingStateChanger) ChangeDataSourceState(_ context.Context, input store.DataSourceStateChange) (store.DataSourceStateChangeResult, error) {
 	c.input = input

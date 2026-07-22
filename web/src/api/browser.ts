@@ -19,6 +19,24 @@ export interface DataSourceSummary {
   readonly revision: number
 }
 
+export interface DataSourceWrite {
+  readonly displayName: string
+  readonly environment: string
+  readonly connectionKind: 'ODP'
+  readonly compatibilityMode: 'MYSQL'
+  readonly host: string
+  readonly port: number
+  readonly username: string
+  readonly defaultDatabase?: string
+  readonly password: string
+}
+
+export interface DataSourceConnectionTest {
+  readonly status: 'SUCCEEDED' | 'FAILED' | 'PENDING' | 'UNAVAILABLE'
+  readonly code: string
+  readonly testedAt?: string
+}
+
 export interface ExportDraftInput {
   readonly dataSourceId: string
   readonly nodeId: string
@@ -79,6 +97,8 @@ export interface TaskLog {
 
 export interface BrowserApi {
   listDataSources(): Promise<DataSourceSummary[]>
+  createDataSource(input: DataSourceWrite): Promise<string>
+  testDataSourceConnection(dataSourceId: string): Promise<DataSourceConnectionTest>
   createExportDraft(input: ExportDraftInput): Promise<string>
   getExportDraft(draftId: string): Promise<ExportDraft>
   updateExportDraft(draft: ExportDraft): Promise<ExportDraft>
@@ -106,6 +126,18 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async listDataSources() {
       const body = await request(options, '/api/v1/data-sources', { method: 'GET' })
       return listOf(body, 'items').map(parseDataSourceSummary)
+    },
+    async createDataSource(input) {
+      const body = await request(options, '/api/v1/data-sources', writeRequest(options, input))
+      return requiredString(body, 'id')
+    },
+    async testDataSourceConnection(dataSourceId) {
+      const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}:test-connection`, writeRequest(options, {}, undefined, 'POST', false))
+      const status = requiredString(body, 'status')
+      if (status !== 'SUCCEEDED' && status !== 'FAILED' && status !== 'PENDING' && status !== 'UNAVAILABLE') {
+        throw localError('RESPONSE_INVALID', '控制面返回了无效连接测试状态。')
+      }
+      return { status, code: requiredString(body, 'code'), testedAt: optionalString(body, 'testedAt') }
     },
     async createExportDraft(input) {
       const body = await request(options, '/api/v1/export-drafts', writeRequest(options, input))

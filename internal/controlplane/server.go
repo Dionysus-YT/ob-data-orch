@@ -25,27 +25,28 @@ import (
 )
 
 type Server struct {
-	build        buildinfo.Info
-	provider     identity.Provider
-	authorizer   identity.Authorizer
-	roles        identity.RoleAuthorizer
-	dataSource   DataSourceReader
-	creator      DataSourceCreator
-	stateChanger DataSourceStateChanger
-	updater      DataSourceUpdater
-	credentials  DataSourceCredentialReferenceReader
-	drafts       ExportDraftStore
-	prechecks    ExportPrecheckStore
-	tasks        ExportTaskStore
-	executions   AgentExecutionStore
-	logs         *syntheticLogStore
-	nodes        ExecutionNodeReader
-	generator    ExportCommandGenerator
-	precheckTTL  time.Duration
-	coordinator  *agentstate.Coordinator
-	encryptor    CredentialEncryptor
-	csrf         CSRFValidator
-	keyID        string
+	build            buildinfo.Info
+	provider         identity.Provider
+	authorizer       identity.Authorizer
+	roles            identity.RoleAuthorizer
+	dataSource       DataSourceReader
+	creator          DataSourceCreator
+	stateChanger     DataSourceStateChanger
+	connectionTester DataSourceConnectionTester
+	updater          DataSourceUpdater
+	credentials      DataSourceCredentialReferenceReader
+	drafts           ExportDraftStore
+	prechecks        ExportPrecheckStore
+	tasks            ExportTaskStore
+	executions       AgentExecutionStore
+	logs             *syntheticLogStore
+	nodes            ExecutionNodeReader
+	generator        ExportCommandGenerator
+	precheckTTL      time.Duration
+	coordinator      *agentstate.Coordinator
+	encryptor        CredentialEncryptor
+	csrf             CSRFValidator
+	keyID            string
 }
 
 // DataSourceReader exposes only a non-sensitive data-source projection. The
@@ -70,6 +71,20 @@ type DataSourceStateChanger interface {
 // DataSourceUpdater 提供包含审计与可选凭据轮换的原子更新边界。
 type DataSourceUpdater interface {
 	UpdateDataSource(context.Context, store.DataSourceUpdate) (store.DataSourceUpdateResult, error)
+}
+
+// DataSourceConnectionTester 只将浏览器已授权的连接测试请求转交给匹配的 Agent。
+// 控制面不得以该接口为由直接连接数据源、启动 Java 或读取数据库密码。
+type DataSourceConnectionTester interface {
+	RequestDataSourceConnectionTest(context.Context, string, string) (DataSourceConnectionTestResult, error)
+}
+
+// DataSourceConnectionTestResult 是可返回浏览器的无秘密连接测试投影。
+// 状态与代码必须由受控 Agent 事实生成，不能携带异常原文、地址、用户名或密码。
+type DataSourceConnectionTestResult struct {
+	Status   string
+	Code     string
+	TestedAt time.Time
 }
 
 // DataSourceCredentialReferenceReader 只向已授权写路径提供当前引用。
@@ -140,26 +155,27 @@ type CSRFValidator interface {
 // Dependencies make the HTTP boundary testable without creating a runtime
 // authentication bypass. Nil production dependencies continue to fail closed.
 type Dependencies struct {
-	Identity        identity.Provider
-	Authorizer      identity.Authorizer
-	Roles           identity.RoleAuthorizer
-	DataSources     DataSourceReader
-	Creator         DataSourceCreator
-	StateChanger    DataSourceStateChanger
-	Updater         DataSourceUpdater
-	CredentialRefs  DataSourceCredentialReferenceReader
-	Drafts          ExportDraftStore
-	Prechecks       ExportPrecheckStore
-	Tasks           ExportTaskStore
-	Executions      AgentExecutionStore
-	LogLedger       *logstream.BatchLedger
-	Nodes           ExecutionNodeReader
-	Generator       ExportCommandGenerator
-	PrecheckTTL     time.Duration
-	Coordinator     *agentstate.Coordinator
-	Encryptor       CredentialEncryptor
-	CSRF            CSRFValidator
-	CredentialKeyID string
+	Identity         identity.Provider
+	Authorizer       identity.Authorizer
+	Roles            identity.RoleAuthorizer
+	DataSources      DataSourceReader
+	Creator          DataSourceCreator
+	StateChanger     DataSourceStateChanger
+	ConnectionTester DataSourceConnectionTester
+	Updater          DataSourceUpdater
+	CredentialRefs   DataSourceCredentialReferenceReader
+	Drafts           ExportDraftStore
+	Prechecks        ExportPrecheckStore
+	Tasks            ExportTaskStore
+	Executions       AgentExecutionStore
+	LogLedger        *logstream.BatchLedger
+	Nodes            ExecutionNodeReader
+	Generator        ExportCommandGenerator
+	PrecheckTTL      time.Duration
+	Coordinator      *agentstate.Coordinator
+	Encryptor        CredentialEncryptor
+	CSRF             CSRFValidator
+	CredentialKeyID  string
 }
 
 func NewHandler(build buildinfo.Info) http.Handler {
@@ -176,7 +192,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger), nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, connectionTester: dependencies.ConnectionTester, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger), nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -255,6 +271,10 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
+		if dataSourceID, ok := parseDataSourceConnectionTestAction(r.URL.Path); ok {
+			s.testDataSourceConnection(w, r, principal, dataSourceID)
+			return
+		}
 		if dataSourceID, targetState, ok := parseDataSourceStateAction(r.URL.Path); ok {
 			s.changeDataSourceState(w, r, principal, dataSourceID, targetState)
 			return
@@ -282,6 +302,16 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	notFound(w, r)
+}
+
+func parseDataSourceConnectionTestAction(path string) (string, bool) {
+	const prefix = "/api/v1/data-sources/"
+	const suffix = ":test-connection"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	dataSourceID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return dataSourceID, dataSourceID != "" && !strings.Contains(dataSourceID, "/")
 }
 
 // parseDataSourceStateAction 只识别已登记的启停动作，避免把路径后缀解释成通用命令。
@@ -955,6 +985,45 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 		"requestId": requestID(), "id": dataSourceID, "state": result.State,
 		"revision": result.Revision, "replayed": result.Replayed,
 	})
+}
+
+// testDataSourceConnection 仅验证浏览器身份、对象范围和 CSRF，然后把请求交给 Agent 通道。
+// 未配置 Agent 测试转交时必须失败关闭，不能由控制面退化为本机 JDBC 或直接数据库连接。
+func (s *Server) testDataSourceConnection(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
+	if s.connectionTester == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前环境尚未配置 Agent 连接测试", true)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	result, err := s.connectionTester.RequestDataSourceConnectionTest(r.Context(), dataSourceID, principal.ID)
+	if err != nil || !validDataSourceConnectionTestResult(result) {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前无法获取 Agent 连接测试结果", true)
+		return
+	}
+	body := map[string]any{"requestId": requestID(), "status": result.Status, "code": result.Code}
+	if !result.TestedAt.IsZero() {
+		body["testedAt"] = result.TestedAt.UTC().Format(time.RFC3339Nano)
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func validDataSourceConnectionTestResult(result DataSourceConnectionTestResult) bool {
+	if result.Code == "" || len(result.Code) > 64 {
+		return false
+	}
+	for _, character := range result.Code {
+		if !(character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_') {
+			return false
+		}
+	}
+	return result.Status == "SUCCEEDED" || result.Status == "FAILED" || result.Status == "PENDING" || result.Status == "UNAVAILABLE"
 }
 
 // exportTaskSubmitRequest 只接收已创建预检查的标识，不能从浏览器接收命令或任务快照。

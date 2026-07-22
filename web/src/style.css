@@ -44,6 +44,7 @@ h2 { font-size: 1.16rem; }
 .field { display: grid; gap: 7px; color: #34434e; font-size: .9rem; font-weight: 700; }
 .field input, .field select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #bfcad1; border-radius: 7px; color: #17202a; background: #fff; }
 .draft-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.source-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid #dfe4e8; }
 .field-wide, .field-errors, .button-row { grid-column: span 2; }
 .field-errors { margin: 0; padding-left: 20px; color: #9a2d2d; font-size: .88rem; line-height: 1.5; }
 
@@ -52,6 +53,7 @@ h2 { font-size: 1.16rem; }
 .button-primary { border-color: #1261a0; color: #fff; background: #1261a0; }
 .button-secondary { border-color: #bfcad1; color: #31414c; background: #fff; }
 .fixed-value, .revision { color: #687783; font-size: .86rem; }
+.compact-row { gap: 8px; }
 .state-text, .capability-gap { margin: 0; color: #5b6973; line-height: 1.65; }
 .capability-gap { margin-top: 16px; font-size: .85rem; }
 

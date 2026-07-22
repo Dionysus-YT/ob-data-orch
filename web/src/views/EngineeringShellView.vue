@@ -5,7 +5,9 @@ import {
   browserApi,
   type ApiError,
   type CommandPreview,
+  type DataSourceConnectionTest,
   type DataSourceSummary,
+  type DataSourceWrite,
   type ExportDraft,
   type ExportDraftInput,
   type Precheck,
@@ -16,6 +18,7 @@ import { runtimeConfig } from '@/config/runtime'
 
 const api = browserApi()
 type DraftForm = { -readonly [Key in keyof ExportDraftInput]: ExportDraftInput[Key] }
+type DataSourceForm = { -readonly [Key in keyof DataSourceWrite]: DataSourceWrite[Key] }
 
 const sources = ref<DataSourceSummary[]>([])
 const sourcesLoading = ref(true)
@@ -28,6 +31,11 @@ const busyAction = ref('')
 const notice = ref('')
 const failure = ref('')
 const existingTaskID = ref('')
+const showSourceEditor = ref(false)
+const connectionTest = ref<DataSourceConnectionTest>()
+const sourceForm = reactive<DataSourceForm>({
+  displayName: '', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '', port: 2883, username: '', defaultDatabase: '', password: '',
+})
 const form = reactive<DraftForm>({
   dataSourceId: '',
   nodeId: '',
@@ -61,6 +69,33 @@ function selectSource() {
   if (source?.defaultDatabase && !form.database) {
     form.database = source.defaultDatabase
   }
+}
+
+async function createDataSource() {
+  if (!sourceForm.displayName.trim() || !sourceForm.host.trim() || !sourceForm.username.trim() || !sourceForm.password || sourceForm.port < 1 || sourceForm.port > 65535) {
+    notice.value = '请填写数据源名称、ODP 地址、端口、用户名和密码。'
+    return
+  }
+  await runAction('create-data-source', async () => {
+    const sourceID = await api.createDataSource({ ...sourceForm, defaultDatabase: sourceForm.defaultDatabase || undefined })
+    sourceForm.password = ''
+    showSourceEditor.value = false
+    await loadSources()
+    form.dataSourceId = sourceID
+    selectSource()
+    notice.value = '数据源已登记。现在可发起连接测试。'
+  })
+}
+
+async function testSelectedSource() {
+  if (!selectedSource.value) {
+    notice.value = '请先选择一个已登记的数据源。'
+    return
+  }
+  await runAction('test-data-source', async () => {
+    connectionTest.value = await api.testDataSourceConnection(selectedSource.value!.id)
+    notice.value = connectionTest.value.status === 'PENDING' ? '连接测试已交给 Agent 执行，请稍后刷新。' : '连接测试已返回安全结果。'
+  })
 }
 
 async function createDraft() {
@@ -221,7 +256,7 @@ function validateDraft(input: ExportDraftInput): string[] {
     </header>
 
     <p class="gate-note">
-      此页面只调用浏览器 API 的脱敏投影；不会保存凭据或启动数据库、Agent、Java 与 OBDUMPER。
+      数据源密码只在提交时作为 write-only 输入发送给控制面；浏览器不会回显、保存或展示密码。连接测试由 Agent 执行，页面不会直接启动 Java 或 OBDUMPER。
     </p>
 
     <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }}</p>
@@ -234,8 +269,22 @@ function validateDraft(input: ExportDraftInput): string[] {
             <p class="step">1</p>
             <h2>选择数据源</h2>
           </div>
-          <button class="button button-secondary" type="button" :disabled="sourcesLoading" @click="loadSources">刷新</button>
+          <div class="button-row compact-row">
+            <button class="button button-secondary" type="button" :disabled="sourcesLoading" @click="loadSources">刷新</button>
+            <button class="button button-primary" type="button" :disabled="Boolean(busyAction)" @click="showSourceEditor = !showSourceEditor">新增数据源</button>
+          </div>
         </div>
+
+        <form v-if="showSourceEditor" class="source-form" @submit.prevent="createDataSource">
+          <label class="field"><span>名称</span><input v-model.trim="sourceForm.displayName" maxlength="120" autocomplete="off" /></label>
+          <label class="field"><span>环境</span><input v-model.trim="sourceForm.environment" maxlength="32" autocomplete="off" /></label>
+          <label class="field"><span>ODP 地址</span><input v-model.trim="sourceForm.host" maxlength="253" autocomplete="off" /></label>
+          <label class="field"><span>端口</span><input v-model.number="sourceForm.port" type="number" min="1" max="65535" /></label>
+          <label class="field"><span>组合用户名</span><input v-model.trim="sourceForm.username" maxlength="256" autocomplete="username" /></label>
+          <label class="field"><span>默认数据库（可选）</span><input v-model.trim="sourceForm.defaultDatabase" maxlength="512" autocomplete="off" /></label>
+          <label class="field field-wide"><span>密码</span><input v-model="sourceForm.password" type="password" maxlength="4096" autocomplete="new-password" /></label>
+          <div class="button-row"><button class="button button-primary" type="submit" :disabled="Boolean(busyAction)">安全登记</button></div>
+        </form>
 
         <p v-if="sourcesLoading" class="state-text">正在加载已授权数据源…</p>
         <p v-else-if="sources.length === 0" class="state-text">当前没有可选择的数据源。请由具备数据源管理权限的用户先完成登记。</p>
@@ -253,6 +302,10 @@ function validateDraft(input: ExportDraftInput): string[] {
           <div><dt>主机</dt><dd>{{ selectedSource.host }}:{{ selectedSource.port }}</dd></div>
           <div><dt>兼容模式</dt><dd>{{ selectedSource.compatibilityMode }}</dd></div>
         </dl>
+        <div v-if="selectedSource" class="precheck-actions">
+          <button class="button button-primary" type="button" :disabled="Boolean(busyAction) || selectedSource.state !== 'ENABLED'" @click="testSelectedSource">测试连接</button>
+          <span v-if="connectionTest" class="fixed-value">{{ connectionTest.status }} · {{ connectionTest.code }}</span>
+        </div>
       </article>
 
       <article class="panel draft-panel">

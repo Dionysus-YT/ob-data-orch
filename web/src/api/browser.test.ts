@@ -65,6 +65,16 @@ describe('浏览器 API 客户端', () => {
     })
   })
 
+  it('连接测试只向控制面发起受 CSRF 保护的动作', async () => {
+    const { api, calls } = apiWith(Response.json({ status: 'PENDING', code: 'AGENT_CONNECTION_TEST_QUEUED' }))
+
+    await expect(api.testDataSourceConnection('source-1')).resolves.toEqual({ status: 'PENDING', code: 'AGENT_CONNECTION_TEST_QUEUED', testedAt: undefined })
+
+    expect(calls[0]?.path).toBe('/api/v1/data-sources/source-1:test-connection')
+    expect(calls[0]?.init.headers).toMatchObject({ 'X-CSRF-Token': 'synthetic-csrf-token' })
+    expect(calls[0]?.init.headers).not.toHaveProperty('Idempotency-Key')
+  })
+
   it('缺少 CSRF 时失败关闭且不发送写请求', async () => {
     const { api, calls } = apiWith(Response.json({ id: 'draft-1' }), '')
 
