@@ -215,3 +215,34 @@ type ExportDraftCreateResult struct {
 	DraftID  string
 	Replayed bool
 }
+
+// PrecheckRun 是提交前固定检查的非敏感绑定与状态投影。
+type PrecheckRun struct {
+	PrecheckID         string
+	DraftID            string
+	DraftRevision      int64
+	ConfigFingerprint  string
+	DataSourceID       string
+	CredentialID       string
+	CredentialRevision int64
+	NodeID             string
+	Status             string
+	IntegrityStatus    string
+	ValidUntil         time.Time
+	CreatedAt          time.Time
+}
+
+// PrecheckCreate 只创建固定 EXPORT_PREFLIGHT 绑定；它不含 Shell、SQL、路径浏览或秘密明文。
+type PrecheckCreate struct {
+	PrecheckRun
+	CreatorSubjectID string
+	RequestID        string
+	IdempotencyKey   string
+	RequestDigest    string
+}
+
+// PrecheckCreateResult 给出新建或幂等重放得到的预检查标识。
+type PrecheckCreateResult struct {
+	PrecheckID string
+	Replayed   bool
+}

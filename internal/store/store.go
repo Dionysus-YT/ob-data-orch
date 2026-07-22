@@ -488,6 +488,85 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
 	return draft, nil
 }
 
+// CreatePrecheck 冻结草稿 revision、指纹、数据源凭据 revision 和节点绑定。
+// 该事务只排队固定检查，不领取租约、不启动进程，也不创建执行任务。
+func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (PrecheckCreateResult, error) {
+	if err := validatePrecheckCreate(input); err != nil {
+		return PrecheckCreateResult{}, err
+	}
+	result := PrecheckCreateResult{PrecheckID: input.PrecheckID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var digest, existingID string
+		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = 'CREATE_EXPORT_PRECHECK' AND idempotency_key = ?`, input.CreatorSubjectID, input.IdempotencyKey).Scan(&digest, &existingID)
+		if err == nil {
+			if digest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.PrecheckID, result.Replayed = existingID, true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read precheck idempotency: %w", err)
+		}
+		insert, err := tx.ExecContext(ctx, `
+            INSERT INTO precheck_runs(
+                precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
+                credential_id, credential_revision, node_id, agent_id, status, lease_id,
+                lease_epoch, lease_expires_at, result_json, integrity_status, valid_until,
+                created_at, completed_at
+            )
+            SELECT ?, d.draft_id, d.revision, d.config_fingerprint, d.data_source_id,
+                   ds.credential_id, ds.current_credential_revision, d.node_id, NULL, 'PENDING', NULL,
+                   NULL, NULL, NULL, 'UNKNOWN', ?, ?, NULL
+            FROM export_drafts d JOIN data_sources ds ON ds.data_source_id = d.data_source_id
+            WHERE d.draft_id = ? AND d.revision = ? AND d.config_fingerprint = ?
+              AND d.node_id = ? AND ds.state = 'ENABLED'
+        `, input.PrecheckID, utcText(input.ValidUntil), utcText(input.CreatedAt), input.DraftID, input.DraftRevision, input.ConfigFingerprint, input.NodeID)
+		if err != nil {
+			return fmt.Errorf("insert export precheck: %w", err)
+		}
+		affected, err := insert.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read precheck insert result: %w", err)
+		}
+		if affected != 1 {
+			return ErrPrecheckInvalid
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.CreatorSubjectID, "EXPORT_PRECHECK_CREATED", "PRECHECK", input.PrecheckID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id, operation, idempotency_key, request_digest, result_status, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, 'CREATE_EXPORT_PRECHECK', ?, ?, 202, 'PRECHECK', ?, '{}', ?, ?)`, input.CreatorSubjectID, input.IdempotencyKey, input.RequestDigest, input.PrecheckID, utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write precheck idempotency: %w", err)
+		}
+		return nil
+	})
+	return result, err
+}
+
+// GetPrecheckRun 返回预检查的非敏感状态；权限与草稿所有权由控制面校验。
+func (s *Store) GetPrecheckRun(ctx context.Context, precheckID string) (PrecheckRun, error) {
+	if s == nil || s.db == nil {
+		return PrecheckRun{}, errors.New("SQLite store is nil")
+	}
+	var run PrecheckRun
+	var validUntil, createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id, credential_id, credential_revision, node_id, status, integrity_status, valid_until, created_at FROM precheck_runs WHERE precheck_id = ?`, precheckID).Scan(&run.PrecheckID, &run.DraftID, &run.DraftRevision, &run.ConfigFingerprint, &run.DataSourceID, &run.CredentialID, &run.CredentialRevision, &run.NodeID, &run.Status, &run.IntegrityStatus, &validUntil, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PrecheckRun{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return PrecheckRun{}, fmt.Errorf("read precheck run: %w", err)
+	}
+	if run.ValidUntil, err = time.Parse(time.RFC3339Nano, validUntil); err != nil {
+		return PrecheckRun{}, fmt.Errorf("parse precheck expiry: %w", err)
+	}
+	if run.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return PrecheckRun{}, fmt.Errorf("parse precheck create time: %w", err)
+	}
+	run.ValidUntil, run.CreatedAt = run.ValidUntil.UTC(), run.CreatedAt.UTC()
+	return run, nil
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")
@@ -804,6 +883,17 @@ func validateExportDraftCreate(input ExportDraftCreate) error {
 	}
 	if err := validateSafeObjectJSON(input.InvalidationJSON); err != nil {
 		return fmt.Errorf("export draft invalidation is invalid: %w", err)
+	}
+	return nil
+}
+
+// validatePrecheckCreate 保证预检查只能绑定到一个已生成的草稿版本与配置指纹。
+func validatePrecheckCreate(input PrecheckCreate) error {
+	if input.PrecheckID == "" || input.DraftID == "" || input.DraftRevision < 1 || input.DataSourceID == "" || input.NodeID == "" || input.CreatorSubjectID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.ValidUntil.IsZero() || !input.ValidUntil.After(input.CreatedAt) {
+		return errors.New("precheck create identity is invalid")
+	}
+	if !isSHA256(input.ConfigFingerprint) || !isSHA256(input.RequestDigest) {
+		return errors.New("precheck create fingerprint is invalid")
 	}
 	return nil
 }

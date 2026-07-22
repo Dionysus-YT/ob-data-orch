@@ -402,6 +402,25 @@ func TestCreateExportDraftBindsEnabledSourceAndNodeWithIdempotency(t *testing.T)
 	}
 }
 
+func TestCreatePrecheckFreezesDraftBindingAndIdempotency(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	input := PrecheckCreate{PrecheckRun: PrecheckRun{PrecheckID: "precheck-create", DraftID: "draft-1", DraftRevision: 1, ConfigFingerprint: testFingerprint, DataSourceID: "source-1", NodeID: "node-1", CreatedAt: testTime, ValidUntil: testTime.Add(5 * time.Minute)}, CreatorSubjectID: "subject-1", RequestID: "request-precheck-create-1", IdempotencyKey: "idempotency-precheck-create-1", RequestDigest: testFingerprint}
+	created, err := store.CreatePrecheck(context.Background(), input)
+	if err != nil || created.PrecheckID != input.PrecheckID || created.Replayed {
+		t.Fatalf("CreatePrecheck() = %#v, %v", created, err)
+	}
+	replayed, err := store.CreatePrecheck(context.Background(), input)
+	if err != nil || !replayed.Replayed {
+		t.Fatalf("replayed CreatePrecheck() = %#v, %v", replayed, err)
+	}
+	run, err := store.GetPrecheckRun(context.Background(), input.PrecheckID)
+	if err != nil || run.Status != "PENDING" || run.CredentialID != "credential-1" || run.CredentialRevision != 1 {
+		t.Fatalf("GetPrecheckRun() = %#v, %v", run, err)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'EXPORT_PRECHECK_CREATED'", 1)
+}
+
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "metadata.db")
