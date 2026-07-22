@@ -35,6 +35,7 @@ type Server struct {
 	drafts       ExportDraftStore
 	prechecks    ExportPrecheckStore
 	tasks        ExportTaskStore
+	executions   AgentExecutionStore
 	nodes        ExecutionNodeReader
 	generator    ExportCommandGenerator
 	precheckTTL  time.Duration
@@ -114,6 +115,13 @@ type ExportTaskStore interface {
 	GetTaskSummary(context.Context, string) (store.TaskSummary, error)
 }
 
+// AgentExecutionStore 持久化已由内存协调器接受的领取和事件事实。
+// 适配器不得让 Agent 直接写入任务状态或任意事件负载。
+type AgentExecutionStore interface {
+	ClaimTask(context.Context, store.Claim) error
+	AppendExecutionEvent(context.Context, store.ExecutionEvent) error
+}
+
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
@@ -139,6 +147,7 @@ type Dependencies struct {
 	Drafts          ExportDraftStore
 	Prechecks       ExportPrecheckStore
 	Tasks           ExportTaskStore
+	Executions      AgentExecutionStore
 	Nodes           ExecutionNodeReader
 	Generator       ExportCommandGenerator
 	PrecheckTTL     time.Duration
@@ -162,7 +171,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -1101,6 +1110,17 @@ func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
 		return
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/executions:claim" {
+		s.claimSyntheticExecution(w, r, principal)
+		return
+	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/agent/v1/executions/") && strings.HasSuffix(r.URL.Path, ":events:append") {
+		executionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/v1/executions/"), ":events:append")
+		if executionID != "" && !strings.Contains(executionID, "/") {
+			s.appendSyntheticExecutionEvent(w, r, principal, executionID)
+			return
+		}
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/prechecks:claim" {
 		s.claimSyntheticPrecheck(w, r, principal)
 		return
@@ -1113,6 +1133,100 @@ func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	notFound(w, r)
+}
+
+// syntheticExecutionClaimRequest 只描述固定任务的领取租约，不承载命令、凭据或路径。
+type syntheticExecutionClaimRequest struct {
+	RequestID   string `json:"requestId"`
+	TaskID      string `json:"taskId"`
+	ExecutionID string `json:"executionId"`
+	NodeID      string `json:"nodeId"`
+	LeaseID     string `json:"leaseId"`
+}
+
+// syntheticExecutionEventRequest 只允许 Agent 上报状态机定义的事实。
+// 事件负载不从 HTTP 透传，避免形成任意日志或命令写入通道。
+type syntheticExecutionEventRequest struct {
+	EventID       string                  `json:"eventId"`
+	LeaseID       string                  `json:"leaseId"`
+	LeaseEpoch    int64                   `json:"leaseEpoch"`
+	Sequence      int64                   `json:"sequence"`
+	Type          agentstate.EventType    `json:"type"`
+	NoProcess     bool                    `json:"noProcess"`
+	ProcessExited bool                    `json:"processExited"`
+	ToolTerminal  agentstate.ToolTerminal `json:"toolTerminal"`
+	ResultFacts   agentstate.ResultFacts  `json:"resultFacts"`
+}
+
+// claimSyntheticExecution 在协调器先生成租约，再将同一领取事实写入 SQLite。
+// 该 G2 适配不启动子进程；初始 SCHEDULED 事件占用序号一，后续 Agent 事件从二开始。
+func (s *Server) claimSyntheticExecution(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.coordinator == nil || s.executions == nil || s.precheckTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成 Agent 协议", false)
+		return
+	}
+	var request syntheticExecutionClaimRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	grant, err := s.coordinator.Claim(agentstate.ClaimRequest{RequestID: request.RequestID, TaskID: request.TaskID, ExecutionID: request.ExecutionID, NodeID: request.NodeID, AgentID: principal.ID, LeaseID: request.LeaseID, LeaseTTL: s.precheckTTL})
+	if errors.Is(err, agentstate.ErrClaimIneligible) || errors.Is(err, agentstate.ErrTaskAlreadyClaimed) {
+		writeError(w, http.StatusConflict, "EXECUTION_CLAIM_REJECTED", "当前 Agent 无可领取的任务", true)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	scheduledEventID := "scheduled-" + request.ExecutionID
+	if _, err := s.coordinator.Append(agentstate.Event{EventID: scheduledEventID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, Sequence: 1, Type: agentstate.EventScheduled}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_CLAIM_UNAVAILABLE", "任务领取暂时不可用", true)
+		return
+	}
+	err = s.executions.ClaimTask(r.Context(), store.Claim{ExecutionID: grant.ExecutionID, TaskID: request.TaskID, NodeID: request.NodeID, AgentID: principal.ID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, IssuedAt: time.Now().UTC(), ExpiresAt: grant.ExpiresAt, EventID: scheduledEventID, RequestID: request.RequestID})
+	if err != nil && !errors.Is(err, store.ErrAlreadyClaimed) {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_CLAIM_UNAVAILABLE", "任务领取暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": grant, "nextEventSequence": 2, "realExecutionEnabled": false})
+}
+
+// appendSyntheticExecutionEvent 先由状态机判定租约和顺序，再保存不含原始负载的接受事实。
+func (s *Server) appendSyntheticExecutionEvent(w http.ResponseWriter, r *http.Request, principal identity.Principal, executionID string) {
+	if s.coordinator == nil || s.executions == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成 Agent 协议", false)
+		return
+	}
+	var request syntheticExecutionEventRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	snapshot, err := s.coordinator.Snapshot(executionID)
+	if err != nil || snapshot.AgentID != principal.ID {
+		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
+		return
+	}
+	result, err := s.coordinator.Append(agentstate.Event{EventID: request.EventID, ExecutionID: executionID, LeaseID: request.LeaseID, LeaseEpoch: request.LeaseEpoch, Sequence: request.Sequence, Type: request.Type, Facts: agentstate.Facts{NoProcess: request.NoProcess, ProcessExited: request.ProcessExited, ToolTerminal: request.ToolTerminal, ResultFacts: request.ResultFacts}})
+	if errors.Is(err, agentstate.ErrEventSequenceReused) || errors.Is(err, agentstate.ErrInvalidStateMutation) || errors.Is(err, agentstate.ErrEventRejected) {
+		writeError(w, http.StatusConflict, "EXECUTION_EVENT_REJECTED", "任务事件不符合当前状态", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	if result.Decision == agentstate.EventGap || result.Decision == agentstate.EventStale {
+		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSequence})
+		return
+	}
+	if result.Decision == agentstate.EventAccepted {
+		err = s.executions.AppendExecutionEvent(r.Context(), store.ExecutionEvent{EventID: request.EventID, ExecutionID: executionID, LeaseID: request.LeaseID, LeaseEpoch: request.LeaseEpoch, EventSeq: request.Sequence, EventType: string(request.Type), PayloadJSON: `{"mode":"synthetic"}`, ReceivedAt: time.Now().UTC()})
+		if err != nil && !errors.Is(err, store.ErrEventRejected) {
+			writeError(w, http.StatusServiceUnavailable, "EXECUTION_EVENT_UNAVAILABLE", "任务事件暂时无法保存", true)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSequence, "state": result.Snapshot.State, "realExecutionEnabled": false})
 }
 
 // syntheticPrecheckClaimRequest 只包含固定预检查的领取标识，不能夹带命令或 SQL。

@@ -275,6 +275,36 @@ func TestSyntheticAgentPrecheckRequiresMachineIdentityAndLease(t *testing.T) {
 	}
 }
 
+func TestSyntheticAgentExecutionClaimAndEventStayWithinG2(t *testing.T) {
+	t.Parallel()
+	coordinator, err := agentstate.NewCoordinator(testClock{})
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
+	}
+	if err := coordinator.Schedule(agentstate.TaskSchedule{TaskID: "task-agent", NodeID: "node-1"}); err != nil {
+		t.Fatalf("Schedule() error = %v", err)
+	}
+	executions := &recordingExecutionStore{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{Identity: dualIdentityProvider{}, Coordinator: coordinator, Executions: executions, PrecheckTTL: time.Minute})
+	claim := httptest.NewRecorder()
+	handler.ServeHTTP(claim, httptest.NewRequest(http.MethodPost, "/agent/v1/executions:claim", bytes.NewBufferString(`{"requestId":"claim-execution-1","taskId":"task-agent","executionId":"execution-agent","nodeId":"node-1","leaseId":"lease-agent"}`)))
+	if claim.Code != http.StatusOK || executions.claim.ExecutionID != "execution-agent" || executions.claim.EventID != "scheduled-execution-agent" {
+		t.Fatalf("claim response=%d record=%#v", claim.Code, executions.claim)
+	}
+	var grant struct {
+		Grant agentstate.LeaseGrant `json:"grant"`
+	}
+	if err := json.Unmarshal(claim.Body.Bytes(), &grant); err != nil {
+		t.Fatalf("decode claim grant: %v", err)
+	}
+	eventBody := fmt.Sprintf(`{"eventId":"event-started","leaseId":"lease-agent","leaseEpoch":%d,"sequence":2,"type":"PROCESS_STARTED"}`, grant.Grant.LeaseEpoch)
+	event := httptest.NewRecorder()
+	handler.ServeHTTP(event, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:events:append", bytes.NewBufferString(eventBody)))
+	if event.Code != http.StatusOK || executions.event.EventSeq != 2 || executions.event.PayloadJSON != `{"mode":"synthetic"}` {
+		t.Fatalf("event response=%d record=%#v", event.Code, executions.event)
+	}
+}
+
 func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
 	t.Parallel()
 	provider := staticIdentityProvider{}
@@ -472,6 +502,21 @@ func (s *recordingPrecheckStore) CompletePrecheck(_ context.Context, input store
 type recordingTaskStore struct {
 	run   store.PrecheckRun
 	input store.TaskSubmission
+}
+
+type recordingExecutionStore struct {
+	claim store.Claim
+	event store.ExecutionEvent
+}
+
+func (s *recordingExecutionStore) ClaimTask(_ context.Context, input store.Claim) error {
+	s.claim = input
+	return nil
+}
+
+func (s *recordingExecutionStore) AppendExecutionEvent(_ context.Context, input store.ExecutionEvent) error {
+	s.event = input
+	return nil
 }
 
 func (s *recordingTaskStore) GetPrecheckRun(context.Context, string) (store.PrecheckRun, error) {
