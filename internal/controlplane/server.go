@@ -32,8 +32,10 @@ type Server struct {
 	updater      DataSourceUpdater
 	credentials  DataSourceCredentialReferenceReader
 	drafts       ExportDraftStore
+	prechecks    ExportPrecheckStore
 	nodes        ExecutionNodeReader
 	generator    ExportCommandGenerator
+	precheckTTL  time.Duration
 	encryptor    CredentialEncryptor
 	csrf         CSRFValidator
 	keyID        string
@@ -93,6 +95,12 @@ type ExportCommandGenerator interface {
 	Generate(commandgen.Request) (commandgen.Result, error)
 }
 
+// ExportPrecheckStore 负责保存预检查绑定与读取其安全状态投影。
+type ExportPrecheckStore interface {
+	CreatePrecheck(context.Context, store.PrecheckCreate) (store.PrecheckCreateResult, error)
+	GetPrecheckRun(context.Context, string) (store.PrecheckRun, error)
+}
+
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
@@ -116,8 +124,10 @@ type Dependencies struct {
 	Updater         DataSourceUpdater
 	CredentialRefs  DataSourceCredentialReferenceReader
 	Drafts          ExportDraftStore
+	Prechecks       ExportPrecheckStore
 	Nodes           ExecutionNodeReader
 	Generator       ExportCommandGenerator
+	PrecheckTTL     time.Duration
 	Encryptor       CredentialEncryptor
 	CSRF            CSRFValidator
 	CredentialKeyID string
@@ -137,7 +147,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, nodes: dependencies.Nodes, generator: dependencies.Generator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -176,6 +186,9 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/v1/export-drafts/") {
 		if draftID, action, ok := parseExportDraftAction(r.URL.Path); ok {
 			switch {
+			case r.Method == http.MethodPost && action == "precheck":
+				s.createExportPrecheck(w, r, principal, draftID)
+				return
 			case r.Method == http.MethodPost && action == "preview-command":
 				s.previewExportDraft(w, r, principal, draftID)
 				return
@@ -186,6 +199,13 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 				s.getExportDraft(w, r, principal, draftID)
 				return
 			}
+		}
+	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/prechecks/") {
+		precheckID := strings.TrimPrefix(r.URL.Path, "/api/v1/prechecks/")
+		if precheckID != "" && !strings.Contains(precheckID, "/") {
+			s.getExportPrecheck(w, r, principal, precheckID)
+			return
 		}
 	}
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
@@ -486,9 +506,11 @@ func parseExportDraftAction(path string) (string, string, bool) {
 		return "", "", false
 	}
 	value := strings.TrimPrefix(path, prefix)
-	if strings.HasSuffix(value, ":preview-command") {
-		id := strings.TrimSuffix(value, ":preview-command")
-		return id, "preview-command", id != "" && !strings.Contains(id, "/")
+	for suffix, action := range map[string]string{":preview-command": "preview-command", ":precheck": "precheck"} {
+		if strings.HasSuffix(value, suffix) {
+			id := strings.TrimSuffix(value, suffix)
+			return id, action, id != "" && !strings.Contains(id, "/")
+		}
 	}
 	return value, "", value != "" && !strings.Contains(value, "/")
 }
@@ -639,6 +661,106 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "command": preview.RedactedCommand, "argvTemplate": preview.ArgvTemplate, "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
 }
 
+// createExportPrecheck 固定当前草稿与凭据版本，之后的 Agent 只能领取该绑定。
+// 有效期来自部署依赖，而不是由浏览器、Agent 或请求体提供。
+func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
+	if s.prechecks == nil || s.csrf == nil || s.precheckTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置预检查依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	expected, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的草稿版本号", false)
+		return
+	}
+	draft, ok := s.loadOwnedDraft(w, r, principal, draftID)
+	if !ok {
+		return
+	}
+	if draft.Revision != expected {
+		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
+		return
+	}
+	var request exportDraftWriteRequest
+	if err := json.Unmarshal([]byte(draft.ConfigJSON), &request); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
+		return
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	credentialReference, err := s.credentials.GetDataSourceCredentialReference(r.Context(), draft.DataSourceID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_REFERENCE_UNAVAILABLE", "凭据引用暂时不可用", true)
+		return
+	}
+	precheckID := newOpaqueID()
+	if precheckID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.prechecks.CreatePrecheck(r.Context(), store.PrecheckCreate{PrecheckRun: store.PrecheckRun{
+		PrecheckID: precheckID, DraftID: draft.DraftID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint,
+		DataSourceID: draft.DataSourceID, CredentialID: credentialReference.CredentialID, CredentialRevision: credentialReference.Revision,
+		NodeID: draft.NodeID, CreatedAt: now, ValidUntil: now.Add(s.precheckTTL),
+	}, CreatorSubjectID: principal.ID, RequestID: requestID(), IdempotencyKey: key, RequestDigest: precheckDigest(draft, preview.ConfigFingerprint)})
+	if errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if errors.Is(err, store.ErrPrecheckInvalid) {
+		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_BINDING_INVALID", "预检查绑定已失效，请刷新草稿后重试", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_CREATE_UNAVAILABLE", "预检查暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(), "id": result.PrecheckID, "replayed": result.Replayed})
+}
+
+// getExportPrecheck 通过预检查关联的草稿所有者控制可见性。
+func (s *Server) getExportPrecheck(w http.ResponseWriter, r *http.Request, principal identity.Principal, precheckID string) {
+	if s.prechecks == nil || s.drafts == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置预检查依赖", false)
+		return
+	}
+	run, err := s.prechecks.GetPrecheckRun(r.Context(), precheckID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_QUERY_UNAVAILABLE", "预检查暂时不可用", true)
+		return
+	}
+	draft, err := s.drafts.GetExportDraft(r.Context(), run.DraftID)
+	if errors.Is(err, store.ErrDataSourceNotFound) || (err == nil && draft.OwnerSubjectID != principal.ID) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_QUERY_UNAVAILABLE", "预检查暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": map[string]any{
+		"id": run.PrecheckID, "draftId": run.DraftID, "draftRevision": run.DraftRevision, "configFingerprint": run.ConfigFingerprint,
+		"nodeId": run.NodeID, "status": run.Status, "integrityStatus": run.IntegrityStatus, "validUntil": run.ValidUntil.Format(time.RFC3339Nano),
+	}})
+}
+
 func (s *Server) loadOwnedDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) (store.ExportDraft, bool) {
 	if s.drafts == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置导出草稿依赖", false)
@@ -695,6 +817,16 @@ func draftResponse(draft store.ExportDraft) map[string]any {
 
 func exportDraftDigest(request exportDraftWriteRequest) string {
 	raw, _ := json.Marshal(request)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func precheckDigest(draft store.ExportDraft, fingerprint string) string {
+	raw, _ := json.Marshal(struct {
+		DraftID     string `json:"draftId"`
+		Revision    int64  `json:"revision"`
+		Fingerprint string `json:"fingerprint"`
+	}{DraftID: draft.DraftID, Revision: draft.Revision, Fingerprint: fingerprint})
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])
 }

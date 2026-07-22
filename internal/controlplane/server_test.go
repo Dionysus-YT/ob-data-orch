@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/commandgen"
@@ -188,9 +189,10 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 		t.Fatalf("NewDefault() error = %v", err)
 	}
 	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
 	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
 		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
-		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Generator: generator, CSRF: allowedCSRF{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Generator: generator, PrecheckTTL: time.Minute, CSRF: allowedCSRF{},
 	})
 	body := `{"dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"E:\\workespace\\ob-data-orch\\tmp\\synthetic-output"}`
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
@@ -206,6 +208,14 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	handler.ServeHTTP(previewed, preview)
 	if previewed.Code != http.StatusOK || !bytes.Contains(previewed.Body.Bytes(), []byte("******")) || bytes.Contains(previewed.Body.Bytes(), []byte("synthetic_user")) || bytes.Contains(previewed.Body.Bytes(), []byte("--password")) {
 		t.Fatalf("unsafe preview response=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
+	precheck.Header.Set("If-Match", `"rev-1"`)
+	precheck.Header.Set("Idempotency-Key", "synthetic-precheck-idempotency-key")
+	prechecked := httptest.NewRecorder()
+	handler.ServeHTTP(prechecked, precheck)
+	if prechecked.Code != http.StatusAccepted || prechecks.created.DraftID != "draft-synthetic" || prechecks.created.CredentialRevision != 1 {
+		t.Fatalf("precheck response=%d binding=%#v", prechecked.Code, prechecks.created)
 	}
 }
 
@@ -368,6 +378,20 @@ func (s *recordingDraftStore) GetExportDraft(context.Context, string) (store.Exp
 func (s *recordingDraftStore) UpdateDraft(_ context.Context, input store.DraftUpdate) (int64, error) {
 	s.created.ConfigJSON, s.created.ConfigFingerprint, s.created.Revision = input.ConfigJSON, input.ConfigFingerprint, input.ExpectedRevision+1
 	return s.created.Revision, nil
+}
+
+type recordingPrecheckStore struct{ created store.PrecheckRun }
+
+func (s *recordingPrecheckStore) CreatePrecheck(_ context.Context, input store.PrecheckCreate) (store.PrecheckCreateResult, error) {
+	s.created = input.PrecheckRun
+	s.created.PrecheckID = "precheck-synthetic"
+	s.created.Status = "PENDING"
+	s.created.IntegrityStatus = "UNKNOWN"
+	return store.PrecheckCreateResult{PrecheckID: s.created.PrecheckID}, nil
+}
+
+func (s *recordingPrecheckStore) GetPrecheckRun(context.Context, string) (store.PrecheckRun, error) {
+	return s.created, nil
 }
 
 func TestVersion(t *testing.T) {
