@@ -299,6 +299,12 @@ func TestSyntheticAgentExecutionClaimAndEventStayWithinG2(t *testing.T) {
 	if err := json.Unmarshal(claim.Body.Bytes(), &grant); err != nil {
 		t.Fatalf("decode claim grant: %v", err)
 	}
+	renew := httptest.NewRecorder()
+	renewBody := fmt.Sprintf(`{"requestId":"renew-execution-1","leaseId":"lease-agent","leaseEpoch":%d}`, grant.Grant.LeaseEpoch)
+	handler.ServeHTTP(renew, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:renew", bytes.NewBufferString(renewBody)))
+	if renew.Code != http.StatusOK || executions.renew.ExecutionID != "execution-agent" {
+		t.Fatalf("renew response=%d record=%#v", renew.Code, executions.renew)
+	}
 	eventBody := fmt.Sprintf(`{"eventId":"event-started","leaseId":"lease-agent","leaseEpoch":%d,"sequence":2,"type":"PROCESS_STARTED"}`, grant.Grant.LeaseEpoch)
 	event := httptest.NewRecorder()
 	handler.ServeHTTP(event, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:events:append", bytes.NewBufferString(eventBody)))
@@ -519,11 +525,17 @@ type recordingTaskStore struct {
 
 type recordingExecutionStore struct {
 	claim store.Claim
+	renew store.LeaseRenewal
 	event store.ExecutionEvent
 }
 
 func (s *recordingExecutionStore) ClaimTask(_ context.Context, input store.Claim) error {
 	s.claim = input
+	return nil
+}
+
+func (s *recordingExecutionStore) RenewExecutionLease(_ context.Context, input store.LeaseRenewal) error {
+	s.renew = input
 	return nil
 }
 

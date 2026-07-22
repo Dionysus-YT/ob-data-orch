@@ -84,6 +84,16 @@ type Claim struct {
 	RequestID   string
 }
 
+// LeaseRenewal 是已认证 Agent 对现有领取租约的续期请求。
+// 它不允许变更执行、节点、Agent 或 epoch，只能延长当前租约。
+type LeaseRenewal struct {
+	ExecutionID string
+	LeaseID     string
+	LeaseEpoch  int64
+	AgentID     string
+	ExpiresAt   time.Time
+}
+
 type ExecutionEvent struct {
 	EventID     string
 	ExecutionID string

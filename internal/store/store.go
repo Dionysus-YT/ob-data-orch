@@ -815,6 +815,32 @@ func (s *Store) ClaimTask(ctx context.Context, input Claim) error {
 	})
 }
 
+// RenewExecutionLease 仅续期仍由同一 Agent 持有的当前 epoch 租约。
+func (s *Store) RenewExecutionLease(ctx context.Context, input LeaseRenewal) error {
+	if input.ExecutionID == "" || input.LeaseID == "" || input.AgentID == "" || input.LeaseEpoch < 1 || input.ExpiresAt.IsZero() {
+		return errors.New("execution lease renewal is invalid")
+	}
+	return s.withWrite(ctx, func(tx *sql.Tx) error {
+		updated, err := tx.ExecContext(ctx, `
+            UPDATE execution_leases
+            SET expires_at = ?
+            WHERE execution_id = ? AND lease_id = ? AND lease_epoch = ? AND agent_id = ?
+              AND status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE')
+        `, utcText(input.ExpiresAt), input.ExecutionID, input.LeaseID, input.LeaseEpoch, input.AgentID)
+		if err != nil {
+			return fmt.Errorf("renew execution lease: %w", err)
+		}
+		affected, err := updated.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read execution lease renewal result: %w", err)
+		}
+		if affected != 1 {
+			return ErrEventRejected
+		}
+		return nil
+	})
+}
+
 func (s *Store) AppendExecutionEvent(ctx context.Context, input ExecutionEvent) error {
 	if err := validateExecutionEvent(input); err != nil {
 		return err

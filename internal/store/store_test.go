@@ -219,6 +219,26 @@ func TestClaimTaskIsAtomicAndConcurrent(t *testing.T) {
 	assertCount(t, primary.db, "SELECT COUNT(*) FROM audit_events", 2)
 }
 
+func TestRenewExecutionLeaseKeepsCurrentAgentAndEpoch(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	if err := store.SubmitTask(context.Background(), validTaskSubmission("task-1")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	if err := store.ClaimTask(context.Background(), validClaim("execution-1", "lease-1", "event-claim-1", "request-claim-1")); err != nil {
+		t.Fatalf("ClaimTask(): %v", err)
+	}
+	renewal := LeaseRenewal{ExecutionID: "execution-1", LeaseID: "lease-1", LeaseEpoch: 1, AgentID: "agent-1", ExpiresAt: testTime.Add(10 * time.Minute)}
+	if err := store.RenewExecutionLease(context.Background(), renewal); err != nil {
+		t.Fatalf("RenewExecutionLease(): %v", err)
+	}
+	wrongAgent := renewal
+	wrongAgent.AgentID = "agent-other"
+	if err := store.RenewExecutionLease(context.Background(), wrongAgent); !errors.Is(err, ErrEventRejected) {
+		t.Fatalf("wrong-agent RenewExecutionLease() error = %v", err)
+	}
+}
+
 func TestAppendExecutionEventRejectsDuplicateAndWrongLease(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)

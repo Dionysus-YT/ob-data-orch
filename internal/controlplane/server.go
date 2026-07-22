@@ -122,6 +122,7 @@ type ExportTaskStore interface {
 // 适配器不得让 Agent 直接写入任务状态或任意事件负载。
 type AgentExecutionStore interface {
 	ClaimTask(context.Context, store.Claim) error
+	RenewExecutionLease(context.Context, store.LeaseRenewal) error
 	AppendExecutionEvent(context.Context, store.ExecutionEvent) error
 }
 
@@ -1125,6 +1126,13 @@ func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
 		s.claimSyntheticExecution(w, r, principal)
 		return
 	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/agent/v1/executions/") && strings.HasSuffix(r.URL.Path, ":renew") {
+		executionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/v1/executions/"), ":renew")
+		if executionID != "" && !strings.Contains(executionID, "/") {
+			s.renewSyntheticExecution(w, r, principal, executionID)
+			return
+		}
+	}
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/agent/v1/executions/") && strings.HasSuffix(r.URL.Path, ":events:append") {
 		executionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/v1/executions/"), ":events:append")
 		if executionID != "" && !strings.Contains(executionID, "/") {
@@ -1183,6 +1191,13 @@ type syntheticExecutionEventRequest struct {
 	ResultFacts   agentstate.ResultFacts  `json:"resultFacts"`
 }
 
+// syntheticExecutionRenewRequest 只能续期已领取的租约，不能改变任务绑定。
+type syntheticExecutionRenewRequest struct {
+	RequestID  string `json:"requestId"`
+	LeaseID    string `json:"leaseId"`
+	LeaseEpoch int64  `json:"leaseEpoch"`
+}
+
 // claimSyntheticExecution 在协调器先生成租约，再将同一领取事实写入 SQLite。
 // 该 G2 适配不启动子进程；初始 SCHEDULED 事件占用序号一，后续 Agent 事件从二开始。
 func (s *Server) claimSyntheticExecution(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
@@ -1214,6 +1229,33 @@ func (s *Server) claimSyntheticExecution(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": grant, "nextEventSequence": 2, "realExecutionEnabled": false})
+}
+
+// renewSyntheticExecution 统一以控制面时钟续期，并同步安全租约投影。
+func (s *Server) renewSyntheticExecution(w http.ResponseWriter, r *http.Request, principal identity.Principal, executionID string) {
+	if s.coordinator == nil || s.executions == nil || s.precheckTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成 Agent 协议", false)
+		return
+	}
+	var request syntheticExecutionRenewRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	snapshot, err := s.coordinator.Snapshot(executionID)
+	if err != nil || snapshot.AgentID != principal.ID {
+		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
+		return
+	}
+	grant, err := s.coordinator.Renew(agentstate.RenewRequest{RequestID: request.RequestID, ExecutionID: executionID, LeaseID: request.LeaseID, LeaseEpoch: request.LeaseEpoch, LeaseTTL: s.precheckTTL})
+	if err != nil {
+		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
+		return
+	}
+	if err := s.executions.RenewExecutionLease(r.Context(), store.LeaseRenewal{ExecutionID: executionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, AgentID: principal.ID, ExpiresAt: grant.ExpiresAt}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_LEASE_UNAVAILABLE", "任务租约暂时无法续期", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": grant, "realExecutionEnabled": false})
 }
 
 // appendSyntheticExecutionEvent 先由状态机判定租约和顺序，再保存不含原始负载的接受事实。
