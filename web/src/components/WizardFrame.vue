@@ -16,6 +16,6 @@ const steps = computed(() => {
       <li v-for="(step, index) in steps" :key="step" :class="{ active: index + 1 === (activeStep ?? 1), complete: index + 1 < (activeStep ?? 1) }"><span>{{ index + 1 }}</span><p>{{ step }}</p></li>
     </ol>
     <div class="wizard-columns"><section class="wizard-main"><slot /></section><aside class="wizard-summary"><slot name="summary" /></aside></div>
-    <footer class="wizard-footer"><button type="button" class="button button-secondary">上一步</button><span class="footer-grow" /><button type="button" class="button button-tertiary">保存草稿</button><button type="button" class="button button-primary">下一步</button></footer>
+    <footer class="wizard-footer"><button type="button" class="button button-secondary" disabled>上一步</button><span class="wizard-baseline-note">页面基线已就绪；步骤校验、草稿与提交将在对应模块功能接入后启用。</span><span class="footer-grow" /><button type="button" class="button button-tertiary" disabled>保存草稿</button><button type="button" class="button button-primary" disabled>下一步</button></footer>
   </div>
 </template>

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import DataSourceFormView from '@/views/DataSourceFormView.vue'
 import DataSourceListView from '@/views/DataSourceListView.vue'
+import ExportWizardView from '@/views/ExportWizardView.vue'
 import HomeView from '@/views/HomeView.vue'
 import ModulePlaceholderView from '@/views/ModulePlaceholderView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
@@ -13,7 +14,7 @@ export const router = createRouter({
     { path: '/', name: 'home', component: HomeView, meta: { title: '首页' } },
     { path: '/data-sources', name: 'data-sources', component: DataSourceListView, meta: { title: '数据源管理' } },
     { path: '/data-sources/:id', name: 'data-source-form', component: DataSourceFormView, meta: { title: '数据源管理' } },
-    { path: '/exports/new', name: 'new-export', component: TaskWizardView, meta: { title: '导出任务', kind: 'export' } },
+    { path: '/exports/new', name: 'new-export', component: ExportWizardView, meta: { title: '导出任务' } },
     { path: '/imports/normal/new', name: 'new-normal-import', component: TaskWizardView, meta: { title: '普通导入', kind: 'normal' } },
     { path: '/imports/direct/new', name: 'new-direct-import', component: TaskWizardView, meta: { title: '旁路导入', kind: 'direct' } },
     { path: '/tasks', name: 'tasks', component: ModulePlaceholderView, meta: { title: '任务中心', description: '统一查看导出、普通导入和旁路导入任务的状态、快照、命令与日志。', sections: ['任务列表', '状态与筛选'] } },
