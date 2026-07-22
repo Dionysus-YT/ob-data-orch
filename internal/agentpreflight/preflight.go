@@ -5,6 +5,7 @@ package agentpreflight
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 
 	"ob-data-orch/internal/agentstate"
@@ -15,7 +16,10 @@ var (
 	ErrInvalidRequest        = errors.New("预检查请求无效")
 	ErrUnsupportedCapability = errors.New("预检查能力不受支持")
 	ErrActiveExecution       = errors.New("Agent 存在活动执行，不能领取预检查")
+	ErrProbeFailed           = errors.New("预检查合成事实不可用")
 )
+
+var evidenceCodePattern = regexp.MustCompile(`^[A-Z0-9_]{1,64}$`)
 
 // Capability 表示 Agent 可以领取的固定本地能力，不能由调用方扩展为任意操作。
 type Capability string
@@ -85,7 +89,7 @@ type Report struct {
 }
 
 // Probe 由 G2 合成夹具实现，用于为固定检查提供合成机器事实。
-// 它不接收命令、秘密或自由路径，且本包不会调用任何操作系统进程 API。
+// 它不接收命令、秘密或独立的自由路径，且本包不会调用任何操作系统进程 API。
 type Probe interface {
 	Probe(context.Context, CheckID, Request) (Result, error)
 }
@@ -99,9 +103,9 @@ func Run(ctx context.Context, request Request, probe Probe) (Report, error) {
 	for _, check := range fixedChecks {
 		result, err := probe.Probe(ctx, check, request)
 		if err != nil {
-			return Report{}, err
+			return Report{}, ErrProbeFailed
 		}
-		if result.Check != check || !validStatus(result.Status) || strings.TrimSpace(result.EvidenceCode) == "" {
+		if result.Check != check || !validStatus(result.Status) || !evidenceCodePattern.MatchString(result.EvidenceCode) {
 			return Report{}, ErrInvalidRequest
 		}
 		report.Results = append(report.Results, result)
@@ -130,7 +134,7 @@ func validate(request Request, probe Probe) error {
 	if blank(request.PrecheckID, request.NodeID, request.AgentID, request.LeaseID, request.OutputPath, request.Binding.PrecheckID, request.Binding.NodeID, request.Binding.ConfigFingerprint) || request.LeaseEpoch < 1 || request.Binding.DraftRevision < 1 || request.Binding.CredentialRevision < 1 || request.Binding.NodeFactsVersion < 1 {
 		return ErrInvalidRequest
 	}
-	if request.PrecheckID != request.Binding.PrecheckID || request.NodeID != request.Binding.NodeID || !supportedPlatform(request.TargetPlatform) {
+	if request.PrecheckID != request.Binding.PrecheckID || request.NodeID != request.Binding.NodeID || !supportedPlatform(request.TargetPlatform) || !validAbsolutePath(request.TargetPlatform, request.OutputPath) {
 		return ErrInvalidRequest
 	}
 	return nil
@@ -151,4 +155,22 @@ func validStatus(status Status) bool {
 
 func supportedPlatform(platform commandgen.Platform) bool {
 	return platform == commandgen.PlatformWindowsAMD64 || platform == commandgen.PlatformLinuxAMD64 || platform == commandgen.PlatformLinuxARM64
+}
+
+func validAbsolutePath(platform commandgen.Platform, value string) bool {
+	if strings.ContainsRune(value, 0) {
+		return false
+	}
+	switch platform {
+	case commandgen.PlatformWindowsAMD64:
+		return len(value) >= 3 && isASCIILetter(value[0]) && value[1] == ':' && value[2] == '\\'
+	case commandgen.PlatformLinuxAMD64, commandgen.PlatformLinuxARM64:
+		return strings.HasPrefix(value, "/")
+	default:
+		return false
+	}
+}
+
+func isASCIILetter(value byte) bool {
+	return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
 }
