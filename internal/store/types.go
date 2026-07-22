@@ -53,6 +53,24 @@ type TaskSubmissionResult struct {
 	Replayed bool
 }
 
+// TaskSummary 是任务详情接口可返回的冻结非敏感投影。
+// 它刻意不包含凭据引用、完整配置快照或未脱敏命令参数。
+type TaskSummary struct {
+	TaskID                 string
+	CreatorSubjectID       string
+	DataSourceID           string
+	NodeID                 string
+	PrecheckID             string
+	ConfigFingerprint      string
+	ToolVersion            string
+	MetadataVersion        string
+	CapabilityVersion      string
+	PlannedCommandRedacted string
+	State                  string
+	ExecutionID            string
+	SubmittedAt            time.Time
+}
+
 type Claim struct {
 	ExecutionID string
 	TaskID      string

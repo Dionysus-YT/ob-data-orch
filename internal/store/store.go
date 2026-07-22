@@ -731,6 +731,37 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 	return nil
 }
 
+// GetTaskSummary 返回任务的冻结非敏感投影；控制面必须在调用后校验创建者范围。
+func (s *Store) GetTaskSummary(ctx context.Context, taskID string) (TaskSummary, error) {
+	if s == nil || s.db == nil {
+		return TaskSummary{}, errors.New("SQLite store is nil")
+	}
+	var summary TaskSummary
+	var submittedAt string
+	err := s.db.QueryRowContext(ctx, `
+        SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
+               t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
+               t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
+               COALESCE(e.execution_id, ''), t.submitted_at
+        FROM tasks t
+        LEFT JOIN task_executions e ON e.task_id = t.task_id
+        WHERE t.task_id = ?
+    `, taskID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
+		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
+		&summary.CapabilityVersion, &summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &submittedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaskSummary{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return TaskSummary{}, fmt.Errorf("read task summary: %w", err)
+	}
+	if summary.SubmittedAt, err = time.Parse(time.RFC3339Nano, submittedAt); err != nil {
+		return TaskSummary{}, fmt.Errorf("parse task submission time: %w", err)
+	}
+	summary.SubmittedAt = summary.SubmittedAt.UTC()
+	return summary, nil
+}
+
 func (s *Store) ClaimTask(ctx context.Context, input Claim) error {
 	if err := validateClaim(input); err != nil {
 		return err

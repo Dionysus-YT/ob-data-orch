@@ -155,6 +155,18 @@ func TestSubmitTaskIdempotentDoesNotCreateSecondTask(t *testing.T) {
 	}
 }
 
+func TestGetTaskSummaryExcludesFrozenSensitiveFields(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	if err := store.SubmitTask(context.Background(), validTaskSubmission("task-summary")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	summary, err := store.GetTaskSummary(context.Background(), "task-summary")
+	if err != nil || summary.State != "WAITING_SCHEDULE" || summary.PlannedCommandRedacted == "" || summary.ExecutionID != "" {
+		t.Fatalf("GetTaskSummary() = %#v, %v", summary, err)
+	}
+}
+
 func TestClaimTaskIsAtomicAndConcurrent(t *testing.T) {
 	primary, databasePath := openTestStore(t)
 	seedBaseFixture(t, primary)
