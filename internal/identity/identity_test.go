@@ -25,8 +25,27 @@ func TestCanFailsClosedWithoutExplicitGrant(t *testing.T) {
 	}
 }
 
+func TestHasRoleRequiresConfirmedDataSourceAdmin(t *testing.T) {
+	principal := Principal{Type: BrowserPrincipal, ID: "synthetic-subject"}
+	if err := HasRole(context.Background(), roleAuthorizer{allow: RoleDataSourceAdmin}, principal, RoleDataSourceAdmin); err != nil {
+		t.Fatalf("HasRole(allowed) error = %v", err)
+	}
+	if err := HasRole(context.Background(), roleAuthorizer{}, principal, RoleDataSourceAdmin); !errors.Is(err, ErrDenied) {
+		t.Fatalf("HasRole(denied) error = %v", err)
+	}
+}
+
 type denyAuthorizer struct{}
 
 func (denyAuthorizer) Authorize(context.Context, Principal, Scope, string) error {
 	return errors.New("synthetic deny")
+}
+
+type roleAuthorizer struct{ allow Role }
+
+func (a roleAuthorizer) AuthorizeRole(_ context.Context, _ Principal, role Role) error {
+	if role == a.allow {
+		return nil
+	}
+	return errors.New("synthetic role denied")
 }

@@ -51,6 +51,19 @@ type Authorizer interface {
 	Authorize(context.Context, Principal, Scope, string) error
 }
 
+// Role is a fixed product role from the confirmed authorization baseline. It
+// is distinct from object scopes because creation has no existing object ID.
+type Role string
+
+const RoleDataSourceAdmin Role = "ROLE_DATA_SOURCE_ADMIN"
+
+// RoleAuthorizer verifies a fixed role without granting any object scope.
+// The concrete implementation must load roles from the trusted identity/
+// authorization projection rather than a client-provided request value.
+type RoleAuthorizer interface {
+	AuthorizeRole(context.Context, Principal, Role) error
+}
+
 func Validate(principal Principal, expected PrincipalType) error {
 	if principal.Type != expected || strings.TrimSpace(principal.ID) == "" {
 		return ErrUnauthenticated
@@ -66,6 +79,19 @@ func Can(ctx context.Context, authorizer Authorizer, principal Principal, scope 
 		return ErrDenied
 	}
 	if err := authorizer.Authorize(ctx, principal, scope, objectID); err != nil {
+		return ErrDenied
+	}
+	return nil
+}
+
+// HasRole is used only where the product permits an action before an object
+// exists, such as creating a data source. It fails closed if the role service
+// is absent, returns an error, or receives an invalid principal/role.
+func HasRole(ctx context.Context, authorizer RoleAuthorizer, principal Principal, role Role) error {
+	if authorizer == nil || Validate(principal, BrowserPrincipal) != nil || role == "" {
+		return ErrDenied
+	}
+	if err := authorizer.AuthorizeRole(ctx, principal, role); err != nil {
 		return ErrDenied
 	}
 	return nil
