@@ -311,11 +311,29 @@ func TestSyntheticAgentExecutionClaimAndEventStayWithinG2(t *testing.T) {
 	if event.Code != http.StatusOK || executions.event.EventSeq != 2 || executions.event.PayloadJSON != `{"mode":"synthetic"}` {
 		t.Fatalf("event response=%d record=%#v", event.Code, executions.event)
 	}
+	eventGap := httptest.NewRecorder()
+	eventGapBody := fmt.Sprintf(`{"eventId":"event-gap","leaseId":"lease-agent","leaseEpoch":%d,"sequence":5,"type":"PROCESS_EXITED"}`, grant.Grant.LeaseEpoch)
+	handler.ServeHTTP(eventGap, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:events:append", bytes.NewBufferString(eventGapBody)))
+	if eventGap.Code != http.StatusConflict {
+		t.Fatalf("event gap response=%d body=%s", eventGap.Code, eventGap.Body.String())
+	}
 	logBody := fmt.Sprintf(`{"leaseId":"lease-agent","leaseEpoch":%d,"batch":{"streamId":"execution-agent","sourceEpoch":1,"firstSeq":1,"lastSeq":1,"previousDigest":"","policyVersion":"policy-v1","records":[{"streamId":"execution-agent","sourceEpoch":1,"sourceSeq":1,"kind":"LOG","message":"safe synthetic log","policyVersion":"policy-v1"}]}}`, grant.Grant.LeaseEpoch)
 	logged := httptest.NewRecorder()
 	handler.ServeHTTP(logged, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:logs:append", bytes.NewBufferString(logBody)))
 	if logged.Code != http.StatusAccepted {
 		t.Fatalf("log response=%d body=%s", logged.Code, logged.Body.String())
+	}
+	unsafeLogBody := fmt.Sprintf(`{"leaseId":"lease-agent","leaseEpoch":%d,"batch":{"streamId":"execution-agent","sourceEpoch":1,"firstSeq":2,"lastSeq":2,"previousDigest":"","policyVersion":"policy-v1","records":[{"streamId":"execution-agent","sourceEpoch":1,"sourceSeq":2,"kind":"LOG","message":"password=unsafe-value","policyVersion":"policy-v1"}]}}`, grant.Grant.LeaseEpoch)
+	unsafeLogged := httptest.NewRecorder()
+	handler.ServeHTTP(unsafeLogged, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:logs:append", bytes.NewBufferString(unsafeLogBody)))
+	if unsafeLogged.Code != http.StatusBadRequest || bytes.Contains(unsafeLogged.Body.Bytes(), []byte("unsafe-value")) {
+		t.Fatalf("unsafe log response=%d body=%s", unsafeLogged.Code, unsafeLogged.Body.String())
+	}
+	gapBody := fmt.Sprintf(`{"leaseId":"lease-agent","leaseEpoch":%d,"gap":{"streamId":"execution-agent","sourceEpoch":1,"firstSeq":2,"lastSeq":3,"reasonCode":"synthetic-gap"}}`, grant.Grant.LeaseEpoch)
+	gapped := httptest.NewRecorder()
+	handler.ServeHTTP(gapped, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:logs:gap", bytes.NewBufferString(gapBody)))
+	if gapped.Code != http.StatusAccepted {
+		t.Fatalf("log gap response=%d body=%s", gapped.Code, gapped.Body.String())
 	}
 	logs := httptest.NewRecorder()
 	handler.ServeHTTP(logs, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-agent/logs", nil))
