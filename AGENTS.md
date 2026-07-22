@@ -58,15 +58,16 @@ Go 模块化单体控制面
         ↑ Agent 主动发起 HTTPS 长轮询、心跳和批量上报
 Go Agent
         ↓ 受控子进程
-Java 8 + OB Loader/Dumper 4.3.5
+Java 8 + OB Loader/Dumper 4.3.5；固定 JDBC 连接探针
 ```
 
-- 控制面与 Agent 都使用 Go；Web 使用 Vue 3、TypeScript、Vite；Java 8 仅用于运行官方工具，不写 Java 平台业务代码。
+- 控制面与 Agent 都使用 Go；Web 使用 Vue 3、TypeScript、Vite；Java 8 仅运行官方工具及用户已确认的固定 JDBC 连接探针，不写 Java 平台业务代码。
 - 采用标准库优先的模块化单体；只有明确、可审查的需要才能加入小型依赖。
 - 首版不引入 Redis、Kafka、RabbitMQ、Elasticsearch、Kubernetes、微服务、通用工作流引擎、ORM、GraphQL 或消息代理。
 - 浏览器 API 为 `/api/v1`；Agent 协议为 `/agent/v1`。两类身份、认证中间件、限流、审计和请求模型必须隔离。
 - 控制面不直接操作执行节点的文件或进程；页面不启动工具；Agent 不决定产品参数和调度策略。
 - 不提供 SSH、WinRM、远程 Shell、任意命令、任意 SQL、任意文件浏览或平台主动入站控制 Agent 的能力。
+- JDBC 连接探针只允许加载 OBDUMPER 4.3.5 包内已核验的 `oceanbase-client-2.4.14.jar`，标准输入短时接收连接输入，并固定执行“建立 JDBC 连接 + 读取基础元信息”；禁止命令行或环境变量秘密、任意 URL、任意 SQL、任意驱动、任意主类和导出/导入行为。
 
 ## 4. 目录职责
 

@@ -187,7 +187,7 @@ AD-R09 确认的 `EXPORT_PREFLIGHT` 可以在提交前解析当前数据源密�
 
 - 同时校验 precheckId、precheckLeaseId/epoch、nodeId、agentId、草稿 revision、配置指纹、credentialId/revision 和固定检查用途；
 - 只返回数据库认证所需的类型化槽位，不返回 sys、对象存储或未来任务秘密；
-- 预检查只在内存中建立有限超时数据库连接，不生成 OBDUMPER 安全文件，不启动 Java/工具进程；
+- 预检查只在内存中建立有限超时数据库连接，不生成 OBDUMPER 安全文件，也不启动 OBDUMPER；允许由固定 Java JDBC 连接探针完成连接与基础元信息读取，但不得接受任意 SQL、URL、驱动、主类或环境秘密；
 - 同一 requestId 在有效短租约内可以重试，但控制面和 Agent 均不缓存或持久化明文响应；
 - 完成、失败、失联或租约过期后立即释放内存槽位；预检查凭据不能复用于正式 execution；
 - 正式任务领取后必须按 execution 租约重新解析已冻结 credential revision，不能沿用预检查连接或秘密；
