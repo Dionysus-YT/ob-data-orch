@@ -9,12 +9,13 @@ import (
 )
 
 var (
-	ErrRevisionConflict   = errors.New("stored revision no longer matches")
-	ErrPrecheckInvalid    = errors.New("precheck is not valid for task submission")
-	ErrAlreadyClaimed     = errors.New("task already has an execution")
-	ErrClaimIneligible    = errors.New("task is not eligible for this agent")
-	ErrEventRejected      = errors.New("execution event violates its lease or sequence")
-	ErrDataSourceNotFound = errors.New("data source does not exist")
+	ErrRevisionConflict    = errors.New("stored revision no longer matches")
+	ErrPrecheckInvalid     = errors.New("precheck is not valid for task submission")
+	ErrAlreadyClaimed      = errors.New("task already has an execution")
+	ErrClaimIneligible     = errors.New("task is not eligible for this agent")
+	ErrEventRejected       = errors.New("execution event violates its lease or sequence")
+	ErrDataSourceNotFound  = errors.New("data source does not exist")
+	ErrIdempotencyConflict = errors.New("idempotency key was reused with different request")
 )
 
 type DraftUpdate struct {
@@ -90,4 +91,35 @@ type DataSourceSummary struct {
 	LastTestedAt            *time.Time
 	LastTestSafeSummaryJSON string
 	UpdatedAt               time.Time
+}
+
+// DataSourceCreate persists a new source and an already encrypted password
+// envelope. Plaintext is deliberately not representable by this input type.
+type DataSourceCreate struct {
+	DataSourceID      string
+	CredentialID      string
+	CreatorSubjectID  string
+	DisplayName       string
+	NormalizedName    string
+	Environment       string
+	ConnectionKind    string
+	CompatibilityMode string
+	Host              string
+	Port              int
+	Username          string
+	DefaultDatabase   string
+	KeyID             string
+	Nonce             []byte
+	Ciphertext        []byte
+	RequestID         string
+	IdempotencyKey    string
+	RequestDigest     string
+	CreatedAt         time.Time
+}
+
+// DataSourceCreateResult lets an HTTP adapter return the original resource for
+// a safe idempotent retry without inserting a second credential revision.
+type DataSourceCreateResult struct {
+	DataSourceID string
+	Replayed     bool
 }

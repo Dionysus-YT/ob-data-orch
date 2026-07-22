@@ -168,6 +168,70 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
 	return summary, nil
 }
 
+// CreateDataSource atomically writes the source, its encrypted first credential
+// revision, a minimal audit fact, and a 24-hour idempotency result. Any error
+// rolls back every record so no usable source can exist without its credential.
+func (s *Store) CreateDataSource(ctx context.Context, input DataSourceCreate) (DataSourceCreateResult, error) {
+	if err := validateDataSourceCreate(input); err != nil {
+		return DataSourceCreateResult{}, err
+	}
+	result := DataSourceCreateResult{DataSourceID: input.DataSourceID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var existingDigest, existingID string
+		err := tx.QueryRowContext(ctx, `
+            SELECT request_digest, COALESCE(resource_id, '')
+            FROM request_idempotency
+            WHERE subject_id = ? AND operation = 'CREATE_DATA_SOURCE' AND idempotency_key = ?
+        `, input.CreatorSubjectID, input.IdempotencyKey).Scan(&existingDigest, &existingID)
+		if err == nil {
+			if existingDigest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.DataSourceID, result.Replayed = existingID, true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read data source idempotency: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO data_sources(
+                data_source_id, display_name, normalized_name, environment, connection_kind,
+                compatibility_mode, host, port, username, default_database, credential_id,
+                current_credential_revision, state, revision, last_test_status, last_tested_at,
+                last_test_safe_summary_json, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)
+        `, input.DataSourceID, input.DisplayName, input.NormalizedName, input.Environment,
+			input.ConnectionKind, input.CompatibilityMode, input.Host, input.Port, input.Username,
+			nullableString(input.DefaultDatabase), input.CredentialID, input.CreatorSubjectID,
+			utcText(input.CreatedAt), utcText(input.CreatedAt)); err != nil {
+			return fmt.Errorf("insert data source: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO credential_revisions(
+                credential_id, revision, data_source_id, secret_type, key_id, nonce,
+                ciphertext, aad_json, status, created_at, retired_at
+            ) VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
+        `, input.CredentialID, input.DataSourceID, input.KeyID, input.Nonce, input.Ciphertext, utcText(input.CreatedAt)); err != nil {
+			return fmt.Errorf("insert encrypted credential revision: %w", err)
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.CreatorSubjectID, "DATA_SOURCE_CREATED", "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+            INSERT INTO request_idempotency(
+                subject_id, operation, idempotency_key, request_digest, result_status,
+                resource_kind, resource_id, response_json, created_at, expires_at
+            ) VALUES (?, 'CREATE_DATA_SOURCE', ?, ?, 201, 'DATA_SOURCE', ?, '{}', ?, ?)
+        `, input.CreatorSubjectID, input.IdempotencyKey, input.RequestDigest, input.DataSourceID,
+			utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour)))
+		if err != nil {
+			return fmt.Errorf("write data source idempotency: %w", err)
+		}
+		return nil
+	})
+	return result, err
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")
@@ -430,6 +494,35 @@ func validateDraftUpdate(input DraftUpdate) error {
 		return fmt.Errorf("draft invalidation is invalid: %w", err)
 	}
 	return nil
+}
+
+func validateDataSourceCreate(input DataSourceCreate) error {
+	if input.DataSourceID == "" || input.CredentialID == "" || input.CreatorSubjectID == "" || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.Username == "" || input.KeyID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
+		return errors.New("data source create identity is invalid")
+	}
+	if !isSHA256(input.RequestDigest) || len(input.Nonce) == 0 || len(input.Ciphertext) == 0 {
+		return errors.New("data source create security material is invalid")
+	}
+	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || !oneOf(input.ConnectionKind, "OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE") || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
+		return errors.New("data source create enum is invalid")
+	}
+	return nil
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func validateTaskSubmission(input TaskSubmission) error {

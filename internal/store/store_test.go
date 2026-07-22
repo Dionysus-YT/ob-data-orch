@@ -268,6 +268,36 @@ func TestListDataSourceSummariesExcludesCredentialMaterial(t *testing.T) {
 	}
 }
 
+func TestCreateDataSourceAtomicallyPersistsEncryptedCredentialAuditAndIdempotency(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	input := DataSourceCreate{
+		DataSourceID: "source-create", CredentialID: "credential-create", CreatorSubjectID: "subject-1",
+		DisplayName: "Created Source", NormalizedName: "created-source", Environment: "TEST",
+		ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.3", Port: 2881,
+		Username: "synthetic-user", DefaultDatabase: "synthetic_db", KeyID: "key-create",
+		Nonce: []byte{1, 2, 3}, Ciphertext: []byte{4, 5, 6}, RequestID: "request-create-1",
+		IdempotencyKey: "idempotency-create-1", RequestDigest: testFingerprint, CreatedAt: testTime,
+	}
+	created, err := store.CreateDataSource(context.Background(), input)
+	if err != nil || created.DataSourceID != input.DataSourceID || created.Replayed {
+		t.Fatalf("CreateDataSource() = %#v, %v", created, err)
+	}
+	replay, err := store.CreateDataSource(context.Background(), input)
+	if err != nil || !replay.Replayed || replay.DataSourceID != input.DataSourceID {
+		t.Fatalf("replayed CreateDataSource() = %#v, %v", replay, err)
+	}
+	conflict := input
+	conflict.RequestDigest = strings.Repeat("b", 64)
+	if _, err := store.CreateDataSource(context.Background(), conflict); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting CreateDataSource() error = %v", err)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM data_sources", 2)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM credential_revisions WHERE credential_id = 'credential-create'", 1)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'DATA_SOURCE_CREATED'", 1)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM request_idempotency WHERE operation = 'CREATE_DATA_SOURCE'", 1)
+}
+
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "metadata.db")
