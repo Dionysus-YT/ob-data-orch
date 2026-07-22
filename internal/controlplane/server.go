@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ob-data-orch/internal/agentstate"
@@ -19,6 +20,7 @@ import (
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
+	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/store"
 )
 
@@ -36,6 +38,7 @@ type Server struct {
 	prechecks    ExportPrecheckStore
 	tasks        ExportTaskStore
 	executions   AgentExecutionStore
+	logs         *syntheticLogStore
 	nodes        ExecutionNodeReader
 	generator    ExportCommandGenerator
 	precheckTTL  time.Duration
@@ -148,6 +151,7 @@ type Dependencies struct {
 	Prechecks       ExportPrecheckStore
 	Tasks           ExportTaskStore
 	Executions      AgentExecutionStore
+	LogLedger       *logstream.BatchLedger
 	Nodes           ExecutionNodeReader
 	Generator       ExportCommandGenerator
 	PrecheckTTL     time.Duration
@@ -171,7 +175,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger), nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -230,6 +234,13 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/") {
 		taskID := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
+		if strings.HasSuffix(taskID, "/logs") {
+			taskID = strings.TrimSuffix(taskID, "/logs")
+			if taskID != "" && !strings.Contains(taskID, "/") {
+				s.listSyntheticLogs(w, r, principal, taskID)
+				return
+			}
+		}
 		if taskID != "" && !strings.Contains(taskID, "/") {
 			s.getTask(w, r, principal, taskID)
 			return
@@ -1121,6 +1132,20 @@ func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/agent/v1/executions/") && strings.HasSuffix(r.URL.Path, ":logs:append") {
+		executionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/v1/executions/"), ":logs:append")
+		if executionID != "" && !strings.Contains(executionID, "/") {
+			s.appendSyntheticLogBatch(w, r, principal, executionID)
+			return
+		}
+	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/agent/v1/executions/") && strings.HasSuffix(r.URL.Path, ":logs:gap") {
+		executionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/v1/executions/"), ":logs:gap")
+		if executionID != "" && !strings.Contains(executionID, "/") {
+			s.appendSyntheticLogGap(w, r, principal, executionID)
+			return
+		}
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/prechecks:claim" {
 		s.claimSyntheticPrecheck(w, r, principal)
 		return
@@ -1227,6 +1252,145 @@ func (s *Server) appendSyntheticExecutionEvent(w http.ResponseWriter, r *http.Re
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSequence, "state": result.Snapshot.State, "realExecutionEnabled": false})
+}
+
+// syntheticLogBatchRequest 将日志批次绑定到当前领取租约，避免任意 Agent 写入其他任务。
+type syntheticLogBatchRequest struct {
+	LeaseID    string          `json:"leaseId"`
+	LeaseEpoch int64           `json:"leaseEpoch"`
+	Batch      logstream.Batch `json:"batch"`
+}
+
+// syntheticLogGapRequest 只保留序号缺口事实，不保留 Agent 提供的原因文本。
+type syntheticLogGapRequest struct {
+	LeaseID    string              `json:"leaseId"`
+	LeaseEpoch int64               `json:"leaseEpoch"`
+	Gap        logstream.GapNotice `json:"gap"`
+}
+
+// syntheticLogStore 是 G2 专用的已脱敏内存日志投影。
+// 它不替代后续分段文件、SQLite 索引或重启恢复设计。
+type syntheticLogStore struct {
+	mu     sync.Mutex
+	ledger *logstream.BatchLedger
+	byTask map[string][]logstream.Record
+}
+
+func newSyntheticLogStore(ledger *logstream.BatchLedger) *syntheticLogStore {
+	if ledger == nil {
+		return nil
+	}
+	return &syntheticLogStore{ledger: ledger, byTask: make(map[string][]logstream.Record)}
+}
+
+func (s *syntheticLogStore) appendBatch(taskID string, batch logstream.Batch) (logstream.BatchResult, error) {
+	for _, record := range batch.Records {
+		redacted, err := (logstream.Policy{Version: batch.PolicyVersion}).Redact(record.Message)
+		if err != nil || redacted != record.Message {
+			return logstream.BatchResult{}, logstream.ErrPolicyRejected
+		}
+	}
+	result, err := s.ledger.Accept(batch)
+	if err != nil || result.Decision != logstream.BatchAccepted {
+		return result, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byTask[taskID] = append(s.byTask[taskID], batch.Records...)
+	return result, nil
+}
+
+func (s *syntheticLogStore) appendGap(taskID string, gap logstream.GapNotice) (logstream.BatchResult, error) {
+	result, err := s.ledger.AcceptGap(gap)
+	if err != nil || result.Decision != logstream.BatchAccepted {
+		return result, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byTask[taskID] = append(s.byTask[taskID], logstream.Record{StreamID: gap.StreamID, SourceEpoch: gap.SourceEpoch, SourceSeq: gap.FirstSeq, Kind: logstream.RecordGap, Message: "日志序号存在缺口", IntegrityCode: "GAP_REPORTED", PolicyVersion: "synthetic", ParserVersion: "synthetic", ReceivedAt: time.Now().UTC()})
+	return result, nil
+}
+
+func (s *syntheticLogStore) records(taskID string) []logstream.Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]logstream.Record(nil), s.byTask[taskID]...)
+}
+
+// appendSyntheticLogBatch 拒绝含未脱敏键值的批次，并由批次账本处理重复与序号缺口。
+func (s *Server) appendSyntheticLogBatch(w http.ResponseWriter, r *http.Request, principal identity.Principal, executionID string) {
+	if s.coordinator == nil || s.logs == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成日志协议", false)
+		return
+	}
+	var request syntheticLogBatchRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	snapshot, err := s.coordinator.Snapshot(executionID)
+	if err != nil || snapshot.AgentID != principal.ID || snapshot.LeaseID != request.LeaseID || snapshot.LeaseEpoch != request.LeaseEpoch || request.Batch.StreamID != executionID {
+		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
+		return
+	}
+	result, err := s.logs.appendBatch(snapshot.TaskID, request.Batch)
+	if errors.Is(err, logstream.ErrBatchGap) {
+		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq})
+		return
+	}
+	if errors.Is(err, logstream.ErrPolicyRejected) || errors.Is(err, logstream.ErrInvalidInput) || errors.Is(err, logstream.ErrBatchConflict) {
+		writeError(w, http.StatusBadRequest, "LOG_BATCH_REJECTED", "日志批次不符合安全约束", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "LOG_BATCH_UNAVAILABLE", "日志批次暂时无法保存", true)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq, "realExecutionEnabled": false})
+}
+
+// appendSyntheticLogGap 记录可审查的序号缺口，不接受或展示 Agent 的原因原文。
+func (s *Server) appendSyntheticLogGap(w http.ResponseWriter, r *http.Request, principal identity.Principal, executionID string) {
+	if s.coordinator == nil || s.logs == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成日志协议", false)
+		return
+	}
+	var request syntheticLogGapRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	snapshot, err := s.coordinator.Snapshot(executionID)
+	if err != nil || snapshot.AgentID != principal.ID || snapshot.LeaseID != request.LeaseID || snapshot.LeaseEpoch != request.LeaseEpoch || request.Gap.StreamID != executionID {
+		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
+		return
+	}
+	result, err := s.logs.appendGap(snapshot.TaskID, request.Gap)
+	if errors.Is(err, logstream.ErrBatchGap) {
+		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "LOG_GAP_REJECTED", "日志缺口不符合安全约束", false)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq, "realExecutionEnabled": false})
+}
+
+// listSyntheticLogs 仅让任务创建者读取已通过第一层脱敏的 G2 内存记录。
+func (s *Server) listSyntheticLogs(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.tasks == nil || s.logs == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置日志查询依赖", false)
+		return
+	}
+	summary, err := s.tasks.GetTaskSummary(r.Context(), taskID)
+	if errors.Is(err, store.ErrDataSourceNotFound) || (err == nil && summary.CreatorSubjectID != principal.ID) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "items": s.logs.records(taskID), "integrity": "SYNTHETIC_MEMORY", "realExecutionEnabled": false})
 }
 
 // syntheticPrecheckClaimRequest 只包含固定预检查的领取标识，不能夹带命令或 SQL。

@@ -17,6 +17,7 @@ import (
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
+	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/store"
 )
 
@@ -285,7 +286,8 @@ func TestSyntheticAgentExecutionClaimAndEventStayWithinG2(t *testing.T) {
 		t.Fatalf("Schedule() error = %v", err)
 	}
 	executions := &recordingExecutionStore{}
-	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{Identity: dualIdentityProvider{}, Coordinator: coordinator, Executions: executions, PrecheckTTL: time.Minute})
+	tasks := &recordingTaskStore{input: store.TaskSubmission{TaskID: "task-agent", CreatorSubjectID: "synthetic-subject", PlannedCommandRedacted: "obdumper --password ******", SubmittedAt: time.Now().UTC()}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{Identity: dualIdentityProvider{}, Coordinator: coordinator, Executions: executions, Tasks: tasks, LogLedger: logstream.NewBatchLedger(), PrecheckTTL: time.Minute})
 	claim := httptest.NewRecorder()
 	handler.ServeHTTP(claim, httptest.NewRequest(http.MethodPost, "/agent/v1/executions:claim", bytes.NewBufferString(`{"requestId":"claim-execution-1","taskId":"task-agent","executionId":"execution-agent","nodeId":"node-1","leaseId":"lease-agent"}`)))
 	if claim.Code != http.StatusOK || executions.claim.ExecutionID != "execution-agent" || executions.claim.EventID != "scheduled-execution-agent" {
@@ -302,6 +304,17 @@ func TestSyntheticAgentExecutionClaimAndEventStayWithinG2(t *testing.T) {
 	handler.ServeHTTP(event, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:events:append", bytes.NewBufferString(eventBody)))
 	if event.Code != http.StatusOK || executions.event.EventSeq != 2 || executions.event.PayloadJSON != `{"mode":"synthetic"}` {
 		t.Fatalf("event response=%d record=%#v", event.Code, executions.event)
+	}
+	logBody := fmt.Sprintf(`{"leaseId":"lease-agent","leaseEpoch":%d,"batch":{"streamId":"execution-agent","sourceEpoch":1,"firstSeq":1,"lastSeq":1,"previousDigest":"","policyVersion":"policy-v1","records":[{"streamId":"execution-agent","sourceEpoch":1,"sourceSeq":1,"kind":"LOG","message":"safe synthetic log","policyVersion":"policy-v1"}]}}`, grant.Grant.LeaseEpoch)
+	logged := httptest.NewRecorder()
+	handler.ServeHTTP(logged, httptest.NewRequest(http.MethodPost, "/agent/v1/executions/execution-agent:logs:append", bytes.NewBufferString(logBody)))
+	if logged.Code != http.StatusAccepted {
+		t.Fatalf("log response=%d body=%s", logged.Code, logged.Body.String())
+	}
+	logs := httptest.NewRecorder()
+	handler.ServeHTTP(logs, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-agent/logs", nil))
+	if logs.Code != http.StatusOK || !bytes.Contains(logs.Body.Bytes(), []byte("safe synthetic log")) || !bytes.Contains(logs.Body.Bytes(), []byte("SYNTHETIC_MEMORY")) {
+		t.Fatalf("logs response=%d body=%s", logs.Code, logs.Body.String())
 	}
 }
 
