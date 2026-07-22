@@ -28,6 +28,9 @@ func Test终态证据完成后清理合成安全材料与启动意图(t *testing
 	if err := WriteStartIntent(workspace, validStartIntent()); err != nil {
 		t.Fatalf("WriteStartIntent() 错误 = %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(workspace.RawLogDirectory(), "synthetic-tool.log"), []byte("synthetic raw log"), 0o600); err != nil {
+		t.Fatalf("写入合成原始日志: %v", err)
+	}
 	result, err := CleanupSynthetic(workspace, true)
 	if err != nil || !result.Cleaned || result.Residual {
 		t.Fatalf("CleanupSynthetic() = %#v, %v", result, err)

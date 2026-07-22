@@ -53,6 +53,12 @@ func (w Workspace) EvidenceDirectory() string {
 	return w.evidenceDir
 }
 
+// RawLogDirectory 返回 execution 私有的原始工具日志目录。
+// 该目录只能由受控 Agent 适配写入；完成证据后必须随工作区清理，不能暴露给浏览器或控制面。
+func (w Workspace) RawLogDirectory() string {
+	return w.rawLogDir
+}
+
 type MaterialPaths struct {
 	SecurityConfiguration string
 }

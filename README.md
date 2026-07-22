@@ -61,4 +61,4 @@ docs/                 产品、设计与技术基线
 .github/workflows/    持续集成
 ```
 
-当前处于 DEV-05 收口：固定 `EXPORT_PREFLIGHT`、execution 私有工作区、写前启动意图、假工具成功/失败/中断、终态证据和安全材料清理均已通过本地合成测试；默认 Agent 启动入口仍为空闲且不联网、不启动工具。该适配不包含 HTTP、SQLite 索引、持久化 Agent 队列、真实进程、真实凭据或 OBDUMPER。真实数据库连接、真实凭据和 OBDUMPER 执行继续等待 G3 授权集成门禁通过。
+DEV-05 已在 G2 收口：固定 `EXPORT_PREFLIGHT`、execution 私有工作区、写前启动意图、假工具成功/失败/中断、终态证据和安全材料清理均已通过本地合成测试。当前进入 DEV-06 最小前端链路；默认 Agent 启动入口仍为空闲且不联网、不启动工具。该适配不包含 HTTP、SQLite 索引、持久化 Agent 队列、真实进程、真实凭据或 OBDUMPER。真实数据库连接、真实凭据和 OBDUMPER 执行继续等待 G3 授权集成门禁通过。
