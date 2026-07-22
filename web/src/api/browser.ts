@@ -17,13 +17,15 @@ export interface DataSourceSummary {
   readonly defaultDatabase?: string
   readonly state: string
   readonly revision: number
+  readonly credentialRevision: number
+  readonly lastTestStatus?: string
 }
 
 export interface DataSourceWrite {
   readonly displayName: string
-  readonly environment: string
+  readonly environment: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
   readonly connectionKind: 'ODP'
-  readonly compatibilityMode: 'MYSQL'
+  readonly compatibilityMode: 'MYSQL' | 'ORACLE' | 'UNKNOWN'
   readonly host: string
   readonly port: number
   readonly username: string
@@ -31,10 +33,27 @@ export interface DataSourceWrite {
   readonly password: string
 }
 
+export interface DataSourceUpdate {
+  readonly displayName?: string
+  readonly environment?: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
+  readonly connectionKind?: 'ODP'
+  readonly compatibilityMode?: 'MYSQL' | 'ORACLE' | 'UNKNOWN'
+  readonly host?: string
+  readonly port?: number
+  readonly username?: string
+  readonly defaultDatabase?: string
+  readonly password?: string
+}
+
 export interface DataSourceConnectionTest {
   readonly status: 'SUCCEEDED' | 'FAILED' | 'PENDING' | 'UNAVAILABLE'
   readonly code: string
   readonly testedAt?: string
+}
+
+export interface DataSourceStateChange {
+  readonly state: 'ENABLED' | 'DISABLED'
+  readonly revision: number
 }
 
 export interface ExportDraftInput {
@@ -97,7 +116,11 @@ export interface TaskLog {
 
 export interface BrowserApi {
   listDataSources(): Promise<DataSourceSummary[]>
+  getDataSource(dataSourceId: string): Promise<DataSourceSummary>
   createDataSource(input: DataSourceWrite): Promise<string>
+  updateDataSource(dataSourceId: string, revision: number, input: DataSourceUpdate): Promise<DataSourceSummary>
+  changeDataSourceState(dataSourceId: string, revision: number, targetState: 'ENABLED' | 'DISABLED'): Promise<DataSourceStateChange>
+  archiveDataSource(dataSourceId: string, revision: number): Promise<void>
   testDataSourceConnection(dataSourceId: string): Promise<DataSourceConnectionTest>
   createExportDraft(input: ExportDraftInput): Promise<string>
   getExportDraft(draftId: string): Promise<ExportDraft>
@@ -127,9 +150,28 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       const body = await request(options, '/api/v1/data-sources', { method: 'GET' })
       return listOf(body, 'items').map(parseDataSourceSummary)
     },
+    async getDataSource(dataSourceId) {
+      const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, { method: 'GET' })
+      return parseDataSourceSummary(requiredObject(body, 'item'))
+    },
     async createDataSource(input) {
       const body = await request(options, '/api/v1/data-sources', writeRequest(options, input))
       return requiredString(body, 'id')
+    },
+    async updateDataSource(dataSourceId, revision, input) {
+      const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, writeRequest(options, input, revision, 'PATCH', false))
+      return parseDataSourceSummary(requiredObject(body, 'item'))
+    },
+    async changeDataSourceState(dataSourceId, revision, targetState) {
+      const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}:${targetState === 'ENABLED' ? 'enable' : 'disable'}`, writeRequest(options, {}, revision, 'POST', false))
+      const state = requiredString(body, 'state')
+      if (state !== 'ENABLED' && state !== 'DISABLED') {
+        throw localError('RESPONSE_INVALID', '控制面返回了无效数据源状态。')
+      }
+      return { state, revision: requiredNumber(body, 'revision') }
+    },
+    async archiveDataSource(dataSourceId, revision) {
+      await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, writeRequest(options, {}, revision, 'DELETE', false))
     },
     async testDataSourceConnection(dataSourceId) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}:test-connection`, writeRequest(options, {}, undefined, 'POST', false))
@@ -235,6 +277,8 @@ function parseDataSourceSummary(value: unknown): DataSourceSummary {
     defaultDatabase: optionalString(source, 'defaultDatabase'),
     state: requiredString(source, 'state'),
     revision: requiredNumber(source, 'revision'),
+    credentialRevision: requiredNumber(source, 'credentialRevision'),
+    lastTestStatus: optionalString(source, 'lastTestStatus'),
   }
 }
 
