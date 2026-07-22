@@ -20,8 +20,17 @@ func TestLoadControlPlane(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := LoadControlPlane(func(string) (string, bool) {
-				return tt.value, tt.exists
+			got, err := LoadControlPlane(func(key string) (string, bool) {
+				if key == ControlPlaneListenEnvironmentVariable {
+					return tt.value, tt.exists
+				}
+				if key == "ProgramData" {
+					return "C:\\ProgramData", true
+				}
+				if key == "HOME" {
+					return "/home/synthetic", true
+				}
+				return "", false
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("LoadControlPlane() error = %v, wantErr %v", err, tt.wantErr)
