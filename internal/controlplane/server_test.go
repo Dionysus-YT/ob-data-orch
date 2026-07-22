@@ -69,6 +69,31 @@ func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing
 	}
 }
 
+func TestGetDataSourceHidesUnauthorizedAndMissingObjects(t *testing.T) {
+	t.Parallel()
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity:    browserOnlyIdentityProvider{},
+		Authorizer:  sourceAuthorizer{allowedID: "source-allowed"},
+		DataSources: staticDataSourceReader{},
+	})
+	for _, testCase := range []struct {
+		path       string
+		wantStatus int
+	}{
+		{path: "/api/v1/data-sources/source-allowed", wantStatus: http.StatusOK},
+		{path: "/api/v1/data-sources/source-denied", wantStatus: http.StatusNotFound},
+		{path: "/api/v1/data-sources/source-missing", wantStatus: http.StatusNotFound},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, testCase.path, nil))
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
 	t.Parallel()
 	provider := staticIdentityProvider{}
@@ -133,6 +158,24 @@ func (staticDataSourceReader) ListDataSourceSummaries(context.Context) ([]store.
 		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
 		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
 	}, nil
+}
+
+func (staticDataSourceReader) GetDataSourceSummary(_ context.Context, dataSourceID string) (store.DataSourceSummary, error) {
+	for _, summary := range mustStaticDataSourceReader().summaries {
+		if summary.DataSourceID == dataSourceID {
+			return summary, nil
+		}
+	}
+	return store.DataSourceSummary{}, store.ErrDataSourceNotFound
+}
+
+type staticDataSources struct{ summaries []store.DataSourceSummary }
+
+func mustStaticDataSourceReader() staticDataSources {
+	return staticDataSources{summaries: []store.DataSourceSummary{
+		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
+		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
+	}}
 }
 
 func TestVersion(t *testing.T) {

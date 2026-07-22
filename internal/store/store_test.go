@@ -250,6 +250,13 @@ func TestListDataSourceSummariesExcludesCredentialMaterial(t *testing.T) {
 	if summary.DataSourceID != "source-1" || summary.CredentialRevision != 1 || summary.UpdatedAt.IsZero() {
 		t.Fatalf("unexpected data source summary: %#v", summary)
 	}
+	detail, err := store.GetDataSourceSummary(ctx, "source-1")
+	if err != nil || detail.DataSourceID != summary.DataSourceID {
+		t.Fatalf("GetDataSourceSummary(source-1) = %#v, %v", detail, err)
+	}
+	if _, err := store.GetDataSourceSummary(ctx, "source-archived"); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("GetDataSourceSummary(source-archived) error = %v", err)
+	}
 	serialized, err := json.Marshal(summary)
 	if err != nil {
 		t.Fatalf("marshal summary: %v", err)

@@ -121,6 +121,53 @@ func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummar
 	return summaries, nil
 }
 
+// GetDataSourceSummary returns the same non-sensitive projection as the list
+// API for one active source. Archived sources intentionally behave as absent.
+func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (DataSourceSummary, error) {
+	if s == nil || s.db == nil {
+		return DataSourceSummary{}, errors.New("SQLite store is nil")
+	}
+	if strings.TrimSpace(dataSourceID) == "" {
+		return DataSourceSummary{}, ErrDataSourceNotFound
+	}
+	var summary DataSourceSummary
+	var lastTestedAt sql.NullString
+	var updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+        SELECT data_source_id, display_name, environment, connection_kind,
+               compatibility_mode, host, port, username,
+               COALESCE(default_database, ''), state, revision,
+               current_credential_revision, COALESCE(last_test_status, ''),
+               last_tested_at, COALESCE(last_test_safe_summary_json, ''), updated_at
+        FROM data_sources
+        WHERE data_source_id = ? AND state != 'ARCHIVED'
+    `, dataSourceID).Scan(
+		&summary.DataSourceID, &summary.DisplayName, &summary.Environment, &summary.ConnectionKind,
+		&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.Username,
+		&summary.DefaultDatabase, &summary.State, &summary.Revision, &summary.CredentialRevision,
+		&summary.LastTestStatus, &lastTestedAt, &summary.LastTestSafeSummaryJSON, &updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DataSourceSummary{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return DataSourceSummary{}, fmt.Errorf("get data source summary: %w", err)
+	}
+	parsedUpdatedAt, err := time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return DataSourceSummary{}, fmt.Errorf("parse data source update time: %w", err)
+	}
+	summary.UpdatedAt = parsedUpdatedAt.UTC()
+	if lastTestedAt.Valid {
+		parsedLastTestedAt, err := time.Parse(time.RFC3339Nano, lastTestedAt.String)
+		if err != nil {
+			return DataSourceSummary{}, fmt.Errorf("parse data source test time: %w", err)
+		}
+		summary.LastTestedAt = &parsedLastTestedAt
+	}
+	return summary, nil
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")

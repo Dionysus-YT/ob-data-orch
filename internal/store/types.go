@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ErrRevisionConflict = errors.New("stored revision no longer matches")
-	ErrPrecheckInvalid  = errors.New("precheck is not valid for task submission")
-	ErrAlreadyClaimed   = errors.New("task already has an execution")
-	ErrClaimIneligible  = errors.New("task is not eligible for this agent")
-	ErrEventRejected    = errors.New("execution event violates its lease or sequence")
+	ErrRevisionConflict   = errors.New("stored revision no longer matches")
+	ErrPrecheckInvalid    = errors.New("precheck is not valid for task submission")
+	ErrAlreadyClaimed     = errors.New("task already has an execution")
+	ErrClaimIneligible    = errors.New("task is not eligible for this agent")
+	ErrEventRejected      = errors.New("execution event violates its lease or sequence")
+	ErrDataSourceNotFound = errors.New("data source does not exist")
 )
 
 type DraftUpdate struct {

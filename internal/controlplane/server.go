@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/identity"
@@ -23,6 +25,7 @@ type Server struct {
 // write API is deferred until credential encryption and audit are transactional.
 type DataSourceReader interface {
 	ListDataSourceSummaries(context.Context) ([]store.DataSourceSummary, error)
+	GetDataSourceSummary(context.Context, string) (store.DataSourceSummary, error)
 }
 
 // Dependencies make the HTTP boundary testable without creating a runtime
@@ -75,7 +78,37 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		s.listDataSources(w, r, principal)
 		return
 	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
+		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
+		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
+			s.getDataSource(w, r, principal, dataSourceID)
+			return
+		}
+	}
 	notFound(w, r)
+}
+
+// getDataSource authorizes the requested ID before reading it, then maps both
+// absence and an out-of-scope object to the same 404 response.
+func (s *Server) getDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
+	if s.dataSource == nil || s.authorizer == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源 API 依赖", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, dataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	summary, err := s.dataSource.GetDataSourceSummary(r.Context(), dataSourceID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_QUERY_UNAVAILABLE", "数据源暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": newDataSourceResponse(summary)})
 }
 
 func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
