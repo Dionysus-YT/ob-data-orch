@@ -47,6 +47,12 @@ type TaskSubmission struct {
 	SubmittedAt            time.Time
 }
 
+// TaskSubmissionResult 区分新建任务与同一幂等请求的安全重放。
+type TaskSubmissionResult struct {
+	TaskID   string
+	Replayed bool
+}
+
 type Claim struct {
 	ExecutionID string
 	TaskID      string

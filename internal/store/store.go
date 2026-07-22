@@ -648,8 +648,45 @@ func (s *Store) SubmitTask(ctx context.Context, input TaskSubmission) error {
 	if err := validateTaskSubmission(input); err != nil {
 		return err
 	}
-	return s.withWrite(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `
+	return s.withWrite(ctx, func(tx *sql.Tx) error { return s.submitTaskTx(ctx, tx, input) })
+}
+
+// SubmitTaskIdempotent 在同一事务中写入不可变任务、审计和幂等结果。
+func (s *Store) SubmitTaskIdempotent(ctx context.Context, input TaskSubmission, idempotencyKey, requestDigest string) (TaskSubmissionResult, error) {
+	if err := validateTaskSubmission(input); err != nil {
+		return TaskSubmissionResult{}, err
+	}
+	if len(idempotencyKey) < 16 || !isSHA256(requestDigest) {
+		return TaskSubmissionResult{}, errors.New("task submission idempotency is invalid")
+	}
+	result := TaskSubmissionResult{TaskID: input.TaskID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var digest, existingID string
+		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = 'SUBMIT_EXPORT_DRAFT' AND idempotency_key = ?`, input.CreatorSubjectID, idempotencyKey).Scan(&digest, &existingID)
+		if err == nil {
+			if digest != requestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.TaskID, result.Replayed = existingID, true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read task submission idempotency: %w", err)
+		}
+		if err := s.submitTaskTx(ctx, tx, input); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id, operation, idempotency_key, request_digest, result_status, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, 'SUBMIT_EXPORT_DRAFT', ?, ?, 201, 'TASK', ?, '{}', ?, ?)`, input.CreatorSubjectID, idempotencyKey, requestDigest, input.TaskID, utcText(input.SubmittedAt), utcText(input.SubmittedAt.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write task submission idempotency: %w", err)
+		}
+		return nil
+	})
+	return result, err
+}
+
+// submitTaskTx 保持原有任务冻结条件，供普通和幂等提交共用。
+func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmission) error {
+	result, err := tx.ExecContext(ctx, `
             INSERT INTO tasks(
                 task_id, creator_subject_id, data_source_id, node_id, precheck_id,
                 credential_id, credential_revision, config_fingerprint, tool_version,
@@ -671,28 +708,27 @@ func (s *Store) SubmitTask(ctx context.Context, input TaskSubmission) error {
                   AND valid_until >= ?
             )
         `,
-			input.TaskID, input.CreatorSubjectID, input.DataSourceID, input.NodeID, input.PrecheckID,
-			input.CredentialID, input.CredentialRevision, input.ConfigFingerprint, input.ToolVersion,
-			input.MetadataVersion, input.CapabilityVersion, input.SnapshotJSON, input.PlannedArgvJSON,
-			input.PlannedCommandRedacted, utcText(input.SubmittedAt),
-			input.PrecheckID, input.DataSourceID, input.NodeID, input.CredentialID,
-			input.CredentialRevision, input.ConfigFingerprint, utcText(input.SubmittedAt),
-		)
-		if err != nil {
-			return fmt.Errorf("insert immutable task: %w", err)
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read task submission result: %w", err)
-		}
-		if affected != 1 {
-			return ErrPrecheckInvalid
-		}
-		if err := insertAudit(ctx, tx, "SUBJECT", input.AuditActorID, "TASK_SUBMITTED", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.SubmittedAt); err != nil {
-			return err
-		}
-		return nil
-	})
+		input.TaskID, input.CreatorSubjectID, input.DataSourceID, input.NodeID, input.PrecheckID,
+		input.CredentialID, input.CredentialRevision, input.ConfigFingerprint, input.ToolVersion,
+		input.MetadataVersion, input.CapabilityVersion, input.SnapshotJSON, input.PlannedArgvJSON,
+		input.PlannedCommandRedacted, utcText(input.SubmittedAt),
+		input.PrecheckID, input.DataSourceID, input.NodeID, input.CredentialID,
+		input.CredentialRevision, input.ConfigFingerprint, utcText(input.SubmittedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("insert immutable task: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read task submission result: %w", err)
+	}
+	if affected != 1 {
+		return ErrPrecheckInvalid
+	}
+	if err := insertAudit(ctx, tx, "SUBJECT", input.AuditActorID, "TASK_SUBMITTED", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.SubmittedAt); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) ClaimTask(ctx context.Context, input Claim) error {

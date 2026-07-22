@@ -134,6 +134,27 @@ func TestSubmitTaskIsImmutableAllowsEqualFingerprintAndRollsBackAuditFailure(t *
 	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events", 3)
 }
 
+func TestSubmitTaskIdempotentDoesNotCreateSecondTask(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	input := validTaskSubmission("task-idempotent")
+	input.RequestID = "request-task-idempotent"
+	created, err := store.SubmitTaskIdempotent(context.Background(), input, "idempotency-task-submit-1", testFingerprint)
+	if err != nil || created.TaskID != input.TaskID || created.Replayed {
+		t.Fatalf("SubmitTaskIdempotent() = %#v, %v", created, err)
+	}
+	replayed, err := store.SubmitTaskIdempotent(context.Background(), input, "idempotency-task-submit-1", testFingerprint)
+	if err != nil || !replayed.Replayed || replayed.TaskID != input.TaskID {
+		t.Fatalf("replayed SubmitTaskIdempotent() = %#v, %v", replayed, err)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM tasks WHERE task_id = 'task-idempotent'", 1)
+	conflict := input
+	conflict.TaskID = "task-other"
+	if _, err := store.SubmitTaskIdempotent(context.Background(), conflict, "idempotency-task-submit-1", strings.Repeat("b", 64)); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting SubmitTaskIdempotent() error = %v", err)
+	}
+}
+
 func TestClaimTaskIsAtomicAndConcurrent(t *testing.T) {
 	primary, databasePath := openTestStore(t)
 	seedBaseFixture(t, primary)
