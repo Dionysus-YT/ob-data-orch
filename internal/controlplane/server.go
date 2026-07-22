@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
@@ -36,6 +37,7 @@ type Server struct {
 	nodes        ExecutionNodeReader
 	generator    ExportCommandGenerator
 	precheckTTL  time.Duration
+	coordinator  *agentstate.Coordinator
 	encryptor    CredentialEncryptor
 	csrf         CSRFValidator
 	keyID        string
@@ -80,9 +82,10 @@ type ExportDraftStore interface {
 
 // ExecutionNodeFact 是命令生成需要的最小、非敏感节点事实。
 type ExecutionNodeFact struct {
-	NodeID       string
-	Platform     commandgen.Platform
-	FactsVersion string
+	NodeID        string
+	Platform      commandgen.Platform
+	FactsVersion  string
+	FactsRevision int64
 }
 
 // ExecutionNodeReader 只读取选中节点的生成事实，不执行任何节点操作。
@@ -99,6 +102,7 @@ type ExportCommandGenerator interface {
 type ExportPrecheckStore interface {
 	CreatePrecheck(context.Context, store.PrecheckCreate) (store.PrecheckCreateResult, error)
 	GetPrecheckRun(context.Context, string) (store.PrecheckRun, error)
+	CompletePrecheck(context.Context, store.PrecheckCompletion) error
 }
 
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
@@ -128,6 +132,7 @@ type Dependencies struct {
 	Nodes           ExecutionNodeReader
 	Generator       ExportCommandGenerator
 	PrecheckTTL     time.Duration
+	Coordinator     *agentstate.Coordinator
 	Encryptor       CredentialEncryptor
 	CSRF            CSRFValidator
 	CredentialKeyID string
@@ -147,7 +152,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -664,7 +669,7 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 // createExportPrecheck 固定当前草稿与凭据版本，之后的 Agent 只能领取该绑定。
 // 有效期来自部署依赖，而不是由浏览器、Agent 或请求体提供。
 func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
-	if s.prechecks == nil || s.csrf == nil || s.precheckTTL <= 0 {
+	if s.prechecks == nil || s.coordinator == nil || s.csrf == nil || s.precheckTTL <= 0 {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置预检查依赖", false)
 		return
 	}
@@ -695,7 +700,7 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), request)
+	preview, _, node, err := s.generateExportDraft(r.Context(), request)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
@@ -711,6 +716,10 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	now := time.Now().UTC()
+	if node.FactsRevision < 1 || s.coordinator.SchedulePrecheck(agentstate.PrecheckBinding{PrecheckID: precheckID, NodeID: draft.NodeID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint, CredentialRevision: credentialReference.Revision, NodeFactsVersion: node.FactsRevision}) != nil {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SCHEDULING_UNAVAILABLE", "预检查暂时无法排队", true)
+		return
+	}
 	result, err := s.prechecks.CreatePrecheck(r.Context(), store.PrecheckCreate{PrecheckRun: store.PrecheckRun{
 		PrecheckID: precheckID, DraftID: draft.DraftID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint,
 		DataSourceID: draft.DataSourceID, CredentialID: credentialReference.CredentialID, CredentialRevision: credentialReference.Revision,
@@ -933,7 +942,94 @@ func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
 		return
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/prechecks:claim" {
+		s.claimSyntheticPrecheck(w, r, principal)
+		return
+	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/agent/v1/prechecks/") && strings.HasSuffix(r.URL.Path, ":complete") {
+		precheckID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/v1/prechecks/"), ":complete")
+		if precheckID != "" && !strings.Contains(precheckID, "/") {
+			s.completeSyntheticPrecheck(w, r, principal, precheckID)
+			return
+		}
+	}
 	notFound(w, r)
+}
+
+// syntheticPrecheckClaimRequest 只包含固定预检查的领取标识，不能夹带命令或 SQL。
+type syntheticPrecheckClaimRequest struct {
+	RequestID  string `json:"requestId"`
+	PrecheckID string `json:"precheckId"`
+	NodeID     string `json:"nodeId"`
+	LeaseID    string `json:"leaseId"`
+}
+
+// syntheticPrecheckCompletionRequest 只能上报完成布尔事实，不允许覆盖冻结绑定。
+type syntheticPrecheckCompletionRequest struct {
+	RequestID  string `json:"requestId"`
+	LeaseID    string `json:"leaseId"`
+	LeaseEpoch int64  `json:"leaseEpoch"`
+	Succeeded  bool   `json:"succeeded"`
+}
+
+// claimSyntheticPrecheck 仅为 G2 合成 Agent 提供固定预检查租约。
+func (s *Server) claimSyntheticPrecheck(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.coordinator == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成 Agent 协议", false)
+		return
+	}
+	var request syntheticPrecheckClaimRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	grant, err := s.coordinator.ClaimPrecheck(agentstate.PrecheckClaimRequest{RequestID: request.RequestID, PrecheckID: request.PrecheckID, NodeID: request.NodeID, AgentID: principal.ID, LeaseID: request.LeaseID, LeaseTTL: s.precheckTTL})
+	if errors.Is(err, agentstate.ErrClaimIneligible) || errors.Is(err, agentstate.ErrUnknownExecution) {
+		writeError(w, http.StatusConflict, "PRECHECK_CLAIM_REJECTED", "当前 Agent 无可领取的预检查", true)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": map[string]any{"precheckId": grant.PrecheckID, "leaseId": grant.LeaseID, "leaseEpoch": grant.LeaseEpoch, "expiresAt": grant.ExpiresAt.Format(time.RFC3339Nano), "binding": grant.Binding}})
+}
+
+// completeSyntheticPrecheck 先校验协调器中的租约和冻结绑定，再写入 SQLite 状态。
+func (s *Server) completeSyntheticPrecheck(w http.ResponseWriter, r *http.Request, principal identity.Principal, precheckID string) {
+	if s.coordinator == nil || s.prechecks == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_NOT_CONFIGURED", "当前环境尚未配置合成 Agent 协议", false)
+		return
+	}
+	var request syntheticPrecheckCompletionRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	snapshot, err := s.coordinator.PrecheckSnapshot(precheckID)
+	if err != nil || snapshot.AgentID != principal.ID {
+		writeError(w, http.StatusConflict, "PRECHECK_LEASE_REJECTED", "预检查租约无效", false)
+		return
+	}
+	completed, err := s.coordinator.CompletePrecheck(agentstate.PrecheckCompletion{RequestID: request.RequestID, PrecheckID: precheckID, LeaseID: request.LeaseID, LeaseEpoch: request.LeaseEpoch, Binding: snapshot.Binding, Complete: true, Succeeded: request.Succeeded})
+	if err != nil {
+		writeError(w, http.StatusConflict, "PRECHECK_LEASE_REJECTED", "预检查租约无效", false)
+		return
+	}
+	if err := s.prechecks.CompletePrecheck(r.Context(), store.PrecheckCompletion{PrecheckID: precheckID, Succeeded: completed.State == agentstate.PrecheckSucceeded, IntegrityStatus: "COMPLETE", ResultJSON: `{"mode":"synthetic"}`, CompletedAt: time.Now().UTC()}); err != nil && !errors.Is(err, store.ErrPrecheckInvalid) {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_COMPLETION_UNAVAILABLE", "预检查结果暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "status": string(completed.State)})
+}
+
+// decodeAgentJSON 对 Agent 协议同样限制大小和未知字段，避免测试适配放宽边界。
+func decodeAgentJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return false
+	}
+	return true
 }
 
 // listDataSources filters each object before it reaches JSON. It never returns

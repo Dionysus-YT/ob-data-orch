@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
@@ -190,9 +192,13 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	}
 	drafts := &recordingDraftStore{}
 	prechecks := &recordingPrecheckStore{}
+	coordinator, err := agentstate.NewCoordinator(testClock{})
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
+	}
 	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
 		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
-		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Generator: generator, PrecheckTTL: time.Minute, CSRF: allowedCSRF{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Generator: generator, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
 	})
 	body := `{"dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"E:\\workespace\\ob-data-orch\\tmp\\synthetic-output"}`
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
@@ -216,6 +222,40 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	handler.ServeHTTP(prechecked, precheck)
 	if prechecked.Code != http.StatusAccepted || prechecks.created.DraftID != "draft-synthetic" || prechecks.created.CredentialRevision != 1 {
 		t.Fatalf("precheck response=%d binding=%#v", prechecked.Code, prechecks.created)
+	}
+}
+
+func TestSyntheticAgentPrecheckRequiresMachineIdentityAndLease(t *testing.T) {
+	t.Parallel()
+	coordinator, err := agentstate.NewCoordinator(testClock{})
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
+	}
+	binding := agentstate.PrecheckBinding{PrecheckID: "precheck-agent", NodeID: "node-1", DraftRevision: 1, ConfigFingerprint: strings.Repeat("a", 64), CredentialRevision: 1, NodeFactsVersion: 1}
+	if err := coordinator.SchedulePrecheck(binding); err != nil {
+		t.Fatalf("SchedulePrecheck() error = %v", err)
+	}
+	prechecks := &recordingPrecheckStore{created: store.PrecheckRun{PrecheckID: binding.PrecheckID, Status: "PENDING"}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{Identity: dualIdentityProvider{}, Coordinator: coordinator, Prechecks: prechecks, PrecheckTTL: time.Minute})
+	claimBody := `{"requestId":"claim-1","precheckId":"precheck-agent","nodeId":"node-1","leaseId":"lease-1"}`
+	claimed := httptest.NewRecorder()
+	handler.ServeHTTP(claimed, httptest.NewRequest(http.MethodPost, "/agent/v1/prechecks:claim", bytes.NewBufferString(claimBody)))
+	if claimed.Code != http.StatusOK {
+		t.Fatalf("claim status=%d body=%s", claimed.Code, claimed.Body.String())
+	}
+	var claim struct {
+		Grant struct {
+			LeaseEpoch int64 `json:"leaseEpoch"`
+		} `json:"grant"`
+	}
+	if err := json.Unmarshal(claimed.Body.Bytes(), &claim); err != nil {
+		t.Fatalf("decode claim: %v", err)
+	}
+	completeBody := fmt.Sprintf(`{"requestId":"complete-1","leaseId":"lease-1","leaseEpoch":%d,"succeeded":true}`, claim.Grant.LeaseEpoch)
+	completed := httptest.NewRecorder()
+	handler.ServeHTTP(completed, httptest.NewRequest(http.MethodPost, "/agent/v1/prechecks/precheck-agent:complete", bytes.NewBufferString(completeBody)))
+	if completed.Code != http.StatusOK || prechecks.created.Status != "SUCCEEDED" {
+		t.Fatalf("complete status=%d run=%#v", completed.Code, prechecks.created)
 	}
 }
 
@@ -261,6 +301,15 @@ type browserOnlyIdentityProvider struct{}
 
 func (browserOnlyIdentityProvider) AuthenticateBrowser(*http.Request) (identity.Principal, error) {
 	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-subject"}, nil
+}
+
+type dualIdentityProvider struct{}
+
+func (dualIdentityProvider) AuthenticateBrowser(*http.Request) (identity.Principal, error) {
+	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-subject"}, nil
+}
+func (dualIdentityProvider) AuthenticateAgent(*http.Request) (identity.Principal, error) {
+	return identity.Principal{Type: identity.AgentPrincipal, ID: "synthetic-agent"}, nil
 }
 
 func (browserOnlyIdentityProvider) AuthenticateAgent(*http.Request) (identity.Principal, error) {
@@ -359,7 +408,7 @@ func (u *recordingUpdater) UpdateDataSource(_ context.Context, input store.DataS
 type staticNodeReader struct{}
 
 func (staticNodeReader) GetExecutionNodeFact(context.Context, string) (ExecutionNodeFact, error) {
-	return ExecutionNodeFact{NodeID: "node-1", Platform: commandgen.PlatformWindowsAMD64, FactsVersion: "node-facts-1"}, nil
+	return ExecutionNodeFact{NodeID: "node-1", Platform: commandgen.PlatformWindowsAMD64, FactsVersion: "node-facts-1", FactsRevision: 1}, nil
 }
 
 type recordingDraftStore struct{ created store.ExportDraft }
@@ -393,6 +442,20 @@ func (s *recordingPrecheckStore) CreatePrecheck(_ context.Context, input store.P
 func (s *recordingPrecheckStore) GetPrecheckRun(context.Context, string) (store.PrecheckRun, error) {
 	return s.created, nil
 }
+
+func (s *recordingPrecheckStore) CompletePrecheck(_ context.Context, input store.PrecheckCompletion) error {
+	if input.Succeeded {
+		s.created.Status = "SUCCEEDED"
+	} else {
+		s.created.Status = "FAILED"
+	}
+	s.created.IntegrityStatus = input.IntegrityStatus
+	return nil
+}
+
+type testClock struct{}
+
+func (testClock) Now() time.Time { return time.Now().UTC() }
 
 func TestVersion(t *testing.T) {
 	t.Parallel()

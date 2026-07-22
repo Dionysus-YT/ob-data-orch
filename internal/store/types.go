@@ -246,3 +246,13 @@ type PrecheckCreateResult struct {
 	PrecheckID string
 	Replayed   bool
 }
+
+// PrecheckCompletion 是经 Agent 租约校验后的结构化完成事实。
+// Store 不接受租约本身；租约校验属于 Agent 状态协调器的职责。
+type PrecheckCompletion struct {
+	PrecheckID      string
+	Succeeded       bool
+	IntegrityStatus string
+	ResultJSON      string
+	CompletedAt     time.Time
+}

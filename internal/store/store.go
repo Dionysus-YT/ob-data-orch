@@ -567,6 +567,32 @@ func (s *Store) GetPrecheckRun(ctx context.Context, precheckID string) (Precheck
 	return run, nil
 }
 
+// CompletePrecheck 仅持久化已经通过 Agent 协调器租约校验的完成事实。
+// 不完整或失败结果绝不会被写成可提交的成功预检查。
+func (s *Store) CompletePrecheck(ctx context.Context, input PrecheckCompletion) error {
+	if err := validatePrecheckCompletion(input); err != nil {
+		return err
+	}
+	return s.withWrite(ctx, func(tx *sql.Tx) error {
+		status := "FAILED"
+		if input.Succeeded {
+			status = "SUCCEEDED"
+		}
+		updated, err := tx.ExecContext(ctx, `UPDATE precheck_runs SET status = ?, result_json = ?, integrity_status = ?, completed_at = ? WHERE precheck_id = ? AND status IN ('PENDING', 'LEASED')`, status, input.ResultJSON, input.IntegrityStatus, utcText(input.CompletedAt), input.PrecheckID)
+		if err != nil {
+			return fmt.Errorf("complete precheck: %w", err)
+		}
+		affected, err := updated.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read precheck completion result: %w", err)
+		}
+		if affected != 1 {
+			return ErrPrecheckInvalid
+		}
+		return nil
+	})
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")
@@ -894,6 +920,23 @@ func validatePrecheckCreate(input PrecheckCreate) error {
 	}
 	if !isSHA256(input.ConfigFingerprint) || !isSHA256(input.RequestDigest) {
 		return errors.New("precheck create fingerprint is invalid")
+	}
+	return nil
+}
+
+// validatePrecheckCompletion 只允许保存安全对象形式的检查摘要。
+func validatePrecheckCompletion(input PrecheckCompletion) error {
+	if input.PrecheckID == "" || input.CompletedAt.IsZero() || !oneOf(input.IntegrityStatus, "COMPLETE", "INCOMPLETE") {
+		return errors.New("precheck completion identity is invalid")
+	}
+	if !input.Succeeded && input.IntegrityStatus != "COMPLETE" {
+		return errors.New("failed precheck completion must be complete")
+	}
+	if input.Succeeded && input.IntegrityStatus != "COMPLETE" {
+		return errors.New("successful precheck completion must be complete")
+	}
+	if err := validateSafeObjectJSON(input.ResultJSON); err != nil {
+		return fmt.Errorf("precheck completion result is invalid: %w", err)
 	}
 	return nil
 }
