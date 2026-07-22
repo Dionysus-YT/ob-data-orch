@@ -25,6 +25,7 @@
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
 - [安全文件兼容性验证](evidence/secure-gen-compatibility-spike-2026-07-21.md)：平台内存生成的 PKCS#8/RSA 材料被 Windows 4.3.5 解密器与 OBDUMPER 读取、错误私钥负例、ACL 和三目标构建证据；Linux 运行与清理仍阻断。
 - [直接 Java 隔离启动验证](evidence/direct-java-launch-spike-2026-07-21.md)：Windows 结构化 argv、任务级安全配置、含空格路径、最小环境、直接父子进程和真实退出码证据；Linux 与成功路径待验证。
+- [JDBC 连接探针最小验证](evidence/jdbc-connection-probe-spike-2026-07-22.md)：固定 Java 8 探针、包内 Connector/J、私有运行目录与本机 Go → Java → JDBC 合成拒绝连接证据；真实 ODP 仍未验证。
 - [日志流重组与双层脱敏验证](evidence/log-stream-redaction-spike-2026-07-21.md)：本地合成验证跨读取块秘密、UTF-8 重组、重复批次、冲突批次和超长记录缺口规则。
 - [API/数据模型 SQLite 约束验证](evidence/api-data-model-sqlite-spike-2026-07-21.md)：本地合成验证乐观锁、不可变任务、同任务唯一领取、复合租约外键、幂等和日志批次冲突。
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)：连接、只读查询、Windows OBDUMPER 运行、脱敏和 VS-P0-02～VS-P0-12 状态。
