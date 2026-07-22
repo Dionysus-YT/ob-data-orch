@@ -192,13 +192,14 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	}
 	drafts := &recordingDraftStore{}
 	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
 	coordinator, err := agentstate.NewCoordinator(testClock{})
 	if err != nil {
 		t.Fatalf("NewCoordinator() error = %v", err)
 	}
 	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
 		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
-		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Generator: generator, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Tasks: tasks, Generator: generator, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
 	})
 	body := `{"dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"E:\\workespace\\ob-data-orch\\tmp\\synthetic-output"}`
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
@@ -222,6 +223,21 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	handler.ServeHTTP(prechecked, precheck)
 	if prechecked.Code != http.StatusAccepted || prechecks.created.DraftID != "draft-synthetic" || prechecks.created.CredentialRevision != 1 {
 		t.Fatalf("precheck response=%d binding=%#v", prechecked.Code, prechecks.created)
+	}
+	tasks.run = prechecks.created
+	tasks.run.Status, tasks.run.IntegrityStatus = "SUCCEEDED", "COMPLETE"
+	submit := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:submit", bytes.NewBufferString(`{"precheckId":"precheck-synthetic"}`))
+	submit.Header.Set("If-Match", `"rev-1"`)
+	submit.Header.Set("Idempotency-Key", "synthetic-task-submit-key")
+	submitted := httptest.NewRecorder()
+	handler.ServeHTTP(submitted, submit)
+	if submitted.Code != http.StatusCreated || tasks.input.TaskID == "" || strings.Contains(tasks.input.PlannedArgvJSON, "synthetic_user") {
+		t.Fatalf("submit response=%d task=%#v", submitted.Code, tasks.input)
+	}
+	task := httptest.NewRecorder()
+	handler.ServeHTTP(task, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+tasks.input.TaskID, nil))
+	if task.Code != http.StatusOK || bytes.Contains(task.Body.Bytes(), []byte("synthetic_user")) || !bytes.Contains(task.Body.Bytes(), []byte("WAITING_SCHEDULE")) {
+		t.Fatalf("task response=%d body=%s", task.Code, task.Body.String())
 	}
 }
 
@@ -451,6 +467,24 @@ func (s *recordingPrecheckStore) CompletePrecheck(_ context.Context, input store
 	}
 	s.created.IntegrityStatus = input.IntegrityStatus
 	return nil
+}
+
+type recordingTaskStore struct {
+	run   store.PrecheckRun
+	input store.TaskSubmission
+}
+
+func (s *recordingTaskStore) GetPrecheckRun(context.Context, string) (store.PrecheckRun, error) {
+	return s.run, nil
+}
+
+func (s *recordingTaskStore) SubmitTaskIdempotent(_ context.Context, input store.TaskSubmission, _ string, _ string) (store.TaskSubmissionResult, error) {
+	s.input = input
+	return store.TaskSubmissionResult{TaskID: input.TaskID}, nil
+}
+
+func (s *recordingTaskStore) GetTaskSummary(context.Context, string) (store.TaskSummary, error) {
+	return store.TaskSummary{TaskID: s.input.TaskID, CreatorSubjectID: s.input.CreatorSubjectID, DataSourceID: s.input.DataSourceID, NodeID: s.input.NodeID, PrecheckID: s.input.PrecheckID, ConfigFingerprint: s.input.ConfigFingerprint, ToolVersion: s.input.ToolVersion, MetadataVersion: s.input.MetadataVersion, CapabilityVersion: s.input.CapabilityVersion, PlannedCommandRedacted: s.input.PlannedCommandRedacted, State: "WAITING_SCHEDULE", SubmittedAt: s.input.SubmittedAt}, nil
 }
 
 type testClock struct{}

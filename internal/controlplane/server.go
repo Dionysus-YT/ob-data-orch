@@ -34,6 +34,7 @@ type Server struct {
 	credentials  DataSourceCredentialReferenceReader
 	drafts       ExportDraftStore
 	prechecks    ExportPrecheckStore
+	tasks        ExportTaskStore
 	nodes        ExecutionNodeReader
 	generator    ExportCommandGenerator
 	precheckTTL  time.Duration
@@ -105,6 +106,14 @@ type ExportPrecheckStore interface {
 	CompletePrecheck(context.Context, store.PrecheckCompletion) error
 }
 
+// ExportTaskStore 只暴露任务冻结、预检查读取和安全详情投影。
+// HTTP 层不能自行绕过预检查条件拼装任务记录。
+type ExportTaskStore interface {
+	GetPrecheckRun(context.Context, string) (store.PrecheckRun, error)
+	SubmitTaskIdempotent(context.Context, store.TaskSubmission, string, string) (store.TaskSubmissionResult, error)
+	GetTaskSummary(context.Context, string) (store.TaskSummary, error)
+}
+
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
@@ -129,6 +138,7 @@ type Dependencies struct {
 	CredentialRefs  DataSourceCredentialReferenceReader
 	Drafts          ExportDraftStore
 	Prechecks       ExportPrecheckStore
+	Tasks           ExportTaskStore
 	Nodes           ExecutionNodeReader
 	Generator       ExportCommandGenerator
 	PrecheckTTL     time.Duration
@@ -152,7 +162,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -197,6 +207,9 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 			case r.Method == http.MethodPost && action == "preview-command":
 				s.previewExportDraft(w, r, principal, draftID)
 				return
+			case r.Method == http.MethodPost && action == "submit":
+				s.submitExportDraft(w, r, principal, draftID)
+				return
 			case r.Method == http.MethodPatch && action == "":
 				s.updateExportDraft(w, r, principal, draftID)
 				return
@@ -204,6 +217,13 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 				s.getExportDraft(w, r, principal, draftID)
 				return
 			}
+		}
+	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/") {
+		taskID := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
+		if taskID != "" && !strings.Contains(taskID, "/") {
+			s.getTask(w, r, principal, taskID)
+			return
 		}
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/prechecks/") {
@@ -511,7 +531,7 @@ func parseExportDraftAction(path string) (string, string, bool) {
 		return "", "", false
 	}
 	value := strings.TrimPrefix(path, prefix)
-	for suffix, action := range map[string]string{":preview-command": "preview-command", ":precheck": "precheck"} {
+	for suffix, action := range map[string]string{":preview-command": "preview-command", ":precheck": "precheck", ":submit": "submit"} {
 		if strings.HasSuffix(value, suffix) {
 			id := strings.TrimSuffix(value, suffix)
 			return id, action, id != "" && !strings.Contains(id, "/")
@@ -798,6 +818,17 @@ func decodeExportDraftRequest(w http.ResponseWriter, r *http.Request) (exportDra
 	return request, true
 }
 
+// decodeBrowserJSON 统一约束非草稿写请求的体积和字段集合。
+func decodeBrowserJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return false
+	}
+	return true
+}
+
 func (s *Server) generateExportDraft(ctx context.Context, request exportDraftWriteRequest) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
 	if request.DataSourceID == "" || request.NodeID == "" || request.Database == "" || request.Table == "" || request.Format != "CSV" || request.FilePath == "" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft fields are incomplete")
@@ -836,6 +867,17 @@ func precheckDigest(draft store.ExportDraft, fingerprint string) string {
 		Revision    int64  `json:"revision"`
 		Fingerprint string `json:"fingerprint"`
 	}{DraftID: draft.DraftID, Revision: draft.Revision, Fingerprint: fingerprint})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func taskSubmitDigest(draft store.ExportDraft, precheckID, fingerprint string) string {
+	raw, _ := json.Marshal(struct {
+		DraftID     string `json:"draftId"`
+		Revision    int64  `json:"revision"`
+		PrecheckID  string `json:"precheckId"`
+		Fingerprint string `json:"fingerprint"`
+	}{DraftID: draft.DraftID, Revision: draft.Revision, PrecheckID: precheckID, Fingerprint: fingerprint})
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])
 }
@@ -880,6 +922,123 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 		"requestId": requestID(), "id": dataSourceID, "state": result.State,
 		"revision": result.Revision, "replayed": result.Replayed,
 	})
+}
+
+// exportTaskSubmitRequest 只接收已创建预检查的标识，不能从浏览器接收命令或任务快照。
+type exportTaskSubmitRequest struct {
+	PrecheckID string `json:"precheckId"`
+}
+
+// submitExportDraft 将已通过的预检查与当前草稿重新核对后冻结为任务。
+// G2 阶段的排队只进入内存协调器，绝不启动真实工具或网络连接。
+func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
+	if s.tasks == nil || s.coordinator == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务提交依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	expected, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的草稿版本号", false)
+		return
+	}
+	draft, ok := s.loadOwnedDraft(w, r, principal, draftID)
+	if !ok {
+		return
+	}
+	if draft.Revision != expected {
+		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
+		return
+	}
+	var request exportTaskSubmitRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	run, err := s.tasks.GetPrecheckRun(r.Context(), request.PrecheckID)
+	if err != nil || run.DraftID != draft.DraftID || run.DraftRevision != draft.Revision || run.Status != "SUCCEEDED" || run.IntegrityStatus != "COMPLETE" || !run.ValidUntil.After(time.Now().UTC()) {
+		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "需要当前草稿的有效成功预检查", false)
+		return
+	}
+	var draftRequest exportDraftWriteRequest
+	if err := json.Unmarshal([]byte(draft.ConfigJSON), &draftRequest); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
+		return
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), draftRequest)
+	if err != nil || preview.ConfigFingerprint != run.ConfigFingerprint {
+		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "草稿或预检查已失效，请重新预检查", false)
+		return
+	}
+	argv, err := json.Marshal(preview.ArgvTemplate)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_SUBMISSION_UNAVAILABLE", "任务暂时无法提交", true)
+		return
+	}
+	taskID := newOpaqueID()
+	if taskID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.tasks.SubmitTaskIdempotent(r.Context(), store.TaskSubmission{
+		TaskID: taskID, CreatorSubjectID: principal.ID, AuditActorID: principal.ID, DataSourceID: draft.DataSourceID, NodeID: draft.NodeID,
+		PrecheckID: run.PrecheckID, CredentialID: run.CredentialID, CredentialRevision: run.CredentialRevision,
+		ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion,
+		CapabilityVersion: preview.CapabilityVersion, SnapshotJSON: draft.ConfigJSON, PlannedArgvJSON: string(argv),
+		PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(), SubmittedAt: now,
+	}, key, taskSubmitDigest(draft, run.PrecheckID, preview.ConfigFingerprint))
+	if errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if errors.Is(err, store.ErrPrecheckInvalid) {
+		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "预检查已失效，请重新执行", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_SUBMISSION_UNAVAILABLE", "任务暂时无法提交", true)
+		return
+	}
+	if err := s.coordinator.Schedule(agentstate.TaskSchedule{TaskID: result.TaskID, NodeID: draft.NodeID}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_SCHEDULING_UNAVAILABLE", "任务已冻结但暂时无法进入合成队列", true)
+		return
+	}
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(), "id": result.TaskID, "replayed": result.Replayed, "state": "WAITING_SCHEDULE", "realExecutionEnabled": false})
+}
+
+// getTask 只允许任务创建者读取冻结的安全投影。
+func (s *Server) getTask(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.tasks == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务查询依赖", false)
+		return
+	}
+	summary, err := s.tasks.GetTaskSummary(r.Context(), taskID)
+	if errors.Is(err, store.ErrDataSourceNotFound) || (err == nil && summary.CreatorSubjectID != principal.ID) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": map[string]any{
+		"id": summary.TaskID, "dataSourceId": summary.DataSourceID, "nodeId": summary.NodeID, "precheckId": summary.PrecheckID,
+		"configFingerprint": summary.ConfigFingerprint, "toolVersion": summary.ToolVersion, "metadataVersion": summary.MetadataVersion,
+		"capabilityVersion": summary.CapabilityVersion, "plannedCommand": summary.PlannedCommandRedacted, "state": summary.State,
+		"executionId": summary.ExecutionID, "submittedAt": summary.SubmittedAt.Format(time.RFC3339Nano), "realExecutionEnabled": false,
+	}})
 }
 
 // parseIfMatchRevision 只接受 API 契约规定的强版本格式，避免将弱 ETag、
