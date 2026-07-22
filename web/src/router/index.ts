@@ -2,12 +2,12 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import DataSourceFormView from '@/views/DataSourceFormView.vue'
 import DataSourceListView from '@/views/DataSourceListView.vue'
+import DirectLoadWizardView from '@/views/DirectLoadWizardView.vue'
 import ExportWizardView from '@/views/ExportWizardView.vue'
 import HomeView from '@/views/HomeView.vue'
 import ModulePlaceholderView from '@/views/ModulePlaceholderView.vue'
 import NormalImportWizardView from '@/views/NormalImportWizardView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
-import TaskWizardView from '@/views/TaskWizardView.vue'
 
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -17,7 +17,7 @@ export const router = createRouter({
     { path: '/data-sources/:id', name: 'data-source-form', component: DataSourceFormView, meta: { title: '数据源管理' } },
     { path: '/exports/new', name: 'new-export', component: ExportWizardView, meta: { title: '导出任务' } },
     { path: '/imports/normal/new', name: 'new-normal-import', component: NormalImportWizardView, meta: { title: '普通导入' } },
-    { path: '/imports/direct/new', name: 'new-direct-import', component: TaskWizardView, meta: { title: '旁路导入', kind: 'direct' } },
+    { path: '/imports/direct/new', name: 'new-direct-import', component: DirectLoadWizardView, meta: { title: '旁路导入' } },
     { path: '/tasks', name: 'tasks', component: ModulePlaceholderView, meta: { title: '任务中心', description: '统一查看导出、普通导入和旁路导入任务的状态、快照、命令与日志。', sections: ['任务列表', '状态与筛选'] } },
     { path: '/tasks/:id', name: 'task-detail', component: ModulePlaceholderView, meta: { title: '任务详情', description: '在同一任务上下文中查看稳定状态、可靠阶段、不可变配置快照、脱敏命令与执行日志。', sections: ['运行概览', '配置快照', '命令与日志'] } },
     { path: '/templates', name: 'templates', component: ModulePlaceholderView, meta: { title: '模板中心', description: '复用已确认的任务配置；模板不保存凭据，也不会改写历史任务快照。', sections: ['模板列表', '兼容状态'] } },
