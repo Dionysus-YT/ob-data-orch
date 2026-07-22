@@ -36,6 +36,8 @@ internal/jdbcprobe/assets/ob-data-orch-jdbc-probe.jar
 
 第二项证明二进制输入、固定驱动加载和 JDBC 连接路径均已执行，失败发生在预期的本地拒绝连接阶段。该验证不涉及真实端点、真实凭据、ODP、数据库对象或导出文件。
 
+2026-07-22 进一步以 Go 启动适配执行同一合成负例：适配层已核验本机 Java、探针 JAR 和包内 Connector/J 的摘要，以显式环境和标准输入启动 Java，并将探针失败安全投影为受控错误。由此确认本机 Go → Java → JDBC 链路可工作；它仍不是正式 Agent、控制面或真实数据源连接验证。
+
 ## 4. 未通过项
 
 - Agent 对 JAR、Java 和包内驱动的运行时摘要核验；
