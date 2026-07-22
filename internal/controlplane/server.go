@@ -3,13 +3,18 @@ package controlplane
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/store"
 )
@@ -18,7 +23,12 @@ type Server struct {
 	build      buildinfo.Info
 	provider   identity.Provider
 	authorizer identity.Authorizer
+	roles      identity.RoleAuthorizer
 	dataSource DataSourceReader
+	creator    DataSourceCreator
+	encryptor  CredentialEncryptor
+	csrf       CSRFValidator
+	keyID      string
 }
 
 // DataSourceReader exposes only a non-sensitive data-source projection. The
@@ -28,12 +38,34 @@ type DataSourceReader interface {
 	GetDataSourceSummary(context.Context, string) (store.DataSourceSummary, error)
 }
 
+// DataSourceCreator is the transaction boundary that stores a source together
+// with its encrypted credential, audit event, and idempotency record.
+type DataSourceCreator interface {
+	CreateDataSource(context.Context, store.DataSourceCreate) (store.DataSourceCreateResult, error)
+}
+
+// CredentialEncryptor keeps raw root-key material out of the HTTP package.
+type CredentialEncryptor interface {
+	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
+}
+
+// CSRFValidator is intentionally separate from authentication because a valid
+// browser session alone must not authorize a state-changing request.
+type CSRFValidator interface {
+	ValidateCSRF(*http.Request) error
+}
+
 // Dependencies make the HTTP boundary testable without creating a runtime
 // authentication bypass. Nil production dependencies continue to fail closed.
 type Dependencies struct {
-	Identity    identity.Provider
-	Authorizer  identity.Authorizer
-	DataSources DataSourceReader
+	Identity        identity.Provider
+	Authorizer      identity.Authorizer
+	Roles           identity.RoleAuthorizer
+	DataSources     DataSourceReader
+	Creator         DataSourceCreator
+	Encryptor       CredentialEncryptor
+	CSRF            CSRFValidator
+	CredentialKeyID string
 }
 
 func NewHandler(build buildinfo.Info) http.Handler {
@@ -50,7 +82,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, dataSource: dependencies.DataSources}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -78,6 +110,10 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		s.listDataSources(w, r, principal)
 		return
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/data-sources" {
+		s.createDataSource(w, r, principal)
+		return
+	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
 		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
@@ -86,6 +122,105 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	notFound(w, r)
+}
+
+type dataSourceCreateRequest struct {
+	DisplayName       string `json:"displayName"`
+	Environment       string `json:"environment"`
+	ConnectionKind    string `json:"connectionKind"`
+	CompatibilityMode string `json:"compatibilityMode"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Username          string `json:"username"`
+	DefaultDatabase   string `json:"defaultDatabase"`
+	Password          string `json:"password"`
+}
+
+// createDataSource never renders or persists the password itself. Its
+// idempotency digest deliberately records only that a password was supplied,
+// rather than retaining a password-derived hash.
+func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.creator == nil || s.encryptor == nil || s.csrf == nil || s.roles == nil || strings.TrimSpace(s.keyID) == "" {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源创建依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if identity.HasRole(r.Context(), s.roles, principal, identity.RoleDataSourceAdmin) != nil {
+		writeError(w, http.StatusForbidden, "ROLE_REQUIRED", "当前身份不具备数据源管理能力", false)
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) < 16 || len(idempotencyKey) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	var request dataSourceCreateRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	password := []byte(request.Password)
+	request.Password = ""
+	defer credential.Zero(password)
+	if len(password) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
+		return
+	}
+	dataSourceID, credentialID, err := newOpaqueID(), newOpaqueID(), error(nil)
+	if dataSourceID == "" || credentialID == "" {
+		err = errors.New("generate identifier")
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	envelope, err := s.encryptor.Encrypt(s.keyID, credential.Reference{CredentialID: credentialID, Revision: 1, SecretType: credential.DatabasePassword, DataSourceID: dataSourceID}, password)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据安全上下文不可用", true)
+		return
+	}
+	defer credential.Zero(envelope.Nonce)
+	defer credential.Zero(envelope.Ciphertext)
+	result, err := s.creator.CreateDataSource(r.Context(), store.DataSourceCreate{
+		DataSourceID: dataSourceID, CredentialID: credentialID, CreatorSubjectID: principal.ID,
+		DisplayName: request.DisplayName, NormalizedName: normalizeName(request.DisplayName),
+		Environment: request.Environment, ConnectionKind: request.ConnectionKind, CompatibilityMode: request.CompatibilityMode,
+		Host: request.Host, Port: request.Port, Username: request.Username, DefaultDatabase: request.DefaultDatabase,
+		KeyID: envelope.KeyID, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
+		RequestID: requestID(), IdempotencyKey: idempotencyKey, RequestDigest: createRequestDigest(request), CreatedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_CREATE_REJECTED", "数据源字段不符合要求", false)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(), "id": result.DataSourceID, "replayed": result.Replayed})
+}
+
+func normalizeName(displayName string) string { return strings.ToLower(strings.TrimSpace(displayName)) }
+
+func createRequestDigest(request dataSourceCreateRequest) string {
+	// Password content is not incorporated; retaining a password hash would be
+	// a new sensitive persistence surface. Presence still distinguishes omission.
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|password=true", request.DisplayName, request.Environment, request.ConnectionKind, request.CompatibilityMode, request.Host, request.Port, request.Username, request.DefaultDatabase)
+	digest := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(digest[:])
+}
+
+func newOpaqueID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(bytes)
 }
 
 // getDataSource authorizes the requested ID before reading it, then maps both

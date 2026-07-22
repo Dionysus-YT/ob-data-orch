@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/store"
 )
@@ -39,6 +41,31 @@ func TestHealthAndReadinessExposeG1Boundary(t *testing.T) {
 				t.Fatal("health responses must not be cached")
 			}
 		})
+	}
+}
+
+func TestCreateDataSourceRequiresSafetyChecksAndPassesOnlyEncryptedCredential(t *testing.T) {
+	t.Parallel()
+	keyring, err := credential.NewKeyring(map[string][]byte{"test-key": bytes.Repeat([]byte{7}, 32)})
+	if err != nil {
+		t.Fatalf("NewKeyring() error = %v", err)
+	}
+	creator := &recordingCreator{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Roles: allowedRoleAuthorizer{}, Creator: creator,
+		Encryptor: keyring, CSRF: allowedCSRF{}, CredentialKeyID: "test-key",
+	})
+	body := []byte(`{"displayName":"Created Source","environment":"TEST","connectionKind":"OBSERVER_DIRECT","compatibilityMode":"MYSQL","host":"127.0.0.1","port":2881,"username":"synthetic-user","password":"synthetic-password"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources", bytes.NewReader(body))
+	request.Header.Set("Idempotency-Key", "synthetic-idempotency-key")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || creator.input.DataSourceID == "" || len(creator.input.Ciphertext) == 0 {
+		t.Fatalf("create response=%d input=%#v", response.Code, creator.input)
+	}
+	serialized, _ := json.Marshal(creator.input)
+	if bytes.Contains(serialized, []byte("synthetic-password")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-password")) {
+		t.Fatal("plaintext password escaped create boundary")
 	}
 }
 
@@ -176,6 +203,23 @@ func mustStaticDataSourceReader() staticDataSources {
 		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
 		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
 	}}
+}
+
+type allowedRoleAuthorizer struct{}
+
+func (allowedRoleAuthorizer) AuthorizeRole(context.Context, identity.Principal, identity.Role) error {
+	return nil
+}
+
+type allowedCSRF struct{}
+
+func (allowedCSRF) ValidateCSRF(*http.Request) error { return nil }
+
+type recordingCreator struct{ input store.DataSourceCreate }
+
+func (c *recordingCreator) CreateDataSource(_ context.Context, input store.DataSourceCreate) (store.DataSourceCreateResult, error) {
+	c.input = input
+	return store.DataSourceCreateResult{DataSourceID: input.DataSourceID}, nil
 }
 
 func TestVersion(t *testing.T) {
