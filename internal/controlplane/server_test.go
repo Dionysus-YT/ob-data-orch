@@ -129,13 +129,16 @@ func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
 		StateChanger: changer, CSRF: allowedCSRF{},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:disable", nil)
+	request.Header.Set("If-Match", `"rev-1"`)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || changer.input.TargetState != "DISABLED" || changer.input.DataSourceID != "source-allowed" {
 		t.Fatalf("disable response=%d input=%#v", response.Code, changer.input)
 	}
 	denied := httptest.NewRecorder()
-	handler.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-denied:enable", nil))
+	deniedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-denied:enable", nil)
+	deniedRequest.Header.Set("If-Match", `"rev-1"`)
+	handler.ServeHTTP(denied, deniedRequest)
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("denied status=%d, want 404", denied.Code)
 	}
@@ -143,7 +146,9 @@ func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
 		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true}, StateChanger: changer,
 	})
 	missingCSRF := httptest.NewRecorder()
-	withoutCSRF.ServeHTTP(missingCSRF, httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:disable", nil))
+	missingCSRFRequest := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:disable", nil)
+	missingCSRFRequest.Header.Set("If-Match", `"rev-1"`)
+	withoutCSRF.ServeHTTP(missingCSRF, missingCSRFRequest)
 	if missingCSRF.Code != http.StatusServiceUnavailable {
 		t.Fatalf("missing CSRF status=%d, want 503", missingCSRF.Code)
 	}

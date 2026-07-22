@@ -257,6 +257,9 @@ func (s *Store) ChangeDataSourceState(ctx context.Context, input DataSourceState
 			result.State, result.Revision, result.Replayed = currentState, currentRevision, true
 			return nil
 		}
+		if currentRevision != input.ExpectedRevision {
+			return ErrRevisionConflict
+		}
 		update, err := tx.ExecContext(ctx, `
             UPDATE data_sources
             SET state = ?, revision = revision + 1, updated_at = ?
@@ -273,8 +276,11 @@ func (s *Store) ChangeDataSourceState(ctx context.Context, input DataSourceState
 			return ErrRevisionConflict
 		}
 		action := "DATA_SOURCE_DISABLED"
-		if input.TargetState == "ENABLED" {
+		switch input.TargetState {
+		case "ENABLED":
 			action = "DATA_SOURCE_ENABLED"
+		case "ARCHIVED":
+			action = "DATA_SOURCE_ARCHIVED"
 		}
 		if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, action, "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.ChangedAt); err != nil {
 			return err
@@ -562,13 +568,12 @@ func validateDataSourceCreate(input DataSourceCreate) error {
 	return nil
 }
 
-// validateDataSourceStateChange 将状态动作限制为产品已确认的两个可逆状态。
-// 归档属于独立删除/归档流程，不能通过此入口触发。
+// validateDataSourceStateChange 将状态动作限制为已确认的启停与归档状态。
 func validateDataSourceStateChange(input DataSourceStateChange) error {
-	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.RequestID == "" || input.ChangedAt.IsZero() {
+	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.RequestID == "" || input.ChangedAt.IsZero() || input.ExpectedRevision < 1 {
 		return errors.New("data source state change identity is invalid")
 	}
-	if !oneOf(input.TargetState, "ENABLED", "DISABLED") {
+	if !oneOf(input.TargetState, "ENABLED", "DISABLED", "ARCHIVED") {
 		return errors.New("data source state change target is invalid")
 	}
 	return nil

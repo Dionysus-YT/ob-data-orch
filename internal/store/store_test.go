@@ -303,7 +303,7 @@ func TestChangeDataSourceStateIsAtomicAndIdempotent(t *testing.T) {
 	seedBaseFixture(t, store)
 	input := DataSourceStateChange{
 		DataSourceID: "source-1", ActorSubjectID: "subject-1", TargetState: "DISABLED",
-		RequestID: "request-disable-1", ChangedAt: testTime.Add(time.Minute),
+		ExpectedRevision: 1, RequestID: "request-disable-1", ChangedAt: testTime.Add(time.Minute),
 	}
 	changed, err := store.ChangeDataSourceState(context.Background(), input)
 	if err != nil || changed.State != "DISABLED" || changed.Revision != 2 || changed.Replayed {
@@ -327,6 +327,12 @@ func TestChangeDataSourceStateIsAtomicAndIdempotent(t *testing.T) {
 	missing.RequestID = "request-disable-missing"
 	if _, err := store.ChangeDataSourceState(context.Background(), missing); !errors.Is(err, ErrDataSourceNotFound) {
 		t.Fatalf("missing ChangeDataSourceState() error = %v", err)
+	}
+	stale := input
+	stale.TargetState = "ENABLED"
+	stale.RequestID = "request-enable-stale"
+	if _, err := store.ChangeDataSourceState(context.Background(), stale); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale ChangeDataSourceState() error = %v", err)
 	}
 }
 

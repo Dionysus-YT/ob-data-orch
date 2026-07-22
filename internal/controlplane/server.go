@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +126,13 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		if dataSourceID, targetState, ok := parseDataSourceStateAction(r.URL.Path); ok {
 			s.changeDataSourceState(w, r, principal, dataSourceID, targetState)
+			return
+		}
+	}
+	if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
+		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
+		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
+			s.changeDataSourceState(w, r, principal, dataSourceID, "ARCHIVED")
 			return
 		}
 	}
@@ -244,12 +252,17 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
 		return
 	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的数据版本号", false)
+		return
+	}
 	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) != nil {
 		notFound(w, r)
 		return
 	}
 	result, err := s.stateChanger.ChangeDataSourceState(r.Context(), store.DataSourceStateChange{
-		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, TargetState: targetState,
+		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, TargetState: targetState, ExpectedRevision: expectedRevision,
 		RequestID: requestID(), ChangedAt: time.Now().UTC(),
 	})
 	if errors.Is(err, store.ErrDataSourceNotFound) {
@@ -268,6 +281,19 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 		"requestId": requestID(), "id": dataSourceID, "state": result.State,
 		"revision": result.Revision, "replayed": result.Replayed,
 	})
+}
+
+// parseIfMatchRevision 只接受 API 契约规定的强版本格式，避免将弱 ETag、
+// 通配符或客户端自定义文本误当成并发控制依据。
+func parseIfMatchRevision(value string) (int64, bool) {
+	if len(value) < 7 || !strings.HasPrefix(value, `"rev-`) || !strings.HasSuffix(value, `"`) {
+		return 0, false
+	}
+	revision, err := strconv.ParseInt(value[5:len(value)-1], 10, 64)
+	if err != nil || revision < 1 {
+		return 0, false
+	}
+	return revision, true
 }
 
 func normalizeName(displayName string) string { return strings.ToLower(strings.TrimSpace(displayName)) }
