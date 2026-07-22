@@ -353,12 +353,20 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
 				input.Password.KeyID, input.Password.Nonce, input.Password.Ciphertext, utcText(input.UpdatedAt)); err != nil {
 				return fmt.Errorf("insert rotated encrypted credential: %w", err)
 			}
-			if _, err := tx.ExecContext(ctx, `
+			retired, err := tx.ExecContext(ctx, `
                 UPDATE credential_revisions
                 SET status = 'SUPERSEDED', retired_at = ?
                 WHERE credential_id = ? AND revision = ? AND status = 'ACTIVE'
-            `, utcText(input.UpdatedAt), credentialID, credentialRevision); err != nil {
+			`, utcText(input.UpdatedAt), credentialID, credentialRevision)
+			if err != nil {
 				return fmt.Errorf("retire prior credential revision: %w", err)
+			}
+			retiredCount, err := retired.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("read prior credential retirement result: %w", err)
+			}
+			if retiredCount != 1 {
+				return errors.New("current credential revision is not active")
 			}
 			newCredentialRevision = input.Password.Revision
 		}
