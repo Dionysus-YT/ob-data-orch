@@ -37,7 +37,7 @@ G1 工程基础
 | DEV-04 | 控制面最小 API 与假 Agent | 已完成合成 SQLite + 假 Agent HTTP 链路验证 | 真实认证、真实执行已开放 |
 | DEV-05 | Agent preflight 与假工具执行适配 | 已完成 G2 本地合成验证 | OBDUMPER 可运行 |
 | DEV-06 | 最小前端业务链路 | 已完成 G2 本地前端与 API 客户端验证 | 可以提交真实导出 |
-| DEV-07 | Windows 真实端到端 | 阻断于 G3 条件 | 麒麟或生产可用 |
+| DEV-07 | Windows 真实端到端 | G3 准入准备中；真实验证仍阻断 | 麒麟或生产可用 |
 | DEV-08 | 三个麒麟目标验证 | 阻断于 G4 条件 | 可以发布 |
 | DEV-09 | 生产安全、恢复、发布评审 | 未开始 | 可生产部署 |
 
@@ -122,6 +122,7 @@ DEV-04 的完成条件：首条 API 链路在合成 SQLite 与假 Agent 上可�
 - 前提：`development-readiness-closure.md` 的 WI-01～WI-12 全部满足。
 - 目标：获授权非生产 Windows 环境完成真实控制面、Agent、OBDUMPER 的单表 CSV 导出成功/失败/清理/失联证据。
 - 验收：只以正式 Agent 产物和可复核证据更新 G3 状态，手工命令不替代验收。
+- 准入准备：[G3 Windows 真实集成准入准备](g3-windows-entry-readiness.md)；当前只收集脱敏的门禁材料和补足 G2 缺口，不启动真实操作。
 
 ### DEV-08：麒麟 G4 验证
 

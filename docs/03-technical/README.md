@@ -20,6 +20,7 @@
 - [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)：定义日志来源、记录重组、双层脱敏、分段存储、游标、缺口和下载边界；LG-R01～LG-R20 已确认。
 - [API 与 SQLite 数据模型最小契约](api-sqlite-data-contract.md)：定义首条切片浏览器/Agent API、提交前远端预检查、20 张窄表、事务、迁移和备份边界；AD-R01～AD-R20 已确认，SQLite 核心仓储和 DEV-04 HTTP 适配已通过同一合成联合测试。
 - [首条切片开发准入收口](development-readiness-closure.md)：按 G0～G4 分层工程骨架、隔离组件、Windows 集成和正式平台门禁；DR-R01～DR-R18 已确认。
+- [G3 Windows 真实集成准入准备](g3-windows-entry-readiness.md)：WI-01～WI-12 的脱敏输入、责任、证据与执行顺序；未获明确授权前不连接真实环境。
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
 - [安全文件兼容性验证](evidence/secure-gen-compatibility-spike-2026-07-21.md)：平台内存生成的 PKCS#8/RSA 材料被 Windows 4.3.5 解密器与 OBDUMPER 读取、错误私钥负例、ACL 和三目标构建证据；Linux 运行与清理仍阻断。

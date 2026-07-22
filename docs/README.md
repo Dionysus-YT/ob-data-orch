@@ -71,6 +71,7 @@
 - [日志采集、双层脱敏与执行证据最小契约](03-technical/log-collection-evidence-contract.md)：日志来源、记录重组、双层脱敏、分段文件、SQLite 索引、游标、缺口与下载规则；LG-R01～LG-R20 已确认。
 - [API 与 SQLite 数据模型最小契约](03-technical/api-sqlite-data-contract.md)：首条切片浏览器/Agent API、提交前 Agent 预检查、20 张窄表、事务、迁移和备份规则；AD-R01～AD-R20 已确认。
 - [首条切片开发准入收口](03-technical/development-readiness-closure.md)：G0～G4 分层准入、P0 重新归类、Windows/麒麟门禁、外部输入和 DEV-01～DEV-09 顺序；DR-R01～DR-R18 已确认。
+- [G3 Windows 真实集成准入准备](03-technical/g3-windows-entry-readiness.md)：WI-01～WI-12 的责任、脱敏证据、执行顺序与 G3 启动判定；当前只准备门禁材料。
 - [开发准入清单](03-technical/development-entry-checklist.md)：版本控制、验证、架构、安全、API 和测试门禁状态。
 - [本地工具包证据](03-technical/evidence/tool-package-baseline.md)：本地 4.3.5 包摘要、工具版本、帮助参数集合和 Windows 启动环境风险。
 - [安全文件兼容性验证](03-technical/evidence/secure-gen-compatibility-spike-2026-07-21.md)：Windows 上的官方兼容安全材料、无密码 argv、错误私钥、ACL 和三目标构建证据，以及仍待执行的 Linux/清理门禁。
