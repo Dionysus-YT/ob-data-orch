@@ -67,8 +67,24 @@ func Test连接探针拒绝不安全运行时和请求(t *testing.T) {
 	if validRuntime(Runtime{Environment: []string{"PATH=C:\\Windows", "JAVA_TOOL_OPTIONS=-Dunsafe=true"}}) {
 		t.Fatal("注入环境被接受")
 	}
-	if _, err := parseResponse([]byte(`{"status":"FAILED","code":"CONNECTION_FAILED"}`)); !errors.Is(err, ErrProbeFailed) {
+	if _, err := parseResponse([]byte(`{"status":"FAILED","code":"CONNECTION_FAILED"}`)); !errors.Is(err, ErrConnectionFailed) {
 		t.Fatalf("失败响应错误 = %v", err)
+	}
+}
+
+func Test连接探针失败只接受固定安全状态码(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want error
+	}{
+		{body: `{"status":"FAILED","code":"DRIVER_UNAVAILABLE"}`, want: ErrDriverUnavailable},
+		{body: `{"status":"FAILED","code":"INVALID_INPUT"}`, want: ErrInvalidRequest},
+		{body: `{"status":"FAILED","code":"UNSAFE_DETAIL"}`, want: ErrProbeFailed},
+		{body: `{"status":"FAILED","code":"CONNECTION_FAILED","driverName":"leak"}`, want: ErrProbeFailed},
+	} {
+		if _, err := parseResponse([]byte(test.body)); !errors.Is(err, test.want) {
+			t.Fatalf("响应 %s 错误 = %v，期望 %v", test.body, err, test.want)
+		}
 	}
 }
 

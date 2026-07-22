@@ -29,9 +29,11 @@ const (
 )
 
 var (
-	ErrInvalidRuntime = errors.New("JDBC 探针运行时无效")
-	ErrInvalidRequest = errors.New("JDBC 探针请求无效")
-	ErrProbeFailed    = errors.New("JDBC 探针执行失败")
+	ErrInvalidRuntime    = errors.New("JDBC 探针运行时无效")
+	ErrInvalidRequest    = errors.New("JDBC 探针请求无效")
+	ErrProbeFailed       = errors.New("JDBC 探针执行失败")
+	ErrConnectionFailed  = errors.New("JDBC 数据库连接失败")
+	ErrDriverUnavailable = errors.New("JDBC 驱动不可用")
 )
 
 var (
@@ -147,11 +149,18 @@ func TestConnection(ctx context.Context, runtime Runtime, request Request) (Resu
 	group.Wait()
 	written := <-writeDone
 	waitErr := command.Wait()
-	if written != nil || outputErr != nil || waitErr != nil {
+	if written != nil || outputErr != nil {
 		zero(output)
 		return Result{}, ErrProbeFailed
 	}
 	defer zero(output)
+	if waitErr != nil {
+		_, responseErr := parseResponse(output)
+		if errors.Is(responseErr, ErrConnectionFailed) || errors.Is(responseErr, ErrDriverUnavailable) || errors.Is(responseErr, ErrInvalidRequest) {
+			return Result{}, responseErr
+		}
+		return Result{}, ErrProbeFailed
+	}
 	return parseResponse(output)
 }
 
@@ -236,7 +245,22 @@ func parseResponse(output []byte) (Result, error) {
 	if err := decoder.Decode(&response); err != nil {
 		return Result{}, ErrProbeFailed
 	}
-	if decoder.Decode(&struct{}{}) != io.EOF || response.Status != "SUCCESS" || response.Code != "" || !safeMetadata(response.ProductName) || !safeMetadata(response.ProductVersion) || !safeMetadata(response.DriverName) || !safeMetadata(response.DriverVersion) {
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return Result{}, ErrProbeFailed
+	}
+	if response.Status == "FAILED" && response.ProductName == "" && response.ProductVersion == "" && response.DriverName == "" && response.DriverVersion == "" {
+		switch response.Code {
+		case "CONNECTION_FAILED":
+			return Result{}, ErrConnectionFailed
+		case "DRIVER_UNAVAILABLE":
+			return Result{}, ErrDriverUnavailable
+		case "INVALID_INPUT":
+			return Result{}, ErrInvalidRequest
+		default:
+			return Result{}, ErrProbeFailed
+		}
+	}
+	if response.Status != "SUCCESS" || response.Code != "" || !safeMetadata(response.ProductName) || !safeMetadata(response.ProductVersion) || !safeMetadata(response.DriverName) || !safeMetadata(response.DriverVersion) {
 		return Result{}, ErrProbeFailed
 	}
 	return Result{ProductName: response.ProductName, ProductVersion: response.ProductVersion, DriverName: response.DriverName, DriverVersion: response.DriverVersion}, nil

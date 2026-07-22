@@ -70,6 +70,7 @@ P0 未完成时，G3 不得启动。P1 可以在不接触真实输入的前提�
 - 启动输入只接受可清零字节形式的真实执行脱敏值，拒绝字符串秘密上下文；策略销毁后失效，不能降级为仅按敏感键名掩码。
 - 数据源连接测试已具备固定 Java JDBC 探针与 Go 启动适配：只允许包内 `oceanbase-client-2.4.14.jar`、固定主类、显式环境、摘要核验和标准输入短时连接帧；本地合成拒绝连接已到达 JDBC 连接阶段。它不执行任意 SQL，也不生成 OBDUMPER 安全材料。
 - Agent 已提供本机运行时校验入口：管理员必须以绝对路径配置 `OB_DATA_ORCH_AGENT_JAVA_PATH`、`OB_DATA_ORCH_AGENT_TOOL_HOME`，可选配置 `OB_DATA_ORCH_AGENT_WORKSPACE_ROOT`；`ob-data-orch agent --check-runtime` 只固定发现包内 Connector/J 并计算摘要，不连接数据库、不解析凭据，也不启动 OBDUMPER。本机 Windows 已使用 Java 8 与本地 4.3.5 安装目录通过该校验。
+- Agent 本地 `DATABASE_CONNECTIVITY` 预检查适配已具备短时槽位、探针工作区、连接失败分类和清理边界；但控制面尚未实现正式槽位解析与租约 HTTP 调用，因此此适配尚不能接收真实密码或连接真实 ODP。
 - 上述内容只覆盖直接 Java 的 stdout/stderr 第一层，不覆盖工具文件跟踪、控制面第二层、Agent 身份/租约、可靠队列、恢复或真实 ODP。因此 WI-07、WI-09、WI-10 仍未通过，真实任务入口继续关闭。
 - JDBC 探针同样尚未接入正式 Agent 身份、预检查租约、槽位解析和结果持久化；因此 WI-06 仍未通过，不能对用户宣称“数据源真实连接测试已可用”。
 
