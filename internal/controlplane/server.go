@@ -704,7 +704,7 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "command": preview.RedactedCommand, "argvTemplate": preview.ArgvTemplate, "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "command": preview.RedactedCommand, "argvTemplate": redactedBrowserArgv(preview.ArgvTemplate), "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
 }
 
 // createExportPrecheck 固定当前草稿与凭据版本，之后的 Agent 只能领取该绑定。
@@ -874,6 +874,18 @@ func (s *Server) generateExportDraft(ctx context.Context, request exportDraftWri
 
 func draftResponse(draft store.ExportDraft) map[string]any {
 	return map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
+}
+
+// redactedBrowserArgv 防止浏览器命令预览泄露连接身份。
+// 受控任务冻结仍使用生成器的内部参数模板，浏览器不能据此获得可执行 argv。
+func redactedBrowserArgv(argv []string) []string {
+	copyArgv := append([]string(nil), argv...)
+	for index := 0; index+1 < len(copyArgv); index++ {
+		if copyArgv[index] == "--user" {
+			copyArgv[index+1] = "******"
+		}
+	}
+	return copyArgv
 }
 
 func exportDraftDigest(request exportDraftWriteRequest) string {

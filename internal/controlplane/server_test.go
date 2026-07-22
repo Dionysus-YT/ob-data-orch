@@ -214,7 +214,7 @@ func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	preview.Header.Set("If-Match", `"rev-1"`)
 	previewed := httptest.NewRecorder()
 	handler.ServeHTTP(previewed, preview)
-	if previewed.Code != http.StatusOK || !bytes.Contains(previewed.Body.Bytes(), []byte("******")) || bytes.Contains(previewed.Body.Bytes(), []byte("synthetic_user")) || bytes.Contains(previewed.Body.Bytes(), []byte("--password")) {
+	if previewed.Code != http.StatusOK || !bytes.Contains(previewed.Body.Bytes(), []byte("******")) || bytes.Contains(previewed.Body.Bytes(), []byte("synthetic-user")) || bytes.Contains(previewed.Body.Bytes(), []byte("--password")) {
 		t.Fatalf("unsafe preview response=%d body=%s", previewed.Code, previewed.Body.String())
 	}
 	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
