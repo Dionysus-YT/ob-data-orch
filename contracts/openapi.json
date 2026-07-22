@@ -3,7 +3,7 @@
   "info": {
     "title": "OB Data Orch first vertical slice API",
     "version": "0.1.0-dev02",
-    "description": "Structural and security-boundary contract for the direct OBServer, single-table CSV export slice. It does not make real execution available."
+    "description": "Structural and security-boundary contract for the private ODP, single-table CSV export slice. It does not make real execution available."
   },
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "x-development-gate": "G2_CONTRACT_ONLY",
@@ -227,7 +227,7 @@
         "properties": {
           "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
           "environment": { "type": "string", "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"] },
-          "connectionKind": { "type": "string", "enum": ["OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE"] },
+          "connectionKind": { "type": "string", "enum": ["ODP"] },
           "host": { "type": "string", "minLength": 1, "maxLength": 255 },
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
           "username": { "type": "string", "minLength": 1, "maxLength": 512 },
@@ -249,7 +249,7 @@
           "filePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
           "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }
         },
-        "description": "Only direct OBServer, one explicit table, CSV and one node-local absolute output path belong to this slice."
+        "description": "Only private ODP, one explicit table, CSV and one node-local absolute output path belong to this slice."
       },
       "GatedCsvOptions": {
         "type": "object",

@@ -1,0 +1,16 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v3",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "capabilityVersion": "export-odp-single-table-csv-v1",
+  "revisionReason": "DEC-045 restricts the current first vertical slice to private ODP and preserves the existing password security override.",
+  "overrides": [
+    {
+      "definitionId": "obdumper.connection.password",
+      "emissionTarget": "SECURITY_FILE",
+      "securityProperty": "oceanbase.jdbc.password",
+      "appendEvidence": ["CS-R12", "TL-R08", "SG-P02"]
+    }
+  ]
+}

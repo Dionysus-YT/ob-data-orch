@@ -124,12 +124,12 @@ func insertSyntheticTaskFixture(t *testing.T, db *sql.DB) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "external-1", "Synthetic User", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'OBSERVER_DIRECT', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO execution_nodes VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
-		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '[]', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v1", "export-direct-single-table-csv-v1", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '[]', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO precheck_runs VALUES (?, ?, 1, ?, ?, ?, 1, ?, NULL, 'SUCCEEDED', NULL, NULL, NULL, '{}', 'COMPLETE', ?, ?, ?)`, []any{"precheck-1", "draft-1", fingerprint, "source-1", "credential-1", "node-1", "2026-01-01T01:00:00Z", "2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z"}},
-		{`INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, '{}', '[]', ?, ?)`, []any{"task-1", "subject-1", "source-1", "node-1", "precheck-1", "credential-1", fingerprint, "4.3.5-RELEASE", "obdumper-4.3.5-slice-v2", "export-direct-single-table-csv-v1", "obdumper --user ******", "2026-01-01T00:02:00Z"}},
+		{`INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, '{}', '[]', ?, ?)`, []any{"task-1", "subject-1", "source-1", "node-1", "precheck-1", "credential-1", fingerprint, "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", "obdumper --user ******", "2026-01-01T00:02:00Z"}},
 	}
 	for index, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement.query, statement.args...); err != nil {

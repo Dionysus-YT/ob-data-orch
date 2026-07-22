@@ -132,7 +132,7 @@ func TestGenerateFailsClosedOnRequestAndFieldErrors(t *testing.T) {
 		field string
 	}{
 		{name: "metadata version", edit: func(r *Request) { r.MetadataVersion = "other" }, code: "METADATA_VERSION_MISMATCH", field: "metadataVersion"},
-		{name: "ODP connection", edit: func(r *Request) { r.ConnectionKind = ConnectionODP }, code: "CONNECTION_KIND_NOT_IN_SLICE", field: "connectionKind"},
+		{name: "non ODP connection", edit: func(r *Request) { r.ConnectionKind = ConnectionObserverDirect }, code: "CONNECTION_KIND_NOT_IN_SLICE", field: "connectionKind"},
 		{name: "unknown parameter", edit: func(r *Request) { r.Fields = append(r.Fields, stringField("--unknown", SourceUser, "x")) }, code: "UNKNOWN_PARAMETER", field: "--unknown"},
 		{name: "duplicate parameter", edit: func(r *Request) { r.Fields = append(r.Fields, stringField("--database", SourceUser, "other")) }, code: "DUPLICATE_PARAMETER", field: "--database"},
 		{name: "missing required", edit: func(r *Request) { removeField(r, "--table") }, code: "REQUIRED_PARAMETER_MISSING", field: "--table"},
@@ -291,9 +291,9 @@ func validRequest(platform Platform) Request {
 	return Request{
 		Tool:                  "OBDUMPER",
 		ToolVersion:           "4.3.5-RELEASE",
-		MetadataVersion:       "obdumper-4.3.5-slice-v2",
-		CapabilityVersion:     "export-direct-single-table-csv-v1",
-		ConnectionKind:        ConnectionObserverDirect,
+		MetadataVersion:       "obdumper-4.3.5-slice-v3",
+		CapabilityVersion:     "export-odp-single-table-csv-v1",
+		ConnectionKind:        ConnectionODP,
 		DataSourceFactVersion: "ds-rev-1",
 		NodeFactVersion:       "node-facts-1",
 		TargetPlatform:        platform,

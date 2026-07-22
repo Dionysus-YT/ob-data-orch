@@ -236,7 +236,7 @@ func (g *Generator) validateRequestIdentity(request Request) []Issue {
 	if request.CapabilityVersion != g.capabilityVersion {
 		issues = append(issues, Issue{Code: "CAPABILITY_VERSION_MISMATCH", Field: "capabilityVersion"})
 	}
-	if request.ConnectionKind != ConnectionObserverDirect {
+	if request.ConnectionKind != ConnectionODP {
 		issues = append(issues, Issue{Code: "CONNECTION_KIND_NOT_IN_SLICE", Field: "connectionKind"})
 	}
 	if request.DataSourceFactVersion == "" {

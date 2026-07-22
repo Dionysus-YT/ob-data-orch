@@ -957,7 +957,7 @@ func validateDataSourceCreate(input DataSourceCreate) error {
 	if !isSHA256(input.RequestDigest) || len(input.Nonce) == 0 || len(input.Ciphertext) == 0 {
 		return errors.New("data source create security material is invalid")
 	}
-	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || !oneOf(input.ConnectionKind, "OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE") || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
+	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
 		return errors.New("data source create enum is invalid")
 	}
 	return nil
@@ -979,7 +979,7 @@ func validateDataSourceUpdate(input DataSourceUpdate) error {
 	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.Username == "" || input.RequestID == "" || input.UpdatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
 		return errors.New("data source update identity is invalid")
 	}
-	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || !oneOf(input.ConnectionKind, "OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE") || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
+	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
 		return errors.New("data source update enum is invalid")
 	}
 	if input.Password != nil && (input.Password.CredentialID == "" || input.Password.Revision < 2 || input.Password.KeyID == "" || len(input.Password.Nonce) == 0 || len(input.Password.Ciphertext) == 0) {

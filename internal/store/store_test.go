@@ -291,7 +291,7 @@ func TestListDataSourceSummariesExcludesCredentialMaterial(t *testing.T) {
 	seedBaseFixture(t, store)
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `
-        INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'OBSERVER_DIRECT', 'MYSQL', ?, 2882, ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?)
+        INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2882, ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?)
     `, "source-archived", "Archived", "archived", "127.0.0.2", "synthetic_user", "synthetic_db", "credential-archived", "subject-1", utcText(testTime), utcText(testTime)); err != nil {
 		t.Fatalf("seed archived data source: %v", err)
 	}
@@ -327,10 +327,16 @@ func TestCreateDataSourceAtomicallyPersistsEncryptedCredentialAuditAndIdempotenc
 	input := DataSourceCreate{
 		DataSourceID: "source-create", CredentialID: "credential-create", CreatorSubjectID: "subject-1",
 		DisplayName: "Created Source", NormalizedName: "created-source", Environment: "TEST",
-		ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.3", Port: 2881,
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.3", Port: 2881,
 		Username: "synthetic-user", DefaultDatabase: "synthetic_db", KeyID: "key-create",
 		Nonce: []byte{1, 2, 3}, Ciphertext: []byte{4, 5, 6}, RequestID: "request-create-1",
 		IdempotencyKey: "idempotency-create-1", RequestDigest: testFingerprint, CreatedAt: testTime,
+	}
+	nonODP := input
+	nonODP.DataSourceID, nonODP.CredentialID = "source-non-odp", "credential-non-odp"
+	nonODP.ConnectionKind, nonODP.RequestID, nonODP.IdempotencyKey = "OBSERVER_DIRECT", "request-non-odp", "idempotency-non-odp"
+	if _, err := store.CreateDataSource(context.Background(), nonODP); err == nil {
+		t.Fatal("CreateDataSource() must reject a non-ODP connection kind")
 	}
 	created, err := store.CreateDataSource(context.Background(), input)
 	if err != nil || created.DataSourceID != input.DataSourceID || created.Replayed {
@@ -395,7 +401,7 @@ func TestUpdateDataSourceAtomicallyRotatesOptionalCredential(t *testing.T) {
 	base := DataSourceUpdate{
 		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
 		DisplayName: "Updated Source", NormalizedName: "updated source", Environment: "TEST",
-		ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.8", Port: 2882,
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.8", Port: 2882,
 		Username: "updated_user", DefaultDatabase: "updated_db", RequestID: "request-update-1", UpdatedAt: testTime.Add(time.Minute),
 	}
 	updated, err := store.UpdateDataSource(context.Background(), base)
@@ -431,7 +437,7 @@ func TestCreateExportDraftBindsEnabledSourceAndNodeWithIdempotency(t *testing.T)
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)
 	input := ExportDraftCreate{
-		ExportDraft: ExportDraft{DraftID: "draft-create", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v2", CapabilityVersion: "export-direct-single-table-csv-v1", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
+		ExportDraft: ExportDraft{DraftID: "draft-create", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v3", CapabilityVersion: "export-odp-single-table-csv-v1", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
 		RequestID:   "request-draft-create-1", IdempotencyKey: "idempotency-draft-create-1", RequestDigest: testFingerprint,
 	}
 	created, err := store.CreateExportDraft(context.Background(), input)
@@ -493,11 +499,11 @@ func seedBaseFixture(t *testing.T, store *Store) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "external-1", "Synthetic User", utcText(testTime), utcText(testTime)}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'OBSERVER_DIRECT', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user@synthetic_tenant", "synthetic_db", "credential-1", "subject-1", utcText(testTime), utcText(testTime)}},
+		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user@synthetic_tenant", "synthetic_db", "credential-1", "subject-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, utcText(testTime)}},
 		{`INSERT INTO execution_nodes VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO agents VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, '{}', ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "agent-v1", "boot-1", utcText(testTime), utcText(testTime)}},
-		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '{}', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v2", "export-direct-single-table-csv-v1", testFingerprint, utcText(testTime), utcText(testTime)}},
+		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '{}', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", testFingerprint, utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO precheck_runs VALUES (?, ?, 1, ?, ?, ?, 1, ?, ?, 'SUCCEEDED', NULL, NULL, NULL, '{}', 'COMPLETE', ?, ?, ?)`, []any{"precheck-1", "draft-1", testFingerprint, "source-1", "credential-1", "node-1", "agent-1", utcText(testTime.Add(10 * time.Minute)), utcText(testTime), utcText(testTime)}},
 	}
 	for index, statement := range statements {
@@ -519,8 +525,8 @@ func validTaskSubmission(taskID string) TaskSubmission {
 		CredentialRevision:     1,
 		ConfigFingerprint:      testFingerprint,
 		ToolVersion:            "4.3.5-RELEASE",
-		MetadataVersion:        "obdumper-4.3.5-slice-v2",
-		CapabilityVersion:      "export-direct-single-table-csv-v1",
+		MetadataVersion:        "obdumper-4.3.5-slice-v3",
+		CapabilityVersion:      "export-odp-single-table-csv-v1",
 		SnapshotJSON:           `{"credentialReference":{"credentialId":"credential-1","revision":1}}`,
 		PlannedArgvJSON:        `["--host","127.0.0.1","--port","2881","--user","synthetic_user@synthetic_tenant","--database","synthetic_db","--table","synthetic_table","--csv","--file-path","E:\\tmp\\output"]`,
 		PlannedCommandRedacted: `obdumper --host 127.0.0.1 --port 2881 --user ****** --database synthetic_db --table synthetic_table --csv --file-path E:\tmp\output`,

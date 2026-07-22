@@ -13,11 +13,14 @@ func TestLoadDefaultCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDefault(): %v", err)
 	}
-	if catalog.ToolVersion() != "4.3.5-RELEASE" || catalog.MetadataVersion() != "obdumper-4.3.5-slice-v2" {
+	if catalog.ToolVersion() != "4.3.5-RELEASE" || catalog.MetadataVersion() != "obdumper-4.3.5-slice-v3" {
 		t.Fatalf("unexpected catalog identity: %s / %s", catalog.ToolVersion(), catalog.MetadataVersion())
 	}
 	if catalog.BaseVersion() != "obdumper-4.3.5-slice-v1" || catalog.RevisionReason() == "" {
 		t.Fatalf("missing compatibility revision trace: %s / %s", catalog.BaseVersion(), catalog.RevisionReason())
+	}
+	if catalog.CapabilityVersion() != "export-odp-single-table-csv-v1" {
+		t.Fatalf("unexpected capability version: %s", catalog.CapabilityVersion())
 	}
 	definitions := catalog.Definitions()
 	if len(definitions) != 16 {

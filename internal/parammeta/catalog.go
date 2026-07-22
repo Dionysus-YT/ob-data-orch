@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	defaultRevisionResource = "resources/obdumper-4.3.5-slice-v2.json"
-	currentMetadataVersion  = "obdumper-4.3.5-slice-v2"
+	defaultRevisionResource = "resources/obdumper-4.3.5-slice-v3.json"
+	currentMetadataVersion  = "obdumper-4.3.5-slice-v3"
 )
 
 //go:embed resources/*.json
@@ -60,12 +60,13 @@ type resource struct {
 }
 
 type revisionManifest struct {
-	MetadataVersion string               `json:"metadataVersion"`
-	BaseVersion     string               `json:"baseVersion"`
-	BaseResource    string               `json:"baseResource"`
-	BaseSHA256      string               `json:"baseSha256"`
-	RevisionReason  string               `json:"revisionReason"`
-	Overrides       []definitionOverride `json:"overrides"`
+	MetadataVersion   string               `json:"metadataVersion"`
+	BaseVersion       string               `json:"baseVersion"`
+	BaseResource      string               `json:"baseResource"`
+	BaseSHA256        string               `json:"baseSha256"`
+	CapabilityVersion string               `json:"capabilityVersion,omitempty"`
+	RevisionReason    string               `json:"revisionReason"`
+	Overrides         []definitionOverride `json:"overrides"`
 }
 
 type definitionOverride struct {
@@ -122,6 +123,9 @@ func loadFromFS(files fs.FS, revisionResource string) (*Catalog, error) {
 		return nil, err
 	}
 	raw.MetadataVersion = manifest.MetadataVersion
+	if manifest.CapabilityVersion != "" {
+		raw.CapabilityVersion = manifest.CapabilityVersion
+	}
 	return buildCatalog(raw, manifest.BaseVersion, manifest.RevisionReason)
 }
 
@@ -241,7 +245,7 @@ func validateResource(raw resource) error {
 	if raw.MetadataVersion != currentMetadataVersion || raw.Tool != "OBDUMPER" || raw.ToolVersion != "4.3.5-RELEASE" {
 		return errors.New("parameter metadata identity does not match the confirmed slice")
 	}
-	if raw.CapabilityVersion != "export-direct-single-table-csv-v1" {
+	if raw.CapabilityVersion != "export-odp-single-table-csv-v1" {
 		return errors.New("parameter metadata capability version is unsupported")
 	}
 	if len(raw.SourceDocuments) == 0 {

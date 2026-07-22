@@ -19,7 +19,7 @@
 | 初始可回退基线 | 已完成 | 根提交 `be05876` 已固化产品与技术设计起点 | 否 |
 | 首条切片范围 | 已完成 | [首条纵向切片](first-vertical-slice.md) | 否 |
 | 开发准入收口 | 已确认 | [首条切片开发准入收口](development-readiness-closure.md)的 DR-R01～DR-R18 已确认；开放 G1/G2，WI-01～WI-12 继续阻断 G3，G4 继续阻断发布 | 是 |
-| 首条切片 P0 | 已执行，存在阻断 | VS-P0-04/12 已通过；疑似 ODP、序列化特殊值、权限负例、凭据和未实现 Agent 仍阻断，见[P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md) | 是 |
+| 首条切片 P0 | 已执行，存在阻断 | VS-P0-04/12 已通过；私有 ODP 的 G3 授权、序列化特殊值、权限负例、凭据和未实现 Agent 仍阻断，见[P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md) | 是 |
 | 技术架构 | 已完成 | TD-001～TD-008 已确认，见[技术架构首版](architecture.md) | 否 |
 | 技术栈与部署 | 已确认 | TS-R01～TS-R14 已确认；SQLite 三架构构建和 Windows 运行通过，三个麒麟目标运行待测，见[技术路线基线](technology-stack.md)和[SQLite 验证证据](evidence/sqlite-cross-platform-spike-2026-07-21.md) | 否 |
 | 参数元数据与命令生成设计 | 生成器子集已通过 | [参数元数据与确定性命令生成契约](parameter-command-contract.md)的 PC-R01～PC-R15 已确认；参数元数据 `v2` 与纯核心生成器已通过合成契约测试，Agent 信封、预检查及 VS-P0-09 全链路仍待后续组件 | 是 |

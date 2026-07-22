@@ -7,6 +7,8 @@
 > 文档位置：`docs/01-product/PRD.md`  
 > 关联文档：[产品范围](product-scope.md)｜[关键决策](decisions.md)｜[文档中心](../README.md)
 
+> 现行范围注记（2026-07-22）：当前工程切片只使用私有 ODP 连接；本文中任何“直连 OBServer 或 ODP”的历史表述不再作为当前实现选项。云 ODP、ODP Sharding 和未确认的集群参数映射不自动纳入。原始需求保留，现行决策见[关键产品决策](decisions.md#dec-045-当前连接范围仅使用私有-odp)。
+
 ---
 
 ## 0. 文档说明
