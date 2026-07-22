@@ -154,6 +154,31 @@ func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
 	}
 }
 
+func TestUpdateDataSourceEncryptsPasswordAndKeepsItOutOfResponses(t *testing.T) {
+	t.Parallel()
+	keyring, err := credential.NewKeyring(map[string][]byte{"test-key": bytes.Repeat([]byte{9}, 32)})
+	if err != nil {
+		t.Fatalf("NewKeyring() error = %v", err)
+	}
+	updater := &recordingUpdater{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		DataSources: staticDataSourceReader{}, Updater: updater, CredentialRefs: staticCredentialReferenceReader{},
+		Encryptor: keyring, CSRF: allowedCSRF{}, CredentialKeyID: "test-key",
+	})
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/data-sources/source-allowed", bytes.NewBufferString(`{"displayName":"Updated","password":"synthetic-rotated-password"}`))
+	request.Header.Set("If-Match", `"rev-1"`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || updater.input.DisplayName != "Updated" || updater.input.Password == nil || len(updater.input.Password.Ciphertext) == 0 {
+		t.Fatalf("update response=%d input=%#v", response.Code, updater.input)
+	}
+	serialized, _ := json.Marshal(updater.input)
+	if bytes.Contains(serialized, []byte("synthetic-rotated-password")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-rotated-password")) {
+		t.Fatal("plaintext password escaped update boundary")
+	}
+}
+
 func TestInjectedIdentityIsDomainSeparatedAndDoesNotCreateAPIAccess(t *testing.T) {
 	t.Parallel()
 	provider := staticIdentityProvider{}
@@ -263,6 +288,23 @@ type recordingStateChanger struct{ input store.DataSourceStateChange }
 func (c *recordingStateChanger) ChangeDataSourceState(_ context.Context, input store.DataSourceStateChange) (store.DataSourceStateChangeResult, error) {
 	c.input = input
 	return store.DataSourceStateChangeResult{State: input.TargetState, Revision: 2}, nil
+}
+
+type staticCredentialReferenceReader struct{}
+
+func (staticCredentialReferenceReader) GetDataSourceCredentialReference(context.Context, string) (store.DataSourceCredentialReference, error) {
+	return store.DataSourceCredentialReference{CredentialID: "11111111-1111-4111-8111-111111111111", Revision: 1}, nil
+}
+
+type recordingUpdater struct{ input store.DataSourceUpdate }
+
+func (u *recordingUpdater) UpdateDataSource(_ context.Context, input store.DataSourceUpdate) (store.DataSourceUpdateResult, error) {
+	u.input = input
+	credentialRevision := int64(2)
+	if input.Password == nil {
+		credentialRevision = 1
+	}
+	return store.DataSourceUpdateResult{Revision: input.ExpectedRevision + 1, CredentialRevision: credentialRevision}, nil
 }
 
 func TestVersion(t *testing.T) {

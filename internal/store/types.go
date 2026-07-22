@@ -141,3 +141,45 @@ type DataSourceStateChangeResult struct {
 	Revision int64
 	Replayed bool
 }
+
+// DataSourceCredentialReference 仅供受控写路径取得加密所需的版本引用。
+// 它不是 API 响应模型，调用方不得将其序列化给浏览器。
+type DataSourceCredentialReference struct {
+	CredentialID string
+	Revision     int64
+}
+
+// EncryptedDataSourcePassword 是一次密码轮换已完成的加密结果。
+// 该类型刻意不能表达密码明文，避免仓储层成为明文秘密入口。
+type EncryptedDataSourcePassword struct {
+	CredentialID string
+	Revision     int64
+	KeyID        string
+	Nonce        []byte
+	Ciphertext   []byte
+}
+
+// DataSourceUpdate 是已合并字段与可选加密密码轮换的一次原子更新。
+type DataSourceUpdate struct {
+	DataSourceID      string
+	ActorSubjectID    string
+	ExpectedRevision  int64
+	DisplayName       string
+	NormalizedName    string
+	Environment       string
+	ConnectionKind    string
+	CompatibilityMode string
+	Host              string
+	Port              int
+	Username          string
+	DefaultDatabase   string
+	Password          *EncryptedDataSourcePassword
+	RequestID         string
+	UpdatedAt         time.Time
+}
+
+// DataSourceUpdateResult 只返回浏览器可安全得知的版本变化。
+type DataSourceUpdateResult struct {
+	Revision           int64
+	CredentialRevision int64
+}

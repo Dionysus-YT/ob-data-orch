@@ -336,6 +336,44 @@ func TestChangeDataSourceStateIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestUpdateDataSourceAtomicallyRotatesOptionalCredential(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	base := DataSourceUpdate{
+		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		DisplayName: "Updated Source", NormalizedName: "updated source", Environment: "TEST",
+		ConnectionKind: "OBSERVER_DIRECT", CompatibilityMode: "MYSQL", Host: "127.0.0.8", Port: 2882,
+		Username: "updated_user", DefaultDatabase: "updated_db", RequestID: "request-update-1", UpdatedAt: testTime.Add(time.Minute),
+	}
+	updated, err := store.UpdateDataSource(context.Background(), base)
+	if err != nil || updated.Revision != 2 || updated.CredentialRevision != 1 {
+		t.Fatalf("UpdateDataSource() = %#v, %v", updated, err)
+	}
+	rotation := base
+	rotation.ExpectedRevision = 2
+	rotation.RequestID = "request-rotate-1"
+	rotation.UpdatedAt = testTime.Add(2 * time.Minute)
+	rotation.Password = &EncryptedDataSourcePassword{CredentialID: "credential-1", Revision: 2, KeyID: "key-2", Nonce: []byte{7, 8, 9}, Ciphertext: []byte{10, 11, 12}}
+	rotated, err := store.UpdateDataSource(context.Background(), rotation)
+	if err != nil || rotated.Revision != 3 || rotated.CredentialRevision != 2 {
+		t.Fatalf("rotated UpdateDataSource() = %#v, %v", rotated, err)
+	}
+	var state string
+	if err := store.db.QueryRow("SELECT status FROM credential_revisions WHERE credential_id = 'credential-1' AND revision = 1").Scan(&state); err != nil {
+		t.Fatalf("read retired credential: %v", err)
+	}
+	if state != "SUPERSEDED" {
+		t.Fatalf("prior credential status=%q, want SUPERSEDED", state)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM credential_revisions WHERE credential_id = 'credential-1'", 2)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'DATA_SOURCE_UPDATED'", 2)
+	stale := base
+	stale.RequestID = "request-update-stale"
+	if _, err := store.UpdateDataSource(context.Background(), stale); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale UpdateDataSource() error = %v", err)
+	}
+}
+
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "metadata.db")

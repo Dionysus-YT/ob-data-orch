@@ -28,6 +28,8 @@ type Server struct {
 	dataSource   DataSourceReader
 	creator      DataSourceCreator
 	stateChanger DataSourceStateChanger
+	updater      DataSourceUpdater
+	credentials  DataSourceCredentialReferenceReader
 	encryptor    CredentialEncryptor
 	csrf         CSRFValidator
 	keyID        string
@@ -52,6 +54,17 @@ type DataSourceStateChanger interface {
 	ChangeDataSourceState(context.Context, store.DataSourceStateChange) (store.DataSourceStateChangeResult, error)
 }
 
+// DataSourceUpdater 提供包含审计与可选凭据轮换的原子更新边界。
+type DataSourceUpdater interface {
+	UpdateDataSource(context.Context, store.DataSourceUpdate) (store.DataSourceUpdateResult, error)
+}
+
+// DataSourceCredentialReferenceReader 只向已授权写路径提供当前引用。
+// 返回值不得进入响应、日志或错误信息。
+type DataSourceCredentialReferenceReader interface {
+	GetDataSourceCredentialReference(context.Context, string) (store.DataSourceCredentialReference, error)
+}
+
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
@@ -72,6 +85,8 @@ type Dependencies struct {
 	DataSources     DataSourceReader
 	Creator         DataSourceCreator
 	StateChanger    DataSourceStateChanger
+	Updater         DataSourceUpdater
+	CredentialRefs  DataSourceCredentialReferenceReader
 	Encryptor       CredentialEncryptor
 	CSRF            CSRFValidator
 	CredentialKeyID string
@@ -91,7 +106,7 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -136,6 +151,13 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
+		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
+		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
+			s.updateDataSource(w, r, principal, dataSourceID)
+			return
+		}
+	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
 		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
@@ -170,6 +192,20 @@ type dataSourceCreateRequest struct {
 	Username          string `json:"username"`
 	DefaultDatabase   string `json:"defaultDatabase"`
 	Password          string `json:"password"`
+}
+
+// dataSourceUpdateRequest 使用指针与 RawMessage 保留 PATCH 的字段存在语义。
+// 密码仅用于本次加密，不能被写回请求结构或安全响应。
+type dataSourceUpdateRequest struct {
+	DisplayName       *string         `json:"displayName"`
+	Environment       *string         `json:"environment"`
+	ConnectionKind    *string         `json:"connectionKind"`
+	CompatibilityMode *string         `json:"compatibilityMode"`
+	Host              *string         `json:"host"`
+	Port              *int            `json:"port"`
+	Username          *string         `json:"username"`
+	DefaultDatabase   json.RawMessage `json:"defaultDatabase"`
+	Password          *string         `json:"password"`
 }
 
 // createDataSource never renders or persists the password itself. Its
@@ -239,6 +275,148 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(), "id": result.DataSourceID, "replayed": result.Replayed})
+}
+
+// updateDataSource 先完成对象授权与当前安全摘要读取，再合并 PATCH 字段。
+// 密码轮换产生新的加密 revision；缺失密码严格表示保持现有凭据不变。
+func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
+	if s.dataSource == nil || s.updater == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源更新依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的数据版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	current, err := s.dataSource.GetDataSourceSummary(r.Context(), dataSourceID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_QUERY_UNAVAILABLE", "数据源暂时不可用", true)
+		return
+	}
+	var request dataSourceUpdateRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	if !request.hasChanges() {
+		writeError(w, http.StatusUnprocessableEntity, "UPDATE_EMPTY", "至少需要更新一个数据源字段", false)
+		return
+	}
+	merged, err := request.merge(current)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_UPDATE_REJECTED", "数据源字段不符合要求", false)
+		return
+	}
+	update := store.DataSourceUpdate{
+		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		DisplayName: merged.DisplayName, NormalizedName: normalizeName(merged.DisplayName), Environment: merged.Environment,
+		ConnectionKind: merged.ConnectionKind, CompatibilityMode: merged.CompatibilityMode, Host: merged.Host,
+		Port: merged.Port, Username: merged.Username, DefaultDatabase: merged.DefaultDatabase,
+		RequestID: requestID(), UpdatedAt: time.Now().UTC(),
+	}
+	if request.Password != nil {
+		if s.credentials == nil || s.encryptor == nil || strings.TrimSpace(s.keyID) == "" {
+			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_UPDATE_NOT_CONFIGURED", "当前环境尚未配置凭据轮换依赖", false)
+			return
+		}
+		password := []byte(*request.Password)
+		*request.Password = ""
+		defer credential.Zero(password)
+		if len(password) == 0 {
+			writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
+			return
+		}
+		reference, refErr := s.credentials.GetDataSourceCredentialReference(r.Context(), dataSourceID)
+		if errors.Is(refErr, store.ErrDataSourceNotFound) {
+			notFound(w, r)
+			return
+		}
+		if refErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_REFERENCE_UNAVAILABLE", "凭据引用暂时不可用", true)
+			return
+		}
+		envelope, encryptErr := s.encryptor.Encrypt(s.keyID, credential.Reference{CredentialID: reference.CredentialID, Revision: reference.Revision + 1, SecretType: credential.DatabasePassword, DataSourceID: dataSourceID}, password)
+		if encryptErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据安全上下文不可用", true)
+			return
+		}
+		defer credential.Zero(envelope.Nonce)
+		defer credential.Zero(envelope.Ciphertext)
+		update.Password = &store.EncryptedDataSourcePassword{CredentialID: envelope.Reference.CredentialID, Revision: envelope.Reference.Revision, KeyID: envelope.KeyID, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext}
+	}
+	result, err := s.updater.UpdateDataSource(r.Context(), update)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "DATA_SOURCE_REVISION_CONFLICT", "数据源已发生变化，请刷新后重试", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_UPDATE_REJECTED", "数据源字段不符合要求", false)
+		return
+	}
+	current.DisplayName, current.Environment, current.ConnectionKind, current.CompatibilityMode = merged.DisplayName, merged.Environment, merged.ConnectionKind, merged.CompatibilityMode
+	current.Host, current.Port, current.Username, current.DefaultDatabase = merged.Host, merged.Port, merged.Username, merged.DefaultDatabase
+	current.Revision, current.CredentialRevision = result.Revision, result.CredentialRevision
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": newDataSourceResponse(current)})
+}
+
+func (r dataSourceUpdateRequest) hasChanges() bool {
+	return r.DisplayName != nil || r.Environment != nil || r.ConnectionKind != nil || r.CompatibilityMode != nil || r.Host != nil || r.Port != nil || r.Username != nil || r.DefaultDatabase != nil || r.Password != nil
+}
+
+func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.DataSourceSummary, error) {
+	merged := current
+	if r.DisplayName != nil {
+		merged.DisplayName = *r.DisplayName
+	}
+	if r.Environment != nil {
+		merged.Environment = *r.Environment
+	}
+	if r.ConnectionKind != nil {
+		merged.ConnectionKind = *r.ConnectionKind
+	}
+	if r.CompatibilityMode != nil {
+		merged.CompatibilityMode = *r.CompatibilityMode
+	}
+	if r.Host != nil {
+		merged.Host = *r.Host
+	}
+	if r.Port != nil {
+		merged.Port = *r.Port
+	}
+	if r.Username != nil {
+		merged.Username = *r.Username
+	}
+	if r.DefaultDatabase != nil {
+		var value *string
+		if err := json.Unmarshal(r.DefaultDatabase, &value); err != nil {
+			return store.DataSourceSummary{}, err
+		}
+		if value == nil {
+			merged.DefaultDatabase = ""
+		} else {
+			merged.DefaultDatabase = *value
+		}
+	}
+	return merged, nil
 }
 
 // changeDataSourceState 执行幂等的启停动作。对象授权先于存储读取，

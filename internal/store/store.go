@@ -291,6 +291,97 @@ func (s *Store) ChangeDataSourceState(ctx context.Context, input DataSourceState
 	return result, err
 }
 
+// GetDataSourceCredentialReference 只为已授权的写路径提供当前凭据引用。
+// 返回值不包含密文、nonce 或任何可恢复的秘密材料。
+func (s *Store) GetDataSourceCredentialReference(ctx context.Context, dataSourceID string) (DataSourceCredentialReference, error) {
+	if s == nil || s.db == nil {
+		return DataSourceCredentialReference{}, errors.New("SQLite store is nil")
+	}
+	var reference DataSourceCredentialReference
+	err := s.db.QueryRowContext(ctx, `
+        SELECT credential_id, current_credential_revision
+        FROM data_sources
+        WHERE data_source_id = ? AND state != 'ARCHIVED'
+    `, dataSourceID).Scan(&reference.CredentialID, &reference.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DataSourceCredentialReference{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return DataSourceCredentialReference{}, fmt.Errorf("read data source credential reference: %w", err)
+	}
+	return reference, nil
+}
+
+// UpdateDataSource 同时更新连接字段、可选凭据 revision 与审计事实。
+// 密码轮换与普通字段更新共用 revision 条件，不能形成部分成功的连接配置。
+func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (DataSourceUpdateResult, error) {
+	if err := validateDataSourceUpdate(input); err != nil {
+		return DataSourceUpdateResult{}, err
+	}
+	result := DataSourceUpdateResult{}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var credentialID string
+		var credentialRevision int64
+		err := tx.QueryRowContext(ctx, `
+            SELECT credential_id, current_credential_revision
+            FROM data_sources
+            WHERE data_source_id = ? AND state != 'ARCHIVED' AND revision = ?
+        `, input.DataSourceID, input.ExpectedRevision).Scan(&credentialID, &credentialRevision)
+		if errors.Is(err, sql.ErrNoRows) {
+			var exists int
+			if checkErr := tx.QueryRowContext(ctx, `SELECT 1 FROM data_sources WHERE data_source_id = ? AND state != 'ARCHIVED'`, input.DataSourceID).Scan(&exists); errors.Is(checkErr, sql.ErrNoRows) {
+				return ErrDataSourceNotFound
+			} else if checkErr != nil {
+				return fmt.Errorf("check data source update target: %w", checkErr)
+			}
+			return ErrRevisionConflict
+		}
+		if err != nil {
+			return fmt.Errorf("read data source update target: %w", err)
+		}
+		newCredentialRevision := credentialRevision
+		if input.Password != nil {
+			if input.Password.CredentialID != credentialID || input.Password.Revision != credentialRevision+1 {
+				return errors.New("data source password revision does not match current credential")
+			}
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO credential_revisions(
+                    credential_id, revision, data_source_id, secret_type, key_id, nonce,
+                    ciphertext, aad_json, status, created_at, retired_at
+                ) VALUES (?, ?, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
+            `, input.Password.CredentialID, input.Password.Revision, input.DataSourceID,
+				input.Password.KeyID, input.Password.Nonce, input.Password.Ciphertext, utcText(input.UpdatedAt)); err != nil {
+				return fmt.Errorf("insert rotated encrypted credential: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+                UPDATE credential_revisions
+                SET status = 'SUPERSEDED', retired_at = ?
+                WHERE credential_id = ? AND revision = ? AND status = 'ACTIVE'
+            `, utcText(input.UpdatedAt), credentialID, credentialRevision); err != nil {
+				return fmt.Errorf("retire prior credential revision: %w", err)
+			}
+			newCredentialRevision = input.Password.Revision
+		}
+		if _, err := tx.ExecContext(ctx, `
+            UPDATE data_sources
+            SET display_name = ?, normalized_name = ?, environment = ?, connection_kind = ?,
+                compatibility_mode = ?, host = ?, port = ?, username = ?, default_database = ?,
+                current_credential_revision = ?, revision = revision + 1, updated_at = ?
+            WHERE data_source_id = ? AND revision = ?
+        `, input.DisplayName, input.NormalizedName, input.Environment, input.ConnectionKind,
+			input.CompatibilityMode, input.Host, input.Port, input.Username, nullableString(input.DefaultDatabase),
+			newCredentialRevision, utcText(input.UpdatedAt), input.DataSourceID, input.ExpectedRevision); err != nil {
+			return fmt.Errorf("update data source: %w", err)
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "DATA_SOURCE_UPDATED", "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.UpdatedAt); err != nil {
+			return err
+		}
+		result.Revision, result.CredentialRevision = input.ExpectedRevision+1, newCredentialRevision
+		return nil
+	})
+	return result, err
+}
+
 func (s *Store) initialize(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return errors.New("SQLite store is nil")
@@ -575,6 +666,20 @@ func validateDataSourceStateChange(input DataSourceStateChange) error {
 	}
 	if !oneOf(input.TargetState, "ENABLED", "DISABLED", "ARCHIVED") {
 		return errors.New("data source state change target is invalid")
+	}
+	return nil
+}
+
+// validateDataSourceUpdate 复用创建时的连接枚举约束，并额外验证轮换材料。
+func validateDataSourceUpdate(input DataSourceUpdate) error {
+	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.Username == "" || input.RequestID == "" || input.UpdatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
+		return errors.New("data source update identity is invalid")
+	}
+	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || !oneOf(input.ConnectionKind, "OBSERVER_DIRECT", "ODP", "PUBLIC_CLOUD", "LOGICAL_DATABASE") || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
+		return errors.New("data source update enum is invalid")
+	}
+	if input.Password != nil && (input.Password.CredentialID == "" || input.Password.Revision < 2 || input.Password.KeyID == "" || len(input.Password.Nonce) == 0 || len(input.Password.Ciphertext) == 0) {
+		return errors.New("data source rotated credential is invalid")
 	}
 	return nil
 }
