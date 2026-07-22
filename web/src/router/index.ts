@@ -5,6 +5,7 @@ import DataSourceListView from '@/views/DataSourceListView.vue'
 import DirectLoadWizardView from '@/views/DirectLoadWizardView.vue'
 import ExportWizardView from '@/views/ExportWizardView.vue'
 import HomeView from '@/views/HomeView.vue'
+import LogCenterView from '@/views/LogCenterView.vue'
 import ModulePlaceholderView from '@/views/ModulePlaceholderView.vue'
 import NormalImportWizardView from '@/views/NormalImportWizardView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
@@ -25,7 +26,7 @@ export const router = createRouter({
     { path: '/templates', name: 'templates', component: ModulePlaceholderView, meta: { title: '模板中心', description: '复用已确认的任务配置；模板不保存凭据，也不会改写历史任务快照。', sections: ['模板列表', '兼容状态'] } },
     { path: '/nodes', name: 'nodes', component: ModulePlaceholderView, meta: { title: '执行节点', description: '展示执行节点可接收状态、工具环境、资源快照和任务关系。', sections: ['节点列表', '环境与状态'] } },
     { path: '/nodes/:id', name: 'node-detail', component: ModulePlaceholderView, meta: { title: '执行节点详情', description: '查看节点注册事实、环境检查、维护状态与关联任务；控制面不会直接操作节点文件或进程。', sections: ['节点概览', '工具环境', '关联任务与事件'] } },
-    { path: '/logs', name: 'logs', component: ModulePlaceholderView, meta: { title: '日志中心', description: '在权限范围内查询已脱敏日志、来源上下文和采集完整性。', sections: ['查询条件', '日志结果'] } },
+    { path: '/logs', name: 'logs', component: LogCenterView, meta: { title: '日志中心' } },
     { path: '/settings', name: 'settings', component: ModulePlaceholderView, meta: { title: '系统设置', description: '平台基础、调度、安全、工具与兼容四个分区保持在同一设置页面。', sections: ['平台基础', '调度', '安全', '工具与兼容'] } },
     { path: '/settings/access-control', name: 'access-control', component: ModulePlaceholderView, meta: { title: '权限与安全', description: '权限配置位于系统设置的安全分区，只管理已认证用户的授权，不创建身份账号。', sections: ['用户与权限列表', '固定角色与对象范围', '高风险能力'] } },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: '页面不存在' } },
