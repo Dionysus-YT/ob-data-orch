@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import AccessControlView from '@/views/AccessControlView.vue'
 import DataSourceFormView from '@/views/DataSourceFormView.vue'
 import DataSourceListView from '@/views/DataSourceListView.vue'
 import DirectLoadWizardView from '@/views/DirectLoadWizardView.vue'
@@ -31,7 +32,7 @@ export const router = createRouter({
     { path: '/nodes/:id', name: 'node-detail', component: ModulePlaceholderView, meta: { title: '执行节点详情', description: '查看节点注册事实、环境检查、维护状态与关联任务；控制面不会直接操作节点文件或进程。', sections: ['节点概览', '工具环境', '关联任务与事件'] } },
     { path: '/logs', name: 'logs', component: LogCenterView, meta: { title: '日志中心' } },
     { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },
-    { path: '/settings/access-control', name: 'access-control', component: ModulePlaceholderView, meta: { title: '权限与安全', description: '权限配置位于系统设置的安全分区，只管理已认证用户的授权，不创建身份账号。', sections: ['用户与权限列表', '固定角色与对象范围', '高风险能力'] } },
+    { path: '/settings/access-control', name: 'access-control', component: AccessControlView, meta: { title: '权限配置' } },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: '页面不存在' } },
   ],
 })
