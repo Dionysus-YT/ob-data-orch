@@ -26,6 +26,14 @@ describe('ODC 连接串解析', () => {
     })
   })
 
+  it('解析服务名形式的用户@租户:集群且不改写原始连接串', () => {
+    const connectionString = ['mysql', '-hsynthetic-service.example', '-P2883', '-uroot@SERVICE:cluster_service', '-p'].join(' ')
+    expect(parseDataSourceConnectionString(connectionString)).toMatchObject({
+      compatibilityMode: 'MYSQL', host: 'synthetic-service.example', port: 2883, username: 'root', tenantName: 'SERVICE', clusterName: 'cluster_service', password: '',
+    })
+    expect(connectionString).toContain('@SERVICE:cluster_service')
+  })
+
   it('拒绝非 ODP、未知客户端和不完整的参数', () => {
     const passwordOption = `-p${'synthetic-value'}`
     expect(parseDataSourceConnectionString(['mysql', '-h127.0.0.1', '-P2883', '-uapp@tenant', passwordOption].join(' '))).toBeUndefined()

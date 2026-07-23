@@ -56,7 +56,7 @@ function option(tokens: string[], index: number): { name: 'host' | 'port' | 'use
 
 function splitODPIdentity(value: string | undefined): { username: string; tenantName: string; clusterName: string } | undefined {
   if (!value) return undefined
-  const matched = /^([^@#\s]+)@([^#\s]+)#([^\s]+)$/.exec(value)
+  const matched = /^([^@#:\s]+)@([^#:\s]+)(?:#|:)([^#:\s]+)$/.exec(value)
   if (!matched) return undefined
   return { username: matched[1] ?? '', tenantName: matched[2] ?? '', clusterName: matched[3] ?? '' }
 }
