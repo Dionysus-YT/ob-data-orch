@@ -20,7 +20,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发�
 要求 Go 1.26、Node.js 24 和 npm 11。
 
 ```powershell
-# 控制面，默认仅监听 127.0.0.1:8080
+# 控制面默认仅监听 127.0.0.1:8080，未配置浏览器身份时所有业务 API 失败关闭
 go run ./cmd/control-plane
 
 # Agent 仅进入空闲等待，不会联网或执行工具
@@ -31,6 +31,21 @@ Set-Location web
 npm ci
 npm run dev
 ```
+
+### 本机 G2 数据源页面手工检查
+
+如需在浏览器中手工核对数据源列表、新增、编辑、启停、归档和“测试连接”按钮，可显式启动仅回环的本机 MVP：
+
+```powershell
+# 终端 1：只监听 127.0.0.1:8080，使用被 Git 忽略的 var/ 本机 SQLite 和密钥文件
+go run ./cmd/control-plane --local-mvp
+
+# 终端 2：Vite 将 /api 代理到本机控制面
+Set-Location web
+npm run dev -- --host 127.0.0.1
+```
+
+随后在宿主机浏览器打开 `http://127.0.0.1:5173/data-sources`。此入口仅用于 G2 合成检查：请仅填写合成数据源和合成密码，不要输入真实凭据。连接测试请求会经过浏览器身份、CSRF 与对象范围校验，但由于本机 MVP 不配置 Agent、不会连接数据库或启动工具，预期显示“当前无法获取 Agent 连接测试结果”；这不是连接成功，也不代表权限、性能或任务可执行性。
 
 控制面监听地址可通过 `OB_DATA_ORCH_LISTEN` 修改。`OB_DATA_ORCH_ENABLE_REAL_EXECUTION=true` 会使控制面和 Agent 拒绝启动；这是 G2 的硬门禁，不是待配置功能。
 
