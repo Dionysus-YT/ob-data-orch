@@ -6,6 +6,16 @@ export interface ApiError {
   readonly conflict: boolean
 }
 
+export function dataSourceErrorMessage(error: unknown, fallback: string): string {
+  const apiError = error as Partial<ApiError>
+  if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE') return '当前页面未获得请求安全令牌，已拒绝写操作。请刷新页面后重试。'
+  if (apiError.status === 401) return '登录状态或请求安全校验已失效，请刷新页面后重试。'
+  if (apiError.status === 404) return '数据源不存在或当前身份无权访问。'
+  if (apiError.status === 409 || apiError.status === 412 || apiError.conflict) return '数据源已发生变化，请刷新后重新比较。'
+  if (apiError.status === 0 || apiError.code === 'NETWORK_UNAVAILABLE') return '无法连接控制面，请检查当前环境后重试。'
+  return apiError.message || fallback
+}
+
 export interface DataSourceSummary {
   readonly id: string
   readonly displayName: string

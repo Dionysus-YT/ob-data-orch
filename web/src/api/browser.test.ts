@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createBrowserApi, type FetchLike } from './browser'
+import { createBrowserApi, dataSourceErrorMessage, type FetchLike } from './browser'
 
 function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
   const calls: Array<{ path: string; init: RequestInit }> = []
@@ -97,5 +97,13 @@ describe('浏览器 API 客户端', () => {
     })).rejects.toMatchObject({ code: 'CSRF_TOKEN_UNAVAILABLE' })
 
     expect(calls).toHaveLength(0)
+  })
+
+  it('为数据源页面提供安全且可操作的错误反馈', () => {
+    expect(dataSourceErrorMessage({ status: 401, message: 'unsafe' }, '请求失败。')).toContain('安全校验')
+    expect(dataSourceErrorMessage({ status: 404, message: 'unsafe' }, '请求失败。')).toContain('无权访问')
+    expect(dataSourceErrorMessage({ status: 409, conflict: true }, '请求失败。')).toContain('刷新')
+    expect(dataSourceErrorMessage({ status: 412, conflict: true }, '请求失败。')).toContain('刷新')
+    expect(dataSourceErrorMessage({ status: 0, code: 'NETWORK_UNAVAILABLE' }, '请求失败。')).toContain('控制面')
   })
 })

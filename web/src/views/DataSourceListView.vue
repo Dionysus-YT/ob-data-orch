@@ -3,13 +3,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import EmptyState from '@/components/EmptyState.vue'
-import { browserApi, type ApiError, type DataSourceSummary } from '@/api/browser'
+import { browserApi, dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceSummary } from '@/api/browser'
 
 const api = browserApi()
 const router = useRouter()
 const sources = ref<DataSourceSummary[]>([])
 const loading = ref(true)
-const failure = ref('')
+const loadFailure = ref('')
+const feedback = ref('')
+const notice = ref('')
+const connectionTest = ref<{ source: DataSourceSummary; result: DataSourceConnectionTest }>()
 const keyword = ref('')
 const environment = ref('')
 const state = ref('')
@@ -25,12 +28,11 @@ onMounted(loadSources)
 
 async function loadSources() {
   loading.value = true
-  failure.value = ''
+  loadFailure.value = ''
   try {
     sources.value = await api.listDataSources()
   } catch (error) {
-    const apiError = error as Partial<ApiError>
-    failure.value = apiError.message || '无法加载数据源，请稍后重试。'
+    loadFailure.value = dataSourceErrorMessage(error, '无法加载数据源，请稍后重试。')
   } finally {
     loading.value = false
   }
@@ -52,25 +54,44 @@ function environmentLabel(value: string) {
 }
 
 function connectionStatusLabel(source: DataSourceSummary) {
-  return { SUCCEEDED: '可连接', FAILED: '连接失败', PENDING: '测试中' }[source.lastTestStatus ?? ''] ?? '未测试'
+  return { SUCCEEDED: '可连接', FAILED: '连接失败', PENDING: '测试已请求', UNAVAILABLE: '测试不可用' }[source.lastTestStatus ?? ''] ?? '未测试'
 }
 
-async function runAction(source: DataSourceSummary, action: 'test' | 'toggle') {
+function lastTestTimeLabel(source: DataSourceSummary) {
+  return source.lastTestStatus ? '控制面摘要未提供时间' : '尚未测试'
+}
+
+function connectionTestMessage(result: DataSourceConnectionTest) {
+  const completedAt = result.testedAt ? `；完成时间：${new Date(result.testedAt).toLocaleString()}` : ''
+  if (result.status === 'PENDING') return `连接测试请求已被控制面接受，等待 Agent 受控处理${completedAt}。`
+  if (result.status === 'UNAVAILABLE') return '当前没有可用 Agent 接收连接测试；控制面不会退化为本机直连数据库。'
+  if (result.status === 'SUCCEEDED') return `控制面返回基础连接测试成功${completedAt}。该结果不代表权限、性能或任务可行性。`
+  return `控制面返回基础连接测试失败${completedAt}。页面不会推断失败原因或给出任务结论。`
+}
+
+async function runAction(source: DataSourceSummary, action: 'test' | 'toggle' | 'archive') {
   actionID.value = source.id
-  failure.value = ''
+  feedback.value = ''
+  notice.value = ''
   try {
     if (action === 'test') {
       const result = await api.testDataSourceConnection(source.id)
-      if (result.status === 'PENDING') failure.value = '连接测试已转交 Agent；当前页面将在测试结果持久化接口接入后显示最近测试时间。'
-      else if (result.status === 'UNAVAILABLE') failure.value = '当前没有可用 Agent 接收连接测试；控制面不会退化为本机直连数据库。'
-      else await loadSources()
+      connectionTest.value = { source, result }
+      notice.value = connectionTestMessage(result)
       return
     }
-    await api.changeDataSourceState(source.id, source.revision, source.state === 'ENABLED' ? 'DISABLED' : 'ENABLED')
-    await loadSources()
+    if (action === 'archive') {
+      if (!window.confirm(`确认删除或归档数据源“${source.displayName}”？历史任务不会被修改。`)) return
+      await api.archiveDataSource(source.id, source.revision)
+      sources.value = sources.value.filter((item) => item.id !== source.id)
+      notice.value = '数据源已删除或归档，并已从当前授权列表移除。'
+      return
+    }
+    const result = await api.changeDataSourceState(source.id, source.revision, source.state === 'ENABLED' ? 'DISABLED' : 'ENABLED')
+    sources.value = sources.value.map((item) => item.id === source.id ? { ...item, state: result.state, revision: result.revision } : item)
+    notice.value = result.state === 'ENABLED' ? '数据源已启用。是否可被任务选择仍由服务端门禁决定。' : '数据源已禁用；不会取消既有任务。'
   } catch (error) {
-    const apiError = error as Partial<ApiError>
-    failure.value = apiError.conflict ? '数据源状态已发生变化，请刷新后重试。' : apiError.message || '数据源操作失败。'
+    feedback.value = dataSourceErrorMessage(error, '数据源操作失败。')
   } finally {
     actionID.value = ''
   }
@@ -81,9 +102,11 @@ async function runAction(source: DataSourceSummary, action: 'test' | 'toggle') {
   <section class="page-heading"><div><h1>数据源管理</h1><p>统一维护任务向导复用的私有 ODP 数据源；连接测试只验证网络、认证和基础数据库连接。</p></div><button type="button" class="button button-primary" @click="router.push('/data-sources/new')">新增数据源</button></section>
   <p class="context-note">数据源状态不代表导入、导出权限、对象权限、性能或任务可执行性；这些检查将在任务预检查阶段进行。</p>
   <section class="filter-bar" aria-label="数据源筛选"><label>关键字<input v-model.trim="keyword" placeholder="名称或地址" /></label><label>环境<select v-model="environment"><option value="">全部环境</option><option value="DEVELOPMENT">开发</option><option value="TEST">测试</option><option value="STAGING">预生产</option><option value="PRODUCTION">生产</option></select></label><label>兼容模式<select v-model="compatibilityMode"><option value="">全部模式</option><option value="MYSQL">MySQL</option><option value="ORACLE">Oracle</option><option value="UNKNOWN">待校验</option></select></label><label>启用状态<select v-model="state"><option value="">全部状态</option><option value="ENABLED">已启用</option><option value="DISABLED">已禁用</option></select></label><button type="button" class="button button-secondary" @click="resetFilters">重置</button><button type="button" class="button button-secondary" :disabled="loading" @click="loadSources">刷新</button></section>
-  <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }}</p>
+  <p v-if="feedback" class="feedback feedback-error" role="alert">{{ feedback }}</p>
+  <p v-else-if="notice" class="feedback feedback-notice" role="status">{{ notice }}</p>
   <section v-if="loading" class="content-card loading-state">正在加载已授权数据源…</section>
-  <EmptyState v-else-if="!failure && sources.length === 0" title="还没有数据源" description="新增并完成一次成功连接测试后，数据源才能被任务向导选择。" action="新增数据源" @action="router.push('/data-sources/new')" />
-  <EmptyState v-else-if="!failure && filteredSources.length === 0" title="没有匹配的数据源" description="保留当前筛选条件；可重置筛选后重新查看。" action="重置筛选" @action="resetFilters" />
-  <section v-else class="content-card table-card"><table><thead><tr><th>数据源名称</th><th>环境</th><th>连接方式</th><th>地址 / SQL 端口</th><th>兼容模式</th><th>连接状态</th><th>启用状态</th><th>最近测试</th><th>操作</th></tr></thead><tbody><tr v-for="source in filteredSources" :key="source.id"><td><strong>{{ source.displayName }}</strong><small>{{ source.id }}</small></td><td><span class="environment-tag" :class="source.environment.toLowerCase()">{{ environmentLabel(source.environment) }}</span></td><td>{{ source.connectionKind === 'ODP' ? '私有 ODP' : source.connectionKind }}</td><td>{{ source.host }}:{{ source.port }}</td><td>{{ source.compatibilityMode === 'MYSQL' ? 'MySQL' : source.compatibilityMode === 'ORACLE' ? 'Oracle' : '待校验' }}</td><td><span class="status-dot" :class="source.lastTestStatus === 'SUCCEEDED' ? 'success' : source.lastTestStatus === 'FAILED' ? 'danger' : 'neutral'" />{{ connectionStatusLabel(source) }}</td><td><span class="status-dot" :class="source.state === 'ENABLED' ? 'success' : 'muted'" />{{ stateLabel(source) }}</td><td>{{ source.lastTestStatus ? '结果待持久化接口接入' : '尚未测试' }}</td><td class="table-actions"><button type="button" class="link-button" :disabled="actionID === source.id" @click="router.push(`/data-sources/${source.id}`)">编辑</button><button type="button" class="link-button" :disabled="actionID === source.id" @click="runAction(source, 'test')">测试</button><button type="button" class="link-button" :disabled="actionID === source.id" @click="runAction(source, 'toggle')">{{ source.state === 'ENABLED' ? '禁用' : '启用' }}</button></td></tr></tbody></table></section>
+  <section v-else-if="loadFailure" class="content-card empty-state"><h2>无法加载数据源</h2><p>{{ loadFailure }}</p><button type="button" class="button button-secondary" @click="loadSources">重试</button></section>
+  <EmptyState v-else-if="sources.length === 0" title="还没有数据源" description="新增并完成一次成功连接测试后，数据源才能被任务向导选择。" action="新增数据源" @action="router.push('/data-sources/new')" />
+  <EmptyState v-else-if="filteredSources.length === 0" title="没有匹配的数据源" description="保留当前筛选条件；可重置筛选后重新查看。" action="重置筛选" @action="resetFilters" />
+  <section v-else class="content-card table-card"><table><thead><tr><th>数据源名称</th><th>环境</th><th>连接方式</th><th>地址 / SQL 端口</th><th>兼容模式</th><th>连接状态</th><th>启用状态</th><th>最近测试</th><th>操作</th></tr></thead><tbody><tr v-for="source in filteredSources" :key="source.id"><td><strong>{{ source.displayName }}</strong><small>{{ source.id }}</small></td><td><span class="environment-tag" :class="source.environment.toLowerCase()">{{ environmentLabel(source.environment) }}</span></td><td>{{ source.connectionKind === 'ODP' ? '私有 ODP' : source.connectionKind }}</td><td>{{ source.host }}:{{ source.port }}</td><td>{{ source.compatibilityMode === 'MYSQL' ? 'MySQL' : source.compatibilityMode === 'ORACLE' ? 'Oracle' : '待校验' }}</td><td><span class="status-dot" :class="source.lastTestStatus === 'SUCCEEDED' ? 'success' : source.lastTestStatus === 'FAILED' ? 'danger' : 'neutral'" />{{ connectionStatusLabel(source) }}</td><td><span class="status-dot" :class="source.state === 'ENABLED' ? 'success' : 'muted'" />{{ stateLabel(source) }}</td><td>{{ lastTestTimeLabel(source) }}</td><td class="table-actions"><button type="button" class="link-button" :disabled="actionID === source.id" @click="router.push(`/data-sources/${source.id}`)">编辑</button><button type="button" class="link-button" :disabled="actionID === source.id" @click="runAction(source, 'test')">测试</button><button type="button" class="link-button" :disabled="actionID === source.id" @click="runAction(source, 'toggle')">{{ source.state === 'ENABLED' ? '禁用' : '启用' }}</button><button type="button" class="link-button danger-link" :disabled="actionID === source.id" @click="runAction(source, 'archive')">删除 / 归档</button></td></tr></tbody></table><section v-if="connectionTest" class="test-result"><strong>{{ connectionTest.source.displayName }} 的本次受控测试</strong><span>状态：{{ connectionTest.result.status }}；代码：{{ connectionTest.result.code }}</span><span v-if="connectionTest.result.testedAt">完成时间：{{ new Date(connectionTest.result.testedAt).toLocaleString() }}</span><span v-else>控制面未返回完成时间。</span></section></section>
 </template>
