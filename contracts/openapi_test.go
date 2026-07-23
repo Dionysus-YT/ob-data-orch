@@ -140,8 +140,14 @@ func TestOpenAPIReferencesResolveAndSecretInputsAreWriteOnly(t *testing.T) {
 	}
 	compatibilityMode := object(t, properties, "compatibilityMode")
 	compatibilityModes, ok := compatibilityMode["enum"].([]any)
-	if !ok || len(compatibilityModes) != 3 || compatibilityModes[0] != "MYSQL" || compatibilityModes[1] != "ORACLE" || compatibilityModes[2] != "UNKNOWN" {
-		t.Fatal("data source compatibility mode must keep the supported values")
+	if !ok || len(compatibilityModes) != 2 || compatibilityModes[0] != "MYSQL" || compatibilityModes[1] != "ORACLE" {
+		t.Fatal("data source compatibility mode must be an OceanBase MySQL or Oracle type")
+	}
+	for _, field := range []string{"clusterName", "tenantName"} {
+		property := object(t, properties, field)
+		if property["minLength"] != float64(1) {
+			t.Fatalf("data source %s must be required by the write contract", field)
+		}
 	}
 	gated := object(t, schemas, "GatedCsvOptions")
 	if gated["x-support-state"] != "VALIDATION_GATED" {

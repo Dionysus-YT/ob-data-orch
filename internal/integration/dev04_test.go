@@ -153,7 +153,7 @@ func seedSyntheticMetadata(t *testing.T, databasePath string) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "synthetic-external", "Synthetic User", now, now}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic-user", "synthetic_db", "11111111-1111-4111-8111-111111111111", "subject-1", now, now}},
+		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic-user", "synthetic_db", "11111111-1111-4111-8111-111111111111", "subject-1", now, now}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"11111111-1111-4111-8111-111111111111", "source-1", "synthetic-key", []byte{1, 2, 3}, []byte{4, 5, 6}, now}},
 		{`INSERT INTO execution_nodes VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", now, now}},
 		{`INSERT INTO agents VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, '{}', ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "synthetic-agent-v1", "synthetic-boot-1", now, now}},

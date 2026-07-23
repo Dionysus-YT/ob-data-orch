@@ -25,6 +25,8 @@ describe('浏览器 API 客户端', () => {
         compatibilityMode: 'MYSQL',
         host: '127.0.0.1',
         port: 2881,
+        clusterName: 'synthetic-cluster',
+        tenantName: 'synthetic-tenant',
         state: 'ENABLED',
         revision: 1,
         credentialRevision: 1,
@@ -41,6 +43,8 @@ describe('浏览器 API 客户端', () => {
       compatibilityMode: 'MYSQL',
       host: '127.0.0.1',
       port: 2881,
+      clusterName: 'synthetic-cluster',
+      tenantName: 'synthetic-tenant',
       state: 'ENABLED',
       revision: 1,
       credentialRevision: 1,
@@ -79,10 +83,10 @@ describe('浏览器 API 客户端', () => {
 
   it('数据源编辑使用版本条件，且空密码不会被发送', async () => {
     const { api, calls } = apiWith(Response.json({
-      item: { id: 'source-1', displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, state: 'ENABLED', revision: 2, credentialRevision: 1 },
+      item: { id: 'source-1', displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', state: 'ENABLED', revision: 2, credentialRevision: 1 },
     }))
 
-    await api.updateDataSource('source-1', 1, { displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, username: 'synthetic-user' })
+    await api.updateDataSource('source-1', 1, { displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', username: 'synthetic-user' })
 
     expect(calls[0]?.path).toBe('/api/v1/data-sources/source-1')
     expect(calls[0]?.init.headers).toMatchObject({ 'X-CSRF-Token': 'synthetic-csrf-token', 'If-Match': '"rev-1"' })

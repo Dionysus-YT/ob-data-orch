@@ -105,9 +105,8 @@ type ExecutionEvent struct {
 	ReceivedAt  time.Time
 }
 
-// DataSourceSummary is the non-sensitive projection available to API list and
-// detail handlers. It intentionally excludes credential ciphertext, nonce,
-// plaintext, and any field from which a password length can be inferred.
+// DataSourceSummary 是列表与详情 API 可返回的非敏感数据源投影。
+// 它刻意排除凭据密文、nonce、明文及任何可推断密码长度的字段。
 type DataSourceSummary struct {
 	DataSourceID            string
 	DisplayName             string
@@ -116,6 +115,8 @@ type DataSourceSummary struct {
 	CompatibilityMode       string
 	Host                    string
 	Port                    int
+	ClusterName             string
+	TenantName              string
 	Username                string
 	DefaultDatabase         string
 	State                   string
@@ -127,8 +128,8 @@ type DataSourceSummary struct {
 	UpdatedAt               time.Time
 }
 
-// DataSourceCreate persists a new source and an already encrypted password
-// envelope. Plaintext is deliberately not representable by this input type.
+// DataSourceCreate 持久化新数据源及已加密的密码信封。
+// 该输入类型故意不能表达密码明文。
 type DataSourceCreate struct {
 	DataSourceID      string
 	CredentialID      string
@@ -140,6 +141,8 @@ type DataSourceCreate struct {
 	CompatibilityMode string
 	Host              string
 	Port              int
+	ClusterName       string
+	TenantName        string
 	Username          string
 	DefaultDatabase   string
 	KeyID             string
@@ -151,8 +154,8 @@ type DataSourceCreate struct {
 	CreatedAt         time.Time
 }
 
-// DataSourceCreateResult lets an HTTP adapter return the original resource for
-// a safe idempotent retry without inserting a second credential revision.
+// DataSourceCreateResult 让 HTTP 适配器在幂等重试时返回原始资源，
+// 而不插入第二个凭据修订。
 type DataSourceCreateResult struct {
 	DataSourceID string
 	Replayed     bool
@@ -205,6 +208,8 @@ type DataSourceUpdate struct {
 	CompatibilityMode string
 	Host              string
 	Port              int
+	ClusterName       string
+	TenantName        string
 	Username          string
 	DefaultDatabase   string
 	Password          *EncryptedDataSourcePassword

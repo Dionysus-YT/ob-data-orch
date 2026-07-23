@@ -3,9 +3,9 @@ import type { DataSourceSummary } from '@/api/browser'
 import { filterDataSources, type DataSourceListFilters } from './dataSourceListFilters'
 
 const sources: DataSourceSummary[] = [
-  { id: 'source-1', displayName: '未测试源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'UNKNOWN', host: '10.0.0.1', port: 2881, state: 'DISABLED', revision: 1, credentialRevision: 1 },
-  { id: 'source-2', displayName: '可连接源', environment: 'PRODUCTION', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '10.0.0.2', port: 2881, state: 'ENABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'SUCCEEDED' },
-  { id: 'source-3', displayName: '失败源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'ORACLE', host: '10.0.0.3', port: 2881, state: 'ENABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'FAILED' },
+  { id: 'source-1', displayName: '未测试源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'UNKNOWN', host: '10.0.0.1', port: 2881, clusterName: 'cluster-a', tenantName: 'tenant-a', state: 'DISABLED', revision: 1, credentialRevision: 1 },
+  { id: 'source-2', displayName: '可连接源', environment: 'PRODUCTION', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '10.0.0.2', port: 2881, clusterName: 'cluster-b', tenantName: 'tenant-b', state: 'ENABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'SUCCEEDED' },
+  { id: 'source-3', displayName: '失败源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'ORACLE', host: '10.0.0.3', port: 2881, clusterName: 'cluster-c', tenantName: 'tenant-c', state: 'ENABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'FAILED' },
 ]
 
 const allFilters: DataSourceListFilters = { keyword: '', environment: '', compatibilityMode: '', connectionStatus: '', state: '' }

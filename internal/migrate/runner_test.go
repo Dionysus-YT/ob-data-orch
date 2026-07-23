@@ -9,10 +9,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"ob-data-orch/migrations"
+
 	_ "modernc.org/sqlite"
 )
 
-func TestApplyCreatesStrictTwentyTableSchema(t *testing.T) {
+func TestApplyCreatesStrictSchema(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := openTestDatabase(t)
@@ -41,8 +43,8 @@ func TestApplyCreatesStrictTwentyTableSchema(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("migration count = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Fatalf("migration count = %d, want 2", migrationCount)
 	}
 
 	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
@@ -79,8 +81,13 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err := Apply(ctx, db); err != nil {
 		t.Fatalf("Apply(): %v", err)
 	}
+	secondMigration, err := migrations.Files.ReadFile("0002_add_data_source_odc_identity.sql")
+	if err != nil {
+		t.Fatalf("read second migration: %v", err)
+	}
 	tampered := fstest.MapFS{
-		"0001_initial.sql": &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
+		"0001_initial.sql":                      &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
+		"0002_add_data_source_odc_identity.sql": &fstest.MapFile{Data: secondMigration},
 	}
 	if err := ApplyFS(ctx, db, tampered); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("Apply() error = %v, want checksum mismatch", err)
@@ -124,7 +131,7 @@ func insertSyntheticTaskFixture(t *testing.T, db *sql.DB) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "external-1", "Synthetic User", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO execution_nodes VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '[]', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},

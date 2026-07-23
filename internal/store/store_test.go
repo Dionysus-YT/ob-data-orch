@@ -291,7 +291,7 @@ func TestListDataSourceSummariesExcludesCredentialMaterial(t *testing.T) {
 	seedBaseFixture(t, store)
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `
-        INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2882, ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?)
+        INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2882, ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?, '', '')
     `, "source-archived", "Archived", "archived", "127.0.0.2", "synthetic_user", "synthetic_db", "credential-archived", "subject-1", utcText(testTime), utcText(testTime)); err != nil {
 		t.Fatalf("seed archived data source: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestCreateDataSourceAtomicallyPersistsEncryptedCredentialAuditAndIdempotenc
 		DataSourceID: "source-create", CredentialID: "credential-create", CreatorSubjectID: "subject-1",
 		DisplayName: "Created Source", NormalizedName: "created-source", Environment: "TEST",
 		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.3", Port: 2881,
-		Username: "synthetic-user", DefaultDatabase: "synthetic_db", KeyID: "key-create",
+		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", DefaultDatabase: "synthetic_db", KeyID: "key-create",
 		Nonce: []byte{1, 2, 3}, Ciphertext: []byte{4, 5, 6}, RequestID: "request-create-1",
 		IdempotencyKey: "idempotency-create-1", RequestDigest: testFingerprint, CreatedAt: testTime,
 	}
@@ -402,7 +402,7 @@ func TestUpdateDataSourceAtomicallyRotatesOptionalCredential(t *testing.T) {
 		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
 		DisplayName: "Updated Source", NormalizedName: "updated source", Environment: "TEST",
 		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.8", Port: 2882,
-		Username: "updated_user", DefaultDatabase: "updated_db", RequestID: "request-update-1", UpdatedAt: testTime.Add(time.Minute),
+		ClusterName: "updated-cluster", TenantName: "updated-tenant", Username: "updated_user", DefaultDatabase: "updated_db", RequestID: "request-update-1", UpdatedAt: testTime.Add(time.Minute),
 	}
 	updated, err := store.UpdateDataSource(context.Background(), base)
 	if err != nil || updated.Revision != 2 || updated.CredentialRevision != 1 {
@@ -499,7 +499,7 @@ func seedBaseFixture(t *testing.T, store *Store) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "external-1", "Synthetic User", utcText(testTime), utcText(testTime)}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user@synthetic_tenant", "synthetic_db", "credential-1", "subject-1", utcText(testTime), utcText(testTime)}},
+		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, utcText(testTime)}},
 		{`INSERT INTO execution_nodes VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO agents VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, '{}', ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "agent-v1", "boot-1", utcText(testTime), utcText(testTime)}},

@@ -67,16 +67,15 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// ListDataSourceSummaries returns only the API-safe data-source projection.
-// Authorization remains a control-plane concern, while this query guarantees
-// that the database's encrypted credential material never enters the result.
+// ListDataSourceSummaries 仅返回可安全暴露给 API 的数据源投影。
+// 授权仍由控制面负责；该查询保证数据库中的加密凭据材料不会进入结果。
 func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummary, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("SQLite store is nil")
 	}
 	rows, err := s.db.QueryContext(ctx, `
         SELECT data_source_id, display_name, environment, connection_kind,
-               compatibility_mode, host, port, username,
+               compatibility_mode, host, port, cluster_name, tenant_name, username,
                COALESCE(default_database, ''), state, revision,
                current_credential_revision, COALESCE(last_test_status, ''),
                last_tested_at, COALESCE(last_test_safe_summary_json, ''), updated_at
@@ -95,7 +94,7 @@ func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummar
 		var updatedAt string
 		if err := rows.Scan(
 			&summary.DataSourceID, &summary.DisplayName, &summary.Environment, &summary.ConnectionKind,
-			&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.Username,
+			&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.ClusterName, &summary.TenantName, &summary.Username,
 			&summary.DefaultDatabase, &summary.State, &summary.Revision, &summary.CredentialRevision,
 			&summary.LastTestStatus, &lastTestedAt, &summary.LastTestSafeSummaryJSON, &updatedAt,
 		); err != nil {
@@ -121,8 +120,8 @@ func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummar
 	return summaries, nil
 }
 
-// GetDataSourceSummary returns the same non-sensitive projection as the list
-// API for one active source. Archived sources intentionally behave as absent.
+// GetDataSourceSummary 为一个活动数据源返回与列表 API 相同的非敏感投影。
+// 已归档数据源故意表现为不存在。
 func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (DataSourceSummary, error) {
 	if s == nil || s.db == nil {
 		return DataSourceSummary{}, errors.New("SQLite store is nil")
@@ -135,7 +134,7 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
 	var updatedAt string
 	err := s.db.QueryRowContext(ctx, `
         SELECT data_source_id, display_name, environment, connection_kind,
-               compatibility_mode, host, port, username,
+               compatibility_mode, host, port, cluster_name, tenant_name, username,
                COALESCE(default_database, ''), state, revision,
                current_credential_revision, COALESCE(last_test_status, ''),
                last_tested_at, COALESCE(last_test_safe_summary_json, ''), updated_at
@@ -143,7 +142,7 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
         WHERE data_source_id = ? AND state != 'ARCHIVED'
     `, dataSourceID).Scan(
 		&summary.DataSourceID, &summary.DisplayName, &summary.Environment, &summary.ConnectionKind,
-		&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.Username,
+		&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.ClusterName, &summary.TenantName, &summary.Username,
 		&summary.DefaultDatabase, &summary.State, &summary.Revision, &summary.CredentialRevision,
 		&summary.LastTestStatus, &lastTestedAt, &summary.LastTestSafeSummaryJSON, &updatedAt,
 	)
@@ -168,9 +167,8 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
 	return summary, nil
 }
 
-// CreateDataSource atomically writes the source, its encrypted first credential
-// revision, a minimal audit fact, and a 24-hour idempotency result. Any error
-// rolls back every record so no usable source can exist without its credential.
+// CreateDataSource 原子写入数据源、其首个加密凭据修订、最小审计事实与 24 小时幂等结果。
+// 任一错误都会回滚全部记录，以避免存在没有凭据的可用数据源。
 func (s *Store) CreateDataSource(ctx context.Context, input DataSourceCreate) (DataSourceCreateResult, error) {
 	if err := validateDataSourceCreate(input); err != nil {
 		return DataSourceCreateResult{}, err
@@ -196,12 +194,12 @@ func (s *Store) CreateDataSource(ctx context.Context, input DataSourceCreate) (D
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO data_sources(
                 data_source_id, display_name, normalized_name, environment, connection_kind,
-                compatibility_mode, host, port, username, default_database, credential_id,
+                compatibility_mode, host, port, cluster_name, tenant_name, username, default_database, credential_id,
                 current_credential_revision, state, revision, last_test_status, last_tested_at,
                 last_test_safe_summary_json, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?)
         `, input.DataSourceID, input.DisplayName, input.NormalizedName, input.Environment,
-			input.ConnectionKind, input.CompatibilityMode, input.Host, input.Port, input.Username,
+			input.ConnectionKind, input.CompatibilityMode, input.Host, input.Port, input.ClusterName, input.TenantName, input.Username,
 			nullableString(input.DefaultDatabase), input.CredentialID, input.CreatorSubjectID,
 			utcText(input.CreatedAt), utcText(input.CreatedAt)); err != nil {
 			return fmt.Errorf("insert data source: %w", err)
@@ -373,11 +371,11 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
 		if _, err := tx.ExecContext(ctx, `
             UPDATE data_sources
             SET display_name = ?, normalized_name = ?, environment = ?, connection_kind = ?,
-                compatibility_mode = ?, host = ?, port = ?, username = ?, default_database = ?,
+                compatibility_mode = ?, host = ?, port = ?, cluster_name = ?, tenant_name = ?, username = ?, default_database = ?,
                 current_credential_revision = ?, revision = revision + 1, updated_at = ?
             WHERE data_source_id = ? AND revision = ?
         `, input.DisplayName, input.NormalizedName, input.Environment, input.ConnectionKind,
-			input.CompatibilityMode, input.Host, input.Port, input.Username, nullableString(input.DefaultDatabase),
+			input.CompatibilityMode, input.Host, input.Port, input.ClusterName, input.TenantName, input.Username, nullableString(input.DefaultDatabase),
 			newCredentialRevision, utcText(input.UpdatedAt), input.DataSourceID, input.ExpectedRevision); err != nil {
 			return fmt.Errorf("update data source: %w", err)
 		}
@@ -951,13 +949,13 @@ func validateDraftUpdate(input DraftUpdate) error {
 }
 
 func validateDataSourceCreate(input DataSourceCreate) error {
-	if input.DataSourceID == "" || input.CredentialID == "" || input.CreatorSubjectID == "" || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.Username == "" || input.KeyID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
+	if input.DataSourceID == "" || input.CredentialID == "" || input.CreatorSubjectID == "" || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.ClusterName == "" || input.TenantName == "" || input.Username == "" || input.KeyID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
 		return errors.New("data source create identity is invalid")
 	}
 	if !isSHA256(input.RequestDigest) || len(input.Nonce) == 0 || len(input.Ciphertext) == 0 {
 		return errors.New("data source create security material is invalid")
 	}
-	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
+	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE") || (input.CompatibilityMode == "ORACLE" && input.DefaultDatabase != "") {
 		return errors.New("data source create enum is invalid")
 	}
 	return nil
@@ -976,10 +974,10 @@ func validateDataSourceStateChange(input DataSourceStateChange) error {
 
 // validateDataSourceUpdate 复用创建时的连接枚举约束，并额外验证轮换材料。
 func validateDataSourceUpdate(input DataSourceUpdate) error {
-	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.Username == "" || input.RequestID == "" || input.UpdatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
+	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.ClusterName == "" || input.TenantName == "" || input.Username == "" || input.RequestID == "" || input.UpdatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
 		return errors.New("data source update identity is invalid")
 	}
-	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE", "UNKNOWN") {
+	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE") || (input.CompatibilityMode == "ORACLE" && input.DefaultDatabase != "") {
 		return errors.New("data source update enum is invalid")
 	}
 	if input.Password != nil && (input.Password.CredentialID == "" || input.Password.Revision < 2 || input.Password.KeyID == "" || len(input.Password.Nonce) == 0 || len(input.Password.Ciphertext) == 0) {

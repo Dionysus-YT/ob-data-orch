@@ -61,12 +61,12 @@ func TestCreateDataSourceRequiresSafetyChecksAndPassesOnlyEncryptedCredential(t 
 		Identity: browserOnlyIdentityProvider{}, Roles: allowedRoleAuthorizer{}, Creator: creator,
 		Encryptor: keyring, CSRF: allowedCSRF{}, CredentialKeyID: "test-key",
 	})
-	body := []byte(`{"displayName":"Created Source","environment":"TEST","connectionKind":"ODP","compatibilityMode":"MYSQL","host":"127.0.0.1","port":2881,"username":"synthetic-user","password":"synthetic-password"}`)
+	body := []byte(`{"displayName":"Created Source","environment":"TEST","connectionKind":"ODP","compatibilityMode":"MYSQL","host":"127.0.0.1","port":2881,"clusterName":"synthetic-cluster","tenantName":"synthetic-tenant","username":"synthetic-user","password":"synthetic-password"}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources", bytes.NewReader(body))
 	request.Header.Set("Idempotency-Key", "synthetic-idempotency-key")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusCreated || creator.input.DataSourceID == "" || len(creator.input.Ciphertext) == 0 {
+	if response.Code != http.StatusCreated || creator.input.DataSourceID == "" || creator.input.ClusterName != "synthetic-cluster" || creator.input.TenantName != "synthetic-tenant" || len(creator.input.Ciphertext) == 0 {
 		t.Fatalf("create response=%d input=%#v", response.Code, creator.input)
 	}
 	serialized, _ := json.Marshal(creator.input)
@@ -441,8 +441,8 @@ type staticDataSourceReader struct{}
 
 func (staticDataSourceReader) ListDataSourceSummaries(context.Context) ([]store.DataSourceSummary, error) {
 	return []store.DataSourceSummary{
-		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
-		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
+		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
+		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
 	}, nil
 }
 
@@ -459,8 +459,8 @@ type staticDataSources struct{ summaries []store.DataSourceSummary }
 
 func mustStaticDataSourceReader() staticDataSources {
 	return staticDataSources{summaries: []store.DataSourceSummary{
-		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
-		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
+		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2},
+		{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
 	}}
 }
 

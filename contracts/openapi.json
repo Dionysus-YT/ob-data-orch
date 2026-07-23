@@ -228,15 +228,17 @@
           "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
           "environment": { "type": "string", "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"] },
           "connectionKind": { "type": "string", "enum": ["ODP"] },
-          "compatibilityMode": { "type": "string", "enum": ["MYSQL", "ORACLE", "UNKNOWN"] },
+          "compatibilityMode": { "type": "string", "enum": ["MYSQL", "ORACLE"], "description": "OceanBase MySQL 或 OceanBase Oracle 数据源类型。" },
           "host": { "type": "string", "minLength": 1, "maxLength": 255 },
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "clusterName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "tenantName": { "type": "string", "minLength": 1, "maxLength": 255 },
           "username": { "type": "string", "minLength": 1, "maxLength": 512 },
           "defaultDatabase": { "type": ["string", "null"], "maxLength": 512 },
           "password": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true },
           "state": { "type": "string", "enum": ["ENABLED", "DISABLED"] }
         },
-        "description": "Create requires name, environment, connection kind, host, port, username and password. Patch uses presence semantics; an omitted password is unchanged."
+        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、集群、租户、用户名和密码。创建需要名称、环境、数据源类型、连接字段和密码；Patch 使用字段存在语义，省略密码表示保持不变。"
       },
       "ExportDraftWrite": {
         "type": "object",

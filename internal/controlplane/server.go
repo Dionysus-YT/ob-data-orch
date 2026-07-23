@@ -335,6 +335,8 @@ type dataSourceCreateRequest struct {
 	CompatibilityMode string `json:"compatibilityMode"`
 	Host              string `json:"host"`
 	Port              int    `json:"port"`
+	ClusterName       string `json:"clusterName"`
+	TenantName        string `json:"tenantName"`
 	Username          string `json:"username"`
 	DefaultDatabase   string `json:"defaultDatabase"`
 	Password          string `json:"password"`
@@ -349,6 +351,8 @@ type dataSourceUpdateRequest struct {
 	CompatibilityMode *string         `json:"compatibilityMode"`
 	Host              *string         `json:"host"`
 	Port              *int            `json:"port"`
+	ClusterName       *string         `json:"clusterName"`
+	TenantName        *string         `json:"tenantName"`
 	Username          *string         `json:"username"`
 	DefaultDatabase   json.RawMessage `json:"defaultDatabase"`
 	Password          *string         `json:"password"`
@@ -364,9 +368,8 @@ type exportDraftWriteRequest struct {
 	FilePath     string `json:"filePath"`
 }
 
-// createDataSource never renders or persists the password itself. Its
-// idempotency digest deliberately records only that a password was supplied,
-// rather than retaining a password-derived hash.
+// createDataSource 从不渲染或持久化密码本身。
+// 幂等摘要只记录是否提供过密码，避免保留由密码派生的哈希。
 func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
 	if s.creator == nil || s.encryptor == nil || s.csrf == nil || s.roles == nil || strings.TrimSpace(s.keyID) == "" {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源创建依赖", false)
@@ -418,7 +421,7 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		DataSourceID: dataSourceID, CredentialID: credentialID, CreatorSubjectID: principal.ID,
 		DisplayName: request.DisplayName, NormalizedName: normalizeName(request.DisplayName),
 		Environment: request.Environment, ConnectionKind: request.ConnectionKind, CompatibilityMode: request.CompatibilityMode,
-		Host: request.Host, Port: request.Port, Username: request.Username, DefaultDatabase: request.DefaultDatabase,
+		Host: request.Host, Port: request.Port, ClusterName: request.ClusterName, TenantName: request.TenantName, Username: request.Username, DefaultDatabase: request.DefaultDatabase,
 		KeyID: envelope.KeyID, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
 		RequestID: requestID(), IdempotencyKey: idempotencyKey, RequestDigest: createRequestDigest(request), CreatedAt: time.Now().UTC(),
 	})
@@ -482,7 +485,7 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
 		DisplayName: merged.DisplayName, NormalizedName: normalizeName(merged.DisplayName), Environment: merged.Environment,
 		ConnectionKind: merged.ConnectionKind, CompatibilityMode: merged.CompatibilityMode, Host: merged.Host,
-		Port: merged.Port, Username: merged.Username, DefaultDatabase: merged.DefaultDatabase,
+		Port: merged.Port, ClusterName: merged.ClusterName, TenantName: merged.TenantName, Username: merged.Username, DefaultDatabase: merged.DefaultDatabase,
 		RequestID: requestID(), UpdatedAt: time.Now().UTC(),
 	}
 	if request.Password != nil {
@@ -529,13 +532,13 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		return
 	}
 	current.DisplayName, current.Environment, current.ConnectionKind, current.CompatibilityMode = merged.DisplayName, merged.Environment, merged.ConnectionKind, merged.CompatibilityMode
-	current.Host, current.Port, current.Username, current.DefaultDatabase = merged.Host, merged.Port, merged.Username, merged.DefaultDatabase
+	current.Host, current.Port, current.ClusterName, current.TenantName, current.Username, current.DefaultDatabase = merged.Host, merged.Port, merged.ClusterName, merged.TenantName, merged.Username, merged.DefaultDatabase
 	current.Revision, current.CredentialRevision = result.Revision, result.CredentialRevision
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": newDataSourceResponse(current)})
 }
 
 func (r dataSourceUpdateRequest) hasChanges() bool {
-	return r.DisplayName != nil || r.Environment != nil || r.ConnectionKind != nil || r.CompatibilityMode != nil || r.Host != nil || r.Port != nil || r.Username != nil || r.DefaultDatabase != nil || r.Password != nil
+	return r.DisplayName != nil || r.Environment != nil || r.ConnectionKind != nil || r.CompatibilityMode != nil || r.Host != nil || r.Port != nil || r.ClusterName != nil || r.TenantName != nil || r.Username != nil || r.DefaultDatabase != nil || r.Password != nil
 }
 
 func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.DataSourceSummary, error) {
@@ -557,6 +560,12 @@ func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.D
 	}
 	if r.Port != nil {
 		merged.Port = *r.Port
+	}
+	if r.ClusterName != nil {
+		merged.ClusterName = *r.ClusterName
+	}
+	if r.TenantName != nil {
+		merged.TenantName = *r.TenantName
 	}
 	if r.Username != nil {
 		merged.Username = *r.Username
@@ -1161,7 +1170,7 @@ func normalizeName(displayName string) string { return strings.ToLower(strings.T
 func createRequestDigest(request dataSourceCreateRequest) string {
 	// Password content is not incorporated; retaining a password hash would be
 	// a new sensitive persistence surface. Presence still distinguishes omission.
-	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|password=true", request.DisplayName, request.Environment, request.ConnectionKind, request.CompatibilityMode, request.Host, request.Port, request.Username, request.DefaultDatabase)
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|password=true", request.DisplayName, request.Environment, request.ConnectionKind, request.CompatibilityMode, request.Host, request.Port, request.ClusterName, request.TenantName, request.Username, request.DefaultDatabase)
 	digest := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(digest[:])
 }
@@ -1624,6 +1633,8 @@ type dataSourceResponse struct {
 	CompatibilityMode  string `json:"compatibilityMode"`
 	Host               string `json:"host"`
 	Port               int    `json:"port"`
+	ClusterName        string `json:"clusterName"`
+	TenantName         string `json:"tenantName"`
 	DefaultDatabase    string `json:"defaultDatabase,omitempty"`
 	State              string `json:"state"`
 	Revision           int64  `json:"revision"`
@@ -1635,7 +1646,7 @@ func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
 	return dataSourceResponse{
 		ID: summary.DataSourceID, DisplayName: summary.DisplayName, Environment: summary.Environment,
 		ConnectionKind: summary.ConnectionKind, CompatibilityMode: summary.CompatibilityMode,
-		Host: summary.Host, Port: summary.Port,
+		Host: summary.Host, Port: summary.Port, ClusterName: summary.ClusterName, TenantName: summary.TenantName,
 		DefaultDatabase: summary.DefaultDatabase, State: summary.State, Revision: summary.Revision,
 		CredentialRevision: summary.CredentialRevision, LastTestStatus: summary.LastTestStatus,
 	}

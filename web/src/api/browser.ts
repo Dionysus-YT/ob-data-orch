@@ -24,6 +24,8 @@ export interface DataSourceSummary {
   readonly compatibilityMode: string
   readonly host: string
   readonly port: number
+  readonly clusterName: string
+  readonly tenantName: string
   readonly defaultDatabase?: string
   readonly state: string
   readonly revision: number
@@ -35,9 +37,11 @@ export interface DataSourceWrite {
   readonly displayName: string
   readonly environment: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
   readonly connectionKind: 'ODP'
-  readonly compatibilityMode: 'MYSQL' | 'ORACLE' | 'UNKNOWN'
+  readonly compatibilityMode: 'MYSQL' | 'ORACLE'
   readonly host: string
   readonly port: number
+  readonly clusterName: string
+  readonly tenantName: string
   readonly username: string
   readonly defaultDatabase?: string
   readonly password: string
@@ -47,9 +51,11 @@ export interface DataSourceUpdate {
   readonly displayName?: string
   readonly environment?: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
   readonly connectionKind?: 'ODP'
-  readonly compatibilityMode?: 'MYSQL' | 'ORACLE' | 'UNKNOWN'
+  readonly compatibilityMode?: 'MYSQL' | 'ORACLE'
   readonly host?: string
   readonly port?: number
+  readonly clusterName?: string
+  readonly tenantName?: string
   readonly username?: string
   readonly defaultDatabase?: string
   readonly password?: string
@@ -284,6 +290,8 @@ function parseDataSourceSummary(value: unknown): DataSourceSummary {
     compatibilityMode: requiredString(source, 'compatibilityMode'),
     host: requiredString(source, 'host'),
     port: requiredNumber(source, 'port'),
+    clusterName: requiredString(source, 'clusterName'),
+    tenantName: requiredString(source, 'tenantName'),
     defaultDatabase: optionalString(source, 'defaultDatabase'),
     state: requiredString(source, 'state'),
     revision: requiredNumber(source, 'revision'),
