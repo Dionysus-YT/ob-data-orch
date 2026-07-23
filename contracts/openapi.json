@@ -228,6 +228,7 @@
           "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
           "environment": { "type": "string", "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"] },
           "connectionKind": { "type": "string", "enum": ["ODP"] },
+          "compatibilityMode": { "type": "string", "enum": ["MYSQL", "ORACLE", "UNKNOWN"] },
           "host": { "type": "string", "minLength": 1, "maxLength": 255 },
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
           "username": { "type": "string", "minLength": 1, "maxLength": 512 },

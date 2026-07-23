@@ -138,6 +138,11 @@ func TestOpenAPIReferencesResolveAndSecretInputsAreWriteOnly(t *testing.T) {
 	if password["writeOnly"] != true {
 		t.Fatal("data source password must be a write-only API field")
 	}
+	compatibilityMode := object(t, properties, "compatibilityMode")
+	compatibilityModes, ok := compatibilityMode["enum"].([]any)
+	if !ok || len(compatibilityModes) != 3 || compatibilityModes[0] != "MYSQL" || compatibilityModes[1] != "ORACLE" || compatibilityModes[2] != "UNKNOWN" {
+		t.Fatal("data source compatibility mode must keep the supported values")
+	}
 	gated := object(t, schemas, "GatedCsvOptions")
 	if gated["x-support-state"] != "VALIDATION_GATED" {
 		t.Fatal("CSV options must remain validation gated")
