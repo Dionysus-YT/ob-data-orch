@@ -2,7 +2,7 @@
 
 > 文档状态：工程启动架构、首条切片范围与技术路线已确认
 > 当前阶段：DEV-01～DEV-06 已通过本地合成/隔离验证；DEV-06 已完成数据源选择、CSV 草稿、脱敏命令预览、预检查、任务详情与日志快照的最小前端链路。下一阶段为 DEV-07 Windows 真实端到端，仍受 G3 条件阻断；G4 真实平台认证和发布继续阻断
-> 更新日期：2026-07-22
+> 更新日期：2026-07-23
 
 ## 1. 目录用途
 
@@ -22,6 +22,7 @@
 - [首条切片开发准入收口](development-readiness-closure.md)：按 G0～G4 分层工程骨架、隔离组件、Windows 集成和正式平台门禁；DR-R01～DR-R18 已确认。
 - [G3 Windows 真实集成准入准备](g3-windows-entry-readiness.md)：WI-01～WI-12 的脱敏输入、责任、证据与执行顺序；未获明确授权前不连接真实环境。
 - [开发准入清单](development-entry-checklist.md)：版本控制、产品基线、验证、技术设计、安全和可追踪条件的状态。
+- [产品页面功能接入计划](frontend-functional-integration-plan.md)：已确认低保真页面进入真实功能接入的 F0～F7 顺序、范围、验收与 G3/G4 关系。
 - [本地工具包证据](evidence/tool-package-baseline.md)：4.3.5 压缩包摘要、版本、109/103 参数集合及 Windows 启动环境发现。
 - [安全文件兼容性验证](evidence/secure-gen-compatibility-spike-2026-07-21.md)：平台内存生成的 PKCS#8/RSA 材料被 Windows 4.3.5 解密器与 OBDUMPER 读取、错误私钥负例、ACL 和三目标构建证据；Linux 运行与清理仍阻断。
 - [直接 Java 隔离启动验证](evidence/direct-java-launch-spike-2026-07-21.md)：Windows 结构化 argv、任务级安全配置、含空格路径、最小环境、直接父子进程和真实退出码证据；Linux 与成功路径待验证。
