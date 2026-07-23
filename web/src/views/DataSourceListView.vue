@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 
 import EmptyState from '@/components/EmptyState.vue'
 import { browserApi, dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceSummary } from '@/api/browser'
+import { filterDataSources, type ConnectionStatusFilter } from './dataSourceListFilters'
 
 const api = browserApi()
 const router = useRouter()
@@ -17,12 +18,10 @@ const keyword = ref('')
 const environment = ref('')
 const state = ref('')
 const compatibilityMode = ref('')
+const connectionStatus = ref<ConnectionStatusFilter>('')
 const actionID = ref('')
 
-const filteredSources = computed(() => sources.value.filter((source) => {
-  const keywordMatched = !keyword.value || [source.displayName, source.host].some((item) => item.toLowerCase().includes(keyword.value.toLowerCase()))
-  return keywordMatched && (!environment.value || source.environment === environment.value) && (!compatibilityMode.value || source.compatibilityMode === compatibilityMode.value) && (!state.value || source.state === state.value)
-}))
+const filteredSources = computed(() => filterDataSources(sources.value, { keyword: keyword.value, environment: environment.value, compatibilityMode: compatibilityMode.value, connectionStatus: connectionStatus.value, state: state.value }))
 
 onMounted(loadSources)
 
@@ -42,6 +41,7 @@ function resetFilters() {
   keyword.value = ''
   environment.value = ''
   compatibilityMode.value = ''
+  connectionStatus.value = ''
   state.value = ''
 }
 
@@ -101,7 +101,7 @@ async function runAction(source: DataSourceSummary, action: 'test' | 'toggle' | 
 <template>
   <section class="page-heading"><div><h1>数据源管理</h1><p>统一维护任务向导复用的私有 ODP 数据源；连接测试只验证网络、认证和基础数据库连接。</p></div><button type="button" class="button button-primary" @click="router.push('/data-sources/new')">新增数据源</button></section>
   <p class="context-note">数据源状态不代表导入、导出权限、对象权限、性能或任务可执行性；这些检查将在任务预检查阶段进行。</p>
-  <section class="filter-bar" aria-label="数据源筛选"><label>关键字<input v-model.trim="keyword" placeholder="名称或地址" /></label><label>环境<select v-model="environment"><option value="">全部环境</option><option value="DEVELOPMENT">开发</option><option value="TEST">测试</option><option value="STAGING">预生产</option><option value="PRODUCTION">生产</option></select></label><label>兼容模式<select v-model="compatibilityMode"><option value="">全部模式</option><option value="MYSQL">MySQL</option><option value="ORACLE">Oracle</option><option value="UNKNOWN">待校验</option></select></label><label>启用状态<select v-model="state"><option value="">全部状态</option><option value="ENABLED">已启用</option><option value="DISABLED">已禁用</option></select></label><button type="button" class="button button-secondary" @click="resetFilters">重置</button><button type="button" class="button button-secondary" :disabled="loading" @click="loadSources">刷新</button></section>
+  <section class="filter-bar" aria-label="数据源筛选"><label>关键字<input v-model.trim="keyword" placeholder="名称或地址" /></label><label>环境<select v-model="environment"><option value="">全部环境</option><option value="DEVELOPMENT">开发</option><option value="TEST">测试</option><option value="STAGING">预生产</option><option value="PRODUCTION">生产</option></select></label><label>兼容模式<select v-model="compatibilityMode"><option value="">全部模式</option><option value="MYSQL">MySQL</option><option value="ORACLE">Oracle</option><option value="UNKNOWN">待校验</option></select></label><label>连接状态<select v-model="connectionStatus"><option value="">全部状态</option><option value="UNTESTED">未测试</option><option value="SUCCEEDED">可连接</option><option value="FAILED">连接失败</option><option value="PENDING">测试已请求</option><option value="UNAVAILABLE">测试不可用</option></select></label><label>启用状态<select v-model="state"><option value="">全部状态</option><option value="ENABLED">已启用</option><option value="DISABLED">已禁用</option></select></label><button type="button" class="button button-secondary" @click="resetFilters">重置</button><button type="button" class="button button-secondary" :disabled="loading" @click="loadSources">刷新</button></section>
   <p v-if="feedback" class="feedback feedback-error" role="alert">{{ feedback }}</p>
   <p v-else-if="notice" class="feedback feedback-notice" role="status">{{ notice }}</p>
   <section v-if="loading" class="content-card loading-state">正在加载已授权数据源…</section>
