@@ -1,6 +1,6 @@
 # OB Data Orch
 
-OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。项目阶段、门禁和真实验证状态以[开发任务地图](docs/03-technical/development-task-map.md)为准；产品页面的功能接入顺序以[产品页面功能接入计划](docs/03-technical/frontend-functional-integration-plan.md)为准。当前仓库尚不是可执行真实导出任务的产品版本。
+OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发顺序、阶段、门禁、页面功能接入和真实验证状态统一以[开发任务地图](docs/03-technical/development-task-map.md)为准。当前仓库尚不是可执行真实导出任务的产品版本。
 
 ## 当前可用内容
 
