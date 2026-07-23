@@ -4,11 +4,11 @@ import AccessControlView from '@/views/AccessControlView.vue'
 import DataSourceFormView from '@/views/DataSourceFormView.vue'
 import DataSourceListView from '@/views/DataSourceListView.vue'
 import DirectLoadWizardView from '@/views/DirectLoadWizardView.vue'
+import ExecutionNodeDetailView from '@/views/ExecutionNodeDetailView.vue'
 import ExportWizardView from '@/views/ExportWizardView.vue'
 import ExecutionNodeView from '@/views/ExecutionNodeView.vue'
 import HomeView from '@/views/HomeView.vue'
 import LogCenterView from '@/views/LogCenterView.vue'
-import ModulePlaceholderView from '@/views/ModulePlaceholderView.vue'
 import NormalImportWizardView from '@/views/NormalImportWizardView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
 import TaskCenterView from '@/views/TaskCenterView.vue'
@@ -29,7 +29,7 @@ export const router = createRouter({
     { path: '/tasks/:id', name: 'task-detail', component: TaskDetailView, meta: { title: '任务详情' } },
     { path: '/templates', name: 'templates', component: TemplateCenterView, meta: { title: '模板中心' } },
     { path: '/nodes', name: 'nodes', component: ExecutionNodeView, meta: { title: '执行节点' } },
-    { path: '/nodes/:id', name: 'node-detail', component: ModulePlaceholderView, meta: { title: '执行节点详情', description: '查看节点注册事实、环境检查、维护状态与关联任务；控制面不会直接操作节点文件或进程。', sections: ['节点概览', '工具环境', '关联任务与事件'] } },
+    { path: '/nodes/:id', name: 'node-detail', component: ExecutionNodeDetailView, meta: { title: '执行节点详情' } },
     { path: '/logs', name: 'logs', component: LogCenterView, meta: { title: '日志中心' } },
     { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },
     { path: '/settings/access-control', name: 'access-control', component: AccessControlView, meta: { title: '权限配置' } },
