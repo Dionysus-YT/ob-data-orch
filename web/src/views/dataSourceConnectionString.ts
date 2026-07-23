@@ -2,7 +2,8 @@ import type { DataSourceWrite } from '@/api/browser'
 
 export type ParsedDataSourceConnection = Pick<DataSourceWrite, 'compatibilityMode' | 'host' | 'port' | 'clusterName' | 'tenantName' | 'username' | 'defaultDatabase' | 'password'>
 
-// parseDataSourceConnectionString 只解析 ODC 支持的固定客户端参数，绝不执行或保存输入的连接串。
+// parseDataSourceConnectionString 只解析 ODC 支持的固定客户端参数，绝不执行输入的连接串。
+// 返回值仅用于回填结构化字段，调用方不得将原始连接串提交给控制面。
 export function parseDataSourceConnectionString(value: string): ParsedDataSourceConnection | undefined {
   const tokens = tokenize(value)
   if (!tokens || tokens.length < 2) return undefined
@@ -20,9 +21,9 @@ export function parseDataSourceConnectionString(value: string): ParsedDataSource
   }
   const host = options.get('host')
   const port = Number(options.get('port'))
-  const password = options.get('password')
+  const password = options.get('password') ?? ''
   const identity = splitODPIdentity(options.get('username'))
-  if (!host || !Number.isInteger(port) || port < 1 || port > 65535 || !password || !identity) return undefined
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535 || !identity || !options.has('password')) return undefined
 
   return {
     compatibilityMode,
@@ -43,7 +44,9 @@ function option(tokens: string[], index: number): { name: 'host' | 'port' | 'use
   const name = names[token]
   if (name) {
     const value = tokens[index + 1]
-    return value ? { name, value, consumed: 1 } : undefined
+    if (value && !value.startsWith('-')) return { name, value, consumed: 1 }
+    // `-p` 可只表示由用户随后在结构化密码字段补填；其他字段不允许缺少值。
+    return name === 'password' ? { name, value: '', consumed: 0 } : undefined
   }
   for (const [prefix, compactName] of Object.entries(names)) {
     if (token.startsWith(prefix) && token.length > prefix.length) return { name: compactName, value: token.slice(prefix.length), consumed: 0 }

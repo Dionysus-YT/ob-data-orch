@@ -19,6 +19,13 @@ describe('ODC 连接串解析', () => {
     })
   })
 
+  it('允许 -p 空值，以便用户稍后补填结构化密码', () => {
+    const connectionString = ['mysql', '-h192.0.2.53', '-P2883', '-uroot@test#cluster_a', '-p'].join(' ')
+    expect(parseDataSourceConnectionString(connectionString)).toMatchObject({
+      compatibilityMode: 'MYSQL', host: '192.0.2.53', port: 2883, username: 'root', tenantName: 'test', clusterName: 'cluster_a', password: '',
+    })
+  })
+
   it('拒绝非 ODP、未知客户端和不完整的参数', () => {
     const passwordOption = `-p${'synthetic-value'}`
     expect(parseDataSourceConnectionString(['mysql', '-h127.0.0.1', '-P2883', '-uapp@tenant', passwordOption].join(' '))).toBeUndefined()
