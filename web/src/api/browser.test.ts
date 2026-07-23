@@ -89,6 +89,50 @@ describe('浏览器 API 客户端', () => {
     expect(calls[0]?.init.body).not.toContain('password')
   })
 
+  it('数据源启停使用版本条件且不生成幂等键', async () => {
+    const { api, calls } = apiWith(Response.json({ state: 'DISABLED', revision: 3 }))
+
+    await expect(api.changeDataSourceState('source-1', 2, 'DISABLED')).resolves.toEqual({
+      state: 'DISABLED',
+      revision: 3,
+    })
+
+    expect(calls[0]?.path).toBe('/api/v1/data-sources/source-1:disable')
+    expect(calls[0]?.init).toMatchObject({ method: 'POST' })
+    expect(calls[0]?.init.headers).toMatchObject({
+      'X-CSRF-Token': 'synthetic-csrf-token',
+      'If-Match': '"rev-2"',
+    })
+    expect(calls[0]?.init.headers).not.toHaveProperty('Idempotency-Key')
+  })
+
+  it('数据源归档使用版本条件且不生成幂等键', async () => {
+    const { api, calls } = apiWith(new Response(null, { status: 204 }))
+
+    await expect(api.archiveDataSource('source-1', 2)).resolves.toBeUndefined()
+
+    expect(calls[0]?.path).toBe('/api/v1/data-sources/source-1')
+    expect(calls[0]?.init).toMatchObject({ method: 'DELETE' })
+    expect(calls[0]?.init.headers).toMatchObject({
+      'X-CSRF-Token': 'synthetic-csrf-token',
+      'If-Match': '"rev-2"',
+    })
+    expect(calls[0]?.init.headers).not.toHaveProperty('Idempotency-Key')
+  })
+
+  it('数据源启停与归档缺少 CSRF 时失败关闭', async () => {
+    const { api, calls } = apiWith(Response.json({}), '')
+
+    await expect(api.changeDataSourceState('source-1', 2, 'DISABLED')).rejects.toMatchObject({
+      code: 'CSRF_TOKEN_UNAVAILABLE',
+    })
+    await expect(api.archiveDataSource('source-1', 2)).rejects.toMatchObject({
+      code: 'CSRF_TOKEN_UNAVAILABLE',
+    })
+
+    expect(calls).toHaveLength(0)
+  })
+
   it('缺少 CSRF 时失败关闭且不发送写请求', async () => {
     const { api, calls } = apiWith(Response.json({ id: 'draft-1' }), '')
 
