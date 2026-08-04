@@ -18,7 +18,9 @@
     { "name": "Tasks" },
     { "name": "AgentEnrollment" },
     { "name": "AgentHeartbeat" },
+    { "name": "AgentEnvironmentChecks" },
     { "name": "AgentPrechecks" },
+    { "name": "AgentConnectionTests" },
     { "name": "AgentExecutions" }
   ],
   "paths": {
@@ -26,17 +28,26 @@
       "get": { "operationId": "getSession", "tags": ["Session"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/execution-nodes": {
-      "get": { "operationId": "listExecutionNodes", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/EligibleFor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "post": { "operationId": "createExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "listExecutionNodes", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "OBDUMPER_EXPORT 只返回管理状态为 ENABLED 的任务候选。DATA_SOURCE_CONNECTION_TEST 是独立诊断筛选，可返回具备当前受认证 Agent 事实的 DISABLED 或 ENABLED 节点，但拒绝 MAINTENANCE/ARCHIVED；诊断候选不表示节点可接收导出任务。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/EligibleFor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "G2 创建节点的固定本机配置声明。服务端固定将新节点保存为 DISABLED；首次关联后的 Agent 必须在本机复核工具、Java 和数据目录，浏览器不能写入心跳、资源采样或管理状态。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/execution-nodes/{nodeId}": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
       "get": { "operationId": "getExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "operationId": "updateExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "patch": { "operationId": "updateExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "G2 替换节点名称、目标平台、工具目录、Java 路径和导出数据目录；配置变化会使节点禁用并要求 Agent 重新核验。管理状态、Agent、心跳和资源事实不可写。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "deleteOrArchiveExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "存在 Agent、草稿、预检查、任务、执行记录或连接测试引用时仅归档；完全未引用的节点才物理删除。归档会原子撤销当前 Agent 身份和未使用注册码；有运行任务时拒绝处置，避免中断任务回报。控制面不披露具体引用事实。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
-    "/api/v1/execution-nodes/{nodeId}:create-enrollment": {
+    "/api/v1/execution-nodes/{nodeId}:enrollments": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
-      "post": { "operationId": "createAgentEnrollment", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-secret-response": "DISPLAY_ONCE", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "issueAgentEnrollment", "tags": ["ExecutionNodes", "AgentEnrollment"], "security": [{ "BrowserSession": [] }], "description": "节点管理员签发一次性关联材料。该操作没有请求体；材料只在 201 响应中展示一次，响应丢失后必须重新签发。", "x-secret-response": "DISPLAY_ONCE", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "responses": { "201": { "$ref": "#/components/responses/EnrollmentMaterialIssued" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/execution-nodes/{nodeId}:environment-check": {
+      "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
+      "post": { "operationId": "requestExecutionNodeEnvironmentCheck", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "节点管理员请求当前受认证 Agent 执行唯一固定本机运行时检查。控制面只随心跳返回不透明检查标识；不下发路径、命令、SQL、凭据或工具输出。请求会使节点保持 DISABLED，直到检查通过后由专用启用动作完成状态转换。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "202": { "$ref": "#/components/responses/Accepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/execution-nodes/{nodeId}:enable": {
+      "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
+      "post": { "operationId": "enableExecutionNode", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "仅当当前 Agent 在线、平台匹配、容量可用，且同一 factsRevision 的固定环境检查为 TOOL_RUNTIME_READY 时启用节点。该动作不连接数据库、不启动 OBDUMPER，任务仍须通过独立预检查。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources": {
       "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
@@ -46,11 +57,15 @@
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
       "get": { "operationId": "getDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
       "patch": { "operationId": "updateDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "deleteOrArchiveDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "delete": { "operationId": "deleteOrArchiveDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources/{dataSourceId}:test-connection": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
-      "post": { "operationId": "testDataSourceConnection", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "testDataSourceConnection", "tags": ["DataSources", "AgentConnectionTests"], "security": [{ "BrowserSession": [] }], "description": "浏览器只选择已授权的执行节点。控制面冻结数据源、凭据修订、节点事实和受认证 Agent 绑定，不直接连接数据库。G2 合成结果不能启用数据源。", "x-idempotency": "REQUIRED", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceConnectionTestRequest" }, "responses": { "200": { "$ref": "#/components/responses/DataSourceConnectionTestAccepted" }, "202": { "$ref": "#/components/responses/DataSourceConnectionTestAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-source-connection-tests/{connectionTestId}": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionTestId" }],
+      "get": { "operationId": "getDataSourceConnectionTest", "tags": ["DataSources", "AgentConnectionTests"], "security": [{ "BrowserSession": [] }], "description": "仅返回当前数据源对象范围内、单个执行节点的无秘密测试投影。它不表示其他节点、对象权限、性能或导出可行性。", "responses": { "200": { "$ref": "#/components/responses/DataSourceConnectionTestRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources/{dataSourceId}:disable": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
@@ -74,52 +89,56 @@
     },
     "/api/v1/prechecks/{precheckId}": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
-      "get": { "operationId": "getPrecheck", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getPrecheck", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/PrecheckRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-drafts/{draftId}:preview-command": {
       "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
-      "post": { "operationId": "previewExportCommand", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-secret-resolution": "FORBIDDEN", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "previewExportCommand", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "description": "Returns the authorized command preview with all non-password arguments and the fixed -p ****** password placeholder. Password secret resolution is forbidden; the executable argv contains neither a password value nor -p because the official security file supplies it.", "x-secret-resolution": "FORBIDDEN", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-drafts/{draftId}:submit": {
       "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
-      "post": { "operationId": "submitExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "DISABLED_UNTIL_G3", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "submitExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT", "description": "Windows 本机 MVP：仅当冻结草稿绑定的预检查仍完整成功时创建任务。提交本身不接收命令、路径或密码；关联 Agent 领取后才会按固定 OBDUMPER_EXPORT 信封启动工具。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks": {
-      "get": { "operationId": "listTasks", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "listTasks", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体创建或通过 TASK_OPERATE_BY_DATA_SOURCE 明确授权的已提交任务。limit 只允许 10、20 或 50，默认 10；totalPages 仅按同一授权范围和当前 limit 派生，不返回全局任务总数。首个 F3 增量没有可靠阶段或百分比证据，因此明确返回 UNAVAILABLE；不返回配置、命令、日志、错误原文、凭据引用或创建者标识。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskPageSize" }], "responses": { "200": { "$ref": "#/components/responses/TaskList" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTask", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTask", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "任务详情页头的授权最小标识。执行状态、配置快照和命令证据必须分别读取，不能借概览响应取得。", "responses": { "200": { "$ref": "#/components/responses/TaskOverviewRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/snapshot": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "当前单表 CSV 切片的最小冻结配置事实；不返回完整快照 JSON、凭据引用、输出路径或日志路径。", "responses": { "200": { "$ref": "#/components/responses/TaskSnapshotRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/command-evidence": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskCommandEvidence", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-redaction": "ALWAYS", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskCommandEvidence", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-redaction": "PASSWORD_ONLY", "description": "只返回脱敏计划命令；不回退为实际 argv、秘密槽位或进程事件载荷。", "responses": { "200": { "$ref": "#/components/responses/TaskCommandEvidenceRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/execution": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskExecution", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskExecution", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "只返回平台已确认的状态和时间事实。阶段、进度、原始执行事件与结果摘要未形成可靠安全投影前不得返回。", "responses": { "200": { "$ref": "#/components/responses/TaskExecutionRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/logs": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "description": "只读取当前已授权任务的已持久化双层秘密脱敏日志。正文保留完整非秘密运行上下文，包括连接、对象、路径、非密码命令令牌和工具诊断；密码、令牌、密钥和安全材料继续遮蔽。cursor 继续固定快照；after 从最后可靠游标创建新快照增量读取；两者不能同时提供。响应不含总数、段路径、SQLite 行号或来源内部标识。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskLogAfter" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/logs/stream": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "streamTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/EventStream" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "streamTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "description": "仅活动任务的单向 SSE。正文与日志查询使用同一秘密脱敏边界，保留非秘密运行上下文。after 或 Last-Event-ID 必须是同一主体和任务的最后可靠游标；每个 log 事件只代表已 fsync 且已登记的单条记录。连接恢复不代表 Agent 采集缺口已补齐。", "parameters": [{ "$ref": "#/components/parameters/TaskLogAfter" }, { "$ref": "#/components/parameters/LastEventId" }], "responses": { "200": { "$ref": "#/components/responses/EventStream" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/logs:download": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "post": { "operationId": "downloadTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "requestBody": { "$ref": "#/components/requestBodies/LogDownload" }, "responses": { "200": { "$ref": "#/components/responses/Download" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "downloadTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-implementation-status": "NOT_IMPLEMENTED", "description": "已确认的后续下载契约；F3.3 不实现该端点，不能将其视为可用能力。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "requestBody": { "$ref": "#/components/requestBodies/LogDownload" }, "responses": { "200": { "$ref": "#/components/responses/Download" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/enrollments:exchange": {
-      "post": { "operationId": "exchangeAgentEnrollment", "tags": ["AgentEnrollment"], "security": [], "requestBody": { "$ref": "#/components/requestBodies/EnrollmentExchange" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "exchangeAgentEnrollment", "tags": ["AgentEnrollment"], "security": [], "x-secret-inputs": ["enrollmentMaterial", "machineCredential"], "requestBody": { "$ref": "#/components/requestBodies/EnrollmentExchange" }, "responses": { "200": { "$ref": "#/components/responses/AgentEnrollmentAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/heartbeats": {
-      "post": { "operationId": "agentHeartbeat", "tags": ["AgentHeartbeat"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "agentHeartbeat", "tags": ["AgentHeartbeat"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentHeartbeat" }, "responses": { "200": { "$ref": "#/components/responses/AgentHeartbeatAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/execution-node-environment-checks/{checkId}:complete": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionNodeEnvironmentCheckId" }],
+      "post": { "operationId": "completeExecutionNodeEnvironmentCheck", "tags": ["AgentEnvironmentChecks"], "security": [{ "AgentCredential": [] }], "description": "当前已关联 Agent 只能回传固定本机运行时检查的 PASSED/TOOL_RUNTIME_READY 或 FAILED 稳定码；请求不包含路径、命令、数据库信息、秘密或原始错误。", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/executions:claim": {
       "post": { "operationId": "claimExecution", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
@@ -142,7 +161,11 @@
     },
     "/agent/v1/executions/{executionId}/logs:append": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
-      "post": { "operationId": "appendExecutionLogs", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "x-redaction": "AGENT_BEFORE_UPLOAD", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "appendExecutionLogs", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "x-redaction": "AGENT_BEFORE_UPLOAD_SECRETS_ONLY", "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentExecutionLogAppendAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}/logs:gap": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "appendExecutionLogGap", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "description": "A durable no-body source gap created when the Agent log spool reaches its fixed limit. It cannot carry log text, command, path, raw error or secret.", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentExecutionLogGapAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/executions/{executionId}:reconcile": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
@@ -152,20 +175,35 @@
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
       "post": { "operationId": "releaseTerminalExecution", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
-    "/agent/v1/prechecks:claim": {
-      "post": { "operationId": "claimPrecheck", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-capability": "EXPORT_PREFLIGHT", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
+    "/agent/v1/prechecks:claim-next": {
+      "post": { "operationId": "claimNextPrecheck", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-capability": "EXPORT_PREFLIGHT", "description": "G2 固定 EXPORT_PREFLIGHT 的服务端原子领取。请求不接受预检查标识、租约标识、秘密、任意 SQL、路径或工具命令；204 表示当前没有可领取工作且不产生副作用，真实执行保持关闭。", "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckClaimNext" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckClaimed" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/prechecks/{precheckId}:acknowledge-lease": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
-      "post": { "operationId": "acknowledgePrecheckLease", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "acknowledgePrecheckLease", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckLeaseAcknowledgement" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckLeaseAcknowledged" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/prechecks/{precheckId}/secret-slots:resolve": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
-      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-secret-response": "NO_STORE", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "description": "仅受认证 Agent 可在已确认的固定 EXPORT_PREFLIGHT 租约中解析唯一数据库连接槽位。响应只能短时进入 Agent 内存，不得进入状态文件、日志、审计、浏览器或任务快照；该合成协议不开放真实执行。", "x-secret-response": "AGENT_MEMORY_ONLY_NO_STORE", "x-real-execution": "DISABLED_UNTIL_G3_VALIDATION", "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckSecretSlotResolve" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckSecretSlotResolved" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/prechecks/{precheckId}:complete": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
-      "post": { "operationId": "completePrecheck", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-forbidden-inputs": ["shell", "arbitrarySql", "arbitraryFile"], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "completePrecheck", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "x-forbidden-inputs": ["shell", "arbitrarySql", "arbitraryFile", "succeeded"], "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckCompletion" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckCompleted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/data-source-connection-tests:claim-next": {
+      "post": { "operationId": "claimNextDataSourceConnectionTest", "tags": ["AgentConnectionTests"], "security": [{ "AgentCredential": [] }], "x-capability": "DATA_SOURCE_CONNECTION_TEST", "description": "受认证 Agent 原子领取已绑定到自身节点的一条基础连接测试。请求不接受测试标识、租约、地址、凭据、SQL、路径或命令；204 不产生副作用。", "requestBody": { "$ref": "#/components/requestBodies/AgentDataSourceConnectionTestClaimNext" }, "responses": { "200": { "$ref": "#/components/responses/AgentDataSourceConnectionTestClaimed" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/data-source-connection-tests/{connectionTestId}:acknowledge-lease": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionTestId" }],
+      "post": { "operationId": "acknowledgeDataSourceConnectionTestLease", "tags": ["AgentConnectionTests"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentDataSourceConnectionTestLeaseAcknowledgement" }, "responses": { "200": { "$ref": "#/components/responses/AgentDataSourceConnectionTestLeaseAcknowledged" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/data-source-connection-tests/{connectionTestId}/secret-slots:resolve": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionTestId" }],
+      "post": { "operationId": "resolveDataSourceConnectionTestSecretSlots", "tags": ["AgentConnectionTests"], "security": [{ "AgentCredential": [] }], "description": "仅当前受认证 Agent 可在确认后的有效连接测试租约内解析唯一数据库连接槽位。响应只短时进入 Agent 内存，禁止持久化、回显、记录或用于导出执行。", "x-secret-response": "AGENT_MEMORY_ONLY_NO_STORE", "x-real-execution": "DISABLED_UNTIL_G3_VALIDATION", "requestBody": { "$ref": "#/components/requestBodies/AgentDataSourceConnectionTestSecretSlotResolve" }, "responses": { "200": { "$ref": "#/components/responses/AgentDataSourceConnectionTestSecretSlotResolved" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/data-source-connection-tests/{connectionTestId}:complete": {
+      "parameters": [{ "$ref": "#/components/parameters/ConnectionTestId" }],
+      "post": { "operationId": "completeDataSourceConnectionTest", "tags": ["AgentConnectionTests"], "security": [{ "AgentCredential": [] }], "x-forbidden-inputs": ["shell", "arbitrarySql", "arbitraryFile", "jdbcUrl", "exception", "succeeded"], "requestBody": { "$ref": "#/components/requestBodies/AgentDataSourceConnectionTestCompletion" }, "responses": { "200": { "$ref": "#/components/responses/AgentDataSourceConnectionTestCompleted" }, "default": { "$ref": "#/components/responses/Error" } } }
     }
   },
   "components": {
@@ -176,12 +214,17 @@
     "parameters": {
       "NodeId": { "name": "nodeId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
       "DataSourceId": { "name": "dataSourceId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "ConnectionTestId": { "name": "connectionTestId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
       "DraftId": { "name": "draftId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
       "PrecheckId": { "name": "precheckId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
+      "ExecutionNodeEnvironmentCheckId": { "name": "checkId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
       "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
       "ExecutionId": { "name": "executionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } },
       "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 2048 }, "description": "Opaque, authorization-bound cursor." },
-      "EligibleFor": { "name": "eligibleFor", "in": "query", "required": false, "schema": { "type": "string", "enum": ["OBDUMPER_EXPORT"] } },
+      "TaskPageSize": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "enum": [10, 20, 50], "default": 10 }, "description": "Authorized task list page size. The server rejects all other values." },
+      "TaskLogAfter": { "name": "after", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 2048 }, "description": "Opaque, subject- and task-bound last reliable log cursor." },
+      "LastEventId": { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "maxLength": 2048 }, "description": "The same opaque last reliable log cursor used by SSE reconnection." },
+      "EligibleFor": { "name": "eligibleFor", "in": "query", "required": false, "schema": { "type": "string", "enum": ["OBDUMPER_EXPORT", "DATA_SOURCE_CONNECTION_TEST"] } },
       "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 4096 } },
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 200 } },
       "IfMatch": { "name": "If-Match", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^\\\"rev-[1-9][0-9]*\\\"$" } }
@@ -190,36 +233,72 @@
       "EmptyAction": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 } } } },
       "ExecutionNodeWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeWrite" } } } },
       "DataSourceWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceWrite" } } } },
+      "DataSourceConnectionTestRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestRequest" } } } },
       "ExportDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportDraftWrite" } } } },
       "LogDownload": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LogDownloadRequest" } } } },
       "EnrollmentExchange": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrollmentExchange" } } } },
+      "AgentHeartbeat": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentHeartbeat" } } } },
+      "AgentPrecheckClaimNext": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckClaimNext" } } } },
+      "AgentPrecheckLeaseAcknowledgement": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckLeaseAcknowledgement" } } } },
+      "AgentPrecheckSecretSlotResolve": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckSecretSlotResolve" } } } },
+      "AgentPrecheckCompletion": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckCompletion" } } } },
+      "AgentDataSourceConnectionTestClaimNext": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestClaimNext" } } } },
+      "AgentDataSourceConnectionTestLeaseAcknowledgement": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestLeaseAcknowledgement" } } } },
+      "AgentDataSourceConnectionTestSecretSlotResolve": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestSecretSlotResolve" } } } },
+      "AgentDataSourceConnectionTestCompletion": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestCompletion" } } } },
       "AgentEnvelope": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentEnvelope" } } } }
     },
     "responses": {
       "Ok": { "description": "Authorized, non-cacheable resource response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceEnvelope" } } } },
+      "DataSourceDeletion": { "description": "Data source was physically deleted or archived to preserve history.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDeletionEnvelope" } } } },
+      "ExecutionNodeDeletion": { "description": "Execution node was physically deleted or archived to preserve history; archived nodes may report that current Agent access was revoked.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeDeletionEnvelope" } } } },
       "Collection": { "description": "Authorized cursor page without a global count.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CollectionEnvelope" } } } },
+      "TaskList": { "description": "Authorization-scoped task page with list-safe fields and authorization-scoped totalPages only.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskListEnvelope" } } } },
+      "TaskOverviewRead": { "description": "Authorized task overview without snapshot, command or execution fields.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskOverviewReadEnvelope" } } } },
+      "TaskSnapshotRead": { "description": "Authorized minimum immutable task snapshot without raw JSON, paths or credential references.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskSnapshotReadEnvelope" } } } },
+      "TaskCommandEvidenceRead": { "description": "Authorized password-redacted planned command evidence without executable argv or secret slots.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommandEvidenceReadEnvelope" } } } },
+      "TaskExecutionRead": { "description": "Authorized confirmed execution state without raw process or result evidence payloads.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskExecutionReadEnvelope" } } } },
       "Created": { "description": "Resource created.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MutationEnvelope" } } } },
       "Accepted": { "description": "Asynchronous precheck accepted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MutationEnvelope" } } } },
+      "PrecheckRead": { "description": "Authorized fixed precheck state with six redacted result codes. A pending lease projects all checks as UNKNOWN and never implies success or real execution.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrecheckReadEnvelope" } } } },
+      "DataSourceConnectionTestAccepted": { "description": "Node-bound connection test accepted or safely replayed. It is only a G2 protocol request until an AGENT_JDBC terminal result is recorded.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestMutationEnvelope" } } } },
+      "DataSourceConnectionTestRead": { "description": "Authorized, node-specific connection test state without connection identity, JDBC metadata, exception text or secret data.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestReadEnvelope" } } } },
       "AgentOk": { "description": "Machine-authenticated protocol response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResponseEnvelope" } } } },
+      "AgentExecutionLogAppendAccepted": { "description": "A confirmed or idempotently duplicated log batch. The response echoes the exact stream, sequence range and digest that the Agent must match before deleting its local batch.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentExecutionLogAppendResponseEnvelope" } } } },
+      "AgentExecutionLogGapAccepted": { "description": "A confirmed or idempotently duplicated no-body log gap. The response echoes the exact source range and normalized gap digest before the Agent may delete its local gap entry.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentExecutionLogGapResponseEnvelope" } } } },
+      "EnrollmentMaterialIssued": { "description": "One-time enrollment material displayed only in this response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrollmentMaterialIssuedEnvelope" } } } },
+      "AgentEnrollmentAccepted": { "description": "Enrollment exchange accepted without echoing either input secret.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentEnrollmentResponseEnvelope" } } } },
+      "AgentHeartbeatAccepted": { "description": "Strict Agent heartbeat accepted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentHeartbeatResponseEnvelope" } } } },
+      "AgentPrecheckClaimed": { "description": "Fixed EXPORT_PREFLIGHT lease was issued with immutable binding and check set; no real execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckClaimResponseEnvelope" } } } },
+      "AgentPrecheckLeaseAcknowledged": { "description": "Agent acknowledged the fixed precheck lease; no real execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckLeaseAcknowledgedResponseEnvelope" } } } },
+      "AgentPrecheckSecretSlotResolved": { "description": "Agent-only, no-store database connection slot response for one verified precheck lease. It does not authorize an execution or a tool start.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckSecretSlotResponseEnvelope" } } } },
+      "AgentPrecheckCompleted": { "description": "Fixed precheck results were accepted as SUCCEEDED or FAILED; no real execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckCompletedResponseEnvelope" } } } },
+      "AgentDataSourceConnectionTestClaimed": { "description": "A fixed node-bound connection-test lease was issued. No export execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestClaimResponseEnvelope" } } } },
+      "AgentDataSourceConnectionTestLeaseAcknowledged": { "description": "The Agent acknowledged the immutable connection-test lease.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestLeaseAcknowledgedResponseEnvelope" } } } },
+      "AgentDataSourceConnectionTestSecretSlotResolved": { "description": "One Agent-only, no-store database connection slot for the current confirmed connection-test lease.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestSecretSlotResponseEnvelope" } } } },
+      "AgentDataSourceConnectionTestCompleted": { "description": "The fixed node-side connection result was accepted. G2 synthetic success still cannot enable a data source.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestCompletedResponseEnvelope" } } } },
       "NoWork": { "description": "No eligible work is currently available.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } } },
-      "EventStream": { "description": "Persisted, double-redacted log events only.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "text/event-stream": { "schema": { "type": "string" } } }, "x-heartbeat-required": true },
-      "Download": { "description": "Synchronous redacted log download, limited to 100000 records and 100 MiB.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/x-ndjson": { "schema": { "type": "string", "format": "binary" } } } },
+      "EventStream": { "description": "Persisted log events after double secret redaction. Authorized task readers retain non-secret operational context; each log event has an opaque reliable cursor as its SSE id, and heartbeats contain no log content.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "text/event-stream": { "schema": { "type": "string" } } }, "x-heartbeat-required": true },
+      "Download": { "description": "Synchronous task-authorized log download after double secret redaction, retaining non-secret operational context; limited to 100000 records and 100 MiB.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/x-ndjson": { "schema": { "type": "string", "format": "binary" } } } },
       "Error": { "description": "Stable safe error. Unauthorized objects use 404 semantics.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
     },
     "headers": {
       "NoStore": { "description": "Sensitive responses are never cached.", "schema": { "type": "string", "const": "no-store" } }
     },
     "schemas": {
-      "OpaqueId": { "type": "string", "format": "uuid" },
+      "OpaqueId": { "type": "string", "format": "uuid", "description": "New control-plane resource IDs and response requestId values use canonical lower-case UUIDv4. Agent v1 accepts already-persisted opaque identifiers only for recovery compatibility; it never rewrites them in place." },
       "ExecutionNodeWrite": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["displayName", "platform", "allowedRoots", "toolHome", "javaPath"],
         "properties": {
           "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
           "platform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
-          "managementState": { "type": "string", "enum": ["ENABLED", "DISABLED", "MAINTENANCE"] },
-          "allowedRoots": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } }
-        }
+          "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+          "toolHome": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "javaPath": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        },
+        "description": "节点注册界面的一次性完整替换输入。工具目录、Java 路径和导出数据目录均为目标机器绝对路径声明；首次关联 Agent 会在本机复核并固化，不能从心跳或后续控制面请求动态覆盖。"
       },
       "DataSourceWrite": {
         "type": "object",
@@ -235,10 +314,54 @@
           "tenantName": { "type": "string", "minLength": 1, "maxLength": 255 },
           "username": { "type": "string", "minLength": 1, "maxLength": 512 },
           "defaultDatabase": { "type": ["string", "null"], "maxLength": 512 },
-          "password": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true },
-          "state": { "type": "string", "enum": ["ENABLED", "DISABLED"] }
+          "password": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true }
         },
-        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、集群、租户、用户名和密码。创建需要名称、环境、数据源类型、连接字段和密码；Patch 使用字段存在语义，省略密码表示保持不变。"
+        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、集群、租户、用户名和密码。创建固定为 DISABLED；启用和禁用只能通过专用状态动作完成。Patch 使用字段存在语义，省略密码表示保持不变。"
+      },
+      "DataSourceConnectionTestRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["nodeId"],
+        "properties": {
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" }
+        },
+        "description": "浏览器只能选择一个已授权的候选执行节点。连接地址、用户名、密码、URL、命令和 SQL 不属于此请求。"
+      },
+      "DataSourceConnectionTestRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "dataSourceId", "nodeId", "nodeFactsRevision", "status", "verificationSource", "realConnectionVerified", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeFactsRevision": { "type": "integer", "minimum": 1 },
+          "status": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] },
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "verificationSource": { "enum": ["G2_SYNTHETIC", "AGENT_JDBC"] },
+          "realConnectionVerified": { "type": "boolean", "description": "仅当 AGENT_JDBC 已在本节点成功完成时为 true；它不代表其他节点、对象权限、性能或导出可行性。" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "completedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DataSourceConnectionTestMutationEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item", "replayed"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "item": { "$ref": "#/components/schemas/DataSourceConnectionTestRun" },
+          "replayed": { "type": "boolean" }
+        }
+      },
+      "DataSourceConnectionTestReadEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "item": { "$ref": "#/components/schemas/DataSourceConnectionTestRun" }
+        }
       },
       "ExportDraftWrite": {
         "type": "object",
@@ -250,9 +373,36 @@
           "table": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^*,]+$" },
           "format": { "type": "string", "const": "CSV" },
           "filePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "logPath": { "type": "string", "maxLength": 4096 },
+          "skipCheckDir": { "type": "boolean" },
           "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }
         },
         "description": "Only private ODP, one explicit table, CSV and one node-local absolute output path belong to this slice."
+      },
+      "ExportPrecheckRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "draftId", "draftRevision", "configFingerprint", "nodeId", "status", "integrityStatus", "results", "validUntil"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "draftId": { "$ref": "#/components/schemas/OpaqueId" },
+          "draftRevision": { "type": "integer", "minimum": 1 },
+          "configFingerprint": { "$ref": "#/components/schemas/SHA256Digest" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "status": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "EXPIRED", "INVALIDATED"] },
+          "integrityStatus": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "results": { "$ref": "#/components/schemas/AgentPrecheckResults" },
+          "validUntil": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PrecheckReadEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "item": { "$ref": "#/components/schemas/ExportPrecheckRun" }
+        }
       },
       "GatedCsvOptions": {
         "type": "object",
@@ -281,7 +431,7 @@
       "EnrollmentExchange": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["requestId", "enrollmentId", "enrollmentMaterial", "agentId", "nodeId", "machineCredential"],
+        "required": ["requestId", "enrollmentId", "enrollmentMaterial", "agentId", "nodeId", "machineCredential", "protocolVersion"],
         "properties": {
           "requestId": { "$ref": "#/components/schemas/OpaqueId" },
           "enrollmentId": { "$ref": "#/components/schemas/OpaqueId" },
@@ -291,6 +441,354 @@
           "machineCredential": { "type": "string", "minLength": 32, "maxLength": 4096, "writeOnly": true },
           "protocolVersion": { "type": "string", "minLength": 1, "maxLength": 64 }
         }
+      },
+      "AgentHeartbeat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "HEARTBEAT" },
+          "payload": { "$ref": "#/components/schemas/AgentHeartbeatPayload" }
+        }
+      },
+      "AgentHeartbeatPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operatingSystem", "architecture", "agentVersion", "observedAt", "capacityTotal", "capacityUsed"],
+        "properties": {
+          "operatingSystem": { "type": "string", "enum": ["WINDOWS", "LINUX"] },
+          "architecture": { "type": "string", "enum": ["AMD64", "ARM64"] },
+          "agentVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "observedAt": { "type": "string", "format": "date-time" },
+          "capacityTotal": { "const": 1 },
+          "capacityUsed": { "type": "integer", "minimum": 0, "maximum": 1 },
+          "cpuUsagePercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "memoryUsagePercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "runtimeConfigurationDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "dataRootUsages": { "type": "array", "maxItems": 32, "items": { "$ref": "#/components/schemas/AgentDataRootUsage" } }
+        }
+      },
+      "AgentDataRootUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rootDigest", "totalBytes", "availableBytes"],
+        "properties": {
+          "rootDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "totalBytes": { "type": "integer", "minimum": 0 },
+          "availableBytes": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "SHA256Digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+      "AgentDataSourceConnectionTestClaimNext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "DATA_SOURCE_CONNECTION_TEST_CLAIM_NEXT" },
+          "payload": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestClaimNextPayload" }
+        }
+      },
+      "AgentDataSourceConnectionTestClaimNextPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability"],
+        "properties": { "capability": { "const": "DATA_SOURCE_CONNECTION_TEST" } }
+      },
+      "AgentDataSourceConnectionTestLeaseAcknowledgement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "DATA_SOURCE_CONNECTION_TEST_ACKNOWLEDGE_LEASE" },
+          "payload": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestLeasePayload" }
+        }
+      },
+      "AgentDataSourceConnectionTestSecretSlotResolve": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "DATA_SOURCE_CONNECTION_TEST_RESOLVE_SECRET_SLOTS" },
+          "payload": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestSecretSlotPayload" }
+        }
+      },
+      "AgentDataSourceConnectionTestCompletion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "DATA_SOURCE_CONNECTION_TEST_COMPLETE" },
+          "payload": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestCompletionPayload" }
+        }
+      },
+      "AgentDataSourceConnectionTestLeasePayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "leaseEpoch", "bindingDigest"],
+        "properties": {
+          "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+          "leaseEpoch": { "type": "integer", "minimum": 1 },
+          "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" }
+        }
+      },
+      "AgentDataSourceConnectionTestSecretSlotPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "leaseEpoch", "bindingDigest", "slot"],
+        "properties": {
+          "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+          "leaseEpoch": { "type": "integer", "minimum": 1 },
+          "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "slot": { "const": "DATABASE_CONNECTION" }
+        }
+      },
+      "AgentDataSourceConnectionTestCompletionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "leaseEpoch", "bindingDigest", "status", "evidenceCode"],
+        "properties": {
+          "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+          "leaseEpoch": { "type": "integer", "minimum": 1 },
+          "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "status": { "enum": ["SUCCEEDED", "FAILED", "UNKNOWN"] },
+          "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] }
+        },
+        "description": "控制面会依据被冻结的 verificationSource 再次核验状态与证据码组合。"
+      },
+      "AgentDataSourceConnectionTestBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["connectionTestId", "dataSourceId", "connectionConfigDigest", "credentialRevision", "nodeId", "nodeFactsRevision"],
+        "properties": {
+          "connectionTestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "connectionConfigDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "credentialRevision": { "type": "integer", "minimum": 1 },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeFactsRevision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AgentPrecheckClaimNext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "EXPORT_PREFLIGHT_CLAIM_NEXT" },
+          "payload": { "$ref": "#/components/schemas/AgentPrecheckClaimNextPayload" }
+        }
+      },
+      "AgentPrecheckClaimNextPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability"],
+        "properties": {
+          "capability": { "const": "EXPORT_PREFLIGHT" }
+        }
+      },
+      "AgentPrecheckLeaseAcknowledgement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "EXPORT_PREFLIGHT_ACKNOWLEDGE_LEASE" },
+          "payload": { "$ref": "#/components/schemas/AgentPrecheckLeaseAcknowledgementPayload" }
+        }
+      },
+      "AgentPrecheckLeaseAcknowledgementPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "leaseEpoch", "bindingDigest"],
+        "properties": {
+          "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+          "leaseEpoch": { "type": "integer", "minimum": 1 },
+          "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" }
+        }
+      },
+      "AgentPrecheckSecretSlotResolve": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "EXPORT_PREFLIGHT_RESOLVE_SECRET_SLOTS" },
+          "payload": { "$ref": "#/components/schemas/AgentPrecheckSecretSlotResolvePayload" }
+        }
+      },
+      "AgentPrecheckSecretSlotResolvePayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "leaseEpoch", "bindingDigest", "slot"],
+        "properties": {
+          "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+          "leaseEpoch": { "type": "integer", "minimum": 1 },
+          "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "slot": { "const": "DATABASE_CONNECTION" }
+        }
+      },
+      "AgentPrecheckCompletion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "EXPORT_PREFLIGHT_COMPLETE" },
+          "payload": { "$ref": "#/components/schemas/AgentPrecheckCompletionPayload" }
+        }
+      },
+      "AgentPrecheckCompletionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "leaseEpoch", "bindingDigest", "results"],
+        "properties": {
+          "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+          "leaseEpoch": { "type": "integer", "minimum": 1 },
+          "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+          "results": { "$ref": "#/components/schemas/AgentPrecheckResults" }
+        }
+      },
+      "AgentPrecheckBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["precheckId", "nodeId", "draftRevision", "configFingerprint", "credentialRevision", "nodeFactsVersion"],
+        "properties": {
+          "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "draftRevision": { "type": "integer", "minimum": 1 },
+          "configFingerprint": { "$ref": "#/components/schemas/SHA256Digest" },
+          "credentialRevision": { "type": "integer", "minimum": 1 },
+          "nodeFactsVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AgentPrecheckExecutionContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["compatibilityMode", "database", "table", "outputPath", "logPath", "skipCheckDir", "targetPlatform", "allowedRoots"],
+        "properties": {
+          "compatibilityMode": { "type": "string", "enum": ["MYSQL", "ORACLE"], "description": "冻结数据源的 OceanBase 兼容模式；Agent 仅以此选择固定元数据定位与零行读取的标识符引用规则。" },
+          "database": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "table": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "outputPath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "logPath": { "type": "string", "maxLength": 4096 },
+          "skipCheckDir": { "type": "boolean" },
+          "targetPlatform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
+          "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+        }
+      },
+      "AgentPrecheckCheckSet": {
+        "type": "array",
+        "minItems": 6,
+        "maxItems": 6,
+        "prefixItems": [
+          { "const": "DATABASE_CONNECTIVITY" },
+          { "const": "OBJECT_ACCESS" },
+          { "const": "TOOL_ENVIRONMENT" },
+          { "const": "OUTPUT_PATH" },
+          { "const": "OUTPUT_EMPTY" },
+          { "const": "AVAILABLE_SPACE" }
+        ],
+        "items": false
+      },
+      "AgentPrecheckResults": {
+        "type": "array",
+        "minItems": 6,
+        "maxItems": 6,
+        "prefixItems": [
+          { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectivityResult" },
+          { "$ref": "#/components/schemas/AgentPrecheckObjectAccessResult" },
+          { "$ref": "#/components/schemas/AgentPrecheckToolEnvironmentResult" },
+          { "$ref": "#/components/schemas/AgentPrecheckOutputPathResult" },
+          { "$ref": "#/components/schemas/AgentPrecheckOutputEmptyResult" },
+          { "$ref": "#/components/schemas/AgentPrecheckAvailableSpaceResult" }
+        ],
+        "items": false
+      },
+      "AgentPrecheckDatabaseConnectivityResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "DATABASE_CONNECTIVITY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckObjectAccessResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "OBJECT_ACCESS" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OBJECT_ACCESSIBLE", "OBJECT_NOT_ACCESSIBLE", "OBJECT_ACCESS_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckToolEnvironmentResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "TOOL_ENVIRONMENT" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "TOOL_RUNTIME_READY", "TOOL_RUNTIME_INVALID", "TOOL_RUNTIME_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckOutputPathResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "OUTPUT_PATH" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_PATH_WRITABLE", "OUTPUT_PATH_NOT_WRITABLE", "OUTPUT_PATH_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckOutputEmptyResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "OUTPUT_EMPTY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_PATH_EMPTY", "OUTPUT_EMPTY_CHECK_SKIPPED", "OUTPUT_PATH_NOT_EMPTY", "OUTPUT_PATH_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckAvailableSpaceResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "AVAILABLE_SPACE" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_SPACE_SUFFICIENT", "OUTPUT_SPACE_INSUFFICIENT", "OUTPUT_SPACE_UNAVAILABLE"] } }
       },
       "AgentEnvelope": {
         "type": "object",
@@ -313,11 +811,145 @@
         "required": ["requestId", "data"],
         "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "data": { "type": "object", "description": "Resource-specific response schema is completed before its DEV-04 endpoint is implemented." } }
       },
+      "DataSourceDeletionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "id", "outcome", "revision"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "outcome": { "type": "string", "enum": ["DELETED", "ARCHIVED"] },
+          "revision": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "ExecutionNodeDeletionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "id", "outcome", "revision", "agentAccessRevoked"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "outcome": { "type": "string", "enum": ["DELETED", "ARCHIVED"] },
+          "revision": { "type": "integer", "minimum": 0 },
+          "agentAccessRevoked": { "type": "boolean", "description": "Whether active Agent credentials or unused enrollment materials were revoked during archival." }
+        }
+      },
       "CollectionEnvelope": {
         "type": "object",
         "additionalProperties": false,
         "required": ["requestId", "items"],
         "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "items": { "type": "array", "items": { "type": "object" } }, "nextCursor": { "type": ["string", "null"] } }
+      },
+      "TaskListItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "dataSourceId", "state", "stageEvidence", "progressEvidence", "reconciliationRequired", "nodeId", "ownedByCurrentUser", "submittedAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "type": { "const": "OBDUMPER_EXPORT" },
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "objectSummary": { "type": "string", "maxLength": 1025, "description": "从不可变单表导出快照提取的 database.table 摘要；不是完整配置。" },
+          "state": { "enum": ["WAITING_SCHEDULE", "STARTING", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"] },
+          "stageEvidence": { "const": "UNAVAILABLE", "description": "当前增量没有可靠工具阶段映射，不得由状态或时间推断。" },
+          "progressEvidence": { "const": "UNAVAILABLE", "description": "当前增量没有可靠总量与完成量，不返回百分比或 ETA。" },
+          "reconciliationRequired": { "type": "boolean", "description": "保留最后可信状态并在页面附加“状态核对中”。" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "ownedByCurrentUser": { "type": "boolean", "description": "用于显示“我”或“已授权任务”，不披露其他主体标识。" },
+          "submittedAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TaskListEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "items", "nextCursor", "totalPages"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "items": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/TaskListItem" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 2048 },
+          "totalPages": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "TaskOverviewRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "dataSourceId", "nodeId", "precheckId", "submittedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "type": { "const": "OBDUMPER_EXPORT" },
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+          "submittedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TaskOverviewReadEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskOverviewRead" } }
+      },
+      "TaskSnapshotRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "dataSourceId", "nodeId", "precheckId", "format", "configFingerprint", "toolVersion", "metadataVersion", "capabilityVersion"],
+        "properties": {
+          "type": { "const": "OBDUMPER_EXPORT" },
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+          "objectSummary": { "type": "string", "maxLength": 1025, "description": "从冻结单表快照提取的 database.table 摘要；不含路径或完整配置。" },
+          "format": { "const": "CSV" },
+          "configFingerprint": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "toolVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "metadataVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "capabilityVersion": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      },
+      "TaskSnapshotReadEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskSnapshotRead" } }
+      },
+      "TaskCommandEvidenceRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "command", "redaction"],
+        "properties": {
+          "kind": { "const": "PLANNED" },
+          "command": { "type": "string", "minLength": 1, "maxLength": 65536 },
+          "redaction": { "const": "PASSWORD_ONLY" }
+        }
+      },
+      "TaskCommandEvidenceReadEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskCommandEvidenceRead" } }
+      },
+      "TaskExecutionRead": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "reconciliationRequired", "stageEvidence", "progressEvidence", "updatedAt"],
+        "properties": {
+          "state": { "enum": ["WAITING_SCHEDULE", "STARTING", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"] },
+          "executionId": { "$ref": "#/components/schemas/OpaqueId" },
+          "reconciliationRequired": { "type": "boolean", "description": "为 true 时页面必须显示“状态核对中”，而非推断新的终态。" },
+          "stageEvidence": { "const": "UNAVAILABLE" },
+          "progressEvidence": { "const": "UNAVAILABLE" },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TaskExecutionReadEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskExecutionRead" } }
       },
       "MutationEnvelope": {
         "type": "object",
@@ -331,12 +963,317 @@
         "required": ["requestId", "serverTime", "status", "payload"],
         "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "serverTime": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "payload": { "type": "object" } }
       },
+      "AgentExecutionLogAppendResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "serverTime": { "type": "string", "format": "date-time" }, "status": { "const": "EXECUTION_LOG_ACCEPTED" }, "payload": { "$ref": "#/components/schemas/AgentExecutionLogAppendPayload" } }
+      },
+      "AgentExecutionLogAppendPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "expectedSequence", "streamId", "sourceEpoch", "firstSequence", "lastSequence", "batchDigest", "realExecutionEnabled"],
+        "properties": {
+          "decision": { "enum": ["ACCEPTED", "DUPLICATE"] },
+          "expectedSequence": { "type": "integer", "minimum": 1 },
+          "streamId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sourceEpoch": { "type": "integer", "minimum": 1 },
+          "firstSequence": { "type": "integer", "minimum": 1 },
+          "lastSequence": { "type": "integer", "minimum": 1 },
+          "batchDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "realExecutionEnabled": { "const": true }
+        }
+      },
+      "AgentExecutionLogGapResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "serverTime": { "type": "string", "format": "date-time" }, "status": { "const": "EXECUTION_LOG_GAP_ACCEPTED" }, "payload": { "$ref": "#/components/schemas/AgentExecutionLogGapPayload" } }
+      },
+      "AgentExecutionLogGapPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "expectedSequence", "streamId", "sourceEpoch", "firstSequence", "lastSequence", "gapDigest", "realExecutionEnabled"],
+        "properties": {
+          "decision": { "enum": ["ACCEPTED", "DUPLICATE"] },
+          "expectedSequence": { "type": "integer", "minimum": 1 },
+          "streamId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sourceEpoch": { "type": "integer", "minimum": 1 },
+          "firstSequence": { "type": "integer", "minimum": 1 },
+          "lastSequence": { "type": "integer", "minimum": 1 },
+          "gapDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "realExecutionEnabled": { "const": true }
+        }
+      },
+      "EnrollmentMaterialIssuedEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "enrollmentId", "nodeId", "enrollmentMaterial", "expiresAt", "displayedOnce"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "enrollmentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "enrollmentMaterial": { "type": "string", "minLength": 32, "maxLength": 4096, "description": "Only returned when issued; never accepted by browser APIs, persisted, or returned by exchange responses." },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "displayedOnce": { "const": true }
+        }
+      },
+      "AgentEnrollmentResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "ENROLLED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agentId", "nodeId", "protocolVersion", "replayed", "realExecutionEnabled", "runtimeConfiguration"],
+            "properties": {
+              "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+              "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+              "protocolVersion": { "const": "agent-v1" },
+              "replayed": { "type": "boolean" },
+              "realExecutionEnabled": { "const": false },
+              "runtimeConfiguration": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["platform", "toolHome", "javaPath", "allowedRoots", "revision", "digest"],
+                "properties": {
+                  "platform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
+                  "toolHome": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                  "javaPath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                  "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+                  "revision": { "type": "integer", "minimum": 1 },
+                  "digest": { "$ref": "#/components/schemas/SHA256Digest" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "AgentHeartbeatResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "ACCEPTED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["factsRevision", "environmentStatus", "realExecutionEnabled"],
+            "properties": {
+              "factsRevision": { "type": "integer", "minimum": 1 },
+              "environmentStatus": { "const": "NOT_CHECKED" },
+              "environmentCheckId": { "type": "string", "maxLength": 256, "description": "仅在当前 Agent 有待处理固定环境检查时返回控制面生成的不透明标识；空字符串表示无待处理检查。" },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
+      "AgentPrecheckClaimResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "PRECHECK_CLAIMED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["precheckId", "leaseId", "leaseEpoch", "expiresAt", "binding", "bindingDigest", "checkSet", "executionContext", "realExecutionEnabled"],
+            "properties": {
+              "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseEpoch": { "type": "integer", "minimum": 1 },
+              "expiresAt": { "type": "string", "format": "date-time" },
+              "binding": { "$ref": "#/components/schemas/AgentPrecheckBinding" },
+              "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+              "checkSet": { "$ref": "#/components/schemas/AgentPrecheckCheckSet" },
+              "executionContext": { "$ref": "#/components/schemas/AgentPrecheckExecutionContext" },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
+      "AgentPrecheckLeaseAcknowledgedResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "PRECHECK_LEASE_ACKNOWLEDGED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["realExecutionEnabled"],
+            "properties": { "realExecutionEnabled": { "const": false } }
+          }
+        }
+      },
+      "AgentPrecheckSecretSlotResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "PRECHECK_SECRET_SLOTS_RESOLVED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled"],
+            "properties": {
+              "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseEpoch": { "type": "integer", "minimum": 1 },
+              "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+              "slot": { "const": "DATABASE_CONNECTION" },
+              "connection": { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectionSlot" },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
+      "AgentPrecheckDatabaseConnectionSlot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["host", "port", "username", "password"],
+        "properties": {
+          "host": { "type": "string" },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "username": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
+          "password": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前请求的短时内存中使用；不得持久化、回显、记录或用作后续 execution 凭据。" }
+        }
+      },
+      "AgentPrecheckCompletedResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "PRECHECK_COMPLETED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "realExecutionEnabled"],
+            "properties": {
+              "status": { "enum": ["SUCCEEDED", "FAILED"] },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
+      "AgentDataSourceConnectionTestClaimResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "DATA_SOURCE_CONNECTION_TEST_CLAIMED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["connectionTestId", "leaseId", "leaseEpoch", "expiresAt", "binding", "bindingDigest", "verificationSource", "realExecutionEnabled"],
+            "properties": {
+              "connectionTestId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseEpoch": { "type": "integer", "minimum": 1 },
+              "expiresAt": { "type": "string", "format": "date-time" },
+              "binding": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestBinding" },
+              "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+              "verificationSource": { "enum": ["G2_SYNTHETIC", "AGENT_JDBC"] },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
+      "AgentDataSourceConnectionTestLeaseAcknowledgedResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "DATA_SOURCE_CONNECTION_TEST_LEASE_ACKNOWLEDGED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["realExecutionEnabled"],
+            "properties": { "realExecutionEnabled": { "const": false } }
+          }
+        }
+      },
+      "AgentDataSourceConnectionTestSecretSlotResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "DATA_SOURCE_CONNECTION_TEST_SECRET_SLOTS_RESOLVED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agentRequestId", "connectionTestId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled"],
+            "properties": {
+              "agentRequestId": { "$ref": "#/components/schemas/OpaqueId" },
+              "connectionTestId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+              "leaseEpoch": { "type": "integer", "minimum": 1 },
+              "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+              "slot": { "const": "DATABASE_CONNECTION" },
+              "connection": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestDatabaseConnectionSlot" },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
+      "AgentDataSourceConnectionTestDatabaseConnectionSlot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["host", "port", "username", "password"],
+        "properties": {
+          "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "username": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
+          "password": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许当前已认证 Agent 的短时内存使用；不得持久化、回显、记录或用于任意导出任务。" }
+        }
+      },
+      "AgentDataSourceConnectionTestCompletedResponseEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "serverTime", "status", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "serverTime": { "type": "string", "format": "date-time" },
+          "status": { "const": "DATA_SOURCE_CONNECTION_TEST_COMPLETED" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "evidenceCode", "verificationSource", "realExecutionEnabled"],
+            "properties": {
+              "status": { "enum": ["SUCCEEDED", "FAILED", "UNKNOWN"] },
+              "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] },
+              "verificationSource": { "enum": ["G2_SYNTHETIC", "AGENT_JDBC"] },
+              "realExecutionEnabled": { "const": false }
+            }
+          }
+        }
+      },
       "ErrorEnvelope": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["requestId", "code", "message", "retryable", "fieldErrors", "safeDetails"],
+        "required": ["code", "message", "retryable", "fieldErrors", "safeDetails"],
         "properties": {
-          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId", "description": "Present for every request that enters the HTTP boundary. It is omitted only when the server cannot obtain secure randomness before authentication or persistence and returns REQUEST_ID_UNAVAILABLE." },
           "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
           "message": { "type": "string", "maxLength": 1000 },
           "retryable": { "type": "boolean" },

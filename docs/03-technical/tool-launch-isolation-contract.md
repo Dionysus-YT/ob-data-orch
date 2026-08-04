@@ -3,7 +3,7 @@
 > 文档状态：首条纵向切片启动基线，TL-R01～TL-R18 已确认
 > 适用范围：OBDUMPER 4.3.5、Windows AMD64、Linux AMD64/ARM64
 > 关联契约：PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18
-> 更新日期：2026-07-21
+> 更新日期：2026-07-31
 
 ## 1. 要解决的最小问题
 
@@ -14,7 +14,7 @@
 3. Windows/Linux 都使用结构化参数，不经过 cmd/Bash 二次解释；
 4. Agent 直接取得真实 Java 进程、退出码和恢复身份；
 5. 保留 4.3.5 官方脚本中的必要 JVM、系统属性和本地库设置；
-6. 用户填写的输出绝对路径原样传给工具。
+6. 用户填写的导出与可选日志绝对路径原样传给工具，并分别受节点允许根目录约束。
 
 本契约不实现任务取消、并行执行器、容器隔离、远程 Shell、通用 Java 启动器、动态插件或用户自定义 JVM 参数。
 
@@ -114,7 +114,7 @@ executions/<executionId>/
 - Linux 父目录 `0700`，秘密文件 `0600`，所有者为 Agent 专用账户；
 - `evidence/` 只保存无秘密的进程身份、摘要、事件游标和清理状态；
 - 工具发布包不复制到 execution 目录；
-- 用户输出目录不放进该树，也不被平台改写。Windows 继续原样使用完整盘符路径，Linux 原样使用 `/` 绝对路径；
+- 用户输出目录不放进该树，也不被平台改写。Windows 原样使用 `/E:/exports` 正斜杠盘符路径，Linux 原样使用 `/` 绝对路径；
 - executionId 必须由控制面签发并按安全文件名规则编码，不接受用户路径片段。
 
 ## 7. 结构化启动计划
@@ -168,6 +168,8 @@ environment
 - 业务参数通过 Windows 进程 API 的结构化参数边界传递，不经过 `.bat`；
 - 直接监管 Java 进程，因此不再把 `.bat=0` 作为执行事实。
 
+Agent 的 Windows 4.3.5 启动配置逐项复刻 `bin/windows/obdumper.bat` 的 Java 8 update/GC 分支、固定 JVM 参数、系统属性、类路径和主类；Agent 不修改、复制或替换官方脚本。仅有三项 execution 私有替换：`security.configurationFile`、`log4j.output` 与 OOM 堆转储路径必须位于当前任务私有目录，避免共享工具包目录承载秘密相关材料或发生并发覆盖。
+
 ### 8.3 Linux 专属
 
 - 类路径按 Linux 官方脚本规则对发布包 JAR 排序，并包含只读 `conf/`；
@@ -201,20 +203,20 @@ LD_PRELOAD
 
 按平台允许的内容至少包括：
 
-- Windows：`SystemRoot`、`WINDIR`、execution 私有 TEMP/TMP、受控 Java/系统路径及经验证的本地库所需项；
-- Linux：execution 私有 `TMPDIR`、必要 locale、受控 Java/本地库路径及目标系统验证后的最小项；
+- Windows：`SystemRoot`、`WINDIR`、由已登记 Java 可执行文件推导的 `JAVA_HOME`、execution 私有 TEMP/TMP、受控 Java/系统路径及经验证的本地库所需项；`HADOOP_HOME` 只从该 Windows Agent 的本机环境读取，必须是绝对目录且其 `bin/` 含 `hadoop.dll` 与 `winutils.exe`，随后仅将该 `bin/` 注入子进程路径；
+- Linux：execution 私有 `TMPDIR`、必要 locale、由已登记 Java 可执行文件推导的 `JAVA_HOME`、受控 Java/本地库路径及目标系统验证后的最小项；不读取或注入 `HADOOP_HOME`；
 - 两端均不得在环境中放数据源密码、机器凭据、根密钥或任意用户 JVM 选项。
 
 环境键和值只记录允许列表版本和摘要。普通日志不输出完整环境快照。
 
 ## 11. 日志与崩溃材料
 
-- stdout/stderr 使用管道读取，先按已知秘密槽位和结构规则脱敏，再进入本地待发送队列；
+- stdout/stderr 使用管道读取，先按已知密码槽位和密码形式键值规则脱敏，再进入本地待发送队列；
 - 不把未处理 stdout/stderr 重定向到普通日志文件；
 - OBDUMPER 自身通过 log4j 写文件的行为无法由管道替代，因此只允许写入 execution 私有 `tool-raw-log/`；
 - `tool-raw-log/` 是受限的短时工具材料，不是产品日志，不进入普通查询、下载或备份；
 - Agent 从中读取增量内容，完成第一层脱敏后生成产品日志分段；
-- 原始文件可能含组合用户名或其他受限信息，终态取证完成后按安全材料规则删除；删除失败进入清理告警和目录隔离；
+- OBDUMPER 的组合用户名保留在产品日志中供人工连接诊断；密码原值和密码形式键值必须继续双层脱敏。工具原生日志在终态取证完成后仍按安全材料规则删除；删除失败进入清理告警和目录隔离；
 - 密码理论上不应进入工具日志，但每个目标平台仍必须以合成秘密执行全目录扫描；发现原值立即判安全失败；
 - JVM 崩溃文件、错误日志或未来受控堆转储与 `tool-raw-log/` 使用相同或更严格的边界。
 

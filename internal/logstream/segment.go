@@ -51,9 +51,22 @@ func (w *SegmentWriter) Append(batch Batch) (int64, error) {
 	if err := validateBatch(batch, true); err != nil {
 		return 0, err
 	}
+	return w.appendRecords(batch.Records)
+}
+
+// AppendGap 将一个已验证的逻辑缺口写为单条 JSONL 记录。
+// 缺口可覆盖多个来源序号，正文不伪造为每条缺失日志；其真实范围只保存在批次索引中。
+func (w *SegmentWriter) AppendGap(record Record) (int64, error) {
+	if strings.TrimSpace(record.StreamID) == "" || record.SourceEpoch < 1 || record.SourceSeq < 1 || record.Kind != RecordGap || strings.TrimSpace(record.Message) == "" || strings.TrimSpace(record.PolicyVersion) == "" {
+		return 0, ErrInvalidInput
+	}
+	return w.appendRecords([]Record{record})
+}
+
+func (w *SegmentWriter) appendRecords(records []Record) (int64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for _, record := range batch.Records {
+	for _, record := range records {
 		message, err := w.policy.Redact(record.Message)
 		if err != nil {
 			return 0, err
@@ -133,4 +146,34 @@ func (w *SegmentWriter) CloseAndSeal() (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// Close 仅关闭活动段句柄，不把服务异常或测试结束伪造成正常封段。
+// 下次打开时持久索引会继续约束可追加偏移，并在发现未登记尾部时先截断。
+func (w *SegmentWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	if err := w.file.Sync(); err != nil {
+		return err
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
+
 func (w *SegmentWriter) Path() string { return w.path }
+
+// Size 返回活动段当前已 fsync 的字节数，供封段前的索引一致性核对使用。
+func (w *SegmentWriter) Size() (int64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return 0, ErrInvalidInput
+	}
+	info, err := w.file.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("stat active log segment: %w", err)
+	}
+	return info.Size(), nil
+}

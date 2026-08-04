@@ -56,10 +56,10 @@ func TestDEV04SyntheticSQLiteHTTPChain(t *testing.T) {
 		LogLedger:      logstream.NewBatchLedger(),
 	})
 
-	draftID := requestID(t, handler, http.MethodPost, "/api/v1/export-drafts", `{"dataSourceId":"source-1","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"E:\\workespace\\ob-data-orch\\tmp\\synthetic-output"}`, map[string]string{"Idempotency-Key": "synthetic-draft-idempotency"}, http.StatusCreated)
+	draftID := requestID(t, handler, http.MethodPost, "/api/v1/export-drafts", `{"dataSourceId":"source-1","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}`, map[string]string{"Idempotency-Key": "synthetic-draft-idempotency"}, http.StatusCreated)
 	preview := request(t, handler, http.MethodPost, "/api/v1/export-drafts/"+draftID+":preview-command", "", map[string]string{"If-Match": `"rev-1"`}, http.StatusOK)
-	if bytes.Contains(preview, []byte("synthetic-user")) || bytes.Contains(preview, []byte("--password")) || !bytes.Contains(preview, []byte("******")) {
-		t.Fatalf("preview escaped a sensitive command field: %s", preview)
+	if !bytes.Contains(preview, []byte("-usynthetic-user@synthetic-tenant#synthetic-cluster")) || !bytes.Contains(preview, []byte("-p ******")) || bytes.Contains(preview, []byte("--password")) {
+		t.Fatalf("preview did not preserve non-password command fields: %s", preview)
 	}
 	precheckID := requestID(t, handler, http.MethodPost, "/api/v1/export-drafts/"+draftID+":precheck", "", map[string]string{"If-Match": `"rev-1"`, "Idempotency-Key": "synthetic-precheck-idempotency"}, http.StatusAccepted)
 
@@ -73,9 +73,17 @@ func TestDEV04SyntheticSQLiteHTTPChain(t *testing.T) {
 	request(t, handler, http.MethodPost, "/agent/v1/prechecks/"+precheckID+":complete", `{"requestId":"precheck-complete-1","leaseId":"precheck-lease-1","leaseEpoch":`+itoa(precheckGrant.Grant.LeaseEpoch)+`,"succeeded":true}`, nil, http.StatusOK)
 
 	taskID := requestID(t, handler, http.MethodPost, "/api/v1/export-drafts/"+draftID+":submit", `{"precheckId":"`+precheckID+`"}`, map[string]string{"If-Match": `"rev-1"`, "Idempotency-Key": "synthetic-task-idempotency"}, http.StatusCreated)
-	task := request(t, handler, http.MethodGet, "/api/v1/tasks/"+taskID, "", nil, http.StatusOK)
-	if !bytes.Contains(task, []byte("WAITING_SCHEDULE")) || bytes.Contains(task, []byte("synthetic-user")) {
-		t.Fatalf("unsafe or unexpected task detail: %s", task)
+	overview := request(t, handler, http.MethodGet, "/api/v1/tasks/"+taskID, "", nil, http.StatusOK)
+	if !bytes.Contains(overview, []byte(`"type":"OBDUMPER_EXPORT"`)) || bytes.Contains(overview, []byte("plannedCommand")) || bytes.Contains(overview, []byte("WAITING_SCHEDULE")) {
+		t.Fatalf("task overview did not preserve its projection boundary: %s", overview)
+	}
+	command := request(t, handler, http.MethodGet, "/api/v1/tasks/"+taskID+"/command-evidence", "", nil, http.StatusOK)
+	if !bytes.Contains(command, []byte("-usynthetic-user@synthetic-tenant#synthetic-cluster")) || !bytes.Contains(command, []byte("-p ******")) || bytes.Contains(command, []byte("--password")) {
+		t.Fatalf("task command did not preserve the password-only display boundary: %s", command)
+	}
+	execution := request(t, handler, http.MethodGet, "/api/v1/tasks/"+taskID+"/execution", "", nil, http.StatusOK)
+	if !bytes.Contains(execution, []byte("WAITING_SCHEDULE")) || bytes.Contains(execution, []byte("plannedCommand")) {
+		t.Fatalf("task execution did not preserve its projection boundary: %s", execution)
 	}
 
 	executionClaim := request(t, handler, http.MethodPost, "/agent/v1/executions:claim", `{"requestId":"execution-claim-1","taskId":"`+taskID+`","executionId":"execution-1","nodeId":"node-1","leaseId":"execution-lease-1"}`, nil, http.StatusOK)
@@ -148,15 +156,20 @@ func seedSyntheticMetadata(t *testing.T, databasePath string) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	allowedRootsJSON := `["E:\\workespace\\ob-data-orch\\tmp"]`
 	statements := []struct {
 		query string
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "synthetic-external", "Synthetic User", now, now}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic-user", "synthetic_db", "11111111-1111-4111-8111-111111111111", "subject-1", now, now}},
+		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant', 'AGENT_JDBC')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic-user", "synthetic_db", "11111111-1111-4111-8111-111111111111", now, "subject-1", now, now}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"11111111-1111-4111-8111-111111111111", "source-1", "synthetic-key", []byte{1, 2, 3}, []byte{4, 5, 6}, now}},
-		{`INSERT INTO execution_nodes VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", now, now}},
-		{`INSERT INTO agents VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, '{}', ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "synthetic-agent-v1", "synthetic-boot-1", now, now}},
+		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_home, java_path, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', ?, ?, ?, NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", allowedRootsJSON, `E:\synthetic\ob-loader-dumper`, `C:\synthetic\java8\bin\java.exe`, "subject-1", now, now}},
+		{`INSERT INTO agents(
+            agent_id, node_id, credential_digest, credential_revision, status,
+            protocol_version, boot_id, last_heartbeat_at, capacity_total, capacity_used,
+            facts_json, facts_revision, created_at, revoked_at
+        ) VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, NULL, 1, ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "synthetic-agent-v1", "synthetic-boot-1", now, now}},
 	}
 	for index, statement := range statements {
 		if _, err := database.Exec(statement.query, statement.args...); err != nil {

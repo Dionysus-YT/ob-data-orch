@@ -21,19 +21,19 @@ func TestGenerateConfirmedWindowsSlice(t *testing.T) {
 	}
 
 	wantArgv := []string{
-		"--host", "127.0.0.1",
-		"--port", "2881",
-		"--user", "synthetic_user@synthetic_tenant",
+		"-h127.0.0.1",
+		"-P2881",
+		"-usynthetic_user@synthetic_tenant",
 		"--database", "synthetic_db",
 		"--table", "synthetic_table",
 		"--csv",
-		"--file-path", `E:\workespace\ob-data-orch\tmp\synthetic-output`,
+		"--file-path", "/E:/workespace/ob-data-orch/tmp/synthetic-output",
 	}
 	if !reflect.DeepEqual(result.ArgvTemplate, wantArgv) {
 		t.Fatalf("ArgvTemplate = %#v, want %#v", result.ArgvTemplate, wantArgv)
 	}
-	if strings.Contains(strings.Join(result.ArgvTemplate, "\x00"), "--password") {
-		t.Fatal("argv must not contain --password")
+	if containsToken(result.ArgvTemplate, "-p") {
+		t.Fatal("argv must not contain the password option")
 	}
 	if len(result.SecretSlots) != 1 {
 		t.Fatalf("SecretSlots length = %d, want 1", len(result.SecretSlots))
@@ -45,8 +45,8 @@ func TestGenerateConfirmedWindowsSlice(t *testing.T) {
 	if slot.CredentialReference.CredentialID != testCredentialID || slot.CredentialReference.Revision != 1 {
 		t.Fatalf("credential reference = %#v", slot.CredentialReference)
 	}
-	if !strings.Contains(result.RedactedCommand, redactedIdentifier) || strings.Contains(result.RedactedCommand, "synthetic_user") {
-		t.Fatalf("RedactedCommand did not redact the identifier: %q", result.RedactedCommand)
+	if !strings.Contains(result.RedactedCommand, "-usynthetic_user@synthetic_tenant") || !strings.Contains(result.RedactedCommand, "-p ******") {
+		t.Fatalf("RedactedCommand did not retain the non-password identifier: %q", result.RedactedCommand)
 	}
 	if strings.Contains(result.RedactedCommand, "--password") {
 		t.Fatalf("RedactedCommand contains --password: %q", result.RedactedCommand)
@@ -62,6 +62,35 @@ func TestGenerateConfirmedWindowsSlice(t *testing.T) {
 		t.Fatalf("TokenEvidence length = %d, want 7", len(result.TokenEvidence))
 	}
 
+}
+
+func TestGenerateOptionalLogPathAndSkipDirectoryCheck(t *testing.T) {
+	generator := mustDefaultGenerator(t)
+	request := validRequest(PlatformWindowsAMD64)
+	request.Fields = append(request.Fields, FieldInput{Name: "--skip-check-dir", Source: SourceUser, Value: Value{Kind: ValueBoolean, Boolean: false}})
+	result, err := generator.Generate(request)
+	if err != nil {
+		t.Fatalf("Generate() with disabled skip flag error = %v", err)
+	}
+	if containsToken(result.ArgvTemplate, "--skip-check-dir") {
+		t.Fatalf("disabled skip flag entered argv: %#v", result.ArgvTemplate)
+	}
+
+	request = validRequest(PlatformWindowsAMD64)
+	request.Fields = append(request.Fields,
+		stringField("--log-path", SourceUser, "/E:/workespace/ob-data-orch/tmp/synthetic-logs"),
+		FieldInput{Name: "--skip-check-dir", Source: SourceUser, Value: Value{Kind: ValueBoolean, Boolean: true}},
+	)
+	result, err = generator.Generate(request)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if !containsToken(result.ArgvTemplate, "--log-path") || !containsToken(result.ArgvTemplate, "--skip-check-dir") {
+		t.Fatalf("optional output arguments missing: %#v", result.ArgvTemplate)
+	}
+	if containsToken(result.ArgvTemplate, "--column-quote-mode") {
+		t.Fatalf("column quote mode must remain unset: %#v", result.ArgvTemplate)
+	}
 }
 
 func TestGenerateIsDeterministicAcrossRunsAndInputOrder(t *testing.T) {
@@ -110,6 +139,7 @@ func TestGenerateValidatesTargetPlatformPath(t *testing.T) {
 	}{
 		{name: "relative Windows", platform: PlatformWindowsAMD64, path: `tmp\output`},
 		{name: "Linux syntax on Windows", platform: PlatformWindowsAMD64, path: "/tmp/output"},
+		{name: "legacy Windows syntax", platform: PlatformWindowsAMD64, path: `E:\tmp\output`},
 		{name: "Windows syntax on Linux", platform: PlatformLinuxAMD64, path: `E:\tmp\output`},
 		{name: "relative Linux", platform: PlatformLinuxARM64, path: "tmp/output"},
 	}
@@ -291,7 +321,7 @@ func validRequest(platform Platform) Request {
 	return Request{
 		Tool:                  "OBDUMPER",
 		ToolVersion:           "4.3.5-RELEASE",
-		MetadataVersion:       "obdumper-4.3.5-slice-v3",
+		MetadataVersion:       "obdumper-4.3.5-slice-v5",
 		CapabilityVersion:     "export-odp-single-table-csv-v1",
 		ConnectionKind:        ConnectionODP,
 		DataSourceFactVersion: "ds-rev-1",
@@ -319,7 +349,7 @@ func validRequest(platform Platform) Request {
 
 func windowsOrLinuxPath(platform Platform) string {
 	if platform == PlatformWindowsAMD64 {
-		return `E:\workespace\ob-data-orch\tmp\synthetic-output`
+		return "/E:/workespace/ob-data-orch/tmp/synthetic-output"
 	}
 	return "/var/lib/ob-data-orch/synthetic-output"
 }

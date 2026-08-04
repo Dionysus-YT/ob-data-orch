@@ -19,11 +19,36 @@ func Test固定预检查执行完整清单且不接收自定义操作(t *testing
 	if !report.Succeeded {
 		t.Fatalf("Run() 成功结果 = %#v", report)
 	}
-	if !reflect.DeepEqual(probe.checks, FixedChecks()) {
-		t.Fatalf("检查顺序 = %#v，期望 %#v", probe.checks, FixedChecks())
+	if !reflect.DeepEqual(probe.checks, executionCheckOrder()) {
+		t.Fatalf("检查执行顺序 = %#v，期望 %#v", probe.checks, executionCheckOrder())
 	}
 	if len(report.Results) != len(FixedChecks()) {
 		t.Fatalf("结果数量 = %d，期望 %d", len(report.Results), len(FixedChecks()))
+	}
+	for index, check := range FixedChecks() {
+		if report.Results[index].Check != check {
+			t.Fatalf("报告结果顺序 %d = %q，期望 %q", index, report.Results[index].Check, check)
+		}
+	}
+}
+
+func Test本机前置失败时不解析数据库槽位(t *testing.T) {
+	probe := &syntheticProbe{results: map[CheckID]Status{CheckToolEnvironment: StatusFailed}}
+	report, err := Run(context.Background(), validRequest(), probe)
+	if err != nil {
+		t.Fatalf("Run() 错误 = %v", err)
+	}
+	if report.Succeeded {
+		t.Fatalf("本机前置失败被错误判定为成功: %#v", report)
+	}
+	if !reflect.DeepEqual(probe.checks, localChecks) {
+		t.Fatalf("本机前置失败后的 Probe 调用 = %#v，期望 %#v", probe.checks, localChecks)
+	}
+	if database := report.Results[0]; database != unavailableDatabaseResult() {
+		t.Fatalf("数据库结果 = %#v，期望未尝试的未知结果", database)
+	}
+	if object := report.Results[1]; object != unavailableObjectResult() {
+		t.Fatalf("对象结果 = %#v，期望未尝试的未知结果", object)
 	}
 }
 
@@ -51,9 +76,11 @@ func Test预检查在不安全输入前失败关闭(t *testing.T) {
 		{name: "未知能力", mutate: func(request *Request) { request.Capability = "ARBITRARY_SHELL" }, want: ErrUnsupportedCapability},
 		{name: "活动执行", mutate: func(request *Request) { request.ActiveExecution = true }, want: ErrActiveExecution},
 		{name: "租约缺失", mutate: func(request *Request) { request.LeaseID = "" }, want: ErrInvalidRequest},
+		{name: "兼容模式未知", mutate: func(request *Request) { request.CompatibilityMode = "UNKNOWN" }, want: ErrInvalidRequest},
 		{name: "绑定漂移", mutate: func(request *Request) { request.Binding.NodeID = "other-node" }, want: ErrInvalidRequest},
 		{name: "不支持平台", mutate: func(request *Request) { request.TargetPlatform = "OTHER" }, want: ErrInvalidRequest},
 		{name: "输出路径不是绝对路径", mutate: func(request *Request) { request.OutputPath = "relative-output" }, want: ErrInvalidRequest},
+		{name: "输出路径包含回退段", mutate: func(request *Request) { request.OutputPath = "/E:/synthetic/exports/../outside" }, want: ErrInvalidRequest},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -70,6 +97,14 @@ func Test预检查在不安全输入前失败关闭(t *testing.T) {
 	}
 }
 
+func TestValidateRequest将输出根目录关系交给本机探针(t *testing.T) {
+	request := validRequest()
+	request.OutputPath = "/E:/synthetic-other/output"
+	if err := ValidateRequest(request); err != nil {
+		t.Fatalf("ValidateRequest() 错误 = %v；输出目录边界应由本机 Probe 解析后回传固定失败结果", err)
+	}
+}
+
 func Test预检查拒绝不完整或不匹配的合成事实(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -78,6 +113,7 @@ func Test预检查拒绝不完整或不匹配的合成事实(t *testing.T) {
 		{name: "错误检查标识", probe: &syntheticProbe{wrongCheck: true}},
 		{name: "缺失证据码", probe: &syntheticProbe{emptyEvidence: true}},
 		{name: "不安全证据码", probe: &syntheticProbe{unsafeEvidence: true}},
+		{name: "编码后的不安全证据码", probe: &syntheticProbe{encodedEvidence: true}},
 		{name: "未知状态", probe: &syntheticProbe{invalidStatus: true}},
 	}
 	for _, test := range tests {
@@ -96,19 +132,46 @@ func Test预检查不泄露探针内部错误(t *testing.T) {
 	}
 }
 
+func TestValidateReport拒绝缺项乱序与伪造成功(t *testing.T) {
+	report, err := Run(context.Background(), validRequest(), &syntheticProbe{})
+	if err != nil {
+		t.Fatalf("Run() 错误 = %v", err)
+	}
+	if err := ValidateReport(report); err != nil {
+		t.Fatalf("ValidateReport() 错误 = %v", err)
+	}
+
+	for _, mutate := range []func(*Report){
+		func(value *Report) { value.Results = value.Results[:len(value.Results)-1] },
+		func(value *Report) { value.Results[0], value.Results[1] = value.Results[1], value.Results[0] },
+		func(value *Report) { value.Results[0].Status = StatusFailed },
+	} {
+		candidate := Report{PrecheckID: report.PrecheckID, Succeeded: report.Succeeded, Results: append([]Result(nil), report.Results...)}
+		mutate(&candidate)
+		if !errors.Is(ValidateReport(candidate), ErrInvalidRequest) {
+			t.Fatalf("ValidateReport() 接受了不安全报告: %#v", candidate)
+		}
+	}
+}
+
 func validRequest() Request {
 	binding := agentstate.PrecheckBinding{PrecheckID: "precheck-1", NodeID: "node-1", DraftRevision: 1, ConfigFingerprint: "synthetic-fingerprint", CredentialRevision: 1, NodeFactsVersion: 1}
-	return Request{Capability: CapabilityExportPreflight, PrecheckID: binding.PrecheckID, NodeID: binding.NodeID, AgentID: "agent-1", LeaseID: "lease-1", LeaseEpoch: 1, Binding: binding, TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: `E:\synthetic\output`}
+	return Request{Capability: CapabilityExportPreflight, PrecheckID: binding.PrecheckID, NodeID: binding.NodeID, AgentID: "agent-1", LeaseID: "lease-1", LeaseEpoch: 1, Binding: binding, CompatibilityMode: "MYSQL", Database: "synthetic_db", Table: "synthetic_table", TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: "/E:/synthetic/output", AllowedRoots: []string{`E:\synthetic`}}
+}
+
+func executionCheckOrder() []CheckID {
+	return append(append([]CheckID(nil), localChecks...), databaseChecks...)
 }
 
 type syntheticProbe struct {
-	checks         []CheckID
-	results        map[CheckID]Status
-	wrongCheck     bool
-	emptyEvidence  bool
-	invalidStatus  bool
-	unsafeEvidence bool
-	probeError     error
+	checks          []CheckID
+	results         map[CheckID]Status
+	wrongCheck      bool
+	emptyEvidence   bool
+	invalidStatus   bool
+	unsafeEvidence  bool
+	encodedEvidence bool
+	probeError      error
 }
 
 func (p *syntheticProbe) Probe(_ context.Context, check CheckID, _ Request) (Result, error) {
@@ -124,6 +187,9 @@ func (p *syntheticProbe) Probe(_ context.Context, check CheckID, _ Request) (Res
 	}
 	if p.unsafeEvidence {
 		return Result{Check: check, Status: StatusPassed, EvidenceCode: "synthetic-secret-not-allowed"}, nil
+	}
+	if p.encodedEvidence {
+		return Result{Check: check, Status: StatusFailed, EvidenceCode: "E_WORKSPACE_SECRET_ABC"}, nil
 	}
 	if p.invalidStatus {
 		return Result{Check: check, Status: "UNTRUSTED", EvidenceCode: "SYNTHETIC_OK"}, nil

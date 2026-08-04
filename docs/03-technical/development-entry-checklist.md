@@ -2,7 +2,7 @@
 
 > 文档状态：分层开发准入已确认，G1 已准入、G2 按组件准入、G3/G4 阻断
 > 适用范围：首条纵向切片
-> 更新日期：2026-07-21
+> 更新日期：2026-07-27
 
 ## 1. 当前结论
 
@@ -19,11 +19,11 @@
 | 初始可回退基线 | 已完成 | 根提交 `be05876` 已固化产品与技术设计起点 | 否 |
 | 首条切片范围 | 已完成 | [首条纵向切片](first-vertical-slice.md) | 否 |
 | 开发准入收口 | 已确认 | [首条切片开发准入收口](development-readiness-closure.md)的 DR-R01～DR-R18 已确认；开放 G1/G2，WI-01～WI-12 继续阻断 G3，G4 继续阻断发布 | 是 |
-| 首条切片 P0 | 已执行，存在阻断 | VS-P0-04/12 已通过；私有 ODP 的 G3 授权、序列化特殊值、权限负例、凭据和未实现 Agent 仍阻断，见[P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md) | 是 |
+| 首条切片 P0 | 已执行，存在阻断 | VS-P0-04/12 已通过；私有 ODP 的 G3 环境/执行窗口证据、序列化特殊值、权限负例、真实凭据槽位和真实预检查执行仍阻断，见[P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md) | 是 |
 | 技术架构 | 已完成 | TD-001～TD-008 已确认，见[技术架构首版](architecture.md) | 否 |
 | 技术栈与部署 | 已确认 | TS-R01～TS-R14 已确认；SQLite 三架构构建和 Windows 运行通过，三个麒麟目标运行待测，见[技术路线基线](technology-stack.md)和[SQLite 验证证据](evidence/sqlite-cross-platform-spike-2026-07-21.md) | 否 |
-| 参数元数据与命令生成设计 | 生成器子集已通过 | [参数元数据与确定性命令生成契约](parameter-command-contract.md)的 PC-R01～PC-R15 已确认；参数元数据 `v2` 与纯核心生成器已通过合成契约测试，Agent 信封、预检查及 VS-P0-09 全链路仍待后续组件 | 是 |
-| Agent 协议与任务状态 | G2 合成适配已通过 | [Agent 协议与任务状态最小契约](agent-task-state-contract.md)的 AS-R01～AS-R16 已确认；假 Agent、固定预检查、假工具事实与状态投影已通过本地测试，VS-P0-07/10/11 的真实环境验证仍待 G3 | 是 |
+| 参数元数据与命令生成设计 | 生成器子集已通过 | [参数元数据与确定性命令生成契约](parameter-command-contract.md)的 PC-R01～PC-R15 已确认；参数元数据 `v4` 与纯核心生成器已通过合成契约测试，Agent 信封、预检查及 VS-P0-09 全链路仍待后续组件 | 是 |
+| Agent 协议与任务状态 | G2 合成适配已通过 | [Agent 协议与任务状态最小契约](agent-task-state-contract.md)的 AS-R01～AS-R16 已确认；受认证关联、心跳、固定预检查 `claim → acknowledge-lease → complete` 信封及 SQLite 回执已通过合成验证。真实节点、槽位解析、工具来源、环境事实、低权限负例和恢复验证仍待 G3 | 是 |
 | 凭据与权限安全 | 凭据/安全目录核心已通过 | [凭据、权限与安全最小契约](credential-access-security-contract.md)的 CS-R01～CS-R18 已确认；AES-GCM/AAD、错误 key/篡改拒绝、Windows 当前进程 DPAPI/ACL、Linux 权限实现、任务级材料生成/清理和无原值扫描已通过纯核心测试。Linux 目标实机、Agent 槽位解析、并发清理和跨机器根密钥恢复仍需验证 | 是 |
 | 跨平台隔离启动入口 | 启动契约已确认，Windows 负例部分通过 | [启动入口契约](tool-launch-isolation-contract.md)的 TL-R01～TL-R18 已确认；Windows 已验证任务级安全配置、结构化路径、直接 PID/退出码和最小环境，见[验证记录](evidence/direct-java-launch-spike-2026-07-21.md)；Linux、成功执行、并发、恢复与清理仍待验证 | 是 |
 | 日志采集与执行证据 | 契约已确认，合成验证部分通过 | [日志采集、双层脱敏与执行证据最小契约](log-collection-evidence-contract.md)的 LG-R01～LG-R20 已确认；跨读取块秘密、UTF-8 重组、幂等批次和超长记录缺口已通过本地合成验证，真实并发、断网、崩溃恢复和三目标运行仍待测，见[验证记录](evidence/log-stream-redaction-spike-2026-07-21.md) | 是 |

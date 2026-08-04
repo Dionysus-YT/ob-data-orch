@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	defaultRevisionResource = "resources/obdumper-4.3.5-slice-v3.json"
-	currentMetadataVersion  = "obdumper-4.3.5-slice-v3"
+	defaultRevisionResource = "resources/obdumper-4.3.5-slice-v5.json"
+	currentMetadataVersion  = "obdumper-4.3.5-slice-v5"
 )
 
 //go:embed resources/*.json
@@ -30,6 +30,7 @@ type Definition struct {
 	DefinitionID     string   `json:"definitionId"`
 	ProductFieldID   string   `json:"productFieldId"`
 	LongName         string   `json:"longName"`
+	ShortName        string   `json:"shortName,omitempty"`
 	Category         string   `json:"category"`
 	Order            int      `json:"order"`
 	ValueType        string   `json:"valueType"`
@@ -67,10 +68,12 @@ type revisionManifest struct {
 	CapabilityVersion string               `json:"capabilityVersion,omitempty"`
 	RevisionReason    string               `json:"revisionReason"`
 	Overrides         []definitionOverride `json:"overrides"`
+	Additions         []Definition         `json:"additions"`
 }
 
 type definitionOverride struct {
 	DefinitionID     string   `json:"definitionId"`
+	ShortName        string   `json:"shortName,omitempty"`
 	EmissionTarget   string   `json:"emissionTarget"`
 	SecurityProperty string   `json:"securityProperty,omitempty"`
 	AppendEvidence   []string `json:"appendEvidence"`
@@ -120,6 +123,9 @@ func loadFromFS(files fs.FS, revisionResource string) (*Catalog, error) {
 		raw.Definitions[index].EmissionTarget = "ARGV"
 	}
 	if err := applyOverrides(&raw, manifest.Overrides); err != nil {
+		return nil, err
+	}
+	if err := applyAdditions(&raw, manifest.Additions); err != nil {
 		return nil, err
 	}
 	raw.MetadataVersion = manifest.MetadataVersion
@@ -213,10 +219,20 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 	if manifest.BaseResource != "obdumper-4.3.5-slice-v1.json" || len(manifest.BaseSHA256) != 64 {
 		return revisionManifest{}, errors.New("parameter metadata revision base is invalid")
 	}
-	if manifest.RevisionReason == "" || len(manifest.Overrides) != 1 {
+	if manifest.RevisionReason == "" || len(manifest.Overrides) != 4 || len(manifest.Additions) != 2 {
 		return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
 	}
 	return manifest, nil
+}
+
+// applyAdditions 将当前版本确认新增的参数定义附加到不可变基础元数据。
+// 仅允许清单声明的受控定义进入目录，避免调用方以自由字段绕过参数校验。
+func applyAdditions(raw *resource, additions []Definition) error {
+	if raw == nil || len(additions) != 2 {
+		return errors.New("parameter metadata additions are invalid")
+	}
+	raw.Definitions = append(raw.Definitions, additions...)
+	return nil
 }
 
 func applyOverrides(raw *resource, overrides []definitionOverride) error {
@@ -236,6 +252,7 @@ func applyOverrides(raw *resource, overrides []definitionOverride) error {
 		}
 		raw.Definitions[index].EmissionTarget = override.EmissionTarget
 		raw.Definitions[index].SecurityProperty = override.SecurityProperty
+		raw.Definitions[index].ShortName = override.ShortName
 		raw.Definitions[index].OfficialEvidence = append(raw.Definitions[index].OfficialEvidence, override.AppendEvidence...)
 	}
 	return nil
@@ -255,12 +272,13 @@ func validateResource(raw resource) error {
 	if strings.Join(raw.CategoryOrder, "\x00") != strings.Join(expectedCategoryOrder, "\x00") {
 		return errors.New("parameter metadata category order does not match the confirmed command order")
 	}
-	if len(raw.Definitions) != 16 {
-		return fmt.Errorf("parameter metadata has %d definitions, want 16", len(raw.Definitions))
+	if len(raw.Definitions) != 18 {
+		return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
 	}
 
 	ids := make(map[string]struct{}, len(raw.Definitions))
 	names := make(map[string]struct{}, len(raw.Definitions))
+	shortNames := make(map[string]struct{}, len(raw.Definitions))
 	orders := make(map[string]struct{}, len(raw.Definitions))
 	for _, definition := range raw.Definitions {
 		if definition.DefinitionID == "" || !strings.HasPrefix(definition.ProductFieldID, "EX-F") {
@@ -277,6 +295,15 @@ func validateResource(raw resource) error {
 			return fmt.Errorf("duplicate parameter name %q", definition.LongName)
 		}
 		names[definition.LongName] = struct{}{}
+		if definition.ShortName != "" {
+			if !strings.HasPrefix(definition.ShortName, "-") || strings.HasPrefix(definition.ShortName, "--") || len(definition.ShortName) != 2 {
+				return fmt.Errorf("parameter %q has an invalid short name", definition.LongName)
+			}
+			if _, duplicate := shortNames[definition.ShortName]; duplicate {
+				return fmt.Errorf("duplicate short parameter name %q", definition.ShortName)
+			}
+			shortNames[definition.ShortName] = struct{}{}
+		}
 		orderKey := fmt.Sprintf("%s/%08d", definition.Category, definition.Order)
 		if definition.Category == "" || definition.Order <= 0 {
 			return fmt.Errorf("parameter %q has no stable category order", definition.LongName)
@@ -344,7 +371,7 @@ func validateResource(raw resource) error {
 		return err
 	}
 	if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
-		"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--file-path",
+		"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--file-path", "--log-path", "--skip-check-dir",
 	}); err != nil {
 		return err
 	}

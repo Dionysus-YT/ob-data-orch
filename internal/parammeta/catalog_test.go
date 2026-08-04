@@ -13,7 +13,7 @@ func TestLoadDefaultCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDefault(): %v", err)
 	}
-	if catalog.ToolVersion() != "4.3.5-RELEASE" || catalog.MetadataVersion() != "obdumper-4.3.5-slice-v3" {
+	if catalog.ToolVersion() != "4.3.5-RELEASE" || catalog.MetadataVersion() != "obdumper-4.3.5-slice-v5" {
 		t.Fatalf("unexpected catalog identity: %s / %s", catalog.ToolVersion(), catalog.MetadataVersion())
 	}
 	if catalog.BaseVersion() != "obdumper-4.3.5-slice-v1" || catalog.RevisionReason() == "" {
@@ -23,15 +23,25 @@ func TestLoadDefaultCatalog(t *testing.T) {
 		t.Fatalf("unexpected capability version: %s", catalog.CapabilityVersion())
 	}
 	definitions := catalog.Definitions()
-	if len(definitions) != 16 {
-		t.Fatalf("definition count = %d, want 16", len(definitions))
+	if len(definitions) != 18 {
+		t.Fatalf("definition count = %d, want 18", len(definitions))
 	}
 	if got := catalog.CategoryOrder(); len(got) != 6 || got[0] != "CONNECTION" || got[5] != "OUTPUT_FILE" {
 		t.Fatalf("unexpected category order: %#v", got)
 	}
 	password, ok := catalog.Definition("--password")
-	if !ok || password.ValueType != "secret-slot" || password.Sensitivity != "SECRET" || password.EmissionTarget != "SECURITY_FILE" || password.SecurityProperty != "oceanbase.jdbc.password" {
+	if !ok || password.ShortName != "-p" || password.ValueType != "secret-slot" || password.Sensitivity != "SECRET" || password.EmissionTarget != "SECURITY_FILE" || password.SecurityProperty != "oceanbase.jdbc.password" {
 		t.Fatalf("unsafe password metadata: %#v", password)
+	}
+	host, ok := catalog.Definition("--host")
+	if !ok || host.ShortName != "-h" {
+		t.Fatalf("host short parameter metadata: %#v", host)
+	}
+	if logPath, ok := catalog.Definition("--log-path"); !ok || logPath.ValueType != "path" || logPath.SupportState != "ENABLED" {
+		t.Fatalf("log path metadata: %#v", logPath)
+	}
+	if skipCheckDir, ok := catalog.Definition("--skip-check-dir"); !ok || skipCheckDir.ValueType != "flag" || skipCheckDir.SupportState != "ENABLED" {
+		t.Fatalf("skip check directory metadata: %#v", skipCheckDir)
 	}
 }
 

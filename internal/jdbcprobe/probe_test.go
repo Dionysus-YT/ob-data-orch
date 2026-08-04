@@ -97,3 +97,45 @@ func Test连接探针只接受完整安全成功响应(t *testing.T) {
 		t.Fatalf("换行元信息错误 = %v", err)
 	}
 }
+
+func Test预检查请求使用固定V3帧且拒绝不安全对象标识(t *testing.T) {
+	request := PreflightRequest{
+		Connection:        Request{Host: "127.0.0.1", Port: 2883, Username: []byte("synthetic-user"), Password: []byte("synthetic-password")},
+		CompatibilityMode: CompatibilityModeMySQL,
+		Database:          "synthetic_db",
+		Table:             "synthetic_table",
+	}
+	encoded := encodePreflightRequest(request)
+	defer zero(encoded)
+	if version := int(binary.BigEndian.Uint32(encoded[:4])); version != preflightProtocolVersion || !bytes.Contains(encoded, []byte(request.CompatibilityMode)) || !bytes.Contains(encoded, []byte(request.Database)) || !bytes.Contains(encoded, []byte(request.Table)) {
+		t.Fatalf("预检查请求未使用固定 v3 帧: %v", encoded)
+	}
+	for _, invalid := range []PreflightRequest{
+		{Connection: request.Connection, CompatibilityMode: CompatibilityModeMySQL, Database: "", Table: request.Table},
+		{Connection: request.Connection, CompatibilityMode: CompatibilityModeMySQL, Database: " database", Table: request.Table},
+		{Connection: request.Connection, CompatibilityMode: CompatibilityModeMySQL, Database: request.Database, Table: "unsafe\nname"},
+		{Connection: request.Connection, CompatibilityMode: CompatibilityModeMySQL, Database: request.Database, Table: string([]byte{0xff})},
+		{Connection: request.Connection, CompatibilityMode: "UNKNOWN", Database: request.Database, Table: request.Table},
+	} {
+		if validPreflightRequest(invalid) {
+			t.Fatalf("不安全预检查对象被接受: %#v", invalid)
+		}
+	}
+}
+
+func Test预检查响应只接受固定对象安全投影(t *testing.T) {
+	body := []byte(`{"status":"SUCCESS","productName":"OceanBase","productVersion":"4.3","driverName":"OceanBase Connector/J","driverVersion":"2.4.14","objectAccess":"ACCESSIBLE"}`)
+	result, err := parsePreflightResponse(body)
+	if err != nil || result.ObjectAccess != ObjectAccessible || result.Connection.DriverVersion != "2.4.14" {
+		t.Fatalf("parsePreflightResponse() = %#v, %v", result, err)
+	}
+	for _, invalid := range []string{"", "LEAKED_OBJECT", "ACCESSIBLE\nunsafe"} {
+		invalidBody := []byte(`{"status":"SUCCESS","productName":"OceanBase","productVersion":"4.3","driverName":"OceanBase Connector/J","driverVersion":"2.4.14","objectAccess":"` + invalid + `"}`)
+		if _, err := parsePreflightResponse(invalidBody); !errors.Is(err, ErrProbeFailed) {
+			t.Fatalf("对象响应 %q 错误 = %v", invalid, err)
+		}
+	}
+	if _, err := parseResponse(body); !errors.Is(err, ErrProbeFailed) {
+		t.Fatalf("v1 解析器接受了 v2 对象响应: %v", err)
+	}
+}

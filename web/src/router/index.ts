@@ -5,6 +5,7 @@ import DataSourceFormView from '@/views/DataSourceFormView.vue'
 import DataSourceListView from '@/views/DataSourceListView.vue'
 import DirectLoadWizardView from '@/views/DirectLoadWizardView.vue'
 import ExecutionNodeDetailView from '@/views/ExecutionNodeDetailView.vue'
+import ExecutionNodeFormView from '@/views/ExecutionNodeFormView.vue'
 import ExportWizardView from '@/views/ExportWizardView.vue'
 import ExecutionNodeView from '@/views/ExecutionNodeView.vue'
 import HomeView from '@/views/HomeView.vue'
@@ -29,6 +30,8 @@ export const router = createRouter({
     { path: '/tasks/:id', name: 'task-detail', component: TaskDetailView, meta: { title: '任务详情' } },
     { path: '/templates', name: 'templates', component: TemplateCenterView, meta: { title: '模板中心' } },
     { path: '/nodes', name: 'nodes', component: ExecutionNodeView, meta: { title: '执行节点' } },
+    { path: '/nodes/new', name: 'node-new', component: ExecutionNodeFormView, meta: { title: '注册执行节点' } },
+    { path: '/nodes/:id/edit', name: 'node-edit', component: ExecutionNodeFormView, meta: { title: '编辑执行节点' } },
     { path: '/nodes/:id', name: 'node-detail', component: ExecutionNodeDetailView, meta: { title: '执行节点详情' } },
     { path: '/logs', name: 'logs', component: LogCenterView, meta: { title: '日志中心' } },
     { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },

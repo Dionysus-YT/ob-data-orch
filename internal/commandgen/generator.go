@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/parammeta"
 )
 
@@ -17,7 +18,6 @@ const (
 	secretSlotID        = "database-password"
 	secretSlotTarget    = "OFFICIAL_SECURITY_FILE_PROPERTY"
 	secretSourceSummary = "密码来源：任务级官方加密配置（已脱敏）"
-	redactedIdentifier  = "******"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
@@ -181,19 +181,18 @@ func (g *Generator) Generate(request Request) (Result, error) {
 				SecurityProperty:    definition.SecurityProperty,
 				CredentialReference: *field.Value.Secret,
 			})
+			// 预览用 -p ****** 表达密码逻辑位置；实际 argv 不含 -p，避免无人值守 Agent 进入交互式密码提示。
+			display = append(display, displayParameterName(definition), "******")
 			continue
 		}
 		start := len(argv)
-		argv = append(argv, definition.LongName)
-		display = append(display, definition.LongName)
 		if definition.ValueType != "flag" {
 			value := normalizedValueString(field.Value)
-			argv = append(argv, value)
-			if definition.Sensitivity == "IDENTIFIER" {
-				display = append(display, redactedIdentifier)
-			} else {
-				display = append(display, value)
-			}
+			argv = append(argv, renderExecutionParameter(definition, value)...)
+			display = append(display, renderExecutionParameter(definition, value)...)
+		} else {
+			argv = append(argv, displayParameterName(definition))
+			display = append(display, displayParameterName(definition))
 		}
 		tokenEvidence = append(tokenEvidence, TokenEvidence{
 			DefinitionID: definition.DefinitionID,
@@ -220,6 +219,23 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		TokenEvidence:       tokenEvidence,
 		ConfigFingerprint:   fingerprint,
 	}, nil
+}
+
+// displayParameterName 优先返回已核验的短参数；未配置短参数时保留元数据中的规范长参数。
+func displayParameterName(definition parammeta.Definition) string {
+	if definition.ShortName != "" {
+		return definition.ShortName
+	}
+	return definition.LongName
+}
+
+// renderExecutionParameter 将支持紧凑写法的短参数和值合并为单个 argv 令牌。
+// 这是本机 4.3.5 已验证的写法，避免命令预览与实际参数序列出现两套拼装规则。
+func renderExecutionParameter(definition parammeta.Definition, value string) []string {
+	if definition.ShortName != "" {
+		return []string{definition.ShortName + value}
+	}
+	return []string{definition.LongName, value}
 }
 
 func (g *Generator) validateRequestIdentity(request Request) []Issue {
@@ -353,18 +369,7 @@ func normalizedValueString(value NormalizedValue) string {
 }
 
 func validAbsolutePath(platform Platform, value string) bool {
-	switch platform {
-	case PlatformWindowsAMD64:
-		return len(value) >= 3 && isASCIILetter(value[0]) && value[1] == ':' && value[2] == '\\'
-	case PlatformLinuxAMD64, PlatformLinuxARM64:
-		return strings.HasPrefix(value, "/")
-	default:
-		return false
-	}
-}
-
-func isASCIILetter(value byte) bool {
-	return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+	return outputpath.IsExportOutputPath(string(platform), value)
 }
 
 func contains(values []string, target string) bool {

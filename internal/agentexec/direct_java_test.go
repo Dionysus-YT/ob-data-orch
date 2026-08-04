@@ -67,6 +67,103 @@ func Test直接Java启动拒绝密码参数与环境注入(t *testing.T) {
 	}
 }
 
+func TestWindowsOBDumper启动配置复刻官方脚本并保留任务私有材料(t *testing.T) {
+	workspace, configuration := directJavaWorkspace(t)
+	toolHome := filepath.Join(t.TempDir(), "ob-loader-dumper-4.3.5-RELEASE")
+	arguments, err := windowsOBDumperReplicaArguments(workspace, toolHome, configuration, 300)
+	if err != nil {
+		t.Fatalf("windowsOBDumperReplicaArguments() = %v", err)
+	}
+	log4jConfiguration := "file:///" + strings.TrimPrefix(filepath.ToSlash(filepath.Join(toolHome, "conf", "log4j2.xml")), "/")
+	want := []string{
+		"-server",
+		"-Xms4G",
+		"-Xmx4G",
+		"-Xss512K",
+		"-XX:MetaspaceSize=128M",
+		"-XX:MaxMetaspaceSize=128M",
+		"-XX:+UseG1GC",
+		"-XX:CICompilerCount=4",
+		"-XX:ParallelGCThreads=4",
+		"-Xnoclassgc",
+		"-XX:MaxGCPauseMillis=50",
+		"-XX:+HeapDumpOnOutOfMemoryError",
+		"-XX:HeapDumpPath=" + workspace.RawLogDirectory(),
+		"-Dsun.stdout.encoding=UTF-8",
+		"-Dsun.stderr.encoding=UTF-8",
+		"-Dsecurity.configurationFile=" + configuration,
+		"-Dpicocli.usage.width=180",
+		"-Denable.parallel.write=false",
+		"-Dskip.tableName.check=false",
+		"-Dupload.buffer.type=disk",
+		"-Dupload.buffer.size=67108864",
+		"-Dupload.active.blocks=2",
+		"-Dupload.disable.chunked.encoding=false",
+		"-DsqlMonitor.enabled=true",
+		"-DsqlMonitor.slowSql.threshold=3000",
+		"-Denable.table.index=true",
+		"-Denable.table.comment=true",
+		"-Denable.table.column.comment=true",
+		"-Dtool.base.dir=" + filepath.ToSlash(toolHome),
+		"-Dobproxy.configurationFile=" + filepath.ToSlash(filepath.Join(toolHome, "conf", "secure.crt")),
+		"-Dsession.configurationFile=" + filepath.ToSlash(filepath.Join(toolHome, "conf", "session.config.json")),
+		"-Ddecrypt.configurationFile=" + filepath.ToSlash(filepath.Join(toolHome, "conf", "decrypt.properties")),
+		"-Dlog4j.output=" + workspace.RawLogDirectory(),
+		"-Dlog4j2.formatMsgNoLookups=true",
+		"-Dlog4j.configurationFile=" + log4jConfiguration,
+		"-Dhadoop.home.dir=" + filepath.ToSlash(filepath.Join(toolHome, "ext", "windows", "hadoop")),
+		"-classpath",
+		".;" + filepath.Join(toolHome, "lib", "*"),
+		obdumperMainClass,
+	}
+	if len(arguments) != len(want) {
+		t.Fatalf("启动参数数量 = %d, want %d: %s", len(arguments), len(want), strings.Join(arguments, "\n"))
+	}
+	for index := range want {
+		if arguments[index] != want[index] {
+			t.Fatalf("启动参数[%d] = %q, want %q", index, arguments[index], want[index])
+		}
+	}
+}
+
+func TestWindowsOBDumper启动配置保留Java8旧版本CMS分支(t *testing.T) {
+	workspace, configuration := directJavaWorkspace(t)
+	arguments, err := windowsOBDumperReplicaArguments(workspace, filepath.Join(t.TempDir(), "tool"), configuration, 291)
+	if err != nil {
+		t.Fatalf("windowsOBDumperReplicaArguments() = %v", err)
+	}
+	joined := strings.Join(arguments, "\n")
+	if !strings.Contains(joined, "-XX:+UseConcMarkSweepGC") || strings.Contains(joined, "-XX:+UseG1GC") {
+		t.Fatalf("Java 8 update 291 的 GC 参数 = %s", joined)
+	}
+}
+
+func Test解析Java8Update仅接受官方脚本支持的版本文本(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		text string
+		want int
+		ok   bool
+	}{
+		{name: "oracle", text: "java version \"1.8.0_301\"", want: 301, ok: true},
+		{name: "openjdk", text: "openjdk version \"1.8.0_292\"", want: 292, ok: true},
+		{name: "unsupported", text: "openjdk version \"17.0.1\"", ok: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.ok {
+				got, err := parseJava8Update([]byte(testCase.text))
+				if err != nil || got != testCase.want {
+					t.Fatalf("parseJava8Update() = %d, %v; want %d, nil", got, err, testCase.want)
+				}
+				return
+			}
+			if _, err := parseJava8Update([]byte(testCase.text)); err == nil {
+				t.Fatal("不支持的 Java 版本被接受")
+			}
+		})
+	}
+}
+
 func Test直接Java管道在字节边界脱敏且不暴露原文(t *testing.T) {
 	secret := []byte("synthetic-cross-boundary-secret")
 	policy, err := logstream.NewBytePolicy("agent-v1", [][]byte{secret}, nil)

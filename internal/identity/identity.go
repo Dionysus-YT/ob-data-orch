@@ -42,6 +42,7 @@ const (
 	ScopeDataSourceRead  Scope = "DATA_SOURCE_READ"
 	ScopeDataSourceWrite Scope = "DATA_SOURCE_WRITE"
 	ScopeNodeUse         Scope = "NODE_USE"
+	ScopeNodeManage      Scope = "NODE_MANAGE"
 	ScopeTaskRead        Scope = "TASK_READ"
 )
 
@@ -55,7 +56,10 @@ type Authorizer interface {
 // is distinct from object scopes because creation has no existing object ID.
 type Role string
 
-const RoleDataSourceAdmin Role = "ROLE_DATA_SOURCE_ADMIN"
+const (
+	RoleDataSourceAdmin Role = "ROLE_DATA_SOURCE_ADMIN"
+	RoleNodeAdmin       Role = "ROLE_NODE_ADMIN"
+)
 
 // RoleAuthorizer verifies a fixed role without granting any object scope.
 // The concrete implementation must load roles from the trusted identity/

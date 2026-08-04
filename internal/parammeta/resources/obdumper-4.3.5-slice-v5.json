@@ -1,0 +1,77 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v5",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "capabilityVersion": "export-odp-single-table-csv-v1",
+  "revisionReason": "V5 adds the optional node-local OBDUMPER log path and an explicit user-controlled non-empty export-directory override. It keeps CSV quote mode unset so OBDUMPER retains its own default behavior.",
+  "overrides": [
+    {
+      "definitionId": "obdumper.connection.host",
+      "shortName": "-h",
+      "emissionTarget": "ARGV",
+      "appendEvidence": ["H"]
+    },
+    {
+      "definitionId": "obdumper.connection.port",
+      "shortName": "-P",
+      "emissionTarget": "ARGV",
+      "appendEvidence": ["H"]
+    },
+    {
+      "definitionId": "obdumper.connection.user",
+      "shortName": "-u",
+      "emissionTarget": "ARGV",
+      "appendEvidence": ["H"]
+    },
+    {
+      "definitionId": "obdumper.connection.password",
+      "shortName": "-p",
+      "emissionTarget": "SECURITY_FILE",
+      "securityProperty": "oceanbase.jdbc.password",
+      "appendEvidence": ["CS-R12", "TL-R08", "SG-P02", "H"]
+    }
+  ],
+  "additions": [
+    {
+      "definitionId": "obdumper.output.log_path",
+      "productFieldId": "EX-F027",
+      "longName": "--log-path",
+      "category": "OUTPUT_FILE",
+      "order": 20,
+      "valueType": "path",
+      "cardinality": "SINGLE",
+      "activation": { "kind": "ALWAYS" },
+      "requiredWhen": { "kind": "NEVER" },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "MEDIUM",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": ["S1", "EX-F027"]
+    },
+    {
+      "definitionId": "obdumper.output.skip_check_dir",
+      "productFieldId": "EX-F034",
+      "longName": "--skip-check-dir",
+      "category": "OUTPUT_FILE",
+      "order": 30,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": { "kind": "ALWAYS" },
+      "requiredWhen": { "kind": "NEVER" },
+      "conflictsWith": [],
+      "dependsOn": ["--file-path"],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "HIGH",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": ["S1", "EX-F034"]
+    }
+  ]
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,38 +17,75 @@ import (
 	"sync"
 	"time"
 
+	"ob-data-orch/internal/agentpreflight"
 	"ob-data-orch/internal/agentstate"
+	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/store"
 )
 
 type Server struct {
-	build            buildinfo.Info
-	provider         identity.Provider
-	authorizer       identity.Authorizer
-	roles            identity.RoleAuthorizer
-	dataSource       DataSourceReader
-	creator          DataSourceCreator
-	stateChanger     DataSourceStateChanger
-	connectionTester DataSourceConnectionTester
-	updater          DataSourceUpdater
-	credentials      DataSourceCredentialReferenceReader
-	drafts           ExportDraftStore
-	prechecks        ExportPrecheckStore
-	tasks            ExportTaskStore
-	executions       AgentExecutionStore
-	logs             *syntheticLogStore
-	nodes            ExecutionNodeReader
-	generator        ExportCommandGenerator
-	precheckTTL      time.Duration
-	coordinator      *agentstate.Coordinator
-	encryptor        CredentialEncryptor
-	csrf             CSRFValidator
-	keyID            string
+	build                          buildinfo.Info
+	provider                       identity.Provider
+	authorizer                     identity.Authorizer
+	roles                          identity.RoleAuthorizer
+	dataSource                     DataSourceReader
+	creator                        DataSourceCreator
+	stateChanger                   DataSourceStateChanger
+	deleter                        DataSourceDeleter
+	connectionTests                DataSourceConnectionTestStore
+	updater                        DataSourceUpdater
+	credentials                    DataSourceCredentialReferenceReader
+	drafts                         ExportDraftStore
+	prechecks                      ExportPrecheckStore
+	tasks                          ExportTaskStore
+	executions                     AgentExecutionStore
+	logs                           *syntheticLogStore
+	nodes                          ExecutionNodeReader
+	nodeManagement                 ExecutionNodeManagementStore
+	nodeEnvironment                ExecutionNodeEnvironmentStore
+	nodeDeleter                    ExecutionNodeDeleter
+	nodeCandidates                 ExecutionNodeCandidateReader
+	agentProtocol                  AgentProtocolStore
+	agentEnvironmentChecks         AgentExecutionNodeEnvironmentCheckStore
+	agentPrechecks                 AgentPrecheckStore
+	precheckSecrets                AgentPrecheckSecretStore
+	agentConnectionTests           AgentDataSourceConnectionTestStore
+	connectionTestSecrets          AgentDataSourceConnectionTestSecretStore
+	agentJDBCConnectionTestEnabled bool
+	realExecutionEnabled           bool
+	generator                      ExportCommandGenerator
+	precheckTTL                    time.Duration
+	connectionTestTTL              time.Duration
+	enrollmentTTL                  time.Duration
+	heartbeatTTL                   time.Duration
+	coordinator                    *agentstate.Coordinator
+	encryptor                      CredentialEncryptor
+	decryptor                      CredentialDecryptor
+	csrf                           CSRFValidator
+	keyID                          string
+	requestIDGenerator             func() (string, error)
+}
+
+type requestIDResponseWriter struct {
+	http.ResponseWriter
+	value string
+}
+
+// RequestID 返回入口已经生成的请求标识，使同一 HTTP 请求的响应、审计和幂等记录可以稳定关联。
+func (w *requestIDResponseWriter) RequestID() string {
+	return w.value
+}
+
+// Unwrap 保留底层 ResponseWriter，避免请求标识包装破坏标准库对底层响应能力的识别。
+func (w *requestIDResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // DataSourceReader exposes only a non-sensitive data-source projection. The
@@ -68,23 +107,22 @@ type DataSourceStateChanger interface {
 	ChangeDataSourceState(context.Context, store.DataSourceStateChange) (store.DataSourceStateChangeResult, error)
 }
 
+// DataSourceDeleter 将物理删除与历史保护归档收敛为同一个原子存储边界。
+// HTTP 层只提交版本化删除意图，不能根据前端状态自行判断引用关系。
+type DataSourceDeleter interface {
+	DeleteOrArchiveDataSource(context.Context, store.DataSourceDeletion) (store.DataSourceDeletionResult, error)
+}
+
 // DataSourceUpdater 提供包含审计与可选凭据轮换的原子更新边界。
 type DataSourceUpdater interface {
 	UpdateDataSource(context.Context, store.DataSourceUpdate) (store.DataSourceUpdateResult, error)
 }
 
-// DataSourceConnectionTester 只将浏览器已授权的连接测试请求转交给匹配的 Agent。
-// 控制面不得以该接口为由直接连接数据源、启动 Java 或读取数据库密码。
-type DataSourceConnectionTester interface {
-	RequestDataSourceConnectionTest(context.Context, string, string) (DataSourceConnectionTestResult, error)
-}
-
-// DataSourceConnectionTestResult 是可返回浏览器的无秘密连接测试投影。
-// 状态与代码必须由受控 Agent 事实生成，不能携带异常原文、地址、用户名或密码。
-type DataSourceConnectionTestResult struct {
-	Status   string
-	Code     string
-	TestedAt time.Time
+// DataSourceConnectionTestStore 是节点绑定基础连接测试的浏览器持久化边界。
+// 它只排队、冻结和读取安全投影；控制面不能借此直接连接数据库、启动 Java 或读取密码。
+type DataSourceConnectionTestStore interface {
+	RequestDataSourceConnectionTest(context.Context, store.DataSourceConnectionTestCreate) (store.DataSourceConnectionTestCreateResult, error)
+	GetDataSourceConnectionTestRun(context.Context, string) (store.DataSourceConnectionTestRun, error)
 }
 
 // DataSourceCredentialReferenceReader 只向已授权写路径提供当前引用。
@@ -113,6 +151,86 @@ type ExecutionNodeReader interface {
 	GetExecutionNodeFact(context.Context, string) (ExecutionNodeFact, error)
 }
 
+// ExecutionNodeManagementStore 为浏览器节点管理提供受控的配置读写边界。
+// 该接口不包含 Agent 关联、心跳、环境检查或任何远程操作，避免页面伪造机器事实。
+type ExecutionNodeManagementStore interface {
+	ListExecutionNodes(context.Context) ([]store.ExecutionNode, error)
+	GetExecutionNode(context.Context, string) (store.ExecutionNode, error)
+	CreateExecutionNode(context.Context, store.ExecutionNodeCreate) (store.ExecutionNodeCreateResult, error)
+	UpdateExecutionNode(context.Context, store.ExecutionNodeUpdate) (int64, error)
+}
+
+// ExecutionNodeEnvironmentStore 收敛节点固定环境检查请求与启用状态转换。
+// 它不向控制面提供远程连接、命令、文件或 Agent 身份写入能力。
+type ExecutionNodeEnvironmentStore interface {
+	RequestExecutionNodeEnvironmentCheck(context.Context, store.ExecutionNodeEnvironmentCheckRequest) (store.ExecutionNodeEnvironmentCheckRequestResult, error)
+	EnableExecutionNode(context.Context, store.ExecutionNodeEnable) (int64, error)
+}
+
+// ExecutionNodeDeleter 将节点物理删除与历史保护归档收敛为同一个原子存储边界。
+// HTTP 层只提交版本化删除意图，不能依据页面投影猜测节点是否被引用。
+type ExecutionNodeDeleter interface {
+	DeleteOrArchiveExecutionNode(context.Context, store.ExecutionNodeDeletion) (store.ExecutionNodeDeletionResult, error)
+}
+
+// ExecutionNodeCandidateReader 只提供草稿选择所需的最小节点安全投影。
+// 它不提供目录、工具安装、Agent 凭据或任何可执行性结论。
+type ExecutionNodeCandidateReader interface {
+	ListExecutionNodeSummaries(context.Context) ([]store.ExecutionNodeSummary, error)
+}
+
+// AgentProtocolStore 是受认证机器身份、关联材料与当前心跳事实的唯一持久化边界。
+// 它不接收浏览器身份、任务命令、数据库凭据、日志正文或任意机器操作。
+type AgentProtocolStore interface {
+	IssueAgentEnrollment(context.Context, store.AgentEnrollmentIssue) error
+	ExchangeAgentEnrollment(context.Context, store.AgentEnrollmentExchange) (store.AgentEnrollmentResult, error)
+	AuthenticateAgent(context.Context, []byte) (store.AgentIdentity, error)
+	RecordAgentHeartbeat(context.Context, store.AgentHeartbeat) (int64, error)
+}
+
+// AgentExecutionNodeEnvironmentCheckStore 是 Agent 固定本机运行时检查的持久化边界。
+// 它只返回待处理的不可解释标识并接收稳定结果码，绝不接收路径、命令、秘密或工具输出。
+type AgentExecutionNodeEnvironmentCheckStore interface {
+	GetPendingExecutionNodeEnvironmentCheck(context.Context, string, string) (store.PendingExecutionNodeEnvironmentCheck, bool, error)
+	CompleteExecutionNodeEnvironmentCheck(context.Context, store.AgentExecutionNodeEnvironmentCheckCompletion) error
+}
+
+// AgentExecutionNodeEnvironmentCheckRefresher 是可选的心跳续接边界。
+// 只有持久化实现具备该能力时，控制面才会在 Agent 事实版本变化后自动重新排队固定环境检查。
+type AgentExecutionNodeEnvironmentCheckRefresher interface {
+	EnsureCurrentExecutionNodeEnvironmentCheck(context.Context, store.ExecutionNodeEnvironmentCheckRefresh) (bool, error)
+}
+
+// AgentPrecheckStore 是受认证 Agent 固定预检查租约的持久化边界。
+// 它只接受已冻结的预检查、固定检查结果和控制面时间，不能成为任意 Agent 操作通道。
+type AgentPrecheckStore interface {
+	ClaimNextPrecheck(context.Context, store.PrecheckClaimNext) (store.PrecheckLeaseGrant, bool, error)
+	AcknowledgePrecheck(context.Context, store.PrecheckAcknowledgement) (store.PrecheckLeaseGrant, error)
+	CompleteAgentPrecheck(context.Context, store.AgentPrecheckCompletion) (store.PrecheckCompletionResult, error)
+}
+
+// AgentPrecheckSecretStore 是固定预检查秘密槽位的持久化授权边界。
+// HTTP 层只传递已认证的机器身份和受控租约字段，绝不读取 SQLite 密文或明文密码。
+type AgentPrecheckSecretStore interface {
+	ResolvePrecheckDatabaseConnection(context.Context, store.PrecheckSecretResolutionRequest) (store.EncryptedPrecheckDatabaseConnection, error)
+	FinishPrecheckSecretResolution(context.Context, store.PrecheckSecretResolutionOutcome) error
+}
+
+// AgentDataSourceConnectionTestStore 是受认证 Agent 的独立基础连接测试租约边界。
+// 它与 EXPORT_PREFLIGHT 分表、分状态和分回执，不能相互领取或复用完成结果。
+type AgentDataSourceConnectionTestStore interface {
+	ClaimNextDataSourceConnectionTest(context.Context, store.DataSourceConnectionTestClaimNext) (store.DataSourceConnectionTestLeaseGrant, bool, error)
+	AcknowledgeDataSourceConnectionTest(context.Context, store.DataSourceConnectionTestAcknowledgement) (store.DataSourceConnectionTestLeaseGrant, error)
+	CompleteAgentDataSourceConnectionTest(context.Context, store.AgentDataSourceConnectionTestCompletion) (store.DataSourceConnectionTestCompletionResult, error)
+}
+
+// AgentDataSourceConnectionTestSecretStore 只在已确认的基础连接测试租约内解析唯一数据库槽位。
+// 浏览器、普通数据源读取和预检查路径均不能调用它。
+type AgentDataSourceConnectionTestSecretStore interface {
+	ResolveDataSourceConnectionTestDatabaseConnection(context.Context, store.DataSourceConnectionTestSecretResolutionRequest) (store.EncryptedDataSourceConnectionTestDatabaseConnection, error)
+	FinishDataSourceConnectionTestSecretResolution(context.Context, store.DataSourceConnectionTestSecretResolutionOutcome) error
+}
+
 // ExportCommandGenerator 约束预览与提交共用确定性命令生成器。
 type ExportCommandGenerator interface {
 	Generate(commandgen.Request) (commandgen.Result, error)
@@ -130,7 +248,9 @@ type ExportPrecheckStore interface {
 type ExportTaskStore interface {
 	GetPrecheckRun(context.Context, string) (store.PrecheckRun, error)
 	SubmitTaskIdempotent(context.Context, store.TaskSubmission, string, string) (store.TaskSubmissionResult, error)
-	GetTaskSummary(context.Context, string) (store.TaskSummary, error)
+	GetAuthorizedTaskSummary(context.Context, string, string) (store.TaskSummary, error)
+	ListTaskSummaries(context.Context, store.TaskListQuery) ([]store.TaskListItem, error)
+	CountAuthorizedTaskSummaries(context.Context, string) (int, error)
 }
 
 // AgentExecutionStore 持久化已由内存协调器接受的领取和事件事实。
@@ -141,9 +261,25 @@ type AgentExecutionStore interface {
 	AppendExecutionEvent(context.Context, store.ExecutionEvent) error
 }
 
+// AuthenticatedAgentExecutionStore 是正式机器凭据路径的受控任务领取、秘密槽位和事实投影边界。
+// 它不接受浏览器输入、自由命令、自由路径或直接状态写入。
+type AuthenticatedAgentExecutionStore interface {
+	ClaimNextExecution(context.Context, store.ExecutionClaimNext) (store.ExecutionLeaseGrant, bool, error)
+	RenewExecutionLease(context.Context, store.LeaseRenewal) error
+	ResolveExecutionDatabaseConnection(context.Context, store.ExecutionSecretResolutionRequest) (store.EncryptedExecutionDatabaseConnection, error)
+	FinishExecutionSecretResolution(context.Context, store.ExecutionSecretResolutionOutcome) error
+	AppendAuthenticatedExecutionEvent(context.Context, string, store.ExecutionEvent) (string, error)
+}
+
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
+}
+
+// CredentialDecryptor 仅供受控 Agent 秘密槽位解析使用。
+// 它不映射为浏览器能力，也不向普通数据源读取路径开放明文。
+type CredentialDecryptor interface {
+	Decrypt(credential.Envelope) ([]byte, error)
 }
 
 // CSRFValidator is intentionally separate from authentication because a valid
@@ -155,27 +291,53 @@ type CSRFValidator interface {
 // Dependencies make the HTTP boundary testable without creating a runtime
 // authentication bypass. Nil production dependencies continue to fail closed.
 type Dependencies struct {
-	Identity         identity.Provider
-	Authorizer       identity.Authorizer
-	Roles            identity.RoleAuthorizer
-	DataSources      DataSourceReader
-	Creator          DataSourceCreator
-	StateChanger     DataSourceStateChanger
-	ConnectionTester DataSourceConnectionTester
-	Updater          DataSourceUpdater
-	CredentialRefs   DataSourceCredentialReferenceReader
-	Drafts           ExportDraftStore
-	Prechecks        ExportPrecheckStore
-	Tasks            ExportTaskStore
-	Executions       AgentExecutionStore
-	LogLedger        *logstream.BatchLedger
-	Nodes            ExecutionNodeReader
-	Generator        ExportCommandGenerator
-	PrecheckTTL      time.Duration
-	Coordinator      *agentstate.Coordinator
-	Encryptor        CredentialEncryptor
-	CSRF             CSRFValidator
-	CredentialKeyID  string
+	Identity        identity.Provider
+	Authorizer      identity.Authorizer
+	Roles           identity.RoleAuthorizer
+	DataSources     DataSourceReader
+	Creator         DataSourceCreator
+	StateChanger    DataSourceStateChanger
+	Deleter         DataSourceDeleter
+	ConnectionTests DataSourceConnectionTestStore
+	Updater         DataSourceUpdater
+	CredentialRefs  DataSourceCredentialReferenceReader
+	Drafts          ExportDraftStore
+	Prechecks       ExportPrecheckStore
+	Tasks           ExportTaskStore
+	Executions      AgentExecutionStore
+	LogLedger       *logstream.BatchLedger
+	// PersistentLogs 仅保存已二次脱敏且已 fsync 的当前任务日志段；为空时保持既有合成内存投影。
+	// 不能用内存投影冒充跨重启日志或 SSE 证据。
+	PersistentLogs         *logstream.PersistentStore
+	Nodes                  ExecutionNodeReader
+	NodeManagement         ExecutionNodeManagementStore
+	NodeEnvironment        ExecutionNodeEnvironmentStore
+	NodeDeleter            ExecutionNodeDeleter
+	NodeCandidates         ExecutionNodeCandidateReader
+	AgentProtocol          AgentProtocolStore
+	AgentEnvironmentChecks AgentExecutionNodeEnvironmentCheckStore
+	AgentPrechecks         AgentPrecheckStore
+	PrecheckSecrets        AgentPrecheckSecretStore
+	AgentConnectionTests   AgentDataSourceConnectionTestStore
+	ConnectionTestSecrets  AgentDataSourceConnectionTestSecretStore
+	Generator              ExportCommandGenerator
+	PrecheckTTL            time.Duration
+	ConnectionTestTTL      time.Duration
+	// AgentJDBCConnectionTestEnabled 仅在已授权的本机 G3 连接测试中签发 AGENT_JDBC 租约。
+	// 默认 false 保持 G2 合成结果，且不影响真实工具执行门禁。
+	AgentJDBCConnectionTestEnabled bool
+	// RealExecutionEnabled 仅供已经满足 Windows 本机 MVP G3 运行时条件的组合根启用。
+	// 它不会绕过任务、租约、槽位、脱敏或 Agent 认证校验。
+	RealExecutionEnabled bool
+	EnrollmentTTL        time.Duration
+	HeartbeatTTL         time.Duration
+	Coordinator          *agentstate.Coordinator
+	Encryptor            CredentialEncryptor
+	Decryptor            CredentialDecryptor
+	CSRF                 CSRFValidator
+	CredentialKeyID      string
+	// RequestIDGenerator 仅供合成测试注入熵源故障；生产为 nil 时固定使用安全 UUIDv4 生成器。
+	RequestIDGenerator func() (string, error)
 }
 
 func NewHandler(build buildinfo.Info) http.Handler {
@@ -192,22 +354,28 @@ func NewHandlerWithIdentity(build buildinfo.Info, provider identity.Provider) ht
 // NewHandlerWithDependencies is used by the composition root and integration
 // tests. Supplying an identity provider alone does not grant access to data.
 func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies) http.Handler {
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, connectionTester: dependencies.ConnectionTester, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger), nodes: dependencies.Nodes, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID}
+	requestIDGenerator := dependencies.RequestIDGenerator
+	if requestIDGenerator == nil {
+		requestIDGenerator = identifier.NewUUIDV4
+	}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, deleter: dependencies.Deleter, connectionTests: dependencies.ConnectionTests, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger, dependencies.PersistentLogs), nodes: dependencies.Nodes, nodeManagement: dependencies.NodeManagement, nodeEnvironment: dependencies.NodeEnvironment, nodeDeleter: dependencies.NodeDeleter, nodeCandidates: dependencies.NodeCandidates, agentProtocol: dependencies.AgentProtocol, agentEnvironmentChecks: dependencies.AgentEnvironmentChecks, agentPrechecks: dependencies.AgentPrechecks, precheckSecrets: dependencies.PrecheckSecrets, agentConnectionTests: dependencies.AgentConnectionTests, connectionTestSecrets: dependencies.ConnectionTestSecrets, agentJDBCConnectionTestEnabled: dependencies.AgentJDBCConnectionTestEnabled, realExecutionEnabled: dependencies.RealExecutionEnabled, generator: dependencies.Generator, precheckTTL: dependencies.PrecheckTTL, connectionTestTTL: dependencies.ConnectionTestTTL, enrollmentTTL: dependencies.EnrollmentTTL, heartbeatTTL: dependencies.HeartbeatTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, decryptor: dependencies.Decryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID, requestIDGenerator: requestIDGenerator}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
 	mux.HandleFunc("GET /version", server.version)
-	// DEV-04 starts with executable API-domain boundaries. No request may be
-	// treated as authenticated until the deployment identity contract exists.
+	// 浏览器与 Agent 认证域分别注册，避免一次性关联被既有机器认证提前阻断。
 	if server.provider == nil {
 		mux.HandleFunc("/api/", server.browserUnavailable)
-		mux.HandleFunc("/agent/", server.agentUnavailable)
 	} else {
 		mux.HandleFunc("/api/", server.browserAuthenticated)
-		mux.HandleFunc("/agent/", server.agentAuthenticated)
+	}
+	if server.agentProtocol != nil || server.provider != nil {
+		mux.HandleFunc("/agent/", server.agentEntry)
+	} else {
+		mux.HandleFunc("/agent/", server.agentUnavailable)
 	}
 	mux.HandleFunc("/", notFound)
-	return securityHeaders(mux)
+	return securityHeaders(withRequestID(server.requestIDGenerator, mux))
 }
 
 func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +388,34 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		s.listDataSources(w, r, principal)
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/execution-nodes" {
+		if r.URL.Query().Get("eligibleFor") != "" {
+			s.listExecutionNodeCandidates(w, r, principal)
+		} else {
+			s.listExecutionNodes(w, r, principal)
+		}
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/execution-nodes" {
+		s.createExecutionNode(w, r, principal)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if nodeID, ok := parseExecutionNodeEnrollmentAction(r.URL.Path); ok {
+			s.issueAgentEnrollment(w, r, principal, nodeID)
+			return
+		}
+		if nodeID, action, ok := parseExecutionNodeEnvironmentAction(r.URL.Path); ok {
+			switch action {
+			case "environment-check":
+				s.requestExecutionNodeEnvironmentCheck(w, r, principal, nodeID)
+				return
+			case "enable":
+				s.enableExecutionNode(w, r, principal, nodeID)
+				return
+			}
+		}
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/data-sources" {
 		s.createDataSource(w, r, principal)
 		return
@@ -227,6 +423,26 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/export-drafts" {
 		s.createExportDraft(w, r, principal)
 		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tasks" {
+		s.listTasks(w, r, principal)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/execution-nodes/") {
+		nodeID := strings.TrimPrefix(r.URL.Path, "/api/v1/execution-nodes/")
+		if nodeID != "" && !strings.Contains(nodeID, "/") && !strings.Contains(nodeID, ":") {
+			switch r.Method {
+			case http.MethodGet:
+				s.getExecutionNode(w, r, principal, nodeID)
+				return
+			case http.MethodPatch:
+				s.updateExecutionNode(w, r, principal, nodeID)
+				return
+			case http.MethodDelete:
+				s.deleteExecutionNode(w, r, principal, nodeID)
+				return
+			}
+		}
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/export-drafts/") {
 		if draftID, action, ok := parseExportDraftAction(r.URL.Path); ok {
@@ -250,23 +466,40 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/") {
-		taskID := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
-		if strings.HasSuffix(taskID, "/logs") {
-			taskID = strings.TrimSuffix(taskID, "/logs")
-			if taskID != "" && !strings.Contains(taskID, "/") {
+		if taskID, projection, ok := parseTaskReadPath(r.URL.Path); ok {
+			switch projection {
+			case "overview":
+				s.getTask(w, r, principal, taskID)
+				return
+			case "snapshot":
+				s.getTaskSnapshot(w, r, principal, taskID)
+				return
+			case "command-evidence":
+				s.getTaskCommandEvidence(w, r, principal, taskID)
+				return
+			case "execution":
+				s.getTaskExecution(w, r, principal, taskID)
+				return
+			case "logs":
 				s.listSyntheticLogs(w, r, principal, taskID)
 				return
+			case "logs-stream":
+				s.streamTaskLogs(w, r, principal, taskID)
+				return
 			}
-		}
-		if taskID != "" && !strings.Contains(taskID, "/") {
-			s.getTask(w, r, principal, taskID)
-			return
 		}
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/prechecks/") {
 		precheckID := strings.TrimPrefix(r.URL.Path, "/api/v1/prechecks/")
 		if precheckID != "" && !strings.Contains(precheckID, "/") {
 			s.getExportPrecheck(w, r, principal, precheckID)
+			return
+		}
+	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/data-source-connection-tests/") {
+		connectionTestID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-source-connection-tests/")
+		if validDataSourceConnectionTestPathID(connectionTestID) {
+			s.getDataSourceConnectionTest(w, r, principal, connectionTestID)
 			return
 		}
 	}
@@ -283,7 +516,7 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
 		if dataSourceID != "" && !strings.Contains(dataSourceID, "/") {
-			s.changeDataSourceState(w, r, principal, dataSourceID, "ARCHIVED")
+			s.deleteDataSource(w, r, principal, dataSourceID)
 			return
 		}
 	}
@@ -312,6 +545,39 @@ func parseDataSourceConnectionTestAction(path string) (string, bool) {
 	}
 	dataSourceID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
 	return dataSourceID, dataSourceID != "" && !strings.Contains(dataSourceID, "/")
+}
+
+// validDataSourceConnectionTestPathID 限制测试状态资源只接受不含路径语义的服务端标识。
+// 这避免查询路径被误解释为节点、命令或本地文件位置。
+func validDataSourceConnectionTestPathID(value string) bool {
+	return validAgentPrecheckPathID(value)
+}
+
+// parseExecutionNodeEnrollmentAction 只识别受控的一次性关联材料签发动作。
+// 它不把节点详情路径或其他后缀解释为可执行的 Agent 管理命令。
+func parseExecutionNodeEnrollmentAction(path string) (string, bool) {
+	const prefix = "/api/v1/execution-nodes/"
+	const suffix = ":enrollments"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	nodeID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return nodeID, nodeID != "" && !strings.Contains(nodeID, "/")
+}
+
+// parseExecutionNodeEnvironmentAction 只识别固定环境检查和启用两个已登记动作。
+// 路径后缀不能变成通用的 Agent 控制、远程命令或文件操作入口。
+func parseExecutionNodeEnvironmentAction(path string) (string, string, bool) {
+	const prefix = "/api/v1/execution-nodes/"
+	for suffix, action := range map[string]string{":environment-check": "environment-check", ":enable": "enable"} {
+		if strings.HasPrefix(path, prefix) && strings.HasSuffix(path, suffix) {
+			nodeID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+			if nodeID != "" && !strings.Contains(nodeID, "/") {
+				return nodeID, action, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 // parseDataSourceStateAction 只识别已登记的启停动作，避免把路径后缀解释成通用命令。
@@ -358,6 +624,16 @@ type dataSourceUpdateRequest struct {
 	Password          *string         `json:"password"`
 }
 
+// executionNodeWriteRequest 只接收节点管理员在注册时声明的固定本机配置。
+// Agent 会在首次关联后本机复核；心跳、资源采样和检查结论仍不能由浏览器写入。
+type executionNodeWriteRequest struct {
+	DisplayName  string   `json:"displayName"`
+	Platform     string   `json:"platform"`
+	AllowedRoots []string `json:"allowedRoots"`
+	ToolHome     string   `json:"toolHome"`
+	JavaPath     string   `json:"javaPath"`
+}
+
 // exportDraftWriteRequest 固定首条切片的单表 CSV 输入，不接收任意参数文本。
 type exportDraftWriteRequest struct {
 	DataSourceID string `json:"dataSourceId"`
@@ -366,6 +642,8 @@ type exportDraftWriteRequest struct {
 	Table        string `json:"table"`
 	Format       string `json:"format"`
 	FilePath     string `json:"filePath"`
+	LogPath      string `json:"logPath"`
+	SkipCheckDir bool   `json:"skipCheckDir"`
 }
 
 // createDataSource 从不渲染或持久化密码本身。
@@ -423,17 +701,21 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		Environment: request.Environment, ConnectionKind: request.ConnectionKind, CompatibilityMode: request.CompatibilityMode,
 		Host: request.Host, Port: request.Port, ClusterName: request.ClusterName, TenantName: request.TenantName, Username: request.Username, DefaultDatabase: request.DefaultDatabase,
 		KeyID: envelope.KeyID, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
-		RequestID: requestID(), IdempotencyKey: idempotencyKey, RequestDigest: createRequestDigest(request), CreatedAt: time.Now().UTC(),
+		RequestID: requestID(w), IdempotencyKey: idempotencyKey, RequestDigest: createRequestDigest(request), CreatedAt: time.Now().UTC(),
 	})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if errors.Is(err, store.ErrDataSourceNameUnavailable) {
+		writeDataSourceNameUnavailable(w)
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_CREATE_REJECTED", "数据源字段不符合要求", false)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(), "id": result.DataSourceID, "replayed": result.Replayed})
+	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(w), "id": result.DataSourceID, "replayed": result.Replayed})
 }
 
 // updateDataSource 先完成对象授权与当前安全摘要读取，再合并 PATCH 字段。
@@ -486,7 +768,7 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		DisplayName: merged.DisplayName, NormalizedName: normalizeName(merged.DisplayName), Environment: merged.Environment,
 		ConnectionKind: merged.ConnectionKind, CompatibilityMode: merged.CompatibilityMode, Host: merged.Host,
 		Port: merged.Port, ClusterName: merged.ClusterName, TenantName: merged.TenantName, Username: merged.Username, DefaultDatabase: merged.DefaultDatabase,
-		RequestID: requestID(), UpdatedAt: time.Now().UTC(),
+		RequestID: requestID(w), UpdatedAt: time.Now().UTC(),
 	}
 	if request.Password != nil {
 		if s.credentials == nil || s.encryptor == nil || strings.TrimSpace(s.keyID) == "" {
@@ -527,6 +809,10 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusPreconditionFailed, "DATA_SOURCE_REVISION_CONFLICT", "数据源已发生变化，请刷新后重试", false)
 		return
 	}
+	if errors.Is(err, store.ErrDataSourceNameUnavailable) {
+		writeDataSourceNameUnavailable(w)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_UPDATE_REJECTED", "数据源字段不符合要求", false)
 		return
@@ -534,7 +820,13 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 	current.DisplayName, current.Environment, current.ConnectionKind, current.CompatibilityMode = merged.DisplayName, merged.Environment, merged.ConnectionKind, merged.CompatibilityMode
 	current.Host, current.Port, current.ClusterName, current.TenantName, current.Username, current.DefaultDatabase = merged.Host, merged.Port, merged.ClusterName, merged.TenantName, merged.Username, merged.DefaultDatabase
 	current.Revision, current.CredentialRevision = result.Revision, result.CredentialRevision
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": newDataSourceResponse(current)})
+	if result.ConnectionTestInvalidated {
+		current.State = "DISABLED"
+		current.LastTestStatus = ""
+		current.LastTestedAt = nil
+		current.LastTestSafeSummaryJSON = ""
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceResponse(current)})
 }
 
 func (r dataSourceUpdateRequest) hasChanges() bool {
@@ -643,7 +935,7 @@ func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, princ
 		DraftID: draftID, OwnerSubjectID: principal.ID, DataSourceID: source.DataSourceID, NodeID: node.NodeID, ToolVersion: preview.ToolVersion,
 		MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion, ConfigJSON: string(configJSON), ConfigFingerprint: preview.ConfigFingerprint,
 		InvalidationJSON: `{}`, CreatedAt: now, UpdatedAt: now,
-	}, RequestID: requestID(), IdempotencyKey: key, RequestDigest: exportDraftDigest(request)})
+	}, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: exportDraftDigest(request)})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
 		return
@@ -652,7 +944,7 @@ func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(), "id": result.DraftID, "replayed": result.Replayed})
+	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(w), "id": result.DraftID, "replayed": result.Replayed})
 }
 
 // getExportDraft 仅允许草稿所有者读取，避免新增未确认的草稿共享规则。
@@ -661,7 +953,7 @@ func (s *Server) getExportDraft(w http.ResponseWriter, r *http.Request, principa
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": draftResponse(draft)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": draftResponse(draft)})
 }
 
 // updateExportDraft 用乐观锁替换整个固定切片配置，并重新计算指纹。
@@ -707,7 +999,7 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 		return
 	}
 	draft.Revision, draft.ConfigJSON, draft.ConfigFingerprint = newRevision, string(configJSON), preview.ConfigFingerprint
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": draftResponse(draft)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": draftResponse(draft)})
 }
 
 // previewExportDraft 只重算脱敏命令，不解析凭据或创建任何执行任务。
@@ -743,13 +1035,13 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "command": preview.RedactedCommand, "argvTemplate": redactedBrowserArgv(preview.ArgvTemplate), "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "command": preview.RedactedCommand, "argvTemplate": browserPreviewArgv(preview.ArgvTemplate), "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
 }
 
 // createExportPrecheck 固定当前草稿与凭据版本，之后的 Agent 只能领取该绑定。
 // 有效期来自部署依赖，而不是由浏览器、Agent 或请求体提供。
 func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
-	if s.prechecks == nil || s.coordinator == nil || s.csrf == nil || s.precheckTTL <= 0 {
+	if s.prechecks == nil || s.csrf == nil || s.precheckTTL <= 0 || (s.agentPrechecks == nil && s.coordinator == nil) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置预检查依赖", false)
 		return
 	}
@@ -796,15 +1088,18 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	now := time.Now().UTC()
-	if node.FactsRevision < 1 || s.coordinator.SchedulePrecheck(agentstate.PrecheckBinding{PrecheckID: precheckID, NodeID: draft.NodeID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint, CredentialRevision: credentialReference.Revision, NodeFactsVersion: node.FactsRevision}) != nil {
-		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SCHEDULING_UNAVAILABLE", "预检查暂时无法排队", true)
-		return
+	if s.agentPrechecks == nil {
+		// 旧合成协议仍由内存协调器持有租约；正式受认证路径由 SQLite 事务冻结事实。
+		if node.FactsRevision < 1 || s.coordinator.SchedulePrecheck(agentstate.PrecheckBinding{PrecheckID: precheckID, NodeID: draft.NodeID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint, CredentialRevision: credentialReference.Revision, NodeFactsVersion: node.FactsRevision}) != nil {
+			writeError(w, http.StatusServiceUnavailable, "PRECHECK_SCHEDULING_UNAVAILABLE", "预检查暂时无法排队", true)
+			return
+		}
 	}
 	result, err := s.prechecks.CreatePrecheck(r.Context(), store.PrecheckCreate{PrecheckRun: store.PrecheckRun{
 		PrecheckID: precheckID, DraftID: draft.DraftID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint,
 		DataSourceID: draft.DataSourceID, CredentialID: credentialReference.CredentialID, CredentialRevision: credentialReference.Revision,
 		NodeID: draft.NodeID, CreatedAt: now, ValidUntil: now.Add(s.precheckTTL),
-	}, CreatorSubjectID: principal.ID, RequestID: requestID(), IdempotencyKey: key, RequestDigest: precheckDigest(draft, preview.ConfigFingerprint)})
+	}, CreatorSubjectID: principal.ID, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: precheckDigest(draft, preview.ConfigFingerprint)})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
 		return
@@ -817,7 +1112,7 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusServiceUnavailable, "PRECHECK_CREATE_UNAVAILABLE", "预检查暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(), "id": result.PrecheckID, "replayed": result.Replayed})
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(w), "id": result.PrecheckID, "replayed": result.Replayed})
 }
 
 // getExportPrecheck 通过预检查关联的草稿所有者控制可见性。
@@ -844,10 +1139,32 @@ func (s *Server) getExportPrecheck(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusServiceUnavailable, "PRECHECK_QUERY_UNAVAILABLE", "预检查暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": map[string]any{
+	results := browserPrecheckResults(run.Results)
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": map[string]any{
 		"id": run.PrecheckID, "draftId": run.DraftID, "draftRevision": run.DraftRevision, "configFingerprint": run.ConfigFingerprint,
-		"nodeId": run.NodeID, "status": run.Status, "integrityStatus": run.IntegrityStatus, "validUntil": run.ValidUntil.Format(time.RFC3339Nano),
+		"nodeId": run.NodeID, "status": run.Status, "integrityStatus": run.IntegrityStatus, "results": results, "validUntil": run.ValidUntil.Format(time.RFC3339Nano),
 	}})
+}
+
+// browserPrecheckResults 为尚未完成的预检查提供固定六项未知投影。
+// 浏览器据此只能展示“尚未得到 Agent 结论”，不能把空数组误判为检查通过。
+func browserPrecheckResults(results []store.PrecheckCheckResult) []store.PrecheckCheckResult {
+	if len(results) > 0 {
+		return append([]store.PrecheckCheckResult{}, results...)
+	}
+	unknownCodes := map[agentpreflight.CheckID]string{
+		agentpreflight.CheckDatabaseConnectivity: "DATABASE_CONNECTION_UNAVAILABLE",
+		agentpreflight.CheckObjectAccess:         "OBJECT_ACCESS_UNAVAILABLE",
+		agentpreflight.CheckToolEnvironment:      "TOOL_RUNTIME_UNAVAILABLE",
+		agentpreflight.CheckOutputPath:           "OUTPUT_PATH_UNAVAILABLE",
+		agentpreflight.CheckOutputEmpty:          "OUTPUT_PATH_UNAVAILABLE",
+		agentpreflight.CheckAvailableSpace:       "OUTPUT_SPACE_UNAVAILABLE",
+	}
+	projected := make([]store.PrecheckCheckResult, 0, len(agentpreflight.FixedChecks()))
+	for _, check := range agentpreflight.FixedChecks() {
+		projected = append(projected, store.PrecheckCheckResult{Check: string(check), Status: string(agentpreflight.StatusUnknown), EvidenceCode: unknownCodes[check]})
+	}
+	return projected
 }
 
 func (s *Server) loadOwnedDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) (store.ExportDraft, bool) {
@@ -897,17 +1214,32 @@ func (s *Server) generateExportDraft(ctx context.Context, request exportDraftWri
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
+	if source.State != "ENABLED" || source.LastTestStatus != "SUCCEEDED" {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export data source is not eligible")
+	}
 	node, err := s.nodes.GetExecutionNodeFact(ctx, request.NodeID)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
+	}
+	if !outputpath.IsExportOutputPath(string(node.Platform), request.FilePath) || (request.LogPath != "" && !outputpath.IsExportOutputPath(string(node.Platform), request.LogPath)) {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export output path is invalid")
 	}
 	credentialReference, err := s.credentials.GetDataSourceCredentialReference(ctx, request.DataSourceID)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
-	result, err := s.generator.Generate(commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v3", CapabilityVersion: "export-odp-single-table-csv-v1", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, Fields: []commandgen.FieldInput{
-		{Name: "--host", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Host}}, {Name: "--port", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(source.Port)}}, {Name: "--user", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Username}}, {Name: "--password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: credentialReference.CredentialID, Revision: credentialReference.Revision}}}, {Name: "--database", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Database}}, {Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Table}}, {Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}}, {Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.FilePath}},
-	}})
+	commandUsername, ok := store.PrivateODPCommandIdentity(source.Username, source.TenantName, source.ClusterName)
+	if !ok {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("private ODP command identity is invalid")
+	}
+	fields := []commandgen.FieldInput{
+		{Name: "--host", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Host}}, {Name: "--port", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(source.Port)}}, {Name: "--user", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: commandUsername}}, {Name: "--password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: credentialReference.CredentialID, Revision: credentialReference.Revision}}}, {Name: "--database", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Database}}, {Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Table}}, {Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}}, {Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.FilePath}},
+	}
+	if request.LogPath != "" {
+		fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.LogPath}})
+	}
+	fields = append(fields, commandgen.FieldInput{Name: "--skip-check-dir", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: request.SkipCheckDir}})
+	result, err := s.generator.Generate(commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v5", CapabilityVersion: "export-odp-single-table-csv-v1", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, Fields: fields})
 	return result, source, node, err
 }
 
@@ -915,16 +1247,10 @@ func draftResponse(draft store.ExportDraft) map[string]any {
 	return map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
 }
 
-// redactedBrowserArgv 防止浏览器命令预览泄露连接身份。
-// 受控任务冻结仍使用生成器的内部参数模板，浏览器不能据此获得可执行 argv。
-func redactedBrowserArgv(argv []string) []string {
-	copyArgv := append([]string(nil), argv...)
-	for index := 0; index+1 < len(copyArgv); index++ {
-		if copyArgv[index] == "--user" {
-			copyArgv[index+1] = "******"
-		}
-	}
-	return copyArgv
+// browserPreviewArgv 返回命令预览对应的独立参数副本。
+// 密码不属于 argv；其余参数可按当前产品规则展示，但该副本仍不能作为 Agent 执行输入。
+func browserPreviewArgv(argv []string) []string {
+	return append([]string(nil), argv...)
 }
 
 func exportDraftDigest(request exportDraftWriteRequest) string {
@@ -976,7 +1302,7 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 	}
 	result, err := s.stateChanger.ChangeDataSourceState(r.Context(), store.DataSourceStateChange{
 		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, TargetState: targetState, ExpectedRevision: expectedRevision,
-		RequestID: requestID(), ChangedAt: time.Now().UTC(),
+		RequestID: requestID(w), ChangedAt: time.Now().UTC(),
 	})
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
@@ -986,21 +1312,72 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 		writeError(w, http.StatusConflict, "DATA_SOURCE_STATE_CONFLICT", "数据源状态已发生变化，请刷新后重试", true)
 		return
 	}
+	if errors.Is(err, store.ErrDataSourceConnectionTestRequired) {
+		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_CONNECTION_TEST_REQUIRED", "当前连接配置尚未通过基础连接测试，不能启用", false)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_STATE_UNAVAILABLE", "数据源状态暂时不可用", true)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"requestId": requestID(), "id": dataSourceID, "state": result.State,
+		"requestId": requestID(w), "id": dataSourceID, "state": result.State,
 		"revision": result.Revision, "replayed": result.Replayed,
 	})
 }
 
-// testDataSourceConnection 仅验证浏览器身份、对象范围和 CSRF，然后把请求交给 Agent 通道。
-// 未配置 Agent 测试转交时必须失败关闭，不能由控制面退化为本机 JDBC 或直接数据库连接。
+// deleteDataSource 先完成 CSRF、对象范围和版本校验，再交由仓储依据历史引用决定删除或归档。
+// 不向调用方暴露引用类型、数量或归档对象信息，避免借由失败路径枚举历史事实。
+func (s *Server) deleteDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
+	if s.deleter == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源删除依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的数据版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	result, err := s.deleter.DeleteOrArchiveDataSource(r.Context(), store.DataSourceDeletion{
+		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		RequestID: requestID(w), DeletedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "DATA_SOURCE_REVISION_CONFLICT", "数据源已发生变化，请刷新后重试", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_DELETE_UNAVAILABLE", "数据源删除暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "id": dataSourceID, "outcome": result.Outcome, "revision": result.Revision,
+	})
+}
+
+// dataSourceConnectionTestRequest 只允许浏览器选择一个已授权节点。
+// 连接地址、用户名、密码、URL、命令和任意 SQL 都不能通过该请求进入 Agent 协议。
+type dataSourceConnectionTestRequest struct {
+	NodeID string `json:"nodeId"`
+}
+
+// testDataSourceConnection 在短事务中冻结一次节点绑定的测试意图。
+// 控制面只做授权、版本、幂等与租约协调，绝不在此路径连接数据库或读取明文凭据。
 func (s *Server) testDataSourceConnection(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
-	if s.connectionTester == nil || s.authorizer == nil || s.csrf == nil {
-		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前环境尚未配置 Agent 连接测试", true)
+	if s.connectionTests == nil || s.authorizer == nil || s.csrf == nil || s.connectionTestTTL <= 0 || s.heartbeatTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前环境尚未配置节点侧连接测试", true)
 		return
 	}
 	if err := s.csrf.ValidateCSRF(r); err != nil {
@@ -1011,28 +1388,104 @@ func (s *Server) testDataSourceConnection(w http.ResponseWriter, r *http.Request
 		notFound(w, r)
 		return
 	}
-	result, err := s.connectionTester.RequestDataSourceConnectionTest(r.Context(), dataSourceID, principal.ID)
-	if err != nil || !validDataSourceConnectionTestResult(result) {
-		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前无法获取 Agent 连接测试结果", true)
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
 		return
 	}
-	body := map[string]any{"requestId": requestID(), "status": result.Status, "code": result.Code}
-	if !result.TestedAt.IsZero() {
-		body["testedAt"] = result.TestedAt.UTC().Format(time.RFC3339Nano)
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的数据版本号", false)
+		return
 	}
-	writeJSON(w, http.StatusOK, body)
+	var request dataSourceConnectionTestRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	request.NodeID = strings.TrimSpace(request.NodeID)
+	if !validDataSourceConnectionTestPathID(request.NodeID) {
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "AGENT_CONNECTION_TEST_FIELDS_INVALID", "连接测试节点不可用", false, []fieldErrorResponse{{Field: "nodeId", Code: "CONNECTION_TEST_NODE_REQUIRED", Message: "请选择一个可用的执行节点"}})
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, request.NodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	connectionTestID := newOpaqueID()
+	if connectionTestID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	verificationSource := "G2_SYNTHETIC"
+	if s.agentJDBCConnectionTestEnabled {
+		verificationSource = "AGENT_JDBC"
+	}
+	result, err := s.connectionTests.RequestDataSourceConnectionTest(r.Context(), store.DataSourceConnectionTestCreate{
+		ConnectionTestID: connectionTestID, DataSourceID: dataSourceID, CreatorSubjectID: principal.ID,
+		ExpectedDataSourceRevision: expectedRevision, NodeID: request.NodeID, VerificationSource: verificationSource,
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: dataSourceConnectionTestCreateDigest(dataSourceID, expectedRevision, request.NodeID),
+		CreatedAt: now, HeartbeatFreshAfter: now.Add(-s.heartbeatTTL), ValidUntil: now.Add(s.connectionTestTTL),
+	})
+	if errors.Is(err, store.ErrDataSourceNotFound) || errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "DATA_SOURCE_REVISION_CONFLICT", "数据源已发生变化，请刷新后重试", false)
+		return
+	}
+	if errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if errors.Is(err, store.ErrDataSourceConnectionTestInvalid) || errors.Is(err, store.ErrDataSourceConnectionTestLeaseRejected) {
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "AGENT_CONNECTION_TEST_NODE_UNAVAILABLE", "所选执行节点当前无法接收连接测试", false, []fieldErrorResponse{{Field: "nodeId", Code: "CONNECTION_TEST_NODE_UNAVAILABLE", Message: "请选择已关联且在线的空闲执行节点"}})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前无法创建节点侧连接测试", true)
+		return
+	}
+	run, err := s.connectionTests.GetDataSourceConnectionTestRun(r.Context(), result.ConnectionTestID)
+	if err != nil || run.DataSourceID != dataSourceID || run.NodeID != request.NodeID {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前无法核对连接测试状态", true)
+		return
+	}
+	status := http.StatusAccepted
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "item": newDataSourceConnectionTestResponse(run), "replayed": result.Replayed})
 }
 
-func validDataSourceConnectionTestResult(result DataSourceConnectionTestResult) bool {
-	if result.Code == "" || len(result.Code) > 64 {
-		return false
+// getDataSourceConnectionTest 仅返回当前数据源范围内的无秘密测试投影。
+// 单节点结果不会经此接口推导其他节点、对象权限、性能或导出任务可行性。
+func (s *Server) getDataSourceConnectionTest(w http.ResponseWriter, r *http.Request, principal identity.Principal, connectionTestID string) {
+	if s.connectionTests == nil || s.authorizer == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前环境尚未配置节点侧连接测试", true)
+		return
 	}
-	for _, character := range result.Code {
-		if !(character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_') {
-			return false
-		}
+	run, err := s.connectionTests.GetDataSourceConnectionTestRun(r.Context(), connectionTestID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
 	}
-	return result.Status == "SUCCEEDED" || result.Status == "FAILED" || result.Status == "PENDING" || result.Status == "UNAVAILABLE"
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前无法读取连接测试状态", true)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, run.DataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceConnectionTestResponse(run)})
+}
+
+func dataSourceConnectionTestCreateDigest(dataSourceID string, revision int64, nodeID string) string {
+	payload := fmt.Sprintf("%s|%d|%s|DATA_SOURCE_CONNECTION_TEST", dataSourceID, revision, nodeID)
+	digest := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(digest[:])
 }
 
 // exportTaskSubmitRequest 只接收已创建预检查的标识，不能从浏览器接收命令或任务快照。
@@ -1041,9 +1494,9 @@ type exportTaskSubmitRequest struct {
 }
 
 // submitExportDraft 将已通过的预检查与当前草稿重新核对后冻结为任务。
-// G2 阶段的排队只进入内存协调器，绝不启动真实工具或网络连接。
+// G2 仍仅进入内存协调器；受控 Windows 本机 MVP 执行模式改由已认证 Agent 从 SQLite 原子领取，绝不由浏览器启动工具。
 func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, draftID string) {
-	if s.tasks == nil || s.coordinator == nil || s.csrf == nil {
+	if s.tasks == nil || s.csrf == nil || (!s.realExecutionEnabled && s.coordinator == nil) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务提交依赖", false)
 		return
 	}
@@ -1104,7 +1557,7 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		PrecheckID: run.PrecheckID, CredentialID: run.CredentialID, CredentialRevision: run.CredentialRevision,
 		ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion,
 		CapabilityVersion: preview.CapabilityVersion, SnapshotJSON: draft.ConfigJSON, PlannedArgvJSON: string(argv),
-		PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(), SubmittedAt: now,
+		PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now,
 	}, key, taskSubmitDigest(draft, run.PrecheckID, preview.ConfigFingerprint))
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
@@ -1118,38 +1571,349 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusServiceUnavailable, "TASK_SUBMISSION_UNAVAILABLE", "任务暂时无法提交", true)
 		return
 	}
-	if err := s.coordinator.Schedule(agentstate.TaskSchedule{TaskID: result.TaskID, NodeID: draft.NodeID}); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "TASK_SCHEDULING_UNAVAILABLE", "任务已冻结但暂时无法进入合成队列", true)
-		return
+	if !s.realExecutionEnabled {
+		if err := s.coordinator.Schedule(agentstate.TaskSchedule{TaskID: result.TaskID, NodeID: draft.NodeID}); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "TASK_SCHEDULING_UNAVAILABLE", "任务已冻结但暂时无法进入合成队列", true)
+			return
+		}
 	}
 	status := http.StatusCreated
 	if result.Replayed {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, map[string]any{"requestId": requestID(), "id": result.TaskID, "replayed": result.Replayed, "state": "WAITING_SCHEDULE", "realExecutionEnabled": false})
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "id": result.TaskID, "replayed": result.Replayed, "state": "WAITING_SCHEDULE", "realExecutionEnabled": s.realExecutionEnabled})
 }
 
-// getTask 只允许任务创建者读取冻结的安全投影。
+// parseTaskReadPath 只将固定读取后缀解释为任务只读投影。
+// 任务标识和资源后缀必须分别完整匹配，避免路径被扩展成任意子资源入口。
+func parseTaskReadPath(path string) (string, string, bool) {
+	const prefix = "/api/v1/tasks/"
+	value := strings.TrimPrefix(path, prefix)
+	if value == "" || value == path {
+		return "", "", false
+	}
+	for suffix, projection := range map[string]string{
+		"/snapshot":         "snapshot",
+		"/command-evidence": "command-evidence",
+		"/execution":        "execution",
+		"/logs/stream":      "logs-stream",
+		"/logs":             "logs",
+	} {
+		if strings.HasSuffix(value, suffix) {
+			taskID := strings.TrimSuffix(value, suffix)
+			return taskID, projection, taskID != "" && !strings.Contains(taskID, "/")
+		}
+	}
+	return value, "overview", !strings.Contains(value, "/")
+}
+
+// taskOverviewResponse 是任务详情页头所需的最小不可变标识，不混入配置、命令或执行状态。
+type taskOverviewResponse struct {
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	DataSourceID string `json:"dataSourceId"`
+	NodeID       string `json:"nodeId"`
+	PrecheckID   string `json:"precheckId"`
+	SubmittedAt  string `json:"submittedAt"`
+}
+
+// taskSnapshotResponse 只返回当前单表 CSV 切片可安全解释的冻结配置事实。
+// 输出和日志路径、凭据引用、完整原始快照均不下发，后续字段必须先完成专项脱敏规则。
+type taskSnapshotResponse struct {
+	Type              string `json:"type"`
+	DataSourceID      string `json:"dataSourceId"`
+	NodeID            string `json:"nodeId"`
+	PrecheckID        string `json:"precheckId"`
+	ObjectSummary     string `json:"objectSummary,omitempty"`
+	Format            string `json:"format"`
+	ConfigFingerprint string `json:"configFingerprint"`
+	ToolVersion       string `json:"toolVersion"`
+	MetadataVersion   string `json:"metadataVersion"`
+	CapabilityVersion string `json:"capabilityVersion"`
+}
+
+// taskCommandEvidenceResponse 只允许浏览器读取提交时冻结的脱敏计划命令。
+// 实际启动 argv、秘密槽位和未验证的进程载荷不能通过该接口返回。
+type taskCommandEvidenceResponse struct {
+	Kind      string `json:"kind"`
+	Command   string `json:"command"`
+	Redaction string `json:"redaction"`
+}
+
+// taskExecutionResponse 只携带平台已经确认的执行状态和时间事实。
+// 阶段、进度和结果解析尚无可靠映射时必须显式标为 UNAVAILABLE。
+type taskExecutionResponse struct {
+	State                  string `json:"state"`
+	ExecutionID            string `json:"executionId,omitempty"`
+	ReconciliationRequired bool   `json:"reconciliationRequired"`
+	StageEvidence          string `json:"stageEvidence"`
+	ProgressEvidence       string `json:"progressEvidence"`
+	StartedAt              string `json:"startedAt,omitempty"`
+	FinishedAt             string `json:"finishedAt,omitempty"`
+	UpdatedAt              string `json:"updatedAt"`
+}
+
+// loadAuthorizedTaskSummary 对每个任务只读投影重新执行服务端范围校验。
+// 请求之间不能复用浏览器端的“已授权”结论，避免权限变更后继续泄露冻结事实。
+func (s *Server) loadAuthorizedTaskSummary(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) (store.TaskSummary, bool) {
+	if s.tasks == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务查询依赖", false)
+		return store.TaskSummary{}, false
+	}
+	summary, err := s.tasks.GetAuthorizedTaskSummary(r.Context(), taskID, principal.ID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return store.TaskSummary{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+		return store.TaskSummary{}, false
+	}
+	return summary, true
+}
+
+// getTask 只返回任务详情页头的最小安全标识。
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	summary, ok := s.loadAuthorizedTaskSummary(w, r, principal, taskID)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskOverviewResponse{
+		ID: summary.TaskID, Type: "OBDUMPER_EXPORT", DataSourceID: summary.DataSourceID, NodeID: summary.NodeID,
+		PrecheckID: summary.PrecheckID, SubmittedAt: summary.SubmittedAt.Format(time.RFC3339Nano),
+	}})
+}
+
+// getTaskSnapshot 返回已提交配置的最小安全快照，不把 SQLite 中的完整 JSON 透传给浏览器。
+func (s *Server) getTaskSnapshot(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	summary, ok := s.loadAuthorizedTaskSummary(w, r, principal, taskID)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskSnapshotResponse{
+		Type: "OBDUMPER_EXPORT", DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
+		ObjectSummary: taskObjectSummary(summary.Database, summary.Table), Format: summary.Format,
+		ConfigFingerprint: summary.ConfigFingerprint, ToolVersion: summary.ToolVersion, MetadataVersion: summary.MetadataVersion,
+		CapabilityVersion: summary.CapabilityVersion,
+	}})
+}
+
+// getTaskCommandEvidence 返回默认脱敏的计划命令；实际命令证据尚未建立，不能伪造或回退为执行 argv。
+func (s *Server) getTaskCommandEvidence(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	summary, ok := s.loadAuthorizedTaskSummary(w, r, principal, taskID)
+	if !ok {
+		return
+	}
+	if !safePlannedCommandEvidence(summary.PlannedCommandRedacted) {
+		writeError(w, http.StatusServiceUnavailable, "TASK_COMMAND_EVIDENCE_UNAVAILABLE", "任务命令证据不符合展示安全规则", false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskCommandEvidenceResponse{
+		Kind: "PLANNED", Command: summary.PlannedCommandRedacted, Redaction: "PASSWORD_ONLY",
+	}})
+}
+
+// safePlannedCommandEvidence 在控制面输出前再次验证密码占位符。
+// 即使历史任务记录被意外污染，也不能把 `-p` 的实际值或长参数密码形式发送到浏览器。
+func safePlannedCommandEvidence(command string) bool {
+	if len(command) == 0 || len(command) > 64<<10 {
+		return false
+	}
+	fields := strings.Fields(command)
+	for index := 0; index < len(fields); index++ {
+		field := fields[index]
+		if strings.HasPrefix(strings.ToLower(field), "--password") || strings.HasPrefix(strings.ToLower(field), "password=") {
+			return false
+		}
+		if field == "-p" {
+			if index+1 >= len(fields) || fields[index+1] != "******" {
+				return false
+			}
+			index++
+			continue
+		}
+		if strings.HasPrefix(field, "-p") {
+			return false
+		}
+	}
+	return true
+}
+
+// getTaskExecution 返回可复核的状态投影，不解析或返回进程事件与结果摘要原文。
+func (s *Server) getTaskExecution(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	summary, ok := s.loadAuthorizedTaskSummary(w, r, principal, taskID)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskExecutionResponse{
+		State: summary.State, ExecutionID: summary.ExecutionID, ReconciliationRequired: summary.ReconciliationRequired,
+		StageEvidence: "UNAVAILABLE", ProgressEvidence: "UNAVAILABLE", StartedAt: optionalTaskTime(summary.StartedAt),
+		FinishedAt: optionalTaskTime(summary.FinishedAt), UpdatedAt: summary.UpdatedAt.Format(time.RFC3339Nano),
+	}})
+}
+
+const taskListDefaultPageSize = 10
+
+type taskListCursor struct {
+	SubjectDigest string `json:"subjectDigest"`
+	SubmittedAt   string `json:"submittedAt"`
+	TaskID        string `json:"taskId"`
+}
+
+// taskListResponse 是任务中心允许展示的最小字段集合。
+// 阶段和进度没有可靠证据时只返回 UNAVAILABLE，不能从状态或时间猜测百分比。
+type taskListResponse struct {
+	ID                     string `json:"id"`
+	Type                   string `json:"type"`
+	DataSourceID           string `json:"dataSourceId"`
+	ObjectSummary          string `json:"objectSummary,omitempty"`
+	State                  string `json:"state"`
+	StageEvidence          string `json:"stageEvidence"`
+	ProgressEvidence       string `json:"progressEvidence"`
+	ReconciliationRequired bool   `json:"reconciliationRequired"`
+	NodeID                 string `json:"nodeId"`
+	OwnedByCurrentUser     bool   `json:"ownedByCurrentUser"`
+	SubmittedAt            string `json:"submittedAt"`
+	StartedAt              string `json:"startedAt,omitempty"`
+	FinishedAt             string `json:"finishedAt,omitempty"`
+	UpdatedAt              string `json:"updatedAt"`
+}
+
+// listTasks 只返回当前主体拥有或按数据源明确授权的任务。
+// 总页数同样仅基于该授权范围计算，不能作为全局任务数量或无权对象发现通道。
+func (s *Server) listTasks(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
 	if s.tasks == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务查询依赖", false)
 		return
 	}
-	summary, err := s.tasks.GetTaskSummary(r.Context(), taskID)
-	if errors.Is(err, store.ErrDataSourceNotFound) || (err == nil && summary.CreatorSubjectID != principal.ID) {
-		notFound(w, r)
+	pageSize, ok := taskListPageSize(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "TASK_PAGE_SIZE_INVALID", "任务列表每页条数无效", false)
 		return
 	}
+	query := store.TaskListQuery{SubjectID: principal.ID, Limit: pageSize}
+	if cursorValue := strings.TrimSpace(r.URL.Query().Get("cursor")); cursorValue != "" {
+		cursor, ok := decodeTaskListCursor(cursorValue, principal.ID)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "任务列表游标无效", false)
+			return
+		}
+		query.BeforeSubmitted = cursor.BeforeSubmitted
+		query.BeforeTaskID = cursor.BeforeTaskID
+	}
+	totalTasks, err := s.tasks.CountAuthorizedTaskSummaries(r.Context(), principal.ID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务列表暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": map[string]any{
-		"id": summary.TaskID, "dataSourceId": summary.DataSourceID, "nodeId": summary.NodeID, "precheckId": summary.PrecheckID,
-		"configFingerprint": summary.ConfigFingerprint, "toolVersion": summary.ToolVersion, "metadataVersion": summary.MetadataVersion,
-		"capabilityVersion": summary.CapabilityVersion, "plannedCommand": summary.PlannedCommandRedacted, "state": summary.State,
-		"executionId": summary.ExecutionID, "submittedAt": summary.SubmittedAt.Format(time.RFC3339Nano), "realExecutionEnabled": false,
-	}})
+	items, err := s.tasks.ListTaskSummaries(r.Context(), query)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务列表暂时不可用", true)
+		return
+	}
+	nextCursor := ""
+	if len(items) > pageSize {
+		last := items[pageSize-1]
+		nextCursor = encodeTaskListCursor(principal.ID, last.SubmittedAt, last.TaskID)
+		items = items[:pageSize]
+	}
+	responses := make([]taskListResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, taskListResponse{
+			ID: item.TaskID, Type: item.TaskType, DataSourceID: item.DataSourceID,
+			ObjectSummary: taskObjectSummary(item.Database, item.Table), State: item.State,
+			StageEvidence: "UNAVAILABLE", ProgressEvidence: "UNAVAILABLE",
+			ReconciliationRequired: item.ReconciliationRequired, NodeID: item.NodeID,
+			OwnedByCurrentUser: item.CreatorSubjectID == principal.ID,
+			SubmittedAt:        item.SubmittedAt.Format(time.RFC3339Nano), StartedAt: optionalTaskTime(item.StartedAt),
+			FinishedAt: optionalTaskTime(item.FinishedAt), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano),
+		})
+	}
+	var nextCursorResponse any
+	if nextCursor != "" {
+		nextCursorResponse = nextCursor
+	}
+	totalPages := totalTasks / pageSize
+	if totalTasks%pageSize != 0 {
+		totalPages++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": responses, "nextCursor": nextCursorResponse, "totalPages": totalPages})
+}
+
+// taskListPageSize 只接受经过产品确认的有限页大小，避免读取接口退化为无界数据枚举。
+func taskListPageSize(r *http.Request) (int, bool) {
+	values, present := r.URL.Query()["limit"]
+	if !present {
+		return taskListDefaultPageSize, true
+	}
+	if len(values) != 1 {
+		return 0, false
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(values[0]))
+	if err != nil {
+		return 0, false
+	}
+	switch limit {
+	case 10, 20, 50:
+		return limit, true
+	default:
+		return 0, false
+	}
+}
+
+func decodeTaskListCursor(value, subjectID string) (store.TaskListQuery, bool) {
+	if len(value) > 2048 {
+		return store.TaskListQuery{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(raw) > 1024 {
+		return store.TaskListQuery{}, false
+	}
+	var cursor taskListCursor
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cursor); err != nil {
+		return store.TaskListQuery{}, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return store.TaskListQuery{}, false
+	}
+	submittedAt, err := time.Parse(time.RFC3339Nano, cursor.SubmittedAt)
+	if err != nil || subtle.ConstantTimeCompare([]byte(cursor.SubjectDigest), []byte(taskListSubjectDigest(subjectID))) != 1 ||
+		strings.TrimSpace(cursor.TaskID) == "" || strings.ContainsAny(cursor.TaskID, "/\\") {
+		return store.TaskListQuery{}, false
+	}
+	return store.TaskListQuery{BeforeSubmitted: submittedAt.UTC(), BeforeTaskID: cursor.TaskID}, true
+}
+
+func encodeTaskListCursor(subjectID string, submittedAt time.Time, taskID string) string {
+	raw, err := json.Marshal(taskListCursor{SubjectDigest: taskListSubjectDigest(subjectID), SubmittedAt: submittedAt.UTC().Format(time.RFC3339Nano), TaskID: taskID})
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func taskListSubjectDigest(subjectID string) string {
+	digest := sha256.Sum256([]byte("task-list-cursor-v1|" + subjectID))
+	return hex.EncodeToString(digest[:])
+}
+
+func taskObjectSummary(database, table string) string {
+	if database == "" {
+		return table
+	}
+	if table == "" {
+		return database
+	}
+	return database + "." + table
+}
+
+func optionalTaskTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 // parseIfMatchRevision 只接受 API 契约规定的强版本格式，避免将弱 ETag、
@@ -1176,11 +1940,24 @@ func createRequestDigest(request dataSourceCreateRequest) string {
 }
 
 func newOpaqueID() string {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
+	value, err := identifier.NewUUIDV4()
+	if err != nil {
 		return ""
 	}
-	return hex.EncodeToString(bytes)
+	return value
+}
+
+// newOpaqueSecret 生成只用于一次性关联或机器身份的高熵 URL 安全字节序列。
+// 调用方必须在摘要或响应完成后清零返回缓冲，不能把它加入审计、日志或持久化模型。
+func newOpaqueSecret() []byte {
+	randomBytes := make([]byte, 32)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return nil
+	}
+	encoded := make([]byte, base64.RawURLEncoding.EncodedLen(len(randomBytes)))
+	base64.RawURLEncoding.Encode(encoded, randomBytes)
+	credential.Zero(randomBytes)
+	return encoded
 }
 
 // getDataSource authorizes the requested ID before reading it, then maps both
@@ -1203,9 +1980,1151 @@ func (s *Server) getDataSource(w http.ResponseWriter, r *http.Request, principal
 		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_QUERY_UNAVAILABLE", "数据源暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "item": newDataSourceResponse(summary)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceResponse(summary)})
 }
 
+// agentEnrollmentExchangeRequest 仅承载一次性关联所需的固定字段。
+// 原始关联材料和机器凭据只在处理期间短时存在，绝不写入日志、审计或响应。
+type agentEnrollmentExchangeRequest struct {
+	RequestID          string `json:"requestId"`
+	EnrollmentID       string `json:"enrollmentId"`
+	EnrollmentMaterial string `json:"enrollmentMaterial"`
+	AgentID            string `json:"agentId"`
+	NodeID             string `json:"nodeId"`
+	MachineCredential  string `json:"machineCredential"`
+	ProtocolVersion    string `json:"protocolVersion"`
+}
+
+// agentHeartbeatRequest 是严格的 Agent 心跳信封。
+// payload 只接受已登记的环境与容量摘要，不能退化为任意机器事实或远程操作指令。
+type agentHeartbeatRequest struct {
+	ProtocolVersion string                `json:"protocolVersion"`
+	AgentID         string                `json:"agentId"`
+	NodeID          string                `json:"nodeId"`
+	BootID          string                `json:"bootId"`
+	RequestID       string                `json:"requestId"`
+	SentAt          string                `json:"sentAt"`
+	PayloadType     string                `json:"payloadType"`
+	Payload         agentHeartbeatPayload `json:"payload"`
+}
+
+// agentHeartbeatPayload 是本轮允许持久化的最小环境事实。
+// 工具、Java、目录、路径、数据库和对象结果都不在此信封中，仍需后续固定环境检查与预检查。
+type agentHeartbeatPayload struct {
+	OperatingSystem            string                      `json:"operatingSystem"`
+	Architecture               string                      `json:"architecture"`
+	AgentVersion               string                      `json:"agentVersion"`
+	ObservedAt                 string                      `json:"observedAt"`
+	CapacityTotal              int                         `json:"capacityTotal"`
+	CapacityUsed               int                         `json:"capacityUsed"`
+	CPUUsagePercent            *int                        `json:"cpuUsagePercent,omitempty"`
+	MemoryUsagePercent         *int                        `json:"memoryUsagePercent,omitempty"`
+	RuntimeConfigurationDigest string                      `json:"runtimeConfigurationDigest,omitempty"`
+	DataRootUsages             []agentDataRootUsagePayload `json:"dataRootUsages,omitempty"`
+}
+
+type agentDataRootUsagePayload struct {
+	RootDigest     string `json:"rootDigest"`
+	TotalBytes     uint64 `json:"totalBytes"`
+	AvailableBytes uint64 `json:"availableBytes"`
+}
+
+// agentExecutionNodeEnvironmentCheckCompletionRequest 只承载固定本机运行时检查的稳定结果。
+// 它不接受路径、命令、工具输出、连接参数或任意可扩展检查字段。
+type agentExecutionNodeEnvironmentCheckCompletionRequest struct {
+	agentPrecheckEnvelope
+	Payload agentExecutionNodeEnvironmentCheckCompletionPayload `json:"payload"`
+}
+
+type agentExecutionNodeEnvironmentCheckCompletionPayload struct {
+	FactsRevision int64  `json:"factsRevision"`
+	Status        string `json:"status"`
+	Code          string `json:"code"`
+}
+
+// exchangeAgentEnrollment 原子消费一次性关联材料，并只返回不含机器凭据的绑定结果。
+func (s *Server) exchangeAgentEnrollment(w http.ResponseWriter, r *http.Request) {
+	if s.agentProtocol == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_ENROLLMENT_NOT_CONFIGURED", "当前环境尚未配置 Agent 关联", false)
+		return
+	}
+	var request agentEnrollmentExchangeRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if request.ProtocolVersion != agentwire.Version {
+		writeError(w, http.StatusBadRequest, "AGENT_PROTOCOL_VERSION_UNSUPPORTED", "Agent 协议版本不受支持", false)
+		return
+	}
+	material := []byte(request.EnrollmentMaterial)
+	machineCredential := []byte(request.MachineCredential)
+	request.EnrollmentMaterial = ""
+	request.MachineCredential = ""
+	defer credential.Zero(material)
+	defer credential.Zero(machineCredential)
+	if len(material) < 32 || len(machineCredential) < 32 {
+		writeError(w, http.StatusBadRequest, "AGENT_ENROLLMENT_INVALID", "Agent 关联请求无效", false)
+		return
+	}
+	materialDigest := sha256.Sum256(material)
+	credentialDigest := sha256.Sum256(machineCredential)
+	result, err := s.agentProtocol.ExchangeAgentEnrollment(r.Context(), store.AgentEnrollmentExchange{
+		EnrollmentID: request.EnrollmentID, NodeID: request.NodeID, AgentID: request.AgentID, RequestID: request.RequestID,
+		ProtocolVersion: request.ProtocolVersion, EnrollmentMaterialDigest: materialDigest[:], CredentialDigest: credentialDigest[:], ExchangedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrEnrollmentRejected) || errors.Is(err, store.ErrAgentAlreadyAssociated) {
+		writeError(w, http.StatusUnauthorized, "AGENT_ENROLLMENT_REJECTED", "Agent 关联请求已被拒绝", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_ENROLLMENT_UNAVAILABLE", "Agent 关联暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "serverTime": time.Now().UTC().Format(time.RFC3339Nano), "status": "ENROLLED",
+		"payload": map[string]any{"agentId": result.AgentID, "nodeId": result.NodeID, "protocolVersion": agentwire.Version, "replayed": result.Replayed, "realExecutionEnabled": false,
+			"runtimeConfiguration": map[string]any{"platform": result.RuntimeConfiguration.Platform, "toolHome": result.RuntimeConfiguration.ToolHome, "javaPath": result.RuntimeConfiguration.JavaPath, "allowedRoots": result.RuntimeConfiguration.AllowedRoots, "revision": result.RuntimeConfiguration.Revision, "digest": result.RuntimeConfiguration.Digest}},
+	})
+}
+
+// recordAgentHeartbeat 先验证 Bearer 机器凭据，再交叉校验信封中的 Agent 与节点绑定。
+// 它只形成当前在线和只读机器事实，不会把环境状态写成正常、启用节点或开放任务领取。
+func (s *Server) recordAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if s.agentProtocol == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_AUTHENTICATION_NOT_CONFIGURED", "当前环境尚未配置 Agent 机器认证", false)
+		return
+	}
+	credentialDigest, ok := agentCredentialDigest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return
+	}
+	identity, err := s.agentProtocol.AuthenticateAgent(r.Context(), credentialDigest)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return
+	}
+	var request agentHeartbeatRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if request.ProtocolVersion != agentwire.Version || request.PayloadType != "HEARTBEAT" || request.AgentID != identity.AgentID || request.NodeID != identity.NodeID || request.ProtocolVersion != identity.ProtocolVersion {
+		writeError(w, http.StatusUnauthorized, "AGENT_HEARTBEAT_REJECTED", "Agent 心跳请求已被拒绝", false)
+		return
+	}
+	if _, err := time.Parse(time.RFC3339Nano, request.SentAt); err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, request.Payload.ObservedAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	now := time.Now().UTC()
+	factsRevision, err := s.agentProtocol.RecordAgentHeartbeat(r.Context(), store.AgentHeartbeat{
+		AgentID: request.AgentID, NodeID: request.NodeID, ProtocolVersion: request.ProtocolVersion, BootID: request.BootID,
+		RequestID: request.RequestID, ObservedAt: observedAt.UTC(), ReceivedAt: now, CapacityTotal: request.Payload.CapacityTotal,
+		CapacityUsed: request.Payload.CapacityUsed, Facts: store.AgentEnvironmentFacts{
+			OperatingSystem: request.Payload.OperatingSystem, Architecture: request.Payload.Architecture, AgentVersion: request.Payload.AgentVersion,
+			ObservedAt: observedAt.UTC(), CPUUsagePercent: request.Payload.CPUUsagePercent, MemoryUsagePercent: request.Payload.MemoryUsagePercent,
+			RuntimeConfigurationDigest: request.Payload.RuntimeConfigurationDigest, DataRootUsages: agentDataRootUsages(request.Payload.DataRootUsages),
+		},
+	})
+	if errors.Is(err, store.ErrAgentHeartbeatRejected) {
+		writeError(w, http.StatusUnauthorized, "AGENT_HEARTBEAT_REJECTED", "Agent 心跳请求已被拒绝", false)
+		return
+	}
+	if errors.Is(err, store.ErrAgentHeartbeatConflict) {
+		writeError(w, http.StatusConflict, "AGENT_HEARTBEAT_CONFLICT", "Agent 心跳请求与此前请求冲突", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	environmentCheckID := ""
+	if s.agentEnvironmentChecks != nil {
+		if refresher, ok := s.agentEnvironmentChecks.(AgentExecutionNodeEnvironmentCheckRefresher); ok {
+			checkID := newOpaqueID()
+			if checkID == "" {
+				writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+				return
+			}
+			if _, refreshErr := refresher.EnsureCurrentExecutionNodeEnvironmentCheck(r.Context(), store.ExecutionNodeEnvironmentCheckRefresh{
+				NodeID: identity.NodeID, AgentID: identity.AgentID, CheckID: checkID, RequestID: request.RequestID,
+				FactsRevision: factsRevision, RequestedAt: now,
+			}); refreshErr != nil {
+				writeError(w, http.StatusServiceUnavailable, "AGENT_ENVIRONMENT_CHECK_UNAVAILABLE", "节点环境检查暂时不可用", true)
+				return
+			}
+		}
+		pending, found, pendingErr := s.agentEnvironmentChecks.GetPendingExecutionNodeEnvironmentCheck(r.Context(), identity.AgentID, identity.NodeID)
+		if pendingErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "AGENT_ENVIRONMENT_CHECK_UNAVAILABLE", "节点环境检查暂时不可用", true)
+			return
+		}
+		if found {
+			environmentCheckID = pending.CheckID
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "serverTime": now.Format(time.RFC3339Nano), "status": "ACCEPTED",
+		"payload": map[string]any{"factsRevision": factsRevision, "environmentStatus": "NOT_CHECKED", "environmentCheckId": environmentCheckID, "realExecutionEnabled": false},
+	})
+}
+
+func agentDataRootUsages(values []agentDataRootUsagePayload) []store.AgentDataRootUsage {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]store.AgentDataRootUsage, 0, len(values))
+	for _, value := range values {
+		result = append(result, store.AgentDataRootUsage{RootDigest: value.RootDigest, TotalBytes: value.TotalBytes, AvailableBytes: value.AvailableBytes})
+	}
+	return result
+}
+
+// agentCredentialDigest 从 Bearer 头短时计算机器凭据摘要，避免把原始材料传入业务或日志层。
+func agentCredentialDigest(r *http.Request) ([]byte, bool) {
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || parts[0] != "Bearer" || len(parts[1]) < 32 {
+		return nil, false
+	}
+	value := []byte(parts[1])
+	defer credential.Zero(value)
+	digest := sha256.Sum256(value)
+	return append([]byte(nil), digest[:]...), true
+}
+
+// agentPrecheckEnvelope 是受认证固定预检查共用的严格机器信封。
+// 载荷由每个动作的专用类型承载，不能借此接收自由 JSON 或任意 Agent 指令。
+type agentPrecheckEnvelope struct {
+	ProtocolVersion string `json:"protocolVersion"`
+	AgentID         string `json:"agentId"`
+	NodeID          string `json:"nodeId"`
+	BootID          string `json:"bootId"`
+	RequestID       string `json:"requestId"`
+	SentAt          string `json:"sentAt"`
+	PayloadType     string `json:"payloadType"`
+}
+
+// agentPrecheckClaimNextRequest 只允许受认证 Agent 原子领取自身的下一条固定预检查。
+// 载荷没有预检查或租约标识、路径、命令、SQL 或秘密，防止本机输入扩展为任意远程操作。
+type agentPrecheckClaimNextRequest struct {
+	agentPrecheckEnvelope
+	Payload agentPrecheckClaimNextPayload `json:"payload"`
+}
+
+type agentPrecheckClaimNextPayload struct {
+	Capability string `json:"capability"`
+}
+
+// agentPrecheckAcknowledgementRequest 只确认当前租约和服务端摘要。
+type agentPrecheckAcknowledgementRequest struct {
+	agentPrecheckEnvelope
+	Payload agentPrecheckAcknowledgementPayload `json:"payload"`
+}
+
+type agentPrecheckAcknowledgementPayload struct {
+	LeaseID       string `json:"leaseId"`
+	LeaseEpoch    int64  `json:"leaseEpoch"`
+	BindingDigest string `json:"bindingDigest"`
+}
+
+// agentPrecheckSecretResolveRequest 只允许 Agent 在已确认租约中请求唯一的数据库连接槽位。
+// 请求体不含凭据引用、用户名、密码、路径、SQL 或命令，所有实际绑定均由控制面重读。
+type agentPrecheckSecretResolveRequest struct {
+	agentPrecheckEnvelope
+	Payload agentPrecheckSecretResolvePayload `json:"payload"`
+}
+
+type agentPrecheckSecretResolvePayload struct {
+	LeaseID       string `json:"leaseId"`
+	LeaseEpoch    int64  `json:"leaseEpoch"`
+	BindingDigest string `json:"bindingDigest"`
+	Slot          string `json:"slot"`
+}
+
+// agentPrecheckCompletionRequest 只接收固定六项检查结果。
+// 整体成功状态由服务端从每项结果派生，Agent 不能在请求体中声明成功。
+type agentPrecheckCompletionRequest struct {
+	agentPrecheckEnvelope
+	Payload agentPrecheckCompletionPayload `json:"payload"`
+}
+
+type agentPrecheckCompletionPayload struct {
+	LeaseID       string                       `json:"leaseId"`
+	LeaseEpoch    int64                        `json:"leaseEpoch"`
+	BindingDigest string                       `json:"bindingDigest"`
+	Results       []agentPrecheckResultPayload `json:"results"`
+}
+
+type agentPrecheckResultPayload struct {
+	Check        agentpreflight.CheckID `json:"check"`
+	Status       agentpreflight.Status  `json:"status"`
+	EvidenceCode string                 `json:"evidenceCode"`
+}
+
+// agentConnectionTestEnvelope 是基础连接测试独立使用的严格机器信封。
+// 它不复用 EXPORT_PREFLIGHT 载荷类型，避免对象、路径或工具检查字段进入基础连接测试。
+type agentConnectionTestEnvelope struct {
+	ProtocolVersion string `json:"protocolVersion"`
+	AgentID         string `json:"agentId"`
+	NodeID          string `json:"nodeId"`
+	BootID          string `json:"bootId"`
+	RequestID       string `json:"requestId"`
+	SentAt          string `json:"sentAt"`
+	PayloadType     string `json:"payloadType"`
+}
+
+// agentConnectionTestClaimNextRequest 不允许 Agent 提供测试标识、租约或连接输入。
+// 控制面只会领取已经冻结到当前 Agent 和节点的下一条基础连接测试。
+type agentConnectionTestClaimNextRequest struct {
+	agentConnectionTestEnvelope
+	Payload agentConnectionTestClaimNextPayload `json:"payload"`
+}
+
+type agentConnectionTestClaimNextPayload struct {
+	Capability string `json:"capability"`
+}
+
+// agentConnectionTestAcknowledgementRequest 只确认当前租约和绑定摘要。
+type agentConnectionTestAcknowledgementRequest struct {
+	agentConnectionTestEnvelope
+	Payload agentConnectionTestLeasePayload `json:"payload"`
+}
+
+// agentConnectionTestSecretResolveRequest 只能请求基础连接测试唯一的 DATABASE_CONNECTION 槽位。
+// 请求体不能包含凭据引用、URL、SQL、路径、命令或秘密原文。
+type agentConnectionTestSecretResolveRequest struct {
+	agentConnectionTestEnvelope
+	Payload agentConnectionTestSecretPayload `json:"payload"`
+}
+
+type agentConnectionTestLeasePayload struct {
+	LeaseID       string `json:"leaseId"`
+	LeaseEpoch    int64  `json:"leaseEpoch"`
+	BindingDigest string `json:"bindingDigest"`
+}
+
+type agentConnectionTestSecretPayload struct {
+	LeaseID       string `json:"leaseId"`
+	LeaseEpoch    int64  `json:"leaseEpoch"`
+	BindingDigest string `json:"bindingDigest"`
+	Slot          string `json:"slot"`
+}
+
+// agentConnectionTestCompletionRequest 只接收固定的基础连接测试结论。
+// Agent 不能提交 JDBC 原始异常、连接信息、任意成功布尔值或其他自由文本。
+type agentConnectionTestCompletionRequest struct {
+	agentConnectionTestEnvelope
+	Payload agentConnectionTestCompletionPayload `json:"payload"`
+}
+
+type agentConnectionTestCompletionPayload struct {
+	LeaseID       string `json:"leaseId"`
+	LeaseEpoch    int64  `json:"leaseEpoch"`
+	BindingDigest string `json:"bindingDigest"`
+	Status        string `json:"status"`
+	EvidenceCode  string `json:"evidenceCode"`
+}
+
+// authenticatedPrecheckAgent 使用独立机器凭据认证预检查请求。
+// 浏览器身份、关联材料和任意请求头都不能代替已登记机器身份。
+func (s *Server) authenticatedPrecheckAgent(w http.ResponseWriter, r *http.Request) (store.AgentIdentity, bool) {
+	if s.agentProtocol == nil || s.agentPrechecks == nil || s.precheckTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PRECHECK_NOT_CONFIGURED", "当前环境尚未配置受认证 Agent 预检查", false)
+		return store.AgentIdentity{}, false
+	}
+	credentialDigest, ok := agentCredentialDigest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return store.AgentIdentity{}, false
+	}
+	machine, err := s.agentProtocol.AuthenticateAgent(r.Context(), credentialDigest)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return store.AgentIdentity{}, false
+	}
+	return machine, true
+}
+
+func validPrecheckEnvelope(machine store.AgentIdentity, envelope agentPrecheckEnvelope, payloadType string) bool {
+	if envelope.ProtocolVersion != agentwire.Version || envelope.ProtocolVersion != machine.ProtocolVersion || envelope.PayloadType != payloadType ||
+		envelope.AgentID != machine.AgentID || envelope.NodeID != machine.NodeID ||
+		!validAgentPrecheckOpaque(envelope.BootID) || !validAgentPrecheckOpaque(envelope.RequestID) {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, envelope.SentAt)
+	return err == nil
+}
+
+func validAgentPrecheckOpaque(value string) bool {
+	return strings.TrimSpace(value) != "" && len(value) <= 256 && !strings.ContainsRune(value, 0)
+}
+
+func validAgentPrecheckPathID(value string) bool {
+	return validAgentPrecheckOpaque(value) && !strings.ContainsAny(value, "/\\?#:")
+}
+
+func validAgentPrecheckDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != sha256.Size {
+		return false
+	}
+	return value == strings.ToLower(value)
+}
+
+// authenticatedExecutionNodeEnvironmentCheckAgent 使用机器凭据认证固定环境检查回执。
+// 它不复用预检查依赖，避免“节点启用前检查”被错误绑定到某个导出草稿或秘密槽位。
+func (s *Server) authenticatedExecutionNodeEnvironmentCheckAgent(w http.ResponseWriter, r *http.Request) (store.AgentIdentity, bool) {
+	if s.agentProtocol == nil || s.agentEnvironmentChecks == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_ENVIRONMENT_CHECK_NOT_CONFIGURED", "当前环境尚未配置受认证 Agent 环境检查", false)
+		return store.AgentIdentity{}, false
+	}
+	credentialDigest, ok := agentCredentialDigest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return store.AgentIdentity{}, false
+	}
+	machine, err := s.agentProtocol.AuthenticateAgent(r.Context(), credentialDigest)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return store.AgentIdentity{}, false
+	}
+	return machine, true
+}
+
+// completeAuthenticatedExecutionNodeEnvironmentCheck 持久化当前 Agent 对唯一固定运行时检查的结果。
+// 检查项和证据码均为协议常量，任何路径、命令、异常文本或自由结果字段都会被拒绝。
+func (s *Server) completeAuthenticatedExecutionNodeEnvironmentCheck(w http.ResponseWriter, r *http.Request, checkID string) {
+	machine, ok := s.authenticatedExecutionNodeEnvironmentCheckAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentExecutionNodeEnvironmentCheckCompletionRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXECUTION_NODE_ENVIRONMENT_CHECK_COMPLETE") ||
+		!validAgentPrecheckPathID(checkID) || request.Payload.FactsRevision < 1 ||
+		!validExecutionNodeEnvironmentCheckResult(request.Payload.Status, request.Payload.Code) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	err := s.agentEnvironmentChecks.CompleteExecutionNodeEnvironmentCheck(r.Context(), store.AgentExecutionNodeEnvironmentCheckCompletion{
+		NodeID: machine.NodeID, AgentID: machine.AgentID, CheckID: checkID, FactsRevision: request.Payload.FactsRevision,
+		Status: request.Payload.Status, Code: request.Payload.Code, RequestID: request.RequestID, CompletedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrExecutionNodeEnvironmentCheckRequired) {
+		writeError(w, http.StatusConflict, "ENVIRONMENT_CHECK_REJECTED", "节点环境检查已失效，请等待下一次心跳", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_ENVIRONMENT_CHECK_UNAVAILABLE", "节点环境检查暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "serverTime": time.Now().UTC().Format(time.RFC3339Nano), "status": "ENVIRONMENT_CHECK_COMPLETED",
+		"payload": map[string]any{"realExecutionEnabled": false},
+	})
+}
+
+func validExecutionNodeEnvironmentCheckResult(status, code string) bool {
+	return (status == "PASSED" && code == "TOOL_RUNTIME_READY") ||
+		(status == "FAILED" && (code == "TOOL_RUNTIME_INVALID" || code == "TOOL_RUNTIME_UNAVAILABLE"))
+}
+
+// agentPrecheckRequestDigest 对已验证的机器信封和固定载荷生成稳定摘要。
+// 摘要让同一个 requestId 只能安全重放完全相同的操作，不能跨操作或改变绑定复用。
+func agentPrecheckRequestDigest(operation string, envelope agentPrecheckEnvelope, precheckID string, payload any) string {
+	raw, err := json.Marshal(struct {
+		Operation       string `json:"operation"`
+		ProtocolVersion string `json:"protocolVersion"`
+		AgentID         string `json:"agentId"`
+		NodeID          string `json:"nodeId"`
+		BootID          string `json:"bootId"`
+		RequestID       string `json:"requestId"`
+		SentAt          string `json:"sentAt"`
+		PayloadType     string `json:"payloadType"`
+		PrecheckID      string `json:"precheckId"`
+		Payload         any    `json:"payload"`
+	}{
+		Operation: operation, ProtocolVersion: envelope.ProtocolVersion, AgentID: envelope.AgentID,
+		NodeID: envelope.NodeID, BootID: envelope.BootID, RequestID: envelope.RequestID,
+		SentAt: envelope.SentAt, PayloadType: envelope.PayloadType, PrecheckID: precheckID, Payload: payload,
+	})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+// writeAgentPrecheckResponse 保持 Agent 客户端可验证的严格响应信封。
+// 载荷只包含当前动作的最小安全投影，避免将内部租约、错误或秘密扩散到 Agent 状态文件。
+func writeAgentPrecheckResponse(w http.ResponseWriter, status string, payload any) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "serverTime": time.Now().UTC().Format(time.RFC3339Nano), "status": status, "payload": payload,
+	})
+}
+
+func writeAgentPrecheckStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "PRECHECK_REQUEST_CONFLICT", "预检查请求与此前请求冲突", false)
+	case errors.Is(err, store.ErrPrecheckLeaseExpired):
+		writeError(w, http.StatusConflict, "PRECHECK_LEASE_EXPIRED", "预检查租约已过期", false)
+	case errors.Is(err, store.ErrPrecheckLeaseRejected), errors.Is(err, store.ErrPrecheckInvalid):
+		writeError(w, http.StatusConflict, "PRECHECK_LEASE_REJECTED", "预检查租约无效", false)
+	default:
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_PROTOCOL_UNAVAILABLE", "预检查协议暂时不可用", true)
+	}
+}
+
+// authenticatedConnectionTestAgent 使用独立租约依赖校验基础连接测试的机器身份。
+// 浏览器身份、关联材料和任意请求头都不能替代已经登记的 Agent 机器凭据。
+func (s *Server) authenticatedConnectionTestAgent(w http.ResponseWriter, r *http.Request) (store.AgentIdentity, bool) {
+	if s.agentProtocol == nil || s.agentConnectionTests == nil || s.connectionTestTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_NOT_CONFIGURED", "当前环境尚未配置受认证 Agent 连接测试", false)
+		return store.AgentIdentity{}, false
+	}
+	credentialDigest, ok := agentCredentialDigest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return store.AgentIdentity{}, false
+	}
+	machine, err := s.agentProtocol.AuthenticateAgent(r.Context(), credentialDigest)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "AGENT_AUTHENTICATION_FAILED", "Agent 机器认证失败", false)
+		return store.AgentIdentity{}, false
+	}
+	return machine, true
+}
+
+// validConnectionTestEnvelope 将基础连接测试限定为当前已认证 Agent 的固定信封。
+// sentAt 仅用于协议可审计性，租约和过期判定一律使用控制面时钟。
+func validConnectionTestEnvelope(machine store.AgentIdentity, envelope agentConnectionTestEnvelope, payloadType string) bool {
+	if envelope.ProtocolVersion != agentwire.Version || envelope.ProtocolVersion != machine.ProtocolVersion || envelope.PayloadType != payloadType ||
+		envelope.AgentID != machine.AgentID || envelope.NodeID != machine.NodeID ||
+		!validAgentPrecheckOpaque(envelope.BootID) || !validAgentPrecheckOpaque(envelope.RequestID) {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, envelope.SentAt)
+	return err == nil
+}
+
+// agentConnectionTestRequestDigest 让相同 requestId 只能重放完全相同的基础连接测试动作。
+// 操作、测试标识和载荷均进入摘要，防止跨动作、跨租约或跨绑定复用。
+func agentConnectionTestRequestDigest(operation string, envelope agentConnectionTestEnvelope, connectionTestID string, payload any) string {
+	raw, err := json.Marshal(struct {
+		Operation        string `json:"operation"`
+		ProtocolVersion  string `json:"protocolVersion"`
+		AgentID          string `json:"agentId"`
+		NodeID           string `json:"nodeId"`
+		BootID           string `json:"bootId"`
+		RequestID        string `json:"requestId"`
+		SentAt           string `json:"sentAt"`
+		PayloadType      string `json:"payloadType"`
+		ConnectionTestID string `json:"connectionTestId"`
+		Payload          any    `json:"payload"`
+	}{
+		Operation: operation, ProtocolVersion: envelope.ProtocolVersion, AgentID: envelope.AgentID, NodeID: envelope.NodeID,
+		BootID: envelope.BootID, RequestID: envelope.RequestID, SentAt: envelope.SentAt, PayloadType: envelope.PayloadType,
+		ConnectionTestID: connectionTestID, Payload: payload,
+	})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+// writeAgentConnectionTestResponse 固定 Agent 响应信封，避免 Agent 客户端接受无结构或带秘密的响应。
+func writeAgentConnectionTestResponse(w http.ResponseWriter, status string, payload any) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "serverTime": time.Now().UTC().Format(time.RFC3339Nano), "status": status, "payload": payload,
+	})
+}
+
+func writeAgentConnectionTestStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "CONNECTION_TEST_REQUEST_CONFLICT", "连接测试请求与此前请求冲突", false)
+	case errors.Is(err, store.ErrDataSourceConnectionTestLeaseExpired):
+		writeError(w, http.StatusConflict, "CONNECTION_TEST_LEASE_EXPIRED", "连接测试租约已过期", false)
+	case errors.Is(err, store.ErrDataSourceConnectionTestLeaseRejected), errors.Is(err, store.ErrDataSourceConnectionTestInvalid):
+		writeError(w, http.StatusConflict, "CONNECTION_TEST_LEASE_REJECTED", "连接测试租约无效", false)
+	default:
+		writeError(w, http.StatusServiceUnavailable, "CONNECTION_TEST_PROTOCOL_UNAVAILABLE", "连接测试协议暂时不可用", true)
+	}
+}
+
+// claimNextAuthenticatedPrecheck 在单个服务端事务内选择并领取当前机器的下一条固定预检查。
+// 请求不能指定预检查或租约；领取只写入 SQLite 租约与回执，不请求秘密、不连接数据库且不启动任何工具。
+func (s *Server) claimNextAuthenticatedPrecheck(w http.ResponseWriter, r *http.Request) {
+	machine, ok := s.authenticatedPrecheckAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentPrecheckClaimNextRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_CLAIM_NEXT") || request.Payload.Capability != string(agentpreflight.CapabilityExportPreflight) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	leaseID, err := identifier.NewUUIDV4()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_PROTOCOL_UNAVAILABLE", "预检查协议暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	grant, found, err := s.agentPrechecks.ClaimNextPrecheck(r.Context(), store.PrecheckClaimNext{
+		AgentID: machine.AgentID, NodeID: machine.NodeID, LeaseID: leaseID, RequestID: request.RequestID,
+		RequestDigest: agentPrecheckRequestDigest("CLAIM_NEXT", request.agentPrecheckEnvelope, "", request.Payload), LeaseTTL: s.precheckTTL, Now: now,
+	})
+	if err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	if !found {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeAgentPrecheckResponse(w, "PRECHECK_CLAIMED", map[string]any{
+		"precheckId": grant.PrecheckID, "leaseId": grant.LeaseID, "leaseEpoch": grant.LeaseEpoch,
+		"expiresAt": grant.ExpiresAt.Format(time.RFC3339Nano),
+		"binding": map[string]any{
+			"precheckId": grant.Binding.PrecheckID, "nodeId": grant.Binding.NodeID, "draftRevision": grant.Binding.DraftRevision,
+			"configFingerprint": grant.Binding.ConfigFingerprint, "credentialRevision": grant.Binding.CredentialRevision,
+			"nodeFactsVersion": grant.Binding.NodeFactsRevision,
+		},
+		"bindingDigest": grant.Binding.BindingDigest, "checkSet": agentpreflight.FixedChecks(), "realExecutionEnabled": false,
+		"executionContext": map[string]any{
+			"compatibilityMode": grant.ExecutionContext.CompatibilityMode,
+			"database":          grant.ExecutionContext.Database, "table": grant.ExecutionContext.Table,
+			"outputPath": grant.ExecutionContext.OutputPath, "targetPlatform": grant.ExecutionContext.TargetPlatform,
+			"logPath": grant.ExecutionContext.LogPath, "skipCheckDir": grant.ExecutionContext.SkipCheckDir,
+			"allowedRoots": grant.ExecutionContext.AllowedRoots,
+		},
+	})
+}
+
+// acknowledgeAuthenticatedPrecheck 持久化 Agent 对当前租约和固定检查集的确认。
+// 不确认的租约不能提交检查结果，避免响应丢失后将未知绑定误当成可完成。
+func (s *Server) acknowledgeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Request, precheckID string) {
+	machine, ok := s.authenticatedPrecheckAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentPrecheckAcknowledgementRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_ACKNOWLEDGE_LEASE") || !validAgentPrecheckPathID(precheckID) ||
+		!validAgentPrecheckOpaque(request.Payload.LeaseID) || request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	_, err := s.agentPrechecks.AcknowledgePrecheck(r.Context(), store.PrecheckAcknowledgement{
+		AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
+		BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+		RequestDigest: agentPrecheckRequestDigest("ACKNOWLEDGE", request.agentPrecheckEnvelope, precheckID, request.Payload), Now: time.Now().UTC(),
+	})
+	if err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	writeAgentPrecheckResponse(w, "PRECHECK_LEASE_ACKNOWLEDGED", map[string]any{"realExecutionEnabled": false})
+}
+
+// resolveAuthenticatedPrecheckSecret 在已确认短租约中返回唯一的数据库连接槽位。
+// 槽位仅以短时字节在 HTTPS 响应中存在；本函数不缓存明文，也不会把它写入审计、错误或 SQLite。
+func (s *Server) resolveAuthenticatedPrecheckSecret(w http.ResponseWriter, r *http.Request, precheckID string) {
+	machine, ok := s.authenticatedPrecheckAgent(w, r)
+	if !ok {
+		return
+	}
+	if s.precheckSecrets == nil || s.decryptor == nil {
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SECRET_RESOLUTION_NOT_CONFIGURED", "当前环境尚未配置预检查秘密槽位", false)
+		return
+	}
+	var request agentPrecheckSecretResolveRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_RESOLVE_SECRET_SLOTS") ||
+		!validAgentPrecheckPathID(precheckID) || !validAgentPrecheckOpaque(request.Payload.LeaseID) ||
+		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) ||
+		request.Payload.Slot != "DATABASE_CONNECTION" {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	now := time.Now().UTC()
+	requestDigest := agentPrecheckRequestDigest("RESOLVE_SECRET", request.agentPrecheckEnvelope, precheckID, request.Payload)
+	encrypted, err := s.precheckSecrets.ResolvePrecheckDatabaseConnection(r.Context(), store.PrecheckSecretResolutionRequest{
+		AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID,
+		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest,
+		RequestID: request.RequestID, RequestDigest: requestDigest, Now: now,
+	})
+	if err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	defer encrypted.Destroy()
+	finish := func(succeeded bool) error {
+		return s.precheckSecrets.FinishPrecheckSecretResolution(r.Context(), store.PrecheckSecretResolutionOutcome{
+			AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID,
+			LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest,
+			RequestID: request.RequestID, RequestDigest: requestDigest, Succeeded: succeeded, Now: time.Now().UTC(),
+		})
+	}
+	owner := identity.Principal{Type: identity.BrowserPrincipal, ID: encrypted.OwnerSubjectID}
+	dataSourceAuthorizationErr := identity.Can(r.Context(), s.authorizer, owner, identity.ScopeDataSourceRead, encrypted.DataSourceID)
+	nodeAuthorizationErr := identity.Can(r.Context(), s.authorizer, owner, identity.ScopeNodeUse, encrypted.NodeID)
+	if identity.Validate(owner, identity.BrowserPrincipal) != nil || dataSourceAuthorizationErr != nil || nodeAuthorizationErr != nil {
+		if finishErr := finish(false); finishErr != nil {
+			writeAgentPrecheckStoreError(w, finishErr)
+			return
+		}
+		writeAgentPrecheckStoreError(w, store.ErrPrecheckLeaseRejected)
+		return
+	}
+	plaintext, decryptErr := s.decryptor.Decrypt(credential.Envelope{
+		FormatVersion: credential.FormatVersion,
+		KeyID:         encrypted.KeyID,
+		Reference: credential.Reference{
+			CredentialID: encrypted.CredentialID,
+			Revision:     encrypted.Revision,
+			SecretType:   credential.DatabasePassword,
+			DataSourceID: encrypted.DataSourceID,
+		},
+		Nonce:      encrypted.Nonce,
+		Ciphertext: encrypted.Ciphertext,
+	})
+	if decryptErr != nil {
+		finishErr := finish(false)
+		if finishErr != nil {
+			writeAgentPrecheckStoreError(w, finishErr)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SECRET_RESOLUTION_UNAVAILABLE", "预检查秘密槽位暂时不可用", true)
+		return
+	}
+	defer credential.Zero(plaintext)
+	if err := finish(true); err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	writeAgentPrecheckResponse(w, "PRECHECK_SECRET_SLOTS_RESOLVED", map[string]any{
+		"agentRequestId": request.RequestID,
+		"precheckId":     precheckID,
+		"leaseId":        request.Payload.LeaseID,
+		"leaseEpoch":     request.Payload.LeaseEpoch,
+		"bindingDigest":  request.Payload.BindingDigest,
+		"slot":           "DATABASE_CONNECTION",
+		"connection": map[string]any{
+			"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext,
+		},
+		"realExecutionEnabled": false,
+	})
+}
+
+// completeAuthenticatedPrecheck 持久化固定六项检查的最终安全投影。
+// 控制面根据每项 PASSED/FAILED/UNKNOWN 推导结果；此路径不接收整体成功布尔值或自由证据文本。
+func (s *Server) completeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Request, precheckID string) {
+	machine, ok := s.authenticatedPrecheckAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentPrecheckCompletionRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_COMPLETE") || !validAgentPrecheckPathID(precheckID) ||
+		!validAgentPrecheckOpaque(request.Payload.LeaseID) || request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) ||
+		len(request.Payload.Results) != len(agentpreflight.FixedChecks()) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	results := make([]store.PrecheckCheckResult, 0, len(request.Payload.Results))
+	report := agentpreflight.Report{PrecheckID: precheckID, Succeeded: true, Results: make([]agentpreflight.Result, 0, len(request.Payload.Results))}
+	for _, item := range request.Payload.Results {
+		results = append(results, store.PrecheckCheckResult{Check: string(item.Check), Status: string(item.Status), EvidenceCode: item.EvidenceCode})
+		report.Results = append(report.Results, agentpreflight.Result{Check: item.Check, Status: item.Status, EvidenceCode: item.EvidenceCode})
+		if item.Status != agentpreflight.StatusPassed {
+			report.Succeeded = false
+		}
+	}
+	if err := agentpreflight.ValidateReport(report); err != nil {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	result, err := s.agentPrechecks.CompleteAgentPrecheck(r.Context(), store.AgentPrecheckCompletion{
+		AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
+		BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+		RequestDigest: agentPrecheckRequestDigest("COMPLETE", request.agentPrecheckEnvelope, precheckID, request.Payload), Results: results, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	writeAgentPrecheckResponse(w, "PRECHECK_COMPLETED", map[string]any{"status": result.Status, "realExecutionEnabled": false})
+}
+
+// claimNextAuthenticatedConnectionTest 在一个短事务内领取当前 Agent 的下一条基础连接测试。
+// 请求不能指定测试、租约、地址或凭据；领取本身不解析秘密、不连接数据库且不启动 Java。
+func (s *Server) claimNextAuthenticatedConnectionTest(w http.ResponseWriter, r *http.Request) {
+	machine, ok := s.authenticatedConnectionTestAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentConnectionTestClaimNextRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validConnectionTestEnvelope(machine, request.agentConnectionTestEnvelope, "DATA_SOURCE_CONNECTION_TEST_CLAIM_NEXT") || request.Payload.Capability != "DATA_SOURCE_CONNECTION_TEST" {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	leaseID, err := identifier.NewUUIDV4()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "CONNECTION_TEST_PROTOCOL_UNAVAILABLE", "连接测试协议暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	grant, found, err := s.agentConnectionTests.ClaimNextDataSourceConnectionTest(r.Context(), store.DataSourceConnectionTestClaimNext{
+		AgentID: machine.AgentID, NodeID: machine.NodeID, LeaseID: leaseID, RequestID: request.RequestID,
+		RequestDigest: agentConnectionTestRequestDigest("CLAIM_NEXT", request.agentConnectionTestEnvelope, "", request.Payload),
+		LeaseTTL:      s.connectionTestTTL, Now: now,
+	})
+	if err != nil {
+		writeAgentConnectionTestStoreError(w, err)
+		return
+	}
+	if !found {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeAgentConnectionTestResponse(w, "DATA_SOURCE_CONNECTION_TEST_CLAIMED", map[string]any{
+		"connectionTestId": grant.ConnectionTestID, "leaseId": grant.LeaseID, "leaseEpoch": grant.LeaseEpoch,
+		"expiresAt": grant.ExpiresAt.UTC().Format(time.RFC3339Nano), "binding": map[string]any{
+			"connectionTestId": grant.Binding.ConnectionTestID, "dataSourceId": grant.Binding.DataSourceID,
+			"connectionConfigDigest": grant.Binding.ConnectionConfigDigest, "credentialRevision": grant.Binding.CredentialRevision,
+			"nodeId": grant.Binding.NodeID, "nodeFactsRevision": grant.Binding.NodeFactsRevision,
+		},
+		"bindingDigest": grant.Binding.BindingDigest, "verificationSource": grant.Binding.VerificationSource,
+		"realExecutionEnabled": false,
+	})
+}
+
+// acknowledgeAuthenticatedConnectionTest 记录 Agent 对当前测试租约和冻结摘要的确认。
+// 未确认的租约不能解析秘密或提交结果，避免响应丢失后继续使用未知绑定。
+func (s *Server) acknowledgeAuthenticatedConnectionTest(w http.ResponseWriter, r *http.Request, connectionTestID string) {
+	machine, ok := s.authenticatedConnectionTestAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentConnectionTestAcknowledgementRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validConnectionTestEnvelope(machine, request.agentConnectionTestEnvelope, "DATA_SOURCE_CONNECTION_TEST_ACKNOWLEDGE_LEASE") ||
+		!validDataSourceConnectionTestPathID(connectionTestID) || !validAgentPrecheckOpaque(request.Payload.LeaseID) ||
+		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	_, err := s.agentConnectionTests.AcknowledgeDataSourceConnectionTest(r.Context(), store.DataSourceConnectionTestAcknowledgement{
+		AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
+		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+		RequestDigest: agentConnectionTestRequestDigest("ACKNOWLEDGE", request.agentConnectionTestEnvelope, connectionTestID, request.Payload),
+		Now:           time.Now().UTC(),
+	})
+	if err != nil {
+		writeAgentConnectionTestStoreError(w, err)
+		return
+	}
+	writeAgentConnectionTestResponse(w, "DATA_SOURCE_CONNECTION_TEST_LEASE_ACKNOWLEDGED", map[string]any{"realExecutionEnabled": false})
+}
+
+// resolveAuthenticatedConnectionTestSecret 只在已确认的基础连接测试租约内返回唯一数据库槽位。
+// 明文仅短时存在于 HTTPS 响应编码期间，不进入日志、审计、SQLite 或浏览器响应。
+func (s *Server) resolveAuthenticatedConnectionTestSecret(w http.ResponseWriter, r *http.Request, connectionTestID string) {
+	machine, ok := s.authenticatedConnectionTestAgent(w, r)
+	if !ok {
+		return
+	}
+	if s.connectionTestSecrets == nil || s.decryptor == nil || s.authorizer == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONNECTION_TEST_SECRET_RESOLUTION_NOT_CONFIGURED", "当前环境尚未配置连接测试秘密槽位", false)
+		return
+	}
+	var request agentConnectionTestSecretResolveRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validConnectionTestEnvelope(machine, request.agentConnectionTestEnvelope, "DATA_SOURCE_CONNECTION_TEST_RESOLVE_SECRET_SLOTS") ||
+		!validDataSourceConnectionTestPathID(connectionTestID) || !validAgentPrecheckOpaque(request.Payload.LeaseID) ||
+		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) || request.Payload.Slot != "DATABASE_CONNECTION" {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	now := time.Now().UTC()
+	requestDigest := agentConnectionTestRequestDigest("RESOLVE_SECRET", request.agentConnectionTestEnvelope, connectionTestID, request.Payload)
+	encrypted, err := s.connectionTestSecrets.ResolveDataSourceConnectionTestDatabaseConnection(r.Context(), store.DataSourceConnectionTestSecretResolutionRequest{
+		AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
+		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+		RequestDigest: requestDigest, Now: now,
+	})
+	if err != nil {
+		writeAgentConnectionTestStoreError(w, err)
+		return
+	}
+	defer encrypted.Destroy()
+	finish := func(succeeded bool) error {
+		return s.connectionTestSecrets.FinishDataSourceConnectionTestSecretResolution(r.Context(), store.DataSourceConnectionTestSecretResolutionOutcome{
+			AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
+			LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+			RequestDigest: requestDigest, Succeeded: succeeded, Now: time.Now().UTC(),
+		})
+	}
+	owner := identity.Principal{Type: identity.BrowserPrincipal, ID: encrypted.OwnerSubjectID}
+	if identity.Validate(owner, identity.BrowserPrincipal) != nil ||
+		identity.Can(r.Context(), s.authorizer, owner, identity.ScopeDataSourceRead, encrypted.DataSourceID) != nil ||
+		identity.Can(r.Context(), s.authorizer, owner, identity.ScopeNodeUse, encrypted.NodeID) != nil {
+		if finishErr := finish(false); finishErr != nil {
+			writeAgentConnectionTestStoreError(w, finishErr)
+			return
+		}
+		writeAgentConnectionTestStoreError(w, store.ErrDataSourceConnectionTestLeaseRejected)
+		return
+	}
+	plaintext, decryptErr := s.decryptor.Decrypt(credential.Envelope{
+		FormatVersion: credential.FormatVersion, KeyID: encrypted.KeyID,
+		Reference: credential.Reference{CredentialID: encrypted.CredentialID, Revision: encrypted.Revision, SecretType: credential.DatabasePassword, DataSourceID: encrypted.DataSourceID},
+		Nonce:     encrypted.Nonce, Ciphertext: encrypted.Ciphertext,
+	})
+	if decryptErr != nil {
+		if finishErr := finish(false); finishErr != nil {
+			writeAgentConnectionTestStoreError(w, finishErr)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "CONNECTION_TEST_SECRET_RESOLUTION_UNAVAILABLE", "连接测试秘密槽位暂时不可用", true)
+		return
+	}
+	defer credential.Zero(plaintext)
+	if err := finish(true); err != nil {
+		writeAgentConnectionTestStoreError(w, err)
+		return
+	}
+	writeAgentConnectionTestResponse(w, "DATA_SOURCE_CONNECTION_TEST_SECRET_SLOTS_RESOLVED", map[string]any{
+		"agentRequestId": request.RequestID, "connectionTestId": connectionTestID, "leaseId": request.Payload.LeaseID,
+		"leaseEpoch": request.Payload.LeaseEpoch, "bindingDigest": request.Payload.BindingDigest, "slot": "DATABASE_CONNECTION",
+		"connection":           map[string]any{"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext},
+		"realExecutionEnabled": false,
+	})
+}
+
+// completeAuthenticatedConnectionTest 保存基础连接测试的三种固定结果。
+// 状态与来源会由 Store 再次复验当前绑定；G2 合成结论不能写为数据源启用事实。
+func (s *Server) completeAuthenticatedConnectionTest(w http.ResponseWriter, r *http.Request, connectionTestID string) {
+	machine, ok := s.authenticatedConnectionTestAgent(w, r)
+	if !ok {
+		return
+	}
+	if s.connectionTests == nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_NOT_CONFIGURED", "当前环境尚未配置受认证 Agent 连接测试", false)
+		return
+	}
+	var request agentConnectionTestCompletionRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validConnectionTestEnvelope(machine, request.agentConnectionTestEnvelope, "DATA_SOURCE_CONNECTION_TEST_COMPLETE") ||
+		!validDataSourceConnectionTestPathID(connectionTestID) || !validAgentPrecheckOpaque(request.Payload.LeaseID) ||
+		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	run, err := s.connectionTests.GetDataSourceConnectionTestRun(r.Context(), connectionTestID)
+	if err != nil {
+		writeAgentConnectionTestStoreError(w, err)
+		return
+	}
+	if !validConnectionTestResult(run.VerificationSource, request.Payload.Status, request.Payload.EvidenceCode) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	result, err := s.agentConnectionTests.CompleteAgentDataSourceConnectionTest(r.Context(), store.AgentDataSourceConnectionTestCompletion{
+		AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
+		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+		RequestDigest: agentConnectionTestRequestDigest("COMPLETE", request.agentConnectionTestEnvelope, connectionTestID, request.Payload),
+		Status:        request.Payload.Status, EvidenceCode: request.Payload.EvidenceCode, VerificationSource: run.VerificationSource, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		writeAgentConnectionTestStoreError(w, err)
+		return
+	}
+	writeAgentConnectionTestResponse(w, "DATA_SOURCE_CONNECTION_TEST_COMPLETED", map[string]any{
+		"status": result.Status, "evidenceCode": result.EvidenceCode, "verificationSource": result.VerificationSource,
+		"realExecutionEnabled": false,
+	})
+}
+
+func validConnectionTestResult(verificationSource, status, evidenceCode string) bool {
+	if verificationSource == "G2_SYNTHETIC" {
+		return status == "SUCCEEDED" && evidenceCode == "SYNTHETIC_OK"
+	}
+	return verificationSource == "AGENT_JDBC" &&
+		((status == "SUCCEEDED" && evidenceCode == "DATABASE_CONNECTED") ||
+			(status == "FAILED" && evidenceCode == "DATABASE_HOST_UNRESOLVABLE") ||
+			(status == "FAILED" && evidenceCode == "DATABASE_TCP_REFUSED") ||
+			(status == "FAILED" && evidenceCode == "DATABASE_TCP_TIMEOUT") ||
+			(status == "FAILED" && evidenceCode == "DATABASE_TCP_UNREACHABLE") ||
+			(status == "FAILED" && evidenceCode == "DATABASE_CONNECTION_FAILED") ||
+			(status == "UNKNOWN" && evidenceCode == "DATABASE_CONNECTION_UNAVAILABLE"))
+}
+
+func parseAuthenticatedPrecheckAction(path string) (string, string, bool) {
+	const prefix = "/agent/v1/prechecks/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", "", false
+	}
+	value := strings.TrimPrefix(path, prefix)
+	for suffix, action := range map[string]string{":acknowledge-lease": "acknowledge-lease", "/secret-slots:resolve": "resolve-secret-slots", ":complete": "complete"} {
+		if strings.HasSuffix(value, suffix) {
+			precheckID := strings.TrimSuffix(value, suffix)
+			return precheckID, action, validAgentPrecheckPathID(precheckID)
+		}
+	}
+	return "", "", false
+}
+
+// parseAuthenticatedConnectionTestAction 只识别基础连接测试的三种固定后续动作。
+// 任何其他后缀都不能被解释为远程命令、文件操作或通用 Agent 控制接口。
+func parseAuthenticatedConnectionTestAction(path string) (string, string, bool) {
+	const prefix = "/agent/v1/data-source-connection-tests/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", "", false
+	}
+	value := strings.TrimPrefix(path, prefix)
+	for suffix, action := range map[string]string{":acknowledge-lease": "acknowledge-lease", "/secret-slots:resolve": "resolve-secret-slots", ":complete": "complete"} {
+		if strings.HasSuffix(value, suffix) {
+			connectionTestID := strings.TrimSuffix(value, suffix)
+			return connectionTestID, action, validDataSourceConnectionTestPathID(connectionTestID)
+		}
+	}
+	return "", "", false
+}
+
+// parseAuthenticatedExecutionNodeEnvironmentCheckCompletion 只匹配固定环境检查回执路径。
+// 检查标识是控制面生成的不透明值，不能携带路径语义或扩展为通用 Agent 操作。
+func parseAuthenticatedExecutionNodeEnvironmentCheckCompletion(path string) (string, bool) {
+	const prefix = "/agent/v1/execution-node-environment-checks/"
+	const suffix = ":complete"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	checkID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return checkID, validAgentPrecheckPathID(checkID)
+}
+
+// agentEntry 让首次关联在没有既有机器凭据时到达受控交换端点。
+// 默认只开放 G2 固定能力；Windows 本机 MVP 显式执行模式才额外开放受租约约束的 OBDUMPER 导出路径。
+func (s *Server) agentEntry(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/enrollments:exchange" {
+		s.exchangeAgentEnrollment(w, r)
+		return
+	}
+	if s.agentProtocol != nil {
+		if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/heartbeats" {
+			s.recordAgentHeartbeat(w, r)
+			return
+		}
+		if r.Method == http.MethodPost {
+			if checkID, ok := parseAuthenticatedExecutionNodeEnvironmentCheckCompletion(r.URL.Path); ok {
+				s.completeAuthenticatedExecutionNodeEnvironmentCheck(w, r, checkID)
+				return
+			}
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/prechecks:claim-next" {
+			s.claimNextAuthenticatedPrecheck(w, r)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/data-source-connection-tests:claim-next" {
+			s.claimNextAuthenticatedConnectionTest(w, r)
+			return
+		}
+		if s.realExecutionEnabled && r.Method == http.MethodPost && r.URL.Path == "/agent/v1/executions:claim-next" {
+			s.claimNextAuthenticatedExecution(w, r)
+			return
+		}
+		if r.Method == http.MethodPost {
+			if precheckID, action, ok := parseAuthenticatedPrecheckAction(r.URL.Path); ok {
+				switch action {
+				case "acknowledge-lease":
+					s.acknowledgeAuthenticatedPrecheck(w, r, precheckID)
+					return
+				case "resolve-secret-slots":
+					s.resolveAuthenticatedPrecheckSecret(w, r, precheckID)
+					return
+				case "complete":
+					s.completeAuthenticatedPrecheck(w, r, precheckID)
+					return
+				}
+			}
+			if connectionTestID, action, ok := parseAuthenticatedConnectionTestAction(r.URL.Path); ok {
+				switch action {
+				case "acknowledge-lease":
+					s.acknowledgeAuthenticatedConnectionTest(w, r, connectionTestID)
+					return
+				case "resolve-secret-slots":
+					s.resolveAuthenticatedConnectionTestSecret(w, r, connectionTestID)
+					return
+				case "complete":
+					s.completeAuthenticatedConnectionTest(w, r, connectionTestID)
+					return
+				}
+			}
+			if s.realExecutionEnabled {
+				if executionID, action, ok := parseAuthenticatedExecutionAction(r.URL.Path); ok {
+					switch action {
+					case "acknowledge-lease":
+						s.acknowledgeAuthenticatedExecution(w, r, executionID)
+						return
+					case "renew-lease":
+						s.renewAuthenticatedExecution(w, r, executionID)
+						return
+					case "resolve-secret-slots":
+						s.resolveAuthenticatedExecutionSecret(w, r, executionID)
+						return
+					case "append-events":
+						s.appendAuthenticatedExecutionEvent(w, r, executionID)
+						return
+					case "append-logs":
+						s.appendAuthenticatedExecutionLog(w, r, executionID)
+						return
+					case "append-log-gap":
+						s.appendAuthenticatedExecutionLogGap(w, r, executionID)
+						return
+					}
+				}
+			}
+		}
+		writeError(w, http.StatusServiceUnavailable, "AGENT_PROTOCOL_G2_ONLY", "当前 Agent 协议仅开放关联、心跳、固定预检查与基础连接测试", false)
+		return
+	}
+	s.agentAuthenticated(w, r)
+}
+
+// agentAuthenticated 保留既有合成 Agent 协议测试适配。
+// 正式机器凭据仓储启用后，agentEntry 会在此函数之前拒绝未实现的执行相关端点。
 func (s *Server) agentAuthenticated(w http.ResponseWriter, r *http.Request) {
 	principal, err := s.provider.AuthenticateAgent(r)
 	if err != nil || identity.Validate(principal, identity.AgentPrincipal) != nil {
@@ -1318,7 +3237,7 @@ func (s *Server) claimSyntheticExecution(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusServiceUnavailable, "EXECUTION_CLAIM_UNAVAILABLE", "任务领取暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": grant, "nextEventSequence": 2, "realExecutionEnabled": false})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "grant": grant, "nextEventSequence": 2, "realExecutionEnabled": false})
 }
 
 // renewSyntheticExecution 统一以控制面时钟续期，并同步安全租约投影。
@@ -1345,7 +3264,7 @@ func (s *Server) renewSyntheticExecution(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusServiceUnavailable, "EXECUTION_LEASE_UNAVAILABLE", "任务租约暂时无法续期", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": grant, "realExecutionEnabled": false})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "grant": grant, "realExecutionEnabled": false})
 }
 
 // appendSyntheticExecutionEvent 先由状态机判定租约和顺序，再保存不含原始负载的接受事实。
@@ -1373,7 +3292,7 @@ func (s *Server) appendSyntheticExecutionEvent(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if result.Decision == agentstate.EventGap || result.Decision == agentstate.EventStale {
-		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSequence})
+		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(w), "decision": result.Decision, "expectedSequence": result.ExpectedSequence})
 		return
 	}
 	if result.Decision == agentstate.EventAccepted {
@@ -1383,7 +3302,7 @@ func (s *Server) appendSyntheticExecutionEvent(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSequence, "state": result.Snapshot.State, "realExecutionEnabled": false})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "decision": result.Decision, "expectedSequence": result.ExpectedSequence, "state": result.Snapshot.State, "realExecutionEnabled": false})
 }
 
 // syntheticLogBatchRequest 将日志批次绑定到当前领取租约，避免任意 Agent 写入其他任务。
@@ -1400,22 +3319,29 @@ type syntheticLogGapRequest struct {
 	Gap        logstream.GapNotice `json:"gap"`
 }
 
-// syntheticLogStore 是 G2 专用的已脱敏内存日志投影。
-// 它不替代后续分段文件、SQLite 索引或重启恢复设计。
+// syntheticLogStore 在未配置持久分段存储时保留 G2 的已脱敏内存投影。
+// 配置持久存储后，普通日志批次只走文件 fsync 与 SQLite 索引，避免两套正文产生不一致。
 type syntheticLogStore struct {
-	mu     sync.Mutex
-	ledger *logstream.BatchLedger
-	byTask map[string][]logstream.Record
+	mu         sync.Mutex
+	ledger     *logstream.BatchLedger
+	persistent *logstream.PersistentStore
+	byTask     map[string][]logstream.Record
 }
 
-func newSyntheticLogStore(ledger *logstream.BatchLedger) *syntheticLogStore {
-	if ledger == nil {
+func newSyntheticLogStore(ledger *logstream.BatchLedger, persistent *logstream.PersistentStore) *syntheticLogStore {
+	if ledger == nil && persistent == nil {
 		return nil
 	}
-	return &syntheticLogStore{ledger: ledger, byTask: make(map[string][]logstream.Record)}
+	return &syntheticLogStore{ledger: ledger, persistent: persistent, byTask: make(map[string][]logstream.Record)}
 }
 
-func (s *syntheticLogStore) appendBatch(taskID string, batch logstream.Batch) (logstream.BatchResult, error) {
+func (s *syntheticLogStore) appendBatch(ctx context.Context, taskID, executionID string, batch logstream.Batch) (logstream.BatchResult, error) {
+	if s.persistent != nil {
+		return s.persistent.Append(ctx, executionID, batch)
+	}
+	if s.ledger == nil {
+		return logstream.BatchResult{}, logstream.ErrInvalidInput
+	}
 	for _, record := range batch.Records {
 		redacted, err := (logstream.Policy{Version: batch.PolicyVersion}).Redact(record.Message)
 		if err != nil || redacted != record.Message {
@@ -1432,14 +3358,20 @@ func (s *syntheticLogStore) appendBatch(taskID string, batch logstream.Batch) (l
 	return result, nil
 }
 
-func (s *syntheticLogStore) appendGap(taskID string, gap logstream.GapNotice) (logstream.BatchResult, error) {
+func (s *syntheticLogStore) appendGap(ctx context.Context, taskID, executionID string, gap logstream.GapNotice) (logstream.BatchResult, error) {
+	if s.persistent != nil {
+		return s.persistent.AppendGap(ctx, executionID, gap)
+	}
+	if s.ledger == nil {
+		return logstream.BatchResult{}, logstream.ErrInvalidInput
+	}
 	result, err := s.ledger.AcceptGap(gap)
 	if err != nil || result.Decision != logstream.BatchAccepted {
 		return result, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.byTask[taskID] = append(s.byTask[taskID], logstream.Record{StreamID: gap.StreamID, SourceEpoch: gap.SourceEpoch, SourceSeq: gap.FirstSeq, Kind: logstream.RecordGap, Message: "日志序号存在缺口", IntegrityCode: "GAP_REPORTED", PolicyVersion: "synthetic", ParserVersion: "synthetic", ReceivedAt: time.Now().UTC()})
+	s.byTask[taskID] = append(s.byTask[taskID], logstream.Record{StreamID: gap.StreamID, SourceKind: gap.SourceKind, SourceEpoch: gap.SourceEpoch, SourceSeq: gap.FirstSeq, Kind: logstream.RecordGap, Message: "日志序号存在缺口", IntegrityCode: gap.ReasonCode, PolicyVersion: gap.PolicyVersion, ParserVersion: gap.ParserVersion, ReceivedAt: time.Now().UTC()})
 	return result, nil
 }
 
@@ -1447,6 +3379,13 @@ func (s *syntheticLogStore) records(taskID string) []logstream.Record {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]logstream.Record(nil), s.byTask[taskID]...)
+}
+
+func (s *syntheticLogStore) persistentStore() *logstream.PersistentStore {
+	if s == nil {
+		return nil
+	}
+	return s.persistent
 }
 
 // appendSyntheticLogBatch 拒绝含未脱敏键值的批次，并由批次账本处理重复与序号缺口。
@@ -1464,9 +3403,9 @@ func (s *Server) appendSyntheticLogBatch(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
 		return
 	}
-	result, err := s.logs.appendBatch(snapshot.TaskID, request.Batch)
+	result, err := s.logs.appendBatch(r.Context(), snapshot.TaskID, executionID, request.Batch)
 	if errors.Is(err, logstream.ErrBatchGap) {
-		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq})
+		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(w), "decision": result.Decision, "expectedSequence": result.ExpectedSeq})
 		return
 	}
 	if errors.Is(err, logstream.ErrPolicyRejected) || errors.Is(err, logstream.ErrInvalidInput) || errors.Is(err, logstream.ErrBatchConflict) {
@@ -1477,7 +3416,7 @@ func (s *Server) appendSyntheticLogBatch(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusServiceUnavailable, "LOG_BATCH_UNAVAILABLE", "日志批次暂时无法保存", true)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq, "realExecutionEnabled": false})
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(w), "decision": result.Decision, "expectedSequence": result.ExpectedSeq, "realExecutionEnabled": false})
 }
 
 // appendSyntheticLogGap 记录可审查的序号缺口，不接受或展示 Agent 的原因原文。
@@ -1495,26 +3434,39 @@ func (s *Server) appendSyntheticLogGap(w http.ResponseWriter, r *http.Request, p
 		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
 		return
 	}
-	result, err := s.logs.appendGap(snapshot.TaskID, request.Gap)
+	result, err := s.logs.appendGap(r.Context(), snapshot.TaskID, executionID, request.Gap)
 	if errors.Is(err, logstream.ErrBatchGap) {
-		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq})
+		writeJSON(w, http.StatusConflict, map[string]any{"requestId": requestID(w), "decision": result.Decision, "expectedSequence": result.ExpectedSeq})
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "LOG_GAP_REJECTED", "日志缺口不符合安全约束", false)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(), "decision": result.Decision, "expectedSequence": result.ExpectedSeq, "realExecutionEnabled": false})
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(w), "decision": result.Decision, "expectedSequence": result.ExpectedSeq, "realExecutionEnabled": false})
 }
 
-// listSyntheticLogs 仅让任务创建者读取已通过第一层脱敏的 G2 内存记录。
+// taskLogCursor 将页面游标绑定到单一已授权任务和当前主体。
+// 它只保存内部批次位置，不能携带文件路径、SQLite 行号、Agent 序号、配置或秘密引用。
+type taskLogCursor struct {
+	SubjectDigest string `json:"subjectDigest"`
+	TaskDigest    string `json:"taskDigest"`
+	SnapshotAt    string `json:"snapshotAt"`
+	SnapshotBatch string `json:"snapshotBatch"`
+	PositionAt    string `json:"positionAt"`
+	PositionBatch string `json:"positionBatch"`
+	RecordOffset  int    `json:"recordOffset"`
+}
+
+// listSyntheticLogs 在配置持久段存储时读取固定水位页或最后可靠游标之后的增量。
+// 未配置时才保留 G2 内存投影，不能把该降级路径描述为可跨重启恢复的日志。
 func (s *Server) listSyntheticLogs(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
 	if s.tasks == nil || s.logs == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置日志查询依赖", false)
 		return
 	}
-	summary, err := s.tasks.GetTaskSummary(r.Context(), taskID)
-	if errors.Is(err, store.ErrDataSourceNotFound) || (err == nil && summary.CreatorSubjectID != principal.ID) {
+	_, err := s.tasks.GetAuthorizedTaskSummary(r.Context(), taskID, principal.ID)
+	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
 		return
 	}
@@ -1522,7 +3474,278 @@ func (s *Server) listSyntheticLogs(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "items": s.logs.records(taskID), "integrity": "SYNTHETIC_MEMORY", "realExecutionEnabled": false})
+	if persistent := s.logs.persistentStore(); persistent != nil {
+		cursorValue := strings.TrimSpace(r.URL.Query().Get("cursor"))
+		afterValue := strings.TrimSpace(r.URL.Query().Get("after"))
+		if cursorValue != "" && afterValue != "" {
+			writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "日志游标无效", false)
+			return
+		}
+		var records []logstream.Record
+		var next, last *logstream.PageCursor
+		if afterValue != "" {
+			after, ok := decodeTaskLogCursor(afterValue, principal.ID, taskID)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "日志游标无效", false)
+				return
+			}
+			records, last, err = persistent.ReadSince(r.Context(), taskID, after)
+		} else {
+			var cursor *logstream.PageCursor
+			if cursorValue != "" {
+				var ok bool
+				cursor, ok = decodeTaskLogCursor(cursorValue, principal.ID, taskID)
+				if !ok {
+					writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "日志游标无效", false)
+					return
+				}
+			}
+			records, next, last, err = persistent.ReadPage(r.Context(), taskID, cursor)
+		}
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "LOG_QUERY_UNAVAILABLE", "日志暂时不可读取", true)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"requestId":          requestID(w),
+			"items":              taskLogResponses(records),
+			"nextCursor":         optionalTaskLogCursor(next, principal.ID, taskID),
+			"lastReliableCursor": optionalTaskLogCursor(last, principal.ID, taskID),
+			"integrity":          "PERSISTED_DOUBLE_REDACTED",
+		})
+		return
+	}
+	integrity := "SYNTHETIC_MEMORY"
+	if s.realExecutionEnabled {
+		integrity = "MEMORY_PROJECTION"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": taskLogResponses(s.logs.records(taskID)), "integrity": integrity, "realExecutionEnabled": s.realExecutionEnabled})
+}
+
+// streamTaskLogs 为一个已授权且活动中的任务提供持久日志的单向增量传输。
+// SSE 事件只在文件 fsync 与 SQLite 批次登记均成功后发送；连接恢复本身不表示 Agent 端没有缺口。
+func (s *Server) streamTaskLogs(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.tasks == nil || s.logs == nil || s.logs.persistentStore() == nil {
+		writeError(w, http.StatusServiceUnavailable, "LOG_STREAM_UNAVAILABLE", "当前环境尚未配置持久日志流", true)
+		return
+	}
+	summary, ok := s.loadAuthorizedTaskSummary(w, r, principal, taskID)
+	if !ok {
+		return
+	}
+	if summary.State != "STARTING" && summary.State != "RUNNING" {
+		writeError(w, http.StatusConflict, "LOG_STREAM_INACTIVE", "当前任务没有活动日志流", false)
+		return
+	}
+	persistent := s.logs.persistentStore()
+	afterValue := strings.TrimSpace(r.URL.Query().Get("after"))
+	if afterValue == "" {
+		afterValue = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	}
+	var after *logstream.PageCursor
+	if afterValue != "" {
+		var cursorOK bool
+		after, cursorOK = decodeTaskLogCursor(afterValue, principal.ID, taskID)
+		if !cursorOK {
+			writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "日志游标无效", false)
+			return
+		}
+	}
+	flusher, flushOK := responseFlusher(w)
+	if !flushOK {
+		writeError(w, http.StatusServiceUnavailable, "LOG_STREAM_UNAVAILABLE", "当前环境不支持日志流", true)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "retry: 2000\n\n")
+	flusher.Flush()
+
+	updates := persistent.Subscribe()
+	last, err := s.writeTaskLogStreamPage(r.Context(), w, principal, taskID, after)
+	if err != nil {
+		return
+	}
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-updates:
+			var pageErr error
+			last, pageErr = s.writeTaskLogStreamPage(r.Context(), w, principal, taskID, last)
+			if pageErr != nil {
+				return
+			}
+		case <-heartbeat.C:
+			_, _ = io.WriteString(w, ": heartbeat\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) writeTaskLogStreamPage(ctx context.Context, w http.ResponseWriter, principal identity.Principal, taskID string, after *logstream.PageCursor) (*logstream.PageCursor, error) {
+	// 长连接不能复用建立时的授权结论；权限撤销后直接关闭流，避免继续发送任何新记录。
+	if _, err := s.tasks.GetAuthorizedTaskSummary(ctx, taskID, principal.ID); err != nil {
+		return after, err
+	}
+	persistent := s.logs.persistentStore()
+	flusher, flushOK := responseFlusher(w)
+	if !flushOK {
+		return after, errors.New("日志流响应不支持刷新")
+	}
+	current := after
+	for sent := 0; sent < 200; sent++ {
+		record, last, found, err := persistent.ReadNextSince(ctx, taskID, current)
+		if err != nil {
+			return current, err
+		}
+		if !found {
+			break
+		}
+		payload, marshalErr := json.Marshal(taskLogResponses([]logstream.Record{record})[0])
+		if marshalErr != nil {
+			return current, marshalErr
+		}
+		cursor := encodeTaskLogCursor(last, principal.ID, taskID)
+		if cursor == "" {
+			return current, logstream.ErrStorageCorrupt
+		}
+		if _, err := fmt.Fprintf(w, "id: %s\nevent: log\ndata: %s\n\n", cursor, payload); err != nil {
+			return current, err
+		}
+		flusher.Flush()
+		current = last
+	}
+	return current, nil
+}
+
+// responseFlusher 解开仅附加响应元数据的包装层，保留 SSE 对底层刷新能力的准确判断。
+// 包装链异常或超过有限层数时失败关闭，不能把无刷新能力的响应误当作可用日志流。
+func responseFlusher(w http.ResponseWriter) (http.Flusher, bool) {
+	for depth := 0; depth < 8 && w != nil; depth++ {
+		if flusher, ok := w.(http.Flusher); ok {
+			return flusher, true
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil, false
+		}
+		w = unwrapper.Unwrap()
+	}
+	return nil, false
+}
+
+func optionalTaskLogCursor(cursor *logstream.PageCursor, subjectID, taskID string) any {
+	if cursor == nil {
+		return nil
+	}
+	encoded := encodeTaskLogCursor(cursor, subjectID, taskID)
+	if encoded == "" {
+		return nil
+	}
+	return encoded
+}
+
+func decodeTaskLogCursor(value, subjectID, taskID string) (*logstream.PageCursor, bool) {
+	if len(value) > 2048 {
+		return nil, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(raw) > 1024 {
+		return nil, false
+	}
+	var cursor taskLogCursor
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cursor); err != nil {
+		return nil, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	snapshotAt, snapshotOK := parseTaskLogCursorTime(cursor.SnapshotAt)
+	positionAt, positionOK := parseTaskLogCursorTime(cursor.PositionAt)
+	if !snapshotOK || !positionOK || cursor.RecordOffset < 0 || !validInternalLogID(cursor.SnapshotBatch) || !validInternalLogID(cursor.PositionBatch) ||
+		subtle.ConstantTimeCompare([]byte(cursor.SubjectDigest), []byte(taskLogSubjectDigest(subjectID))) != 1 ||
+		subtle.ConstantTimeCompare([]byte(cursor.TaskDigest), []byte(taskLogTaskDigest(taskID))) != 1 {
+		return nil, false
+	}
+	return &logstream.PageCursor{
+		Snapshot:     logstream.BatchPosition{ReceivedAt: snapshotAt, BatchID: cursor.SnapshotBatch},
+		Position:     logstream.BatchPosition{ReceivedAt: positionAt, BatchID: cursor.PositionBatch},
+		RecordOffset: cursor.RecordOffset,
+	}, true
+}
+
+func encodeTaskLogCursor(cursor *logstream.PageCursor, subjectID, taskID string) string {
+	if cursor == nil || cursor.RecordOffset < 0 || cursor.Snapshot.ReceivedAt.IsZero() || cursor.Position.ReceivedAt.IsZero() || !validInternalLogID(cursor.Snapshot.BatchID) || !validInternalLogID(cursor.Position.BatchID) {
+		return ""
+	}
+	raw, err := json.Marshal(taskLogCursor{
+		SubjectDigest: taskLogSubjectDigest(subjectID), TaskDigest: taskLogTaskDigest(taskID),
+		SnapshotAt: cursor.Snapshot.ReceivedAt.UTC().Format(time.RFC3339Nano), SnapshotBatch: cursor.Snapshot.BatchID,
+		PositionAt: cursor.Position.ReceivedAt.UTC().Format(time.RFC3339Nano), PositionBatch: cursor.Position.BatchID,
+		RecordOffset: cursor.RecordOffset,
+	})
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func taskLogSubjectDigest(subjectID string) string {
+	digest := sha256.Sum256([]byte("task-log-cursor-v1|subject|" + subjectID))
+	return hex.EncodeToString(digest[:])
+}
+
+func taskLogTaskDigest(taskID string) string {
+	digest := sha256.Sum256([]byte("task-log-cursor-v1|task|" + taskID))
+	return hex.EncodeToString(digest[:])
+}
+
+func parseTaskLogCursorTime(value string) (time.Time, bool) {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	return parsed.UTC(), err == nil
+}
+
+func validInternalLogID(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, value := range value {
+		if (value < '0' || value > '9') && (value < 'a' || value > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// taskLogResponse 是浏览器日志接口的最小脱敏投影。
+// 不能直接序列化领域记录，否则 Go 的导出字段会绕开既定的 lowerCamelCase API 契约。
+type taskLogResponse struct {
+	SourceSeq     int64  `json:"sourceSeq"`
+	Kind          string `json:"kind"`
+	Message       string `json:"message"`
+	IntegrityCode string `json:"integrityCode"`
+	ReceivedAt    string `json:"receivedAt"`
+}
+
+func taskLogResponses(records []logstream.Record) []taskLogResponse {
+	items := make([]taskLogResponse, 0, len(records))
+	for _, record := range records {
+		items = append(items, taskLogResponse{
+			SourceSeq:     record.SourceSeq,
+			Kind:          string(record.Kind),
+			Message:       record.Message,
+			IntegrityCode: record.IntegrityCode,
+			ReceivedAt:    record.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return items
 }
 
 // syntheticPrecheckClaimRequest 只包含固定预检查的领取标识，不能夹带命令或 SQL。
@@ -1560,7 +3783,7 @@ func (s *Server) claimSyntheticPrecheck(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "grant": map[string]any{"precheckId": grant.PrecheckID, "leaseId": grant.LeaseID, "leaseEpoch": grant.LeaseEpoch, "expiresAt": grant.ExpiresAt.Format(time.RFC3339Nano), "binding": grant.Binding}})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "grant": map[string]any{"precheckId": grant.PrecheckID, "leaseId": grant.LeaseID, "leaseEpoch": grant.LeaseEpoch, "expiresAt": grant.ExpiresAt.Format(time.RFC3339Nano), "binding": grant.Binding}})
 }
 
 // completeSyntheticPrecheck 先校验协调器中的租约和冻结绑定，再写入 SQLite 状态。
@@ -1587,7 +3810,7 @@ func (s *Server) completeSyntheticPrecheck(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "PRECHECK_COMPLETION_UNAVAILABLE", "预检查结果暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "status": string(completed.State)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "status": string(completed.State)})
 }
 
 // decodeAgentJSON 对 Agent 协议同样限制大小和未知字段，避免测试适配放宽边界。
@@ -1620,7 +3843,531 @@ func (s *Server) listDataSources(w http.ResponseWriter, r *http.Request, princip
 		}
 		items = append(items, newDataSourceResponse(summary))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(), "items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
+}
+
+// listExecutionNodes 返回节点管理员范围内的配置与明确的失败关闭状态。
+// 当前组件不投影 Agent 环境事实，因此不会把节点声明配置渲染为可接收新任务。
+func (s *Server) listExecutionNodes(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.nodeManagement == nil || s.authorizer == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点管理", false)
+		return
+	}
+	nodes, err := s.nodeManagement.ListExecutionNodes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
+		return
+	}
+	items := make([]executionNodeListResponse, 0, len(nodes))
+	for _, node := range nodes {
+		if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, node.NodeID) != nil {
+			continue
+		}
+		items = append(items, s.newExecutionNodeListResponse(node))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
+}
+
+// createExecutionNode 只创建禁用节点记录并生成审计与幂等事实。
+// Agent 关联、环境核对和节点启用必须由后续受认证协议写回，不能从浏览器请求推导。
+func (s *Server) createExecutionNode(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.nodeManagement == nil || s.csrf == nil || s.roles == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点创建依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if identity.HasRole(r.Context(), s.roles, principal, identity.RoleNodeAdmin) != nil {
+		writeError(w, http.StatusForbidden, "ROLE_REQUIRED", "当前身份不具备执行节点管理能力", false)
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) < 16 || len(idempotencyKey) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	request, ok := decodeExecutionNodeWriteRequest(w, r)
+	if !ok {
+		return
+	}
+	if fieldErrors := validateExecutionNodeWrite(request); len(fieldErrors) > 0 {
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "EXECUTION_NODE_FIELDS_INVALID", "执行节点字段不符合要求", false, fieldErrors)
+		return
+	}
+	nodeID := newOpaqueID()
+	if nodeID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.nodeManagement.CreateExecutionNode(r.Context(), store.ExecutionNodeCreate{
+		NodeID: nodeID, CreatorSubjectID: principal.ID, DisplayName: request.DisplayName,
+		NormalizedName: normalizeName(request.DisplayName), Platform: request.Platform, AllowedRoots: request.AllowedRoots,
+		ToolHome: request.ToolHome, JavaPath: request.JavaPath,
+		RequestID: requestID(w), IdempotencyKey: idempotencyKey, RequestDigest: executionNodeCreateDigest(request), CreatedAt: now,
+	})
+	if errors.Is(err, store.ErrExecutionNodeNameUnavailable) {
+		writeExecutionNodeNameUnavailable(w)
+		return
+	}
+	if errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_CREATE_UNAVAILABLE", "执行节点暂时无法创建", true)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"requestId": requestID(w), "id": result.NodeID, "revision": 1, "managementState": "DISABLED", "replayed": result.Replayed})
+}
+
+// issueAgentEnrollment 只向已授权节点管理员显示一次新的关联材料。
+// 原始材料不进入 SQLite、审计、页面详情或重放响应；若展示响应丢失，管理员必须显式签发新材料。
+func (s *Server) issueAgentEnrollment(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
+	if s.agentProtocol == nil || s.authorizer == nil || s.csrf == nil || s.enrollmentTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_ENROLLMENT_NOT_CONFIGURED", "当前环境尚未配置 Agent 关联", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, nodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	if r.ContentLength > 0 {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	material := newOpaqueSecret()
+	if len(material) == 0 {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	defer credential.Zero(material)
+	enrollmentID := newOpaqueID()
+	if enrollmentID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	digest := sha256.Sum256(material)
+	err := s.agentProtocol.IssueAgentEnrollment(r.Context(), store.AgentEnrollmentIssue{
+		EnrollmentID: enrollmentID, NodeID: nodeID, ActorID: principal.ID, RequestID: requestID(w),
+		TokenDigest: digest[:], ExpiresAt: now.Add(s.enrollmentTTL), CreatedAt: now,
+	})
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "AGENT_ENROLLMENT_UNAVAILABLE", "Agent 关联材料暂时无法签发", true)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"requestId": requestID(w), "enrollmentId": enrollmentID, "nodeId": nodeID,
+		"enrollmentMaterial": string(material), "expiresAt": now.Add(s.enrollmentTTL).Format(time.RFC3339Nano),
+		"displayedOnce": true,
+	})
+}
+
+// getExecutionNode 先验证对象范围，再读取节点配置，避免无权请求通过详情接口枚举节点。
+func (s *Server) getExecutionNode(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
+	if s.nodeManagement == nil || s.authorizer == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点管理", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, nodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	node, err := s.nodeManagement.GetExecutionNode(r.Context(), nodeID)
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newExecutionNodeDetailResponse(node)})
+}
+
+// updateExecutionNode 只修改浏览器可管理的声明配置，并要求强版本前置条件。
+// 更新后不会生成环境检查成功或允许任务选择的事实。
+func (s *Server) updateExecutionNode(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
+	if s.nodeManagement == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点更新依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的节点版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, nodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	request, ok := decodeExecutionNodeWriteRequest(w, r)
+	if !ok {
+		return
+	}
+	if fieldErrors := validateExecutionNodeWrite(request); len(fieldErrors) > 0 {
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "EXECUTION_NODE_FIELDS_INVALID", "执行节点字段不符合要求", false, fieldErrors)
+		return
+	}
+	revision, err := s.nodeManagement.UpdateExecutionNode(r.Context(), store.ExecutionNodeUpdate{
+		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		DisplayName: request.DisplayName, NormalizedName: normalizeName(request.DisplayName), Platform: request.Platform,
+		AllowedRoots: request.AllowedRoots, ToolHome: request.ToolHome, JavaPath: request.JavaPath,
+		RequestID: requestID(w), UpdatedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "执行节点已发生变化，请刷新后重试", false)
+		return
+	}
+	if errors.Is(err, store.ErrExecutionNodeNameUnavailable) {
+		writeExecutionNodeNameUnavailable(w)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_UPDATE_UNAVAILABLE", "执行节点暂时无法更新", true)
+		return
+	}
+	node, err := s.nodeManagement.GetExecutionNode(r.Context(), nodeID)
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
+		return
+	}
+	if node.Revision != revision {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_UPDATE_UNAVAILABLE", "执行节点更新结果无法核对", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newExecutionNodeDetailResponse(node)})
+}
+
+// requestExecutionNodeEnvironmentCheck 仅由节点管理员请求当前 Agent 执行固定本机运行时核验。
+// 控制面不主动连接节点，浏览器也不能指定检查内容、路径、命令或工具配置。
+func (s *Server) requestExecutionNodeEnvironmentCheck(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
+	if s.nodeEnvironment == nil || s.nodeManagement == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置节点环境检查", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if r.ContentLength > 0 {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的节点版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, nodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	checkID := newOpaqueID()
+	if checkID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.nodeEnvironment.RequestExecutionNodeEnvironmentCheck(r.Context(), store.ExecutionNodeEnvironmentCheckRequest{
+		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision, CheckID: checkID, RequestID: requestID(w), RequestedAt: now,
+	})
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "执行节点已发生变化，请刷新后重试", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "ENVIRONMENT_CHECK_REQUEST_UNAVAILABLE", "节点环境检查暂时无法请求", true)
+		return
+	}
+	node, err := s.nodeManagement.GetExecutionNode(r.Context(), nodeID)
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil || node.Revision != result.Revision {
+		writeError(w, http.StatusServiceUnavailable, "ENVIRONMENT_CHECK_REQUEST_UNAVAILABLE", "节点环境检查结果暂时无法核对", true)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(w), "checkId": result.CheckID, "item": s.newExecutionNodeDetailResponse(node)})
+}
+
+// deleteExecutionNode 先完成 CSRF、对象范围和版本校验，再由仓储按历史引用选择删除或归档。
+// 归档只在没有运行中任务时撤销当前机器身份；响应不披露引用的类型、数量或 Agent 身份。
+func (s *Server) deleteExecutionNode(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
+	if s.nodeDeleter == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点删除依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的节点版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, nodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	result, err := s.nodeDeleter.DeleteOrArchiveExecutionNode(r.Context(), store.ExecutionNodeDeletion{
+		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		RequestID: requestID(w), DeletedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "EXECUTION_NODE_REVISION_CONFLICT", "执行节点已发生变化，请刷新后重试", false)
+		return
+	}
+	if errors.Is(err, store.ErrExecutionNodeHasRunningTask) {
+		writeError(w, http.StatusConflict, "EXECUTION_NODE_RUNNING_TASK", "节点仍有运行任务，暂不能删除或归档", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_DELETE_UNAVAILABLE", "执行节点删除暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "id": nodeID, "outcome": result.Outcome, "revision": result.Revision,
+		"agentAccessRevoked": result.AgentAccessRevoked,
+	})
+}
+
+// enableExecutionNode 在当前 Agent 在线、平台匹配、容量可用且固定环境检查通过后启用节点。
+// 它不连接数据库、不启动 OBDUMPER，也不能取代任务提交时的路径和数据源预检查。
+func (s *Server) enableExecutionNode(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
+	if s.nodeEnvironment == nil || s.nodeManagement == nil || s.authorizer == nil || s.csrf == nil || s.heartbeatTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置节点启用", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	if r.ContentLength > 0 {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的节点版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, nodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	node, err := s.nodeManagement.GetExecutionNode(r.Context(), nodeID)
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
+		return
+	}
+	response := s.newExecutionNodeListResponse(node)
+	if node.Revision != expectedRevision || response.ManagementState != "DISABLED" || response.AgentAssociationStatus != "ASSOCIATED" ||
+		response.HeartbeatStatus != "ONLINE" || response.EnvironmentStatus != "NORMAL" || response.CapacityStatus != "AVAILABLE" {
+		writeError(w, http.StatusUnprocessableEntity, "NODE_ENABLE_PRECONDITION_FAILED", "节点尚未满足启用条件，请先完成环境检查并保持 Agent 在线", false)
+		return
+	}
+	now := time.Now().UTC()
+	revision, err := s.nodeEnvironment.EnableExecutionNode(r.Context(), store.ExecutionNodeEnable{
+		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision, RequestID: requestID(w),
+		EnabledAt: now, OnlineAfter: now.Add(-s.heartbeatTTL),
+	})
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "执行节点已发生变化，请刷新后重试", false)
+		return
+	}
+	if errors.Is(err, store.ErrExecutionNodeEnableRejected) {
+		writeError(w, http.StatusUnprocessableEntity, "NODE_ENABLE_PRECONDITION_FAILED", "节点尚未满足启用条件，请先完成环境检查并保持 Agent 在线", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_ENABLE_UNAVAILABLE", "执行节点暂时无法启用", true)
+		return
+	}
+	node, err = s.nodeManagement.GetExecutionNode(r.Context(), nodeID)
+	if errors.Is(err, store.ErrExecutionNodeNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil || node.Revision != revision {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_ENABLE_UNAVAILABLE", "执行节点启用结果暂时无法核对", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newExecutionNodeDetailResponse(node)})
+}
+
+// decodeExecutionNodeWriteRequest 对节点管理写入施加浏览器 JSON 大小和未知字段限制。
+func decodeExecutionNodeWriteRequest(w http.ResponseWriter, r *http.Request) (executionNodeWriteRequest, bool) {
+	var request executionNodeWriteRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return executionNodeWriteRequest{}, false
+	}
+	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	request.ToolHome = strings.TrimSpace(request.ToolHome)
+	request.JavaPath = strings.TrimSpace(request.JavaPath)
+	for index, root := range request.AllowedRoots {
+		request.AllowedRoots[index] = strings.TrimSpace(root)
+	}
+	return request, true
+}
+
+// validateExecutionNodeWrite 将可修正的表单错误绑定到对应字段，同时复用仓储的绝对路径与平台规则。
+func validateExecutionNodeWrite(request executionNodeWriteRequest) []fieldErrorResponse {
+	fieldErrors := make([]fieldErrorResponse, 0, 4)
+	if request.DisplayName == "" || len(request.DisplayName) > 200 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "displayName", Code: "EXECUTION_NODE_NAME_INVALID", Message: "请输入不超过 200 个字符的节点名称"})
+	}
+	validPlatform := request.Platform == "WINDOWS_AMD64" || request.Platform == "LINUX_AMD64" || request.Platform == "LINUX_ARM64"
+	if !validPlatform {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "platform", Code: "EXECUTION_NODE_PLATFORM_INVALID", Message: "请选择受支持的目标平台"})
+	}
+	if validPlatform && !store.ValidateExecutionNodeConfiguration(request.Platform, request.AllowedRoots) {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "allowedRoots", Code: "EXECUTION_NODE_ROOTS_INVALID", Message: "请为目标平台填写至少一个不重复的绝对允许根目录"})
+	}
+	if !validPlatform && len(request.AllowedRoots) == 0 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "allowedRoots", Code: "EXECUTION_NODE_ROOTS_REQUIRED", Message: "请填写至少一个允许根目录"})
+	}
+	if validPlatform && !store.ValidateExecutionNodeRuntimeConfiguration(request.Platform, request.AllowedRoots, request.ToolHome, request.JavaPath) {
+		if request.ToolHome == "" {
+			fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "toolHome", Code: "EXECUTION_NODE_TOOL_HOME_REQUIRED", Message: "请填写 OB Loader/Dumper 安装目录"})
+		} else {
+			fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "toolHome", Code: "EXECUTION_NODE_TOOL_HOME_INVALID", Message: "工具目录必须是与目标平台匹配的绝对路径"})
+		}
+		if request.JavaPath == "" {
+			fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "javaPath", Code: "EXECUTION_NODE_JAVA_PATH_REQUIRED", Message: "请填写工具专用 Java 8 可执行文件路径"})
+		} else {
+			fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "javaPath", Code: "EXECUTION_NODE_JAVA_PATH_INVALID", Message: "Java 路径必须是与目标平台匹配的绝对路径"})
+		}
+	}
+	return fieldErrors
+}
+
+func executionNodeCreateDigest(request executionNodeWriteRequest) string {
+	payload, _ := json.Marshal(struct {
+		DisplayName  string   `json:"displayName"`
+		Platform     string   `json:"platform"`
+		AllowedRoots []string `json:"allowedRoots"`
+		ToolHome     string   `json:"toolHome"`
+		JavaPath     string   `json:"javaPath"`
+	}{DisplayName: request.DisplayName, Platform: request.Platform, AllowedRoots: request.AllowedRoots, ToolHome: request.ToolHome, JavaPath: request.JavaPath})
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:])
+}
+
+// listExecutionNodeCandidates 只返回调用者可使用的已启用节点。
+// 它可服务草稿节点选择和基础连接测试节点选择，但候选不等于在线、空闲或可执行；创建测试时仍由 Store 重新核验 Agent 与事实绑定。
+func (s *Server) listExecutionNodeCandidates(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.authorizer == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点候选", false)
+		return
+	}
+	eligibleFor := r.URL.Query().Get("eligibleFor")
+	if eligibleFor != "" && eligibleFor != "OBDUMPER_EXPORT" && eligibleFor != "DATA_SOURCE_CONNECTION_TEST" {
+		writeError(w, http.StatusBadRequest, "EXECUTION_NODE_FILTER_INVALID", "执行节点筛选条件无效", false)
+		return
+	}
+	if eligibleFor == "DATA_SOURCE_CONNECTION_TEST" {
+		s.listDataSourceConnectionTestNodeCandidates(w, r, principal)
+		return
+	}
+	if s.nodeCandidates == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点候选", false)
+		return
+	}
+	summaries, err := s.nodeCandidates.ListExecutionNodeSummaries(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
+		return
+	}
+	items := make([]executionNodeCandidateResponse, 0, len(summaries))
+	for _, summary := range summaries {
+		if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, summary.NodeID) != nil {
+			continue
+		}
+		items = append(items, executionNodeCandidateResponse{ID: summary.NodeID, DisplayName: summary.DisplayName, Platform: summary.Platform})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
+}
+
+// listDataSourceConnectionTestNodeCandidates 只公开当前可安全尝试领取基础连接测试的节点。
+// 它不会把节点候选解释为数据库可达或任务可执行；Store 在创建、领取、槽位解析和完成时仍会重新核验事实与资源占用。
+func (s *Server) listDataSourceConnectionTestNodeCandidates(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.nodeManagement == nil || s.heartbeatTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置连接测试节点候选", false)
+		return
+	}
+	nodes, err := s.nodeManagement.ListExecutionNodes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
+		return
+	}
+	items := make([]executionNodeCandidateResponse, 0, len(nodes))
+	now := time.Now().UTC()
+	for _, node := range nodes {
+		if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, node.NodeID) != nil || !dataSourceConnectionTestNodeCandidateEligible(node, now, s.heartbeatTTL) {
+			continue
+		}
+		items = append(items, executionNodeCandidateResponse{ID: node.NodeID, DisplayName: node.DisplayName, Platform: node.Platform})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
+}
+
+// dataSourceConnectionTestNodeCandidateEligible 仅使用已认证 Agent 的当前安全投影筛选候选。
+// 它不读取工具、目录、数据库或任务内容，也不能替代后续租约事务中的并发占用复验。
+func dataSourceConnectionTestNodeCandidateEligible(node store.ExecutionNode, now time.Time, heartbeatTTL time.Duration) bool {
+	if node.ManagementState != "ENABLED" && node.ManagementState != "DISABLED" {
+		return false
+	}
+	if node.Agent == nil || node.Agent.FactsRevision < 1 || node.Agent.LastHeartbeatAt == nil ||
+		!now.Before(node.Agent.LastHeartbeatAt.Add(heartbeatTTL)) || node.Agent.CapacityTotal < 1 ||
+		node.Agent.CapacityUsed >= node.Agent.CapacityTotal {
+		return false
+	}
+	return executionNodePlatformMatchesAgentFacts(node.Platform, node.Agent.EnvironmentFacts)
 }
 
 // dataSourceResponse 仅保留浏览器选择数据源所需的脱敏摘要字段。
@@ -1640,16 +4387,236 @@ type dataSourceResponse struct {
 	Revision           int64  `json:"revision"`
 	CredentialRevision int64  `json:"credentialRevision"`
 	LastTestStatus     string `json:"lastTestStatus,omitempty"`
+	LastTestedAt       string `json:"lastTestedAt,omitempty"`
+}
+
+// dataSourceConnectionTestResponse 是浏览器轮询连接测试的节点特定安全投影。
+// 它不返回 JDBC 元信息、异常文本、连接身份、秘密或安全摘要原文。
+type dataSourceConnectionTestResponse struct {
+	ID                     string `json:"id"`
+	DataSourceID           string `json:"dataSourceId"`
+	NodeID                 string `json:"nodeId"`
+	NodeFactsRevision      int64  `json:"nodeFactsRevision"`
+	Status                 string `json:"status"`
+	Code                   string `json:"code,omitempty"`
+	VerificationSource     string `json:"verificationSource"`
+	RealConnectionVerified bool   `json:"realConnectionVerified"`
+	CreatedAt              string `json:"createdAt"`
+	CompletedAt            string `json:"completedAt,omitempty"`
+}
+
+// executionNodeCandidateResponse 只向草稿页面返回节点定位和路径校验所需字段。
+type executionNodeCandidateResponse struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Platform    string `json:"platform"`
+}
+
+// executionNodeListResponse 保持列表紧凑，只返回管理定位和失败关闭状态。
+// 完整允许根目录仅在单节点详情中返回，避免列表泄露不必要的机器路径。
+type executionNodeListResponse struct {
+	ID                     string                           `json:"id"`
+	DisplayName            string                           `json:"displayName"`
+	Platform               string                           `json:"platform"`
+	ManagementState        string                           `json:"managementState"`
+	AgentAssociationStatus string                           `json:"agentAssociationStatus"`
+	HeartbeatStatus        string                           `json:"heartbeatStatus"`
+	LastHeartbeatAt        *string                          `json:"lastHeartbeatAt"`
+	EnvironmentStatus      string                           `json:"environmentStatus"`
+	CapacityStatus         string                           `json:"capacityStatus"`
+	AcceptsNewTasks        bool                             `json:"acceptsNewTasks"`
+	UnavailableReasons     []string                         `json:"unavailableReasons"`
+	AgentFacts             *executionNodeAgentFactsResponse `json:"agentFacts,omitempty"`
+	Revision               int64                            `json:"revision"`
+	UpdatedAt              string                           `json:"updatedAt"`
+}
+
+// executionNodeAgentFactsResponse 只投影节点管理员可读取的当前机器摘要。
+// 它不包含凭据、关联材料、主机地址、磁盘路径、工具命令或 Agent 原始报文。
+type executionNodeAgentFactsResponse struct {
+	OS                 string `json:"os"`
+	Arch               string `json:"arch"`
+	AgentVersion       string `json:"agentVersion"`
+	BootID             string `json:"bootId"`
+	ObservedAt         string `json:"observedAt"`
+	CapacityTotal      int    `json:"capacityTotal"`
+	CapacityUsed       int    `json:"capacityUsed"`
+	CPUUsagePercent    *int   `json:"cpuUsagePercent,omitempty"`
+	MemoryUsagePercent *int   `json:"memoryUsagePercent,omitempty"`
+}
+
+// executionNodeDataRootUsageResponse 只在 Agent 上报配置摘要与当前节点声明一致时显示目录空间。
+// 目录名称来自浏览器登记配置，而非 Agent 心跳，避免 Agent 将任意本机路径带回控制面。
+type executionNodeDataRootUsageResponse struct {
+	Root           string `json:"root"`
+	TotalBytes     uint64 `json:"totalBytes"`
+	AvailableBytes uint64 `json:"availableBytes"`
+}
+
+// executionNodeDetailResponse 在节点管理员对象范围内补充注册时声明的工具与数据目录。
+// 它仍不包含 Agent 凭据、日志、资源采样或伪造的环境检查结果。
+type executionNodeDetailResponse struct {
+	executionNodeListResponse
+	AllowedRoots   []string                             `json:"allowedRoots"`
+	ToolHome       string                               `json:"toolHome"`
+	JavaPath       string                               `json:"javaPath"`
+	DataRootUsages []executionNodeDataRootUsageResponse `json:"dataRootUsages,omitempty"`
+	CreatedAt      string                               `json:"createdAt"`
+}
+
+func (s *Server) newExecutionNodeListResponse(node store.ExecutionNode) executionNodeListResponse {
+	response := executionNodeListResponse{
+		ID: node.NodeID, DisplayName: node.DisplayName, Platform: node.Platform, ManagementState: node.ManagementState,
+		AgentAssociationStatus: "PENDING", HeartbeatStatus: "NEVER_CONNECTED", LastHeartbeatAt: nil,
+		EnvironmentStatus: "NOT_CHECKED", CapacityStatus: "UNKNOWN", AcceptsNewTasks: false,
+		Revision: node.Revision, UpdatedAt: node.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	reasons := make([]string, 0, 4)
+	switch node.ManagementState {
+	case "DISABLED":
+		reasons = append(reasons, "NODE_DISABLED")
+	case "MAINTENANCE":
+		reasons = append(reasons, "NODE_MAINTENANCE")
+	}
+	if node.Agent == nil {
+		response.UnavailableReasons = append(reasons, "AGENT_ASSOCIATION_REQUIRED", "ENVIRONMENT_CHECK_REQUIRED")
+		return response
+	}
+	response.AgentAssociationStatus = "ASSOCIATED"
+	agent := node.Agent
+	if agent.LastHeartbeatAt == nil {
+		response.UnavailableReasons = append(reasons, "HEARTBEAT_REQUIRED", "ENVIRONMENT_CHECK_REQUIRED", "CAPACITY_UNKNOWN")
+		return response
+	}
+	lastHeartbeatAt := agent.LastHeartbeatAt.UTC().Format(time.RFC3339Nano)
+	response.LastHeartbeatAt = &lastHeartbeatAt
+	if s.heartbeatTTL > 0 && !time.Now().UTC().After(agent.LastHeartbeatAt.Add(s.heartbeatTTL)) {
+		response.HeartbeatStatus = "ONLINE"
+	} else {
+		response.HeartbeatStatus = "OFFLINE"
+		reasons = append(reasons, "HEARTBEAT_OFFLINE")
+	}
+	if agent.CapacityTotal > 0 {
+		if agent.CapacityUsed >= agent.CapacityTotal {
+			response.CapacityStatus = "BUSY"
+			reasons = append(reasons, "CAPACITY_BUSY")
+		} else {
+			response.CapacityStatus = "AVAILABLE"
+		}
+	} else {
+		reasons = append(reasons, "CAPACITY_UNKNOWN")
+	}
+	if !agent.EnvironmentFacts.ObservedAt.IsZero() {
+		response.AgentFacts = &executionNodeAgentFactsResponse{
+			OS: agent.EnvironmentFacts.OperatingSystem, Arch: agent.EnvironmentFacts.Architecture, AgentVersion: agent.EnvironmentFacts.AgentVersion,
+			BootID: agent.BootID, ObservedAt: agent.EnvironmentFacts.ObservedAt.UTC().Format(time.RFC3339Nano),
+			CapacityTotal: agent.CapacityTotal, CapacityUsed: agent.CapacityUsed,
+			CPUUsagePercent: agent.EnvironmentFacts.CPUUsagePercent, MemoryUsagePercent: agent.EnvironmentFacts.MemoryUsagePercent,
+		}
+	}
+	if !executionNodePlatformMatchesAgentFacts(node.Platform, agent.EnvironmentFacts) {
+		response.EnvironmentStatus = "ABNORMAL"
+		reasons = append(reasons, "ENVIRONMENT_CHECK_ABNORMAL")
+	} else if node.ToolHome != "" && node.JavaPath != "" && agent.EnvironmentFacts.RuntimeConfigurationDigest != store.ExecutionNodeRuntimeConfigurationDigest(node) {
+		response.EnvironmentStatus = "ABNORMAL"
+		reasons = append(reasons, "RUNTIME_CONFIGURATION_MISMATCH")
+	} else {
+		switch node.EnvironmentCheck.Status {
+		case "PASSED":
+			if node.EnvironmentCheck.Code == "TOOL_RUNTIME_READY" && node.EnvironmentCheck.FactsRevision == agent.FactsRevision && node.EnvironmentCheck.FactsRevision > 0 && node.EnvironmentCheck.CompletedAt != nil {
+				response.EnvironmentStatus = "NORMAL"
+			} else {
+				response.EnvironmentStatus = "EXPIRED"
+				reasons = append(reasons, "ENVIRONMENT_CHECK_EXPIRED")
+			}
+		case "FAILED":
+			response.EnvironmentStatus = "ABNORMAL"
+			reasons = append(reasons, "ENVIRONMENT_CHECK_ABNORMAL")
+		case "PENDING":
+			reasons = append(reasons, "ENVIRONMENT_CHECK_IN_PROGRESS")
+		default:
+			reasons = append(reasons, "ENVIRONMENT_CHECK_REQUIRED")
+		}
+	}
+	if response.ManagementState == "ENABLED" && response.AgentAssociationStatus == "ASSOCIATED" && response.HeartbeatStatus == "ONLINE" &&
+		response.EnvironmentStatus == "NORMAL" && response.CapacityStatus == "AVAILABLE" && len(reasons) == 0 {
+		response.AcceptsNewTasks = true
+	}
+	response.UnavailableReasons = reasons
+	return response
+}
+
+func executionNodePlatformMatchesAgentFacts(platform string, facts store.AgentEnvironmentFacts) bool {
+	switch platform {
+	case "WINDOWS_AMD64":
+		return facts.OperatingSystem == "WINDOWS" && facts.Architecture == "AMD64"
+	case "LINUX_AMD64":
+		return facts.OperatingSystem == "LINUX" && facts.Architecture == "AMD64"
+	case "LINUX_ARM64":
+		return facts.OperatingSystem == "LINUX" && facts.Architecture == "ARM64"
+	default:
+		return false
+	}
+}
+
+func (s *Server) newExecutionNodeDetailResponse(node store.ExecutionNode) executionNodeDetailResponse {
+	return executionNodeDetailResponse{
+		executionNodeListResponse: s.newExecutionNodeListResponse(node),
+		AllowedRoots:              append([]string(nil), node.AllowedRoots...),
+		ToolHome:                  node.ToolHome,
+		JavaPath:                  node.JavaPath,
+		DataRootUsages:            executionNodeDataRootUsages(node),
+		CreatedAt:                 node.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func executionNodeDataRootUsages(node store.ExecutionNode) []executionNodeDataRootUsageResponse {
+	if node.Agent == nil || node.ToolHome == "" || node.JavaPath == "" || node.Agent.EnvironmentFacts.RuntimeConfigurationDigest != store.ExecutionNodeRuntimeConfigurationDigest(node) {
+		return nil
+	}
+	usages := make(map[string]store.AgentDataRootUsage, len(node.Agent.EnvironmentFacts.DataRootUsages))
+	for _, usage := range node.Agent.EnvironmentFacts.DataRootUsages {
+		usages[usage.RootDigest] = usage
+	}
+	result := make([]executionNodeDataRootUsageResponse, 0, len(node.AllowedRoots))
+	for _, root := range node.AllowedRoots {
+		digest := sha256.Sum256([]byte(root))
+		usage, found := usages[hex.EncodeToString(digest[:])]
+		if !found {
+			return nil
+		}
+		result = append(result, executionNodeDataRootUsageResponse{Root: root, TotalBytes: usage.TotalBytes, AvailableBytes: usage.AvailableBytes})
+	}
+	return result
 }
 
 func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
-	return dataSourceResponse{
+	response := dataSourceResponse{
 		ID: summary.DataSourceID, DisplayName: summary.DisplayName, Environment: summary.Environment,
 		ConnectionKind: summary.ConnectionKind, CompatibilityMode: summary.CompatibilityMode,
 		Host: summary.Host, Port: summary.Port, ClusterName: summary.ClusterName, TenantName: summary.TenantName,
 		DefaultDatabase: summary.DefaultDatabase, State: summary.State, Revision: summary.Revision,
 		CredentialRevision: summary.CredentialRevision, LastTestStatus: summary.LastTestStatus,
 	}
+	if summary.LastTestedAt != nil {
+		response.LastTestedAt = summary.LastTestedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return response
+}
+
+// newDataSourceConnectionTestResponse 固定限制 G2 合成结果的含义。
+// 只有已受控配置的 Agent JDBC 终态才会标为真实连接事实，且仍只代表返回的单个节点。
+func newDataSourceConnectionTestResponse(run store.DataSourceConnectionTestRun) dataSourceConnectionTestResponse {
+	response := dataSourceConnectionTestResponse{
+		ID: run.ConnectionTestID, DataSourceID: run.DataSourceID, NodeID: run.NodeID,
+		NodeFactsRevision: run.NodeFactsRevision, Status: run.Status, Code: run.ResultCode,
+		VerificationSource: run.VerificationSource, CreatedAt: run.CreatedAt.UTC().Format(time.RFC3339Nano),
+		RealConnectionVerified: run.VerificationSource == "AGENT_JDBC" && run.Status == "SUCCEEDED",
+	}
+	if !run.CompletedAt.IsZero() {
+		response.CompletedAt = run.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return response
 }
 
 func (s *Server) browserUnavailable(w http.ResponseWriter, _ *http.Request) {
@@ -1693,27 +4660,79 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// withRequestID 在认证、解析或写入前生成唯一请求标识。
+// 系统熵源不可用时必须停止请求，不能以固定值、时间戳或计数器继续写入审计事实。
+func withRequestID(generate func() (string, error), next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		value, err := generate()
+		if err != nil {
+			writeRequestIDUnavailable(w)
+			return
+		}
+		next.ServeHTTP(&requestIDResponseWriter{ResponseWriter: w, value: value}, r)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func writeError(w http.ResponseWriter, status int, code, message string, retryable bool) {
+type fieldErrorResponse struct {
+	Field   string `json:"field"`
+	Code    string `json:"code"`
+	Message string `json:"message,omitempty"`
+}
+
+// writeErrorWithFields 统一保持错误信封结构，并只返回可安全关联到表单字段的校验信息。
+func writeErrorWithFields(w http.ResponseWriter, status int, code, message string, retryable bool, fieldErrors []fieldErrorResponse) {
+	if fieldErrors == nil {
+		fieldErrors = []fieldErrorResponse{}
+	}
 	writeJSON(w, status, map[string]any{
-		"requestId":   requestID(),
+		"requestId":   requestID(w),
 		"code":        code,
 		"message":     message,
 		"retryable":   retryable,
-		"fieldErrors": []any{},
+		"fieldErrors": fieldErrors,
 		"safeDetails": map[string]any{},
 	})
 }
 
-func requestID() string {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "request-id-unavailable"
+func writeError(w http.ResponseWriter, status int, code, message string, retryable bool) {
+	writeErrorWithFields(w, status, code, message, retryable, nil)
+}
+
+// writeRequestIDUnavailable 是请求尚未进入业务边界时的失败关闭响应。
+// 此时没有可安全复用的 UUID，因此明确省略 requestId，调用方只能重试整个请求。
+func writeRequestIDUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"code":        "REQUEST_ID_UNAVAILABLE",
+		"message":     "服务暂时不可用",
+		"retryable":   true,
+		"fieldErrors": []fieldErrorResponse{},
+		"safeDetails": map[string]any{},
+	})
+}
+
+// writeDataSourceNameUnavailable 只指出可修正的输入字段，不透露冲突记录是否存在、已归档或不可见。
+func writeDataSourceNameUnavailable(w http.ResponseWriter) {
+	writeErrorWithFields(w, http.StatusUnprocessableEntity, "DATA_SOURCE_NAME_UNAVAILABLE", "数据源名称不可用，请更换后重试", false, []fieldErrorResponse{{
+		Field: "displayName", Code: "DATA_SOURCE_NAME_UNAVAILABLE", Message: "数据源名称不可用，请更换后重试",
+	}})
+}
+
+// writeExecutionNodeNameUnavailable 只定位可修正的名称字段，不泄露冲突节点是否存在、归档或不可见。
+func writeExecutionNodeNameUnavailable(w http.ResponseWriter) {
+	writeErrorWithFields(w, http.StatusUnprocessableEntity, "EXECUTION_NODE_NAME_UNAVAILABLE", "执行节点名称不可用，请更换后重试", false, []fieldErrorResponse{{
+		Field: "displayName", Code: "EXECUTION_NODE_NAME_UNAVAILABLE", Message: "执行节点名称不可用，请更换后重试",
+	}})
+}
+
+func requestID(w http.ResponseWriter) string {
+	if carrier, ok := w.(interface{ RequestID() string }); ok {
+		return carrier.RequestID()
 	}
-	return hex.EncodeToString(bytes)
+	return ""
 }

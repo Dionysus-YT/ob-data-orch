@@ -56,6 +56,31 @@ func LoadAgentRuntime(lookupEnv func(string) (string, bool)) (AgentRuntime, erro
 	return AgentRuntime{JavaPath: javaPath, ToolHome: toolHome, WorkspaceRoot: workspaceRoot, Environment: environment}, nil
 }
 
+// LoadAgentRuntimeFromLocalConfiguration 使用 Agent 首次关联后加密保存的本机路径构造运行时。
+// 它只从环境读取操作系统必要的 SystemRoot、ProgramData 或 HOME，不读取 Java、工具或数据目录配置。
+func LoadAgentRuntimeFromLocalConfiguration(javaPath, toolHome string, lookupEnv func(string) (string, bool)) (AgentRuntime, error) {
+	if lookupEnv == nil {
+		return AgentRuntime{}, ErrAgentRuntimeConfiguration
+	}
+	cleanJavaPath, ok := normalizeAbsolutePath(javaPath)
+	if !ok {
+		return AgentRuntime{}, ErrAgentRuntimeConfiguration
+	}
+	cleanToolHome, ok := normalizeAbsolutePath(toolHome)
+	if !ok {
+		return AgentRuntime{}, ErrAgentRuntimeConfiguration
+	}
+	workspaceRoot, err := defaultAgentWorkspaceRoot(lookupEnv)
+	if err != nil {
+		return AgentRuntime{}, ErrAgentRuntimeConfiguration
+	}
+	environment, err := agentJavaEnvironment(lookupEnv, cleanJavaPath)
+	if err != nil {
+		return AgentRuntime{}, ErrAgentRuntimeConfiguration
+	}
+	return AgentRuntime{JavaPath: cleanJavaPath, ToolHome: cleanToolHome, WorkspaceRoot: workspaceRoot, Environment: environment}, nil
+}
+
 func requiredAbsolutePath(lookupEnv func(string) (string, bool), key string) (string, bool) {
 	path, exists := lookupEnv(key)
 	if !exists {
@@ -81,16 +106,27 @@ func normalizeAbsolutePath(path string) (string, bool) {
 }
 
 func agentJavaEnvironment(lookupEnv func(string) (string, bool), javaPath string) ([]string, error) {
+	javaHome, ok := javaHomeFromExecutable(javaPath)
+	if !ok {
+		return nil, ErrAgentRuntimeConfiguration
+	}
 	if runtime.GOOS == "windows" {
 		systemRoot, exists := lookupEnv("SystemRoot")
 		if !exists || strings.TrimSpace(systemRoot) == "" || strings.ContainsRune(systemRoot, 0) {
 			return nil, ErrAgentRuntimeConfiguration
 		}
+		hadoopHome, ok := requiredAbsolutePath(lookupEnv, "HADOOP_HOME")
+		if !ok {
+			return nil, ErrAgentRuntimeConfiguration
+		}
 		windowsRoot := strings.TrimSpace(systemRoot)
+		hadoopBin := filepath.Join(hadoopHome, "bin")
 		return []string{
 			"SystemRoot=" + windowsRoot,
 			"WINDIR=" + windowsRoot,
-			"PATH=" + filepath.Dir(javaPath) + ";" + filepath.Join(windowsRoot, "System32") + ";" + windowsRoot,
+			"JAVA_HOME=" + javaHome,
+			"HADOOP_HOME=" + hadoopHome,
+			"PATH=" + filepath.Dir(javaPath) + ";" + hadoopBin + ";" + filepath.Join(windowsRoot, "System32") + ";" + windowsRoot,
 		}, nil
 	}
 	userHome, exists := lookupEnv("HOME")
@@ -100,8 +136,15 @@ func agentJavaEnvironment(lookupEnv func(string) (string, bool), javaPath string
 	return []string{
 		"HOME=" + strings.TrimSpace(userHome),
 		"LANG=C.UTF-8",
-		"PATH=/usr/bin:/bin",
+		"JAVA_HOME=" + javaHome,
+		"PATH=" + filepath.Dir(javaPath) + ":/usr/bin:/bin",
 	}, nil
+}
+
+// javaHomeFromExecutable 从受控 Java 可执行文件推导 JAVA_HOME，避免采纳与已登记 JavaPath 不一致的宿主环境变量。
+func javaHomeFromExecutable(javaPath string) (string, bool) {
+	javaHome := filepath.Dir(filepath.Dir(javaPath))
+	return normalizeAbsolutePath(javaHome)
 }
 
 func defaultAgentWorkspaceRoot(lookupEnv func(string) (string, bool)) (string, error) {

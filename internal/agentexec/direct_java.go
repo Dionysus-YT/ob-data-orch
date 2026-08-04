@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,8 @@ var (
 )
 
 var jvmOptionPattern = regexp.MustCompile(`^-(X|XX:)[A-Za-z0-9._:=+\-]+$`)
+
+var java8UpdatePattern = regexp.MustCompile(`(?m)(?:java|openjdk) version "1\.8\.0_(\d+)`)
 
 // DirectJavaLaunch 是已由 Agent 配置和不可变任务信封共同固定的直接 Java 启动输入。
 // 它不接收 Shell 文本、不继承父进程环境，也不允许密码进入业务参数或环境变量。
@@ -70,22 +73,27 @@ type DirectJavaProcess struct {
 }
 
 // StartDirectJava 在写入不可覆盖的启动意图后直接启动包内 Java 主类。
+// Windows 启动参数逐项复刻 OBDUMPER 4.3.5 的 obdumper.bat；官方脚本保持只读，
+// 唯一的任务级替换是安全配置、原始日志和堆转储必须位于 execution 私有目录。
 // 该函数仅建立本地进程边界；任务租约、秘密解析、日志脱敏和终态投影必须由上层完成。
 func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch DirectJavaLaunch) (*DirectJavaProcess, error) {
 	if err := validateDirectJavaLaunch(workspace, launch); err != nil {
 		return nil, err
 	}
+	javaUpdate, err := readJava8Update(ctx, launch.JavaPath, launch.Environment)
+	if err != nil {
+		return nil, ErrDirectJavaLaunchInvalid
+	}
+	profile, err := windowsOBDumperReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
+	if err != nil {
+		return nil, ErrDirectJavaLaunchInvalid
+	}
 	if err := WriteStartIntent(workspace, launch.Intent); err != nil {
 		return nil, err
 	}
-	arguments := make([]string, 0, len(launch.JVMOptions)+len(launch.BusinessArguments)+5)
+	arguments := make([]string, 0, len(launch.JVMOptions)+len(profile)+len(launch.BusinessArguments)+3)
 	arguments = append(arguments, launch.JVMOptions...)
-	arguments = append(arguments,
-		"-Dsecurity.configurationFile="+launch.SecurityConfiguration,
-		"-Dlog4j.output="+workspace.RawLogDirectory(),
-		"-classpath", filepath.Join(launch.ToolHome, "lib", "*"),
-		obdumperMainClass,
-	)
+	arguments = append(arguments, profile...)
 	arguments = append(arguments, launch.BusinessArguments...)
 	command := exec.CommandContext(ctx, launch.JavaPath, arguments...)
 	command.Dir = launch.ToolHome
@@ -113,6 +121,91 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 			BootID:           launch.BootID,
 		},
 		outputDone: outputDone,
+	}, nil
+}
+
+// readJava8Update 复刻 Windows 官方脚本按 Java 8 update 版本选择 CMS 或 G1 的分支。
+// 版本探测只使用已校验的 Java 与最小环境，输出绝不写入普通 Agent 或任务日志。
+func readJava8Update(ctx context.Context, javaPath string, environment []string) (int, error) {
+	command := exec.CommandContext(ctx, javaPath, "-version")
+	command.Env = append([]string(nil), environment...)
+	output, err := command.CombinedOutput()
+	defer zeroBytes(output)
+	if err != nil {
+		return 0, errors.New("java version probe failed")
+	}
+	return parseJava8Update(output)
+}
+
+// parseJava8Update 只接受 Windows 官方脚本支持的 Java 8 update 版本文本。
+func parseJava8Update(output []byte) (int, error) {
+	matches := java8UpdatePattern.FindSubmatch(output)
+	if len(matches) != 2 {
+		return 0, errors.New("java version is not supported")
+	}
+	update, err := strconv.Atoi(string(matches[1]))
+	if err != nil || update < 0 {
+		return 0, errors.New("java update is invalid")
+	}
+	return update, nil
+}
+
+// windowsOBDumperReplicaArguments 按官方 Windows obdumper.bat 的默认分支形成结构化 argv。
+// Agent 不执行或改写批处理文件；安全配置、工具原生日志和 OOM 堆转储改落 execution 私有目录，
+// 防止共享工具包目录承载密码相关材料或被并发任务互相覆盖。
+func windowsOBDumperReplicaArguments(workspace credential.Workspace, toolHome, securityConfiguration string, javaUpdate int) ([]string, error) {
+	if !filepath.IsAbs(toolHome) || strings.ContainsRune(toolHome, 0) || securityConfiguration == "" || javaUpdate < 0 {
+		return nil, errors.New("windows obdumper launch profile is invalid")
+	}
+	toolHome = filepath.Clean(toolHome)
+	configuration := func(name string) string { return filepath.Join(toolHome, "conf", name) }
+	toolPath := func(path string) string { return filepath.ToSlash(path) }
+	gcOption := "-XX:+UseConcMarkSweepGC"
+	if javaUpdate >= 300 {
+		gcOption = "-XX:+UseG1GC"
+	}
+	log4jConfiguration := "file:///" + strings.TrimPrefix(toolPath(configuration("log4j2.xml")), "/")
+	classpath := ".;" + filepath.Join(toolHome, "lib", "*")
+	return []string{
+		"-server",
+		"-Xms4G",
+		"-Xmx4G",
+		"-Xss512K",
+		"-XX:MetaspaceSize=128M",
+		"-XX:MaxMetaspaceSize=128M",
+		gcOption,
+		"-XX:CICompilerCount=4",
+		"-XX:ParallelGCThreads=4",
+		"-Xnoclassgc",
+		"-XX:MaxGCPauseMillis=50",
+		"-XX:+HeapDumpOnOutOfMemoryError",
+		"-XX:HeapDumpPath=" + workspace.RawLogDirectory(),
+		"-Dsun.stdout.encoding=UTF-8",
+		"-Dsun.stderr.encoding=UTF-8",
+		"-Dsecurity.configurationFile=" + securityConfiguration,
+		"-Dpicocli.usage.width=180",
+		"-Denable.parallel.write=false",
+		"-Dskip.tableName.check=false",
+		"-Dupload.buffer.type=disk",
+		"-Dupload.buffer.size=67108864",
+		"-Dupload.active.blocks=2",
+		"-Dupload.disable.chunked.encoding=false",
+		"-DsqlMonitor.enabled=true",
+		"-DsqlMonitor.slowSql.threshold=3000",
+		"-Denable.table.index=true",
+		"-Denable.table.comment=true",
+		"-Denable.table.column.comment=true",
+		"-Dtool.base.dir=" + toolPath(toolHome),
+		"-Dobproxy.configurationFile=" + toolPath(configuration("secure.crt")),
+		"-Dsession.configurationFile=" + toolPath(configuration("session.config.json")),
+		"-Ddecrypt.configurationFile=" + toolPath(configuration("decrypt.properties")),
+		"-Dlog4j.output=" + workspace.RawLogDirectory(),
+		"-Dlog4j2.formatMsgNoLookups=true",
+		"-Dlog4j.configurationFile=" + log4jConfiguration,
+		"-Dhadoop.home.dir=" + toolPath(filepath.Join(toolHome, "ext", "windows", "hadoop")),
+		"-classpath",
+		classpath,
+		obdumperMainClass,
 	}, nil
 }
 

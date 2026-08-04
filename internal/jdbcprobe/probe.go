@@ -1,5 +1,5 @@
 // Package jdbcprobe 提供 Agent 使用的固定 JDBC 连接探针适配。
-// 它不接受任意 SQL、JDBC URL、驱动、Java 主类或命令文本，只能启动受控探针验证 ODP 基础连接。
+// 它不接受任意 SQL、JDBC URL、驱动、Java 主类或命令文本，只能启动受控探针验证 ODP 连接及固定预检查。
 package jdbcprobe
 
 import (
@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"ob-data-orch/internal/credential"
 )
@@ -26,6 +28,9 @@ const (
 	probeMainClass = "com.obdataorch.jdbcprobe.ConnectionProbe"
 	probeTimeout   = 10 * time.Second
 	maxOutputBytes = 4 * 1024
+
+	connectionProtocolVersion = 1
+	preflightProtocolVersion  = 3
 )
 
 var (
@@ -62,6 +67,40 @@ type Request struct {
 	Password []byte
 }
 
+// PreflightRequest 是固定 EXPORT_PREFLIGHT 的 JDBC 输入。
+// CompatibilityMode、Database 和 Table 只用于受控 JDBC 元数据与探针内部固定零行读取，不出现在 argv、环境变量或错误正文。
+type PreflightRequest struct {
+	Connection        Request
+	CompatibilityMode CompatibilityMode
+	Database          string
+	Table             string
+}
+
+// CompatibilityMode 是已冻结数据源的 OceanBase 兼容模式。
+// 它只决定固定元数据 API 的命名空间参数和零行读取中的标识符引用方式，不能由 Agent 本地配置覆盖。
+type CompatibilityMode string
+
+const (
+	CompatibilityModeMySQL  CompatibilityMode = "MYSQL"
+	CompatibilityModeOracle CompatibilityMode = "ORACLE"
+)
+
+// ObjectAccess 是固定对象元数据与零行读取的安全投影。
+// 它不包含对象名称、SQL、驱动异常或权限细节。
+type ObjectAccess string
+
+const (
+	ObjectAccessible  ObjectAccess = "ACCESSIBLE"
+	ObjectUnavailable ObjectAccess = "UNAVAILABLE"
+	ObjectNotFound    ObjectAccess = "NOT_ACCESSIBLE"
+)
+
+// PreflightResult 同时保存一条 JDBC 连接和固定对象读取检查的安全结论。
+type PreflightResult struct {
+	Connection   Result
+	ObjectAccess ObjectAccess
+}
+
 // Result 是可安全写入预检查结果的基础 JDBC 元信息。
 // 它不包含地址、用户名、密码、JDBC URL、异常文本或数据库对象信息。
 type Result struct {
@@ -78,6 +117,7 @@ type probeResponse struct {
 	ProductVersion string `json:"productVersion"`
 	DriverName     string `json:"driverName"`
 	DriverVersion  string `json:"driverVersion"`
+	ObjectAccess   string `json:"objectAccess"`
 }
 
 // TestConnectionInWorkspace 在预检查专属工作区中释放固定探针后执行基础连接测试。
@@ -92,6 +132,18 @@ func TestConnectionInWorkspace(ctx context.Context, workspace credential.Workspa
 	return TestConnection(ctx, runtime, request)
 }
 
+// TestPreflightInWorkspace 在一个预检查私有工作区中执行连接、固定对象元数据和零行读取。
+// 同一子进程只接受一次短时秘密输入，避免把连接与对象检查拆成多次秘密解析。
+func TestPreflightInWorkspace(ctx context.Context, workspace credential.Workspace, runtime Runtime, request PreflightRequest) (PreflightResult, error) {
+	probePath, probeDigest, err := Install(workspace)
+	if err != nil {
+		return PreflightResult{}, err
+	}
+	runtime.ProbePath = probePath
+	runtime.ProbeSHA256 = probeDigest
+	return TestPreflight(ctx, runtime, request)
+}
+
 // TestConnection 直接启动固定 Java 主类，完成 ODP 基础 JDBC 连接测试。
 // 它不向 argv 或环境变量写入连接输入；标准错误只被排空以防止子进程阻塞，绝不作为错误正文返回。
 func TestConnection(ctx context.Context, runtime Runtime, request Request) (Result, error) {
@@ -103,6 +155,34 @@ func TestConnection(ctx context.Context, runtime Runtime, request Request) (Resu
 	}
 	input := encodeRequest(request)
 	defer zero(input)
+	output, err := runProbe(ctx, runtime, input)
+	if err != nil {
+		return Result{}, err
+	}
+	defer zero(output)
+	return parseResponse(output)
+}
+
+// TestPreflight 直接启动固定 Java 主类，并在一个连接中完成基础元信息和对象访问检查。
+// 它拒绝非冻结对象输入，且不会把对象或秘密写入命令行、环境变量、日志或返回错误。
+func TestPreflight(ctx context.Context, runtime Runtime, request PreflightRequest) (PreflightResult, error) {
+	if !validRuntime(runtime) {
+		return PreflightResult{}, ErrInvalidRuntime
+	}
+	if !validPreflightRequest(request) {
+		return PreflightResult{}, ErrInvalidRequest
+	}
+	input := encodePreflightRequest(request)
+	defer zero(input)
+	output, err := runProbe(ctx, runtime, input)
+	if err != nil {
+		return PreflightResult{}, err
+	}
+	defer zero(output)
+	return parsePreflightResponse(output)
+}
+
+func runProbe(ctx context.Context, runtime Runtime, input []byte) ([]byte, error) {
 	bounded, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	arguments := []string{"-cp", runtime.ProbePath + string(os.PathListSeparator) + runtime.ConnectorPath, probeMainClass}
@@ -111,18 +191,18 @@ func TestConnection(ctx context.Context, runtime Runtime, request Request) (Resu
 	command.Env = append([]string(nil), runtime.Environment...)
 	stdin, err := command.StdinPipe()
 	if err != nil {
-		return Result{}, ErrProbeFailed
+		return nil, ErrProbeFailed
 	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return Result{}, ErrProbeFailed
+		return nil, ErrProbeFailed
 	}
 	stderr, err := command.StderrPipe()
 	if err != nil {
-		return Result{}, ErrProbeFailed
+		return nil, ErrProbeFailed
 	}
 	if err := command.Start(); err != nil {
-		return Result{}, ErrProbeFailed
+		return nil, ErrProbeFailed
 	}
 	writeDone := make(chan error, 1)
 	go func() {
@@ -151,17 +231,18 @@ func TestConnection(ctx context.Context, runtime Runtime, request Request) (Resu
 	waitErr := command.Wait()
 	if written != nil || outputErr != nil {
 		zero(output)
-		return Result{}, ErrProbeFailed
+		return nil, ErrProbeFailed
 	}
-	defer zero(output)
 	if waitErr != nil {
 		_, responseErr := parseResponse(output)
 		if errors.Is(responseErr, ErrConnectionFailed) || errors.Is(responseErr, ErrDriverUnavailable) || errors.Is(responseErr, ErrInvalidRequest) {
-			return Result{}, responseErr
+			zero(output)
+			return nil, responseErr
 		}
-		return Result{}, ErrProbeFailed
+		zero(output)
+		return nil, ErrProbeFailed
 	}
-	return parseResponse(output)
+	return output, nil
 }
 
 func validRuntime(runtime Runtime) bool {
@@ -187,8 +268,39 @@ func validRequest(request Request) bool {
 	return hostPattern.MatchString(request.Host) && request.Port >= 1 && request.Port <= 65535 && len(request.Username) > 0 && len(request.Username) <= 256 && len(request.Password) > 0 && len(request.Password) <= 4096 && !bytes.ContainsAny(request.Username, "\r\n") && !bytes.ContainsAny(request.Password, "\r\n")
 }
 
+func validPreflightRequest(request PreflightRequest) bool {
+	return validRequest(request.Connection) && validCompatibilityMode(request.CompatibilityMode) && validObjectIdentifier(request.Database) && validObjectIdentifier(request.Table)
+}
+
+func validCompatibilityMode(mode CompatibilityMode) bool {
+	return mode == CompatibilityModeMySQL || mode == CompatibilityModeOracle
+}
+
+func validObjectIdentifier(value string) bool {
+	if value == "" || len(value) > 256 || value != strings.TrimSpace(value) || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
 func encodeRequest(request Request) []byte {
+	return encodeProbeRequest(connectionProtocolVersion, request, nil)
+}
+
+func encodePreflightRequest(request PreflightRequest) []byte {
+	return encodeProbeRequest(preflightProtocolVersion, request.Connection, [][]byte{[]byte(request.CompatibilityMode), []byte(request.Database), []byte(request.Table)})
+}
+
+func encodeProbeRequest(version int, request Request, fields [][]byte) []byte {
 	length := 4 + 4 + len(request.Host) + 4 + 4 + len(request.Username) + 4 + len(request.Password)
+	for _, field := range fields {
+		length += 4 + len(field)
+	}
 	result := make([]byte, length)
 	offset := 0
 	writeInt := func(value int) {
@@ -200,11 +312,14 @@ func encodeRequest(request Request) []byte {
 		copy(result[offset:], value)
 		offset += len(value)
 	}
-	writeInt(1)
+	writeInt(version)
 	writeBytes([]byte(request.Host))
 	writeInt(request.Port)
 	writeBytes(request.Username)
 	writeBytes(request.Password)
+	for _, field := range fields {
+		writeBytes(field)
+	}
 	return result
 }
 
@@ -239,15 +354,43 @@ func readLimited(reader io.Reader, maximum int) ([]byte, error) {
 }
 
 func parseResponse(output []byte) (Result, error) {
+	response, err := decodeResponse(output)
+	if err != nil || response.ObjectAccess != "" {
+		return Result{}, ErrProbeFailed
+	}
+	return parseConnectionResponse(response)
+}
+
+func parsePreflightResponse(output []byte) (PreflightResult, error) {
+	response, err := decodeResponse(output)
+	if err != nil {
+		return PreflightResult{}, ErrProbeFailed
+	}
+	connection, err := parseConnectionResponse(response)
+	if err != nil {
+		return PreflightResult{}, err
+	}
+	objectAccess := ObjectAccess(response.ObjectAccess)
+	if objectAccess != ObjectAccessible && objectAccess != ObjectUnavailable && objectAccess != ObjectNotFound {
+		return PreflightResult{}, ErrProbeFailed
+	}
+	return PreflightResult{Connection: connection, ObjectAccess: objectAccess}, nil
+}
+
+func decodeResponse(output []byte) (probeResponse, error) {
 	var response probeResponse
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&response); err != nil {
-		return Result{}, ErrProbeFailed
+		return probeResponse{}, err
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
-		return Result{}, ErrProbeFailed
+		return probeResponse{}, errors.New("JDBC 探针响应包含额外内容")
 	}
+	return response, nil
+}
+
+func parseConnectionResponse(response probeResponse) (Result, error) {
 	if response.Status == "FAILED" && response.ProductName == "" && response.ProductVersion == "" && response.DriverName == "" && response.DriverVersion == "" {
 		switch response.Code {
 		case "CONNECTION_FAILED":

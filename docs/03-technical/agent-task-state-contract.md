@@ -4,7 +4,7 @@
 > 适用范围：单控制面、用户显式选择的一个执行节点、单表 CSV 导出  
 > 对应门禁：VS-P0-07、VS-P0-10、VS-P0-11  
 > 评审结论：AS-R01～AS-R16 已于 2026-07-21 确认；AD-R09 已补充提交前预检查协议
-> 更新日期：2026-07-21
+> 更新日期：2026-08-03
 
 ## 1. 目标与非目标
 
@@ -55,6 +55,8 @@ Agent 主动认证连接
 
 `taskId`、`executionId`、`agentId`、`leaseId` 和 `leaseEpoch` 必须同时匹配，事件才有资格改变执行事实。只匹配任务 ID 不足以证明消息属于当前执行者。
 
+控制面新建资源和响应 `requestId` 使用规范小写 UUIDv4。当前 `agent-v1` 实现由 Agent 使用同一生成规则创建新的 `agentId`、`bootId` 与协议 `requestId`，这与旧版“外部 ID 均由服务端生成”的表述形成 `TD-ID-01` 归属待决项；本轮只记录实现事实，不把它提升为新的架构决策。为保证本机身份状态、SQLite 外键和回执重放可恢复，`agent-v1` 暂时只把已有非 UUID 标识视为受长度和绑定校验约束的不透明历史值，绝不在原地迁移或改写。真实 G3 Worker 接入前，`leaseId` 必须有唯一的共享 UUIDv4 生成点；在此之前不把当前合成调用方提供的 `leaseId` 描述为已完成的 UUID 边界。
+
 ## 4. 注册与机器认证
 
 ### 4.1 最小注册流程
@@ -77,7 +79,7 @@ Agent 主动认证连接
 - 一次性关联材料使用后立即失效，过期、重复或节点不匹配均拒绝；
 - 一个 Agent 机器身份只绑定一个节点；重新关联必须撤销旧身份并留下审计事实；
 - 机器凭据不得进入 URL、普通日志、任务信封或诊断导出；
-- 节点禁用、归档或凭据撤销后，心跳可返回明确拒绝，但不得继续领取任务；
+- 节点禁用、归档或凭据撤销后，心跳可返回明确拒绝，但不得继续领取任务；归档仅在没有 `STARTING`、`RUNNING` 或 `CANCELLING` 任务时允许，并原子撤销当前机器凭据和未使用关联材料；
 - 协议版本不兼容时拒绝任务领取，并保留足够的非敏感升级原因。
 
 ## 5. 通用消息信封
@@ -119,17 +121,38 @@ AD-R09 补充以下固定操作，但不改变正式任务的 `ClaimExecution` �
 
 | 操作 | 方向 | 作用 | 是否允许重发 |
 |---|---|---|---:|
-| `ClaimPrecheck` | Agent → 控制面 | 领取明确绑定本节点的 `EXPORT_PREFLIGHT` | 是；同 requestId/预检查租约返回原结果 |
-| `AcknowledgePrecheckLease` | Agent → 控制面 | 确认草稿 revision、指纹、检查清单和短租约 | 是 |
+| `ClaimNextPrecheck` | Agent → 控制面 | 服务端原子选择并领取明确绑定本节点的下一条 `EXPORT_PREFLIGHT` | 是；严格 `EXPORT_PREFLIGHT_CLAIM_NEXT` 信封不接受 precheckId 或 leaseId，同 requestId/同摘要返回原 binding、bindingDigest、checkSet 和租约；没有工作返回 `204 No Content`，不写回执或租约 |
+| `AcknowledgePrecheckLease` | Agent → 控制面 | 确认草稿 revision、指纹、检查清单和短租约 | 是；严格 `EXPORT_PREFLIGHT_ACKNOWLEDGE_LEASE` 信封，必须回送 leaseId、epoch 和 bindingDigest |
 | `ResolvePrecheckSecretSlots` | Agent → 控制面 | 在有效预检查租约内解析固定数据库凭据槽位 | 是；不缓存明文 |
-| `CompletePrecheck` | Agent → 控制面 | 返回结构化检查项、脱敏证据摘要和完整性 | 是；同摘要返回原确认 |
+| `CompletePrecheck` | Agent → 控制面 | 返回结构化检查项、脱敏证据摘要和完整性 | 是；严格 `EXPORT_PREFLIGHT_COMPLETE` 信封，只提交按固定顺序的六项结果，不提交独立 `succeeded` |
 
-- 预检查只执行登记的数据库连接、对象存在/可访问、工具/Java、允许根目录、路径可写/非空和空间检查；
+- 预检查只执行登记的数据库连接、对象存在/可读取、工具/Java、允许根目录、路径可写/非空和空间检查；`OBJECT_ACCESS` 先使用固定 JDBC `DatabaseMetaData.getTables` 确认对象元数据可见，再以同一连接对已冻结单表执行固定 `SELECT 1 FROM <安全引用的库或 Schema>.<安全引用的表> WHERE 1 = 0`。该语句不读取业务行；MySQL/Oracle 的命名空间位置和引用字符只能由冻结数据源的兼容模式决定，不能由浏览器或 Agent 自由输入 SQL；
+- Agent 在租约确认且有效后，必须先按本机执行顺序完成 `TOOL_ENVIRONMENT`、`OUTPUT_PATH`、`OUTPUT_EMPTY`、`AVAILABLE_SPACE`。仅当四项均为 `PASSED` 时，才允许调用 `ResolvePrecheckSecretSlots` 并执行 `DATABASE_CONNECTIVITY`、`OBJECT_ACCESS`；任一为 `FAILED` 或 `UNKNOWN` 时，不得请求数据库槽位或启动 JDBC，后二项分别以 `UNKNOWN/DATABASE_CONNECTION_UNAVAILABLE`、`UNKNOWN/OBJECT_ACCESS_UNAVAILABLE` 收口。完成报告仍按固定六项契约顺序序列化，不随执行顺序改变；
 - 不接受任意 SQL、Shell、自由命令、任意文件路径或 OBDUMPER 启动请求；
 - 预检查短租约由控制面时间控制，结果绑定 precheckId、lease/epoch、Agent、草稿 revision、配置指纹、credential revision 和节点事实版本；
 - 预检查不创建 taskId、executionId 或 execution event，不生成正式输出，也不改变任务状态；
 - 首条切片 Agent 有活动 execution 时不领取预检查，避免检查争用正式执行的唯一容量；
 - 失联或租约过期的预检查结果标为未知/过期，不能据此提交任务，也不自动改派后合并两个结果。
+
+预检查的机器请求使用 `agent_precheck_receipts` 持久化最小回执：claim 记录 `LEASED`，acknowledge 记录 `ACKNOWLEDGED`，complete 记录 `SUCCEEDED`、`FAILED` 或迟到的 `EXPIRED`。回执以 `(agentId, requestId)` 和请求摘要防止控制面重启后重新签发租约或重复写入终态；同一 requestId 但摘要不同必须拒绝。`precheck_runs` 仍是预检查业务状态权威，acknowledge 不能把它从 `LEASED` 提升为成功。控制面时钟到期后，迟到的 acknowledge/complete 不得改变预检查通过状态，不能作为任务提交依据；迟到 complete 的回执与 `EXPORT_PRECHECK_COMPLETION_EXPIRED` Agent 审计必须同事务落库。
+
+### 6.2 Windows 本机 MVP 的固定导出信封
+
+在 `--local-mvp` 且控制面、Agent 同时显式启用真实执行开关时，已实现如下单任务协议；它只用于受授权的 Windows AMD64 单表 CSV 测试：
+
+| 固定 payloadType | 入口 | 控制面约束 |
+| --- | --- | --- |
+| `OBDUMPER_EXPORT_CLAIM_NEXT` | `POST /agent/v1/executions:claim-next` | 不接收 taskId、argv、目录或秘密；控制面选择已冻结且满足全部准入条件的一条任务 |
+| `OBDUMPER_EXPORT_ACKNOWLEDGE_LEASE` | `POST /agent/v1/executions/{executionId}:acknowledge-lease` | eventSeq 固定为 2，确认 Agent 已收到信封 |
+| `OBDUMPER_EXPORT_RENEW_LEASE` | `POST /agent/v1/executions/{executionId}:renew-lease` | 控制面时间续期，不能切换任务、节点、参数或秘密 |
+| `OBDUMPER_EXPORT_RESOLVE_SECRET_SLOTS` | `POST /agent/v1/executions/{executionId}/secret-slots:resolve` | 只在当前租约、任务信封摘要、权限和凭据仍有效时返回短时数据库连接槽位 |
+| `OBDUMPER_EXPORT_APPEND_EVENT` | `POST /agent/v1/executions/{executionId}:events:append` | 只接受 `PROCESS_STARTED`、`PROCESS_EXITED`、工具终态、结果文件事实或无进程启动拒绝；序号连续 |
+| `OBDUMPER_EXPORT_APPEND_LOG` | `POST /agent/v1/executions/{executionId}:logs:append` | 只接受已密封、已完成第一层秘密脱敏的 stdout/stderr 批次；正文可保留已确认的非秘密运行上下文（路径、非密码命令令牌和工具诊断），不能承载原始文件字节或任何秘密。确认必须回显当前批次位置、摘要和下一期望序号；错位或不完整回执不得释放本地批次 |
+| `OBDUMPER_EXPORT_APPEND_LOG_GAP` | `POST /agent/v1/executions/{executionId}:logs:gap` | 只接受 Agent 私有队列容量已满时形成的无正文连续缺口；固定原因码为 `LOCAL_SPOOL_LIMIT`，确认必须回显来源范围、规范化缺口摘要和下一期望序号；错位或不完整回执不得释放本地缺口 |
+
+领取时控制面创建 eventSeq=1 的 `SCHEDULED` 事实。Agent 只能发送没有密码令牌的冻结 argv；密码经短时槽位写入任务私有官方安全文件后，直接 Java 启动包内主类。工具进程存活期间每 30 秒续期；进程已启动后即使事件上报失败，Agent 也先等待进程退出再清理安全材料，避免删除仍被 Java 使用的文件。
+
+当前 MVP 已提供仅用于**已第一层脱敏、已密封日志批次**的 Agent 私有可靠队列：批次在控制面确认前保留，Agent 启动后会按稳定顺序重放。它不恢复工具进程、不读取任意文件，也不等同于工具文件日志采集或自动对账。控制面发现 `ISSUED`、`ACKNOWLEDGED` 或 `ACTIVE` 租约已过期时，会将租约标为 `EXPIRED`，把关联 execution 收口为 `FAILED + reconciliation_required=1` 并记录审计；这会释放节点容量，但绝不自动重新领取同一任务或宣称成功。
 
 ## 7. 心跳与节点在线事实
 
@@ -248,7 +271,7 @@ Agent 在启动任何进程前必须核验：
 - OBDUMPER 和 Java 的实际文件、版本与快照一致；
 - Windows/Linux 目标平台与进程适配器匹配；
 - 工作目录、日志目录和输出目录符合允许根目录及任务规则；
-- 输出目录为空或可新建，不隐式添加 `--skip-check-dir`；
+- 未显式启用 `--skip-check-dir` 时输出目录为空或可新建；启用时仍核验路径、允许根目录、可写性和空间，但不再把目录非空作为启动阻断；
 - 本机不存在该 execution 已启动但尚未核对的进程证据；
 - 凭据能按授权解析，且不会写入普通日志或本地持久文件。
 
@@ -343,7 +366,7 @@ Windows `.bat` 只是包装入口。Agent 必须跟踪能够代表实际 Java/OB
 
 ### 14.1 Agent 重启或崩溃
 
-Agent 启动后先读取本地持久执行日志，再领取新任务。存在未释放 execution 时：
+Agent 启动后先读取本地持久状态，再领取新任务。当前实现先重放未获确认的脱敏日志批次；完整的进程身份恢复仍受后续门禁约束。控制面收到同一 Agent 身份的**新** `bootId` 时，会把仍持有活动租约的旧 execution 附加为“状态核对中”并写入审计，保留其原持久状态、租约和证据，绝不因此自动判定终态或重新派发。存在未释放 execution 时，完整恢复目标为：
 
 1. 上报新 `bootId`、旧 execution 和最后本地事件序号；
 2. 使用 PID、开始时间、进程树和信封摘要核对原进程；

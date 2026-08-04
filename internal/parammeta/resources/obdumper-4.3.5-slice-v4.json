@@ -1,0 +1,35 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v4",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "capabilityVersion": "export-odp-single-table-csv-v1",
+  "revisionReason": "H confirms compact short options for the private ODP connection expression; v4 preserves the password security-file override while rendering -h, -P, -u and the masked -p placeholder.",
+  "overrides": [
+    {
+      "definitionId": "obdumper.connection.host",
+      "shortName": "-h",
+      "emissionTarget": "ARGV",
+      "appendEvidence": ["H"]
+    },
+    {
+      "definitionId": "obdumper.connection.port",
+      "shortName": "-P",
+      "emissionTarget": "ARGV",
+      "appendEvidence": ["H"]
+    },
+    {
+      "definitionId": "obdumper.connection.user",
+      "shortName": "-u",
+      "emissionTarget": "ARGV",
+      "appendEvidence": ["H"]
+    },
+    {
+      "definitionId": "obdumper.connection.password",
+      "shortName": "-p",
+      "emissionTarget": "SECURITY_FILE",
+      "securityProperty": "oceanbase.jdbc.password",
+      "appendEvidence": ["CS-R12", "TL-R08", "SG-P02", "H"]
+    }
+  ]
+}

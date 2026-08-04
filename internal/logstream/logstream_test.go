@@ -112,7 +112,7 @@ func TestSyntheticPipelineNeverPersistsSecretAcrossChunkAndBatchBoundaries(t *te
 	}
 }
 
-func TestBatchLedgerAcceptsDuplicateRejectsConflictAndRequiresExplicitGap(t *testing.T) {
+func Test批次账本接受重复拒绝冲突并要求显式缺口(t *testing.T) {
 	ledger := NewBatchLedger()
 	first := syntheticBatch(1, 2, "")
 	sealed, err := SealBatch(first)
@@ -137,7 +137,7 @@ func TestBatchLedgerAcceptsDuplicateRejectsConflictAndRequiresExplicitGap(t *tes
 	if result, err := ledger.Accept(late); !errors.Is(err, ErrBatchGap) || result.ExpectedSeq != 3 {
 		t.Fatalf("Accept(gap) = %#v, %v", result, err)
 	}
-	gap, err := ledger.AcceptGap(GapNotice{StreamID: "stream-1", SourceEpoch: 1, FirstSeq: 3, LastSeq: 3, ReasonCode: "LOCAL_SPOOL_LIMIT"})
+	gap, err := ledger.AcceptGap(GapNotice{StreamID: "stream-1", SourceKind: SourceStdout, SourceEpoch: 1, FirstSeq: 3, LastSeq: 3, ReasonCode: "LOCAL_SPOOL_LIMIT", PolicyVersion: "synthetic-v1", ParserVersion: "synthetic-parser-v1"})
 	if err != nil || gap.ExpectedSeq != 4 {
 		t.Fatalf("AcceptGap() = %#v, %v", gap, err)
 	}
@@ -167,6 +167,21 @@ func TestReassemblerDropsOversizedRecordWithoutPersistingText(t *testing.T) {
 	records, truncated := r.Push([]byte("still-secret\nnext\n"))
 	if !truncated || len(records) != 1 || records[0] != "next" {
 		t.Fatalf("drop recovery = %#v, truncated=%v", records, truncated)
+	}
+}
+
+func Test日志批次拒绝超出记录和批次上限(t *testing.T) {
+	overstretchedRecord := syntheticBatch(1, 1, "")
+	overstretchedRecord.Records[0].Message = strings.Repeat("x", MaxRecordBytes+1)
+	if _, err := SealBatch(overstretchedRecord); !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("SealBatch(超长记录) error = %v", err)
+	}
+	overstretchedBatch := syntheticBatch(1, 3, "")
+	for index := range overstretchedBatch.Records {
+		overstretchedBatch.Records[index].Message = strings.Repeat("x", MaxBatchBytes/3+1)
+	}
+	if _, err := SealBatch(overstretchedBatch); !errors.Is(err, ErrBatchTooLarge) {
+		t.Fatalf("SealBatch(超长批次) error = %v", err)
 	}
 }
 

@@ -13,7 +13,7 @@
 - [技术架构首版](architecture.md)：控制面、执行 Agent、参数元数据、命令生成、任务状态、日志、权限和凭据的职责边界。
 - [首条纵向切片](first-vertical-slice.md)：数据源管理到基础 CSV 导出的最小开发范围、P0 证据和验收条件。
 - [技术路线与部署选型基线](technology-stack.md)：已确认的 Go、Vue 3、SQLite、Windows AMD64，以及麒麟 V10 SP1/V11 ARM64、V10 SP3 C86 三个国产 Linux 目标和轻量任务通道，记录 TS-R01～TS-R14。
-- [参数元数据与确定性命令生成契约](parameter-command-contract.md)：首条切片的值状态、最小参数集合、稳定顺序、指纹、跨平台路径和秘密槽位边界；PC-R01～PC-R15 已确认，参数元数据 `v2` 和确定性生成器子集已通过纯合成契约测试，Agent 全链路仍待后续组件。
+- [参数元数据与确定性命令生成契约](parameter-command-contract.md)：首条切片的值状态、最小参数集合、稳定顺序、指纹、跨平台路径和秘密槽位边界；PC-R01～PC-R15 已确认，参数元数据 `v4` 和确定性生成器子集已通过纯合成契约测试，Agent 全链路仍待后续组件。
 - [Agent 协议与任务状态最小契约](agent-task-state-contract.md)：首条切片的机器认证、心跳、长轮询、租约、幂等事件、进程证据、状态投影和失联恢复；AS-R01～AS-R16 已确认，G2 假 Agent 与假工具适配已通过测试，持久恢复和真实机器验证仍待后续阶段。
 - [凭据、权限与安全最小契约](credential-access-security-contract.md)：数据源密码、Agent 机器凭据、跨平台根密钥、短时槽位解析、权限、审计和 OBDUMPER 进程暴露边界；CS-R01～CS-R18 已确认，AES-GCM/AAD、Windows DPAPI/ACL、Linux 权限实现和官方兼容材料生成已通过纯核心测试，真实 Agent/工具链路仍待验证。
 - [OBDUMPER 跨平台隔离启动入口契约](tool-launch-isolation-contract.md)：直接 Java 受控入口、版本化启动配置、execution 私有目录、最小环境、进程恢复和清理边界；TL-R01～TL-R18 已确认。

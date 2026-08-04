@@ -4,16 +4,49 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发�
 
 ## 当前可用内容
 
-- Go 控制面最小浏览器/Agent API 适配：默认未配置身份时失败关闭，真实执行始终关闭；
-- Go Agent 空入口：不联网、不领取任务、不启动 OB Loader/Dumper；
+- Go 控制面最小浏览器/Agent API 适配：默认未配置身份时失败关闭，真实执行始终关闭；回环 Local MVP 使用 TLS，可完成节点声明、一次性注册码签发、Agent 实际关联、首次心跳和节点侧 `G2_SYNTHETIC` 连接测试闭环；仅在控制面与 Agent 都显式开启受控 JDBC 测试开关时，才签发一次节点侧 `AGENT_JDBC` 基础连接测试；
+- Go Agent G2 机器协议适配：受保护本机关联状态、HTTPS/CA 校验、受认证心跳和固定预检查信封均已具备；默认不连接数据库、不解析真实凭据、不启动 OB Loader/Dumper；
 - Vue 3 + TypeScript + Vite 产品页面基线：覆盖数据源、三类任务向导、任务/日志、模板、节点与系统设置；其中真实功能接入范围以开发计划逐项验收；
-- OpenAPI 3.1 结构基线：覆盖 29 个浏览器操作和 14 个 Agent 操作，真实执行仍关闭；
-- SQLite `0001` 前向迁移草案：20 张首条切片窄表及关键约束，仅在临时数据库使用合成数据验证；
+- OpenAPI 3.1 结构基线：覆盖当前已实现的浏览器与 Agent 操作，真实执行仍关闭；
+- SQLite 前向迁移：`0001` 建立 20 张首条切片窄表，后续迁移补充数据源 ODP 身份、未验证数据源禁用和无引用归档数据源清理；仅在临时数据库使用合成数据验证；
 - OBDUMPER 4.3.5 首条切片只读参数资源：8 个可用参数、8 个验证门禁参数；
 - Windows AMD64、Linux AMD64、Linux ARM64 交叉构建；
 - Go/前端测试、静态检查和基础敏感信息扫描。
 
-`/readyz` 只表示控制面进程本身可响应。浏览器身份/CSRF 注入和执行节点列表尚未接入实际控制面，Agent 默认入口仍不联网，OB Loader/Dumper 尚未接入。交叉构建成功也不等于三个麒麟目标环境已经认证通过。
+`/readyz` 只表示控制面进程本身可响应。默认启动时业务 API 会因未配置浏览器身份而失败关闭；显式 `--local-mvp` 只允许回环本机的 TLS 管理面，并可验证节点、注册码、Agent 实际关联与首次心跳。默认该入口不会建立真实数据库连接；仅在当次真实连接获明确授权、控制面与 Agent 都设置 `OB_DATA_ORCH_ENABLE_AGENT_JDBC_CONNECTION_TEST=true`，且 Agent 已通过 Java/工具运行时校验时，才允许固定 JDBC 探针建立一次受控基础连接。该开关不启用节点、预检查、OBDUMPER 或任何导入导出。Agent 只会主动访问 HTTPS 控制面；HTTP、未受信证书及非回环 Local MVP 绑定都会失败关闭。交叉构建成功也不等于三个麒麟目标环境已经认证通过。
+
+### Windows 本机 Agent 注册测试
+
+```powershell
+# 终端一：生成仅用于本机回环 TLS 的 7 天测试证书（材料位于 Git 忽略的 var/）
+./scripts/new-local-mvp-tls-certificate.ps1
+
+# 终端一：仅监听 https://127.0.0.1:8080，不接受外部连接
+$env:OB_DATA_ORCH_LISTEN = '127.0.0.1:8080'
+$env:OB_DATA_ORCH_TLS_CERT_FILE = "$PWD\var\local-mvp-tls\control-plane-cert.pem"
+$env:OB_DATA_ORCH_TLS_KEY_FILE = "$PWD\var\local-mvp-tls\control-plane-key.pem"
+go run ./cmd/control-plane --local-mvp
+
+# 终端二：构建固定指向本机控制面的 Windows Agent 包
+./scripts/build-local-mvp-agent-package.ps1 -ControlPlaneCAFile "$PWD\var\local-mvp-tls\control-plane-ca.pem"
+
+# 终端三：Vite 代理会显式验证本机测试 CA，绝不跳过 TLS 校验
+$env:NODE_EXTRA_CA_CERTS = "$PWD\var\local-mvp-tls\control-plane-ca.pem"
+Set-Location web
+npm run dev -- --host 127.0.0.1
+```
+
+在浏览器打开 `http://127.0.0.1:5173/nodes`，创建 Windows 节点后可在节点详情下载 Windows Agent ZIP。将 ZIP 解压到目标 Windows 机器，首次双击“首次注册并启动Agent.cmd”，粘贴页面生成的一次性注册码并按 Enter；进程会继续发送心跳。以后双击“启动Agent.cmd”，无需再次输入注册码。两个脚本都会显式启用固定 JDBC 连接测试、六项 `EXPORT_PREFLIGHT` 与受控真实执行；它只会在操作者完成预检查并在导出向导点击“提交并启动导出”后，领取该节点的一条冻结单表 CSV 任务并直接启动 OBDUMPER。密码只进入任务级官方安全文件，绝不进入启动参数或日志。该下载包固定连接本机回环 TLS，只用于控制面和 Agent 位于同一 Windows 主机的 Local MVP 测试。当前实时日志为控制面进程内投影，控制面重启后不保留；断线恢复与正式 G3 验收尚未完成。
+
+本机 MVP 的 `G2_SYNTHETIC` 连接测试在控制面确认首次心跳后由 Agent 独立领取，最多约 2 秒开始处理，不再等待下一次 30 秒心跳。它不建立真实数据库连接。
+
+本机 MVP 的监听地址固定为 `127.0.0.1:8080`，且必须同时配置 TLS 证书和私钥。`OB_DATA_ORCH_ENABLE_REAL_EXECUTION=true` 仅在控制面使用 `--local-mvp` 且 Agent 为 Windows AMD64 时启用这条受控本机链路；非本机 MVP、任意命令、任意 SQL、任意路径浏览、自动重试和重新分配仍然拒绝。
+
+### G2 Agent HTTPS 边界
+
+非 `--local-mvp` 控制面只有同时配置绝对路径的 `OB_DATA_ORCH_TLS_CERT_FILE` 与 `OB_DATA_ORCH_TLS_KEY_FILE` 时才会使用 HTTPS；缺少任一文件会拒绝启动。Windows 本机包无需用户填写 URL、节点 IP、CA 路径或节点标识：包内固定 `https://127.0.0.1:8080` 与同目录 CA 文件，注册码仅通过标准输入短时接收。Agent 不会跟随重定向、使用代理或跳过证书和主机名校验。
+
+这条链路已通过回环 TLS、临时 SQLite 与实际 Windows `agent.exe` 完成关联和首个心跳验证；仍不是获授权 G3 运行环境，也不是连接真实 ODP、启用数据源或启动工具的授权。
 
 ## 本地启动
 
@@ -23,7 +56,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发�
 # 控制面默认仅监听 127.0.0.1:8080，未配置浏览器身份时所有业务 API 失败关闭
 go run ./cmd/control-plane
 
-# Agent 仅进入空闲等待，不会联网或执行工具
+# 未关联 Agent 会失败关闭；已关联 Agent 仅发送 HTTPS 心跳，不执行工具
 go run ./cmd/agent
 
 # 前端开发服务器
@@ -31,23 +64,6 @@ Set-Location web
 npm ci
 npm run dev
 ```
-
-### 本机 G2 数据源页面手工检查
-
-如需在浏览器中手工核对数据源列表、新增、编辑、启停、归档和“测试连接”按钮，可显式启动仅回环的本机 MVP：
-
-```powershell
-# 终端 1：只监听 127.0.0.1:8080，使用被 Git 忽略的 var/ 本机 SQLite 和密钥文件
-go run ./cmd/control-plane --local-mvp
-
-# 终端 2：Vite 将 /api 代理到本机控制面
-Set-Location web
-npm run dev -- --host 127.0.0.1
-```
-
-随后在宿主机浏览器打开 `http://127.0.0.1:5173/data-sources`。此入口仅用于 G2 合成检查：请仅填写合成数据源和合成密码，不要输入真实凭据。连接测试请求会经过浏览器身份、CSRF 与对象范围校验，但由于本机 MVP 不配置 Agent、不会连接数据库或启动工具，预期显示“当前无法获取 Agent 连接测试结果”；这不是连接成功，也不代表权限、性能或任务可执行性。
-
-控制面监听地址可通过 `OB_DATA_ORCH_LISTEN` 修改。`OB_DATA_ORCH_ENABLE_REAL_EXECUTION=true` 会使控制面和 Agent 拒绝启动；这是 G2 的硬门禁，不是待配置功能。
 
 ## 验证
 
@@ -76,4 +92,4 @@ docs/                 产品、设计与技术基线
 .github/workflows/    持续集成
 ```
 
-页面基线、合成验证、真实功能可用与真实环境验证是不同状态。默认 Agent 启动入口不联网、不启动工具；真实数据库连接、真实凭据、真实进程和 OBDUMPER 执行均须遵循任务地图规定的授权与证据门禁。
+页面基线、合成验证、真实功能可用与真实环境验证是不同状态。默认 Agent 启动入口只进行受认证关联、心跳和 `G2_SYNTHETIC` 基础连接测试编排，不解析数据库槽位、不启动 Java/JDBC 或 OBDUMPER；真实数据库连接、真实凭据、真实进程和 OBDUMPER 执行均须遵循任务地图规定的授权与证据门禁。

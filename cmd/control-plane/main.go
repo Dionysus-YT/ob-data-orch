@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +30,7 @@ func main() {
 
 func run() error {
 	showVersion := flag.Bool("version", false, "print version and exit")
-	localMVP := flag.Bool("local-mvp", false, "run the loopback-only local MVP")
+	localMVP := flag.Bool("local-mvp", false, "run the loopback-only local TLS MVP")
 	flag.Parse()
 	if *showVersion {
 		info := buildinfo.Current()
@@ -37,8 +38,12 @@ func run() error {
 		return nil
 	}
 
-	if err := featuregate.RequireRealExecutionDisabled(os.LookupEnv); err != nil {
+	realExecutionEnabled, err := featuregate.LoadRealExecutionEnabled(os.LookupEnv)
+	if err != nil {
 		return err
+	}
+	if realExecutionEnabled && !*localMVP {
+		return errors.New("real execution is currently limited to the local MVP Windows integration")
 	}
 	appConfig, err := config.LoadControlPlane(os.LookupEnv)
 	if err != nil {
@@ -47,9 +52,14 @@ func run() error {
 
 	var handler http.Handler = controlplane.NewHandler(buildinfo.Current())
 	var database *store.Store
+	agentJDBCConnectionTestEnabled := false
 	if *localMVP {
-		if appConfig.ListenAddress != "127.0.0.1:8080" {
-			return errors.New("local MVP must bind 127.0.0.1:8080")
+		if err := validateLocalMVPConfiguration(appConfig); err != nil {
+			return err
+		}
+		agentJDBCConnectionTestEnabled, err = config.LoadAgentJDBCConnectionTestEnabled(os.LookupEnv)
+		if err != nil {
+			return errors.New("local MVP JDBC connection test configuration is invalid")
 		}
 		if err := os.MkdirAll("var", 0o700); err != nil {
 			return err
@@ -59,6 +69,9 @@ func run() error {
 			return err
 		}
 		defer database.Close()
+		if err := localmvp.PrepareStore(context.Background(), database); err != nil {
+			return fmt.Errorf("初始化本机 MVP 身份投影: %w", err)
+		}
 		key, keyErr := credential.LoadOrCreateRootKey("var/local-mvp-root-key.json", "local-mvp-root-v1")
 		if keyErr != nil {
 			return keyErr
@@ -68,7 +81,18 @@ func run() error {
 		if keyErr != nil {
 			return keyErr
 		}
-		handler = controlplane.NewHandlerWithDependencies(buildinfo.Current(), localmvp.Dependencies(database, keyring))
+		dependencies, dependencyErr := localmvp.Dependencies(database, keyring, agentJDBCConnectionTestEnabled, realExecutionEnabled)
+		if dependencyErr != nil {
+			return dependencyErr
+		}
+		defer func() {
+			shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := dependencies.PersistentLogs.Shutdown(shutdownContext); err != nil {
+				slog.Error("seal persistent logs on shutdown failed", "error", err)
+			}
+		}()
+		handler = controlplane.NewHandlerWithDependencies(buildinfo.Current(), dependencies)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -77,6 +101,7 @@ func run() error {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	transport, serve := controlPlaneServeFunction(server, appConfig)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -84,10 +109,12 @@ func run() error {
 	go func() {
 		logger.Info("control plane listening",
 			"address", appConfig.ListenAddress,
-			"stage", "G1",
-			"realExecutionEnabled", false,
+			"transport", transport,
+			"stage", map[bool]string{true: "G3_LOCAL_MVP", false: "G2"}[realExecutionEnabled],
+			"realExecutionEnabled", realExecutionEnabled,
+			"agentJDBCConnectionTestEnabled", agentJDBCConnectionTestEnabled,
 		)
-		serverErrors <- server.ListenAndServe()
+		serverErrors <- serve()
 	}()
 
 	select {
@@ -100,5 +127,31 @@ func run() error {
 			return nil
 		}
 		return err
+	}
+}
+
+// validateLocalMVPConfiguration 将本机 MVP 限制为回环 TLS 联调入口，避免测试身份和机器凭据暴露到非本机网络。
+func validateLocalMVPConfiguration(appConfig config.ControlPlane) error {
+	host, _, err := net.SplitHostPort(appConfig.ListenAddress)
+	if err != nil {
+		return errors.New("local MVP must use a valid loopback listen address")
+	}
+	address := net.ParseIP(host)
+	if address == nil || !address.IsLoopback() {
+		return errors.New("local MVP must bind a loopback address")
+	}
+	if appConfig.TLSCertFile == "" || appConfig.TLSKeyFile == "" {
+		return errors.New("local MVP requires TLS certificate and key files")
+	}
+	return nil
+}
+
+// controlPlaneServeFunction 根据已验证的 TLS 配置选择固定监听方式，不在日志中暴露证书或私钥路径。
+func controlPlaneServeFunction(server *http.Server, appConfig config.ControlPlane) (string, func() error) {
+	if appConfig.TLSCertFile == "" {
+		return "http", server.ListenAndServe
+	}
+	return "https", func() error {
+		return server.ListenAndServeTLS(appConfig.TLSCertFile, appConfig.TLSKeyFile)
 	}
 }

@@ -6,6 +6,7 @@ const sources: DataSourceSummary[] = [
   { id: 'source-1', displayName: '未测试源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'UNKNOWN', host: '10.0.0.1', port: 2881, clusterName: 'cluster-a', tenantName: 'tenant-a', state: 'DISABLED', revision: 1, credentialRevision: 1 },
   { id: 'source-2', displayName: '可连接源', environment: 'PRODUCTION', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '10.0.0.2', port: 2881, clusterName: 'cluster-b', tenantName: 'tenant-b', state: 'ENABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'SUCCEEDED' },
   { id: 'source-3', displayName: '失败源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'ORACLE', host: '10.0.0.3', port: 2881, clusterName: 'cluster-c', tenantName: 'tenant-c', state: 'ENABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'FAILED' },
+  { id: 'source-4', displayName: '未知源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '10.0.0.4', port: 2881, clusterName: 'cluster-d', tenantName: 'tenant-d', state: 'DISABLED', revision: 1, credentialRevision: 1, lastTestStatus: 'UNKNOWN' },
 ]
 
 const allFilters: DataSourceListFilters = { keyword: '', environment: '', compatibilityMode: '', connectionStatus: '', state: '' }
@@ -15,6 +16,7 @@ describe('数据源列表筛选', () => {
     expect(filterDataSources(sources, { ...allFilters, connectionStatus: 'UNTESTED' }).map((source) => source.id)).toEqual(['source-1'])
     expect(filterDataSources(sources, { ...allFilters, connectionStatus: 'SUCCEEDED' }).map((source) => source.id)).toEqual(['source-2'])
     expect(filterDataSources(sources, { ...allFilters, connectionStatus: 'FAILED' }).map((source) => source.id)).toEqual(['source-3'])
+    expect(filterDataSources(sources, { ...allFilters, connectionStatus: 'UNKNOWN' }).map((source) => source.id)).toEqual(['source-4'])
   })
 
   it('与既有关键字、环境、兼容模式和启用状态筛选叠加', () => {

@@ -1,6 +1,6 @@
 import type { DataSourceSummary } from '@/api/browser'
 
-export type ConnectionStatusFilter = '' | 'UNTESTED' | 'SUCCEEDED' | 'FAILED' | 'PENDING' | 'UNAVAILABLE'
+export type ConnectionStatusFilter = '' | 'UNTESTED' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN' | 'EXPIRED' | 'INVALIDATED' | 'PENDING' | 'UNAVAILABLE'
 
 export type DataSourceListFilters = {
   readonly keyword: string
