@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { precheckCheckLabel, precheckResultDetail, precheckResultLabel } from './exportPrecheckPresentation'
+import { precheckCheckLabel, precheckResultBlocksSubmission, precheckResultDetail, precheckResultLabel } from './exportPrecheckPresentation'
 
 describe('预检查结果展示', () => {
-  it('将对象不可用说明为未执行而非未知故障', () => {
+  it('将对象不可用说明为未完成且不伪造连接状态', () => {
     const result = { check: 'OBJECT_ACCESS' as const, status: 'UNKNOWN' as const, evidenceCode: 'OBJECT_ACCESS_UNAVAILABLE' }
 
     expect(precheckCheckLabel(result.check)).toBe('所选表可读取')
-    expect(precheckResultLabel(result, false)).toBe('未执行')
-    expect(precheckResultDetail(result)).toContain('依赖数据源连接')
+    expect(precheckResultLabel(result, false)).toBe('未完成')
+    expect(precheckResultDetail(result)).toContain('未得到可验证结论')
+    expect(precheckResultDetail(result)).not.toContain('连接未确认')
   })
 
   it('将未取得连接结果说明为未完成', () => {
@@ -52,5 +53,11 @@ describe('预检查结果展示', () => {
     { check: 'AVAILABLE_SPACE' as const, evidenceCode: 'OUTPUT_SPACE_INSUFFICIENT' },
   ])('为 $evidenceCode 提供失败说明', (result) => {
     expect(precheckResultDetail({ ...result, status: 'FAILED' })).not.toBe('')
+  })
+
+  it('将失败和未知结果都计为提交阻断项', () => {
+    expect(precheckResultBlocksSubmission({ check: 'OBJECT_ACCESS', status: 'FAILED', evidenceCode: 'OBJECT_NOT_ACCESSIBLE' })).toBe(true)
+    expect(precheckResultBlocksSubmission({ check: 'OBJECT_ACCESS', status: 'UNKNOWN', evidenceCode: 'OBJECT_ACCESS_UNAVAILABLE' })).toBe(true)
+    expect(precheckResultBlocksSubmission({ check: 'OBJECT_ACCESS', status: 'PASSED', evidenceCode: 'OBJECT_ACCESSIBLE' })).toBe(false)
   })
 })

@@ -1105,6 +1105,61 @@ func TestRenewExecutionLeaseKeepsCurrentAgentAndEpoch(t *testing.T) {
 	}
 }
 
+func TestAuthorizeExecutionLogAppendAllowsOnlyMatchingTerminalLeaseReplay(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-1")); err != nil {
+		t.Fatalf("SubmitTask() error = %v", err)
+	}
+	claim := validClaim("execution-log-replay", "lease-log-replay", "event-log-replay", "request-log-replay")
+	if err := store.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask() error = %v", err)
+	}
+	var argv []string
+	if err := json.Unmarshal([]byte(validTaskSubmission("task-1").PlannedArgvJSON), &argv); err != nil {
+		t.Fatalf("解析合成任务参数失败: %v", err)
+	}
+	digest, err := executionEnvelopeDigest("task-1", "node-1", testFingerprint, "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", argv)
+	if err != nil {
+		t.Fatalf("计算冻结信封摘要失败: %v", err)
+	}
+	now := testTime.Add(4 * time.Minute)
+	if taskID, err := store.AuthorizeExecutionLogAppend(ctx, "agent-1", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, digest, now); err != nil || taskID != "task-1" {
+		t.Fatalf("活动租约日志授权 = (%q, %v), want task-1 and nil", taskID, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE execution_leases SET status = 'RELEASED', released_at = ? WHERE execution_id = ? AND lease_id = ? AND lease_epoch = ?`, utcText(now), claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch); err != nil {
+		t.Fatalf("释放合成租约失败: %v", err)
+	}
+	if _, err := store.AuthorizeExecutionLogAppend(ctx, "agent-1", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, digest, now); !errors.Is(err, ErrEventRejected) {
+		t.Fatalf("非终态已释放租约补传 error = %v, want ErrEventRejected", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_executions SET state = 'SUCCEEDED', finished_at = ? WHERE execution_id = ?`, utcText(now), claim.ExecutionID); err != nil {
+		t.Fatalf("设置合成成功终态失败: %v", err)
+	}
+	if taskID, err := store.AuthorizeExecutionLogAppend(ctx, "agent-1", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, digest, now.Add(time.Hour)); err != nil || taskID != "task-1" {
+		t.Fatalf("成功终态已释放租约补传授权 = (%q, %v), want task-1 and nil", taskID, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_executions SET state = 'FAILED' WHERE execution_id = ?`, claim.ExecutionID); err != nil {
+		t.Fatalf("设置合成失败终态失败: %v", err)
+	}
+	if taskID, err := store.AuthorizeExecutionLogAppend(ctx, "agent-1", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, digest, now.Add(time.Hour)); err != nil || taskID != "task-1" {
+		t.Fatalf("失败终态已释放租约补传授权 = (%q, %v), want task-1 and nil", taskID, err)
+	}
+	if _, err := store.AuthorizeExecutionLogAppend(ctx, "agent-1", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, strings.Repeat("b", 64), now); !errors.Is(err, ErrEventRejected) {
+		t.Fatalf("错误信封摘要 error = %v, want ErrEventRejected", err)
+	}
+	if _, err := store.AuthorizeExecutionLogAppend(ctx, "agent-other", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, digest, now); !errors.Is(err, ErrEventRejected) {
+		t.Fatalf("其他 Agent 的终态补传 error = %v, want ErrEventRejected", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE execution_leases SET status = 'EXPIRED' WHERE execution_id = ? AND lease_id = ? AND lease_epoch = ?`, claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch); err != nil {
+		t.Fatalf("设置过期租约失败: %v", err)
+	}
+	if _, err := store.AuthorizeExecutionLogAppend(ctx, "agent-1", claim.ExecutionID, claim.LeaseID, claim.LeaseEpoch, digest, now); !errors.Is(err, ErrEventRejected) {
+		t.Fatalf("过期租约补传 error = %v, want ErrEventRejected", err)
+	}
+}
+
 func TestAppendExecutionEventRejectsDuplicateAndWrongLease(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)

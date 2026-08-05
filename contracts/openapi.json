@@ -161,11 +161,11 @@
     },
     "/agent/v1/executions/{executionId}/logs:append": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
-      "post": { "operationId": "appendExecutionLogs", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "x-redaction": "AGENT_BEFORE_UPLOAD_SECRETS_ONLY", "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentExecutionLogAppendAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "appendExecutionLogs", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "x-redaction": "AGENT_BEFORE_UPLOAD_SECRETS_ONLY", "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "x-terminal-log-replay": "SAME_AGENT_RELEASED_TERMINAL_LEASE_AND_FROZEN_ENVELOPE_ONLY", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentExecutionLogAppendAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/executions/{executionId}/logs:gap": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
-      "post": { "operationId": "appendExecutionLogGap", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "description": "A durable no-body source gap created when the Agent log spool reaches its fixed limit. It cannot carry log text, command, path, raw error or secret.", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentExecutionLogGapAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "appendExecutionLogGap", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "description": "A durable no-body source gap created when the Agent log spool reaches its fixed limit. It cannot carry log text, command, path, raw error or secret.", "x-terminal-log-replay": "SAME_AGENT_RELEASED_TERMINAL_LEASE_AND_FROZEN_ENVELOPE_ONLY", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentExecutionLogGapAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/executions/{executionId}:reconcile": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],

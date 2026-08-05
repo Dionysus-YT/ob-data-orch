@@ -13,6 +13,10 @@ import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTimeoutException;
+import java.sql.SQLTransientConnectionException;
 import java.sql.Statement;
 import java.util.Properties;
 
@@ -103,6 +107,9 @@ public final class ConnectionProbe {
     private static String checkObjectAccess(Connection connection, DatabaseMetaData metadata, ProbeInput input) {
         try {
             String tablePattern = metadataPattern(input.tableText(), metadata.getSearchStringEscape());
+            if (tablePattern == null) {
+                return OBJECT_UNAVAILABLE;
+            }
             String catalog = input.isMySQL() ? input.databaseText() : null;
             String schema = input.isOracle() ? input.databaseText() : null;
             try (ResultSet tables = metadata.getTables(catalog, schema, tablePattern, new String[] { "TABLE" })) {
@@ -110,9 +117,9 @@ public final class ConnectionProbe {
                     return OBJECT_NOT_ACCESSIBLE;
                 }
             }
-            return canReadTable(connection, input) ? OBJECT_ACCESSIBLE : OBJECT_NOT_ACCESSIBLE;
+            return checkTableRead(connection, input);
         } catch (SQLException exception) {
-            return OBJECT_UNAVAILABLE;
+            return classifyObjectSQLException(exception);
         } catch (RuntimeException exception) {
             return OBJECT_UNAVAILABLE;
         }
@@ -122,30 +129,52 @@ public final class ConnectionProbe {
      * 只对已通过元数据定位的冻结对象执行固定零行读取。
      * 标识符不能使用 PreparedStatement 参数化，因此只能由兼容模式分支逐段引用和转义；输入从不作为 SQL 片段透传。
      */
-    private static boolean canReadTable(Connection connection, ProbeInput input) {
+    private static String checkTableRead(Connection connection, ProbeInput input) {
         String quote = input.isMySQL() ? "`" : "\"";
         String qualifiedTable = quoteIdentifier(input.databaseText(), quote) + "." + quoteIdentifier(input.tableText(), quote);
         try (Statement statement = connection.createStatement()) {
             statement.setQueryTimeout(5);
             try (ResultSet ignored = statement.executeQuery("SELECT 1 FROM " + qualifiedTable + " WHERE 1 = 0")) {
-                return true;
+                return OBJECT_ACCESSIBLE;
             }
         } catch (SQLException exception) {
-            return false;
+            return classifyObjectSQLException(exception);
         } catch (RuntimeException exception) {
-            return false;
+            return OBJECT_UNAVAILABLE;
         }
+    }
+
+    /**
+     * 已建立连接后的固定对象检查只暴露三态安全结论。
+     * 连接中断和超时仍是事实不可用；其余数据库拒绝统一合并为“对象不可访问”，避免区分权限不足与对象不存在。
+     */
+    static String classifyObjectSQLException(SQLException exception) {
+        SQLException current = exception;
+        for (int depth = 0; current != null && depth < 8; depth++) {
+            if (current instanceof SQLTransientConnectionException
+                    || current instanceof SQLNonTransientConnectionException
+                    || current instanceof SQLRecoverableException
+                    || current instanceof SQLTimeoutException) {
+                return OBJECT_UNAVAILABLE;
+            }
+            String sqlState = current.getSQLState();
+            if (sqlState != null && (sqlState.startsWith("08") || sqlState.startsWith("HYT"))) {
+                return OBJECT_UNAVAILABLE;
+            }
+            current = current.getNextException();
+        }
+        return OBJECT_NOT_ACCESSIBLE;
     }
 
     private static String quoteIdentifier(String value, String quote) {
         return quote + value.replace(quote, quote + quote) + quote;
     }
 
-    private static String metadataPattern(String value, String escape) throws SQLException {
+    private static String metadataPattern(String value, String escape) {
         if (escape == null || escape.length() != 1 || escape.charAt(0) == '%' || escape.charAt(0) == '_') {
             if (value.indexOf('%') >= 0 || value.indexOf('_') >= 0) {
                 // 无法安全转义 JDBC 模式通配符时宁可使对象结论未知，不能扩大为其他对象匹配。
-                throw new SQLException();
+                return null;
             }
             return value;
         }

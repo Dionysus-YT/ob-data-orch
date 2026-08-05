@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -80,19 +79,19 @@ func Test常规Agent二进制重启后补传普通批次与本地队列缺口(t 
 	if err := 队列.EnqueueGap(缺口); err != nil {
 		t.Fatalf("持久化受控本地队列缺口失败: %v", err)
 	}
-	核对受控待确认条目(t, 队列, 2)
+	等待受控待确认条目数量(t, 队列, 2, "初始受控队列条目未准备完成")
 
 	环境 := 受控Agent运行环境(身份目录, 工作目录)
 	控制面.设置阶段(重启补传暂时不可达)
 	首次进程 := 启动受控常规Agent二进制(t, Agent二进制, 环境)
 	等待受控信号(t, 控制面.不可达已观测, "常规 Agent 未向假控制面重试不可达日志批次", 首次进程)
 	停止受控Agent二进制(首次进程)
-	核对受控待确认条目(t, 队列, 2)
+	等待受控待确认条目数量(t, 队列, 2, "停止首次 Agent 后待确认条目未保留")
 
 	控制面.设置阶段(重启补传确认)
 	二次进程 := 启动受控常规Agent二进制(t, Agent二进制, 环境)
 	等待受控信号(t, 控制面.确认已完成, "重启后的常规 Agent 未完成队列补传", 二次进程)
-	等待受控队列清空(t, 队列)
+	等待受控待确认条目数量(t, 队列, 0, "控制面已确认后 Agent 没有清理本地待确认条目")
 	停止受控Agent二进制(二次进程)
 
 	if 顺序 := 控制面.确认顺序(); strings.Join(顺序, ",") != "LOG:1,GAP:2" {
@@ -396,36 +395,27 @@ func 受控Agent安全诊断(进程 *受控Agent二进制进程) string {
 	return 输出
 }
 
-func 等待受控队列清空(t *testing.T, 队列 *agentlogqueue.Queue) {
+// 等待受控待确认条目数量在独立 Agent 与测试观察端短暂争用队列文件时保持有限重试。
+// 任意读取错误或数量不符都只能重试到截止时间，不能借观察逻辑掩盖持续的文件或协议问题。
+func 等待受控待确认条目数量(t *testing.T, 队列 *agentlogqueue.Queue, 期望数量 int, 失败说明 string) {
 	t.Helper()
-	截止 := time.After(5 * time.Second)
+	截止 := time.NewTimer(5 * time.Second)
+	defer 截止.Stop()
 	计时器 := time.NewTicker(25 * time.Millisecond)
 	defer 计时器.Stop()
+	最后数量 := -1
+	var 最后错误 error
 	for {
 		条目, err := 队列.PendingItems()
-		// 受控观察端与独立 Agent 进程没有共享互斥锁；Glob 后文件已被确认删除时重试即可，其他读取错误仍失败关闭。
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			t.Fatalf("读取受控待确认条目失败: %v", err)
-		}
-		if len(条目) == 0 {
+		最后数量, 最后错误 = len(条目), err
+		if err == nil && len(条目) == 期望数量 {
 			return
 		}
 		select {
-		case <-截止:
-			t.Fatal("控制面已确认后 Agent 没有清理本地待确认条目")
+		case <-截止.C:
+			t.Fatalf("%s：最后待确认条目数=%d，期望=%d，最后读取错误=%v", 失败说明, 最后数量, 期望数量, 最后错误)
 		case <-计时器.C:
 		}
-	}
-}
-
-func 核对受控待确认条目(t *testing.T, 队列 *agentlogqueue.Queue, 期望数量 int) {
-	t.Helper()
-	条目, err := 队列.PendingItems()
-	if err != nil || len(条目) != 期望数量 {
-		t.Fatalf("待确认条目数=%d，错误=%v，期望=%d", len(条目), err, 期望数量)
 	}
 }
 

@@ -4,7 +4,7 @@
 > 适用范围：单控制面、用户显式选择的一个执行节点、单表 CSV 导出  
 > 对应门禁：VS-P0-07、VS-P0-10、VS-P0-11  
 > 评审结论：AS-R01～AS-R16 已于 2026-07-21 确认；AD-R09 已补充提交前预检查协议
-> 更新日期：2026-08-03
+> 更新日期：2026-08-04
 
 ## 1. 目标与非目标
 
@@ -126,7 +126,7 @@ AD-R09 补充以下固定操作，但不改变正式任务的 `ClaimExecution` �
 | `ResolvePrecheckSecretSlots` | Agent → 控制面 | 在有效预检查租约内解析固定数据库凭据槽位 | 是；不缓存明文 |
 | `CompletePrecheck` | Agent → 控制面 | 返回结构化检查项、脱敏证据摘要和完整性 | 是；严格 `EXPORT_PREFLIGHT_COMPLETE` 信封，只提交按固定顺序的六项结果，不提交独立 `succeeded` |
 
-- 预检查只执行登记的数据库连接、对象存在/可读取、工具/Java、允许根目录、路径可写/非空和空间检查；`OBJECT_ACCESS` 先使用固定 JDBC `DatabaseMetaData.getTables` 确认对象元数据可见，再以同一连接对已冻结单表执行固定 `SELECT 1 FROM <安全引用的库或 Schema>.<安全引用的表> WHERE 1 = 0`。该语句不读取业务行；MySQL/Oracle 的命名空间位置和引用字符只能由冻结数据源的兼容模式决定，不能由浏览器或 Agent 自由输入 SQL；
+- 预检查只执行登记的数据库连接、对象存在/可读取、工具/Java、允许根目录、路径可写/非空和空间检查；`OBJECT_ACCESS` 先使用固定 JDBC `DatabaseMetaData.getTables` 确认对象元数据可见，再以同一连接对已冻结单表执行固定 `SELECT 1 FROM <安全引用的库或 Schema>.<安全引用的表> WHERE 1 = 0`。该语句不读取业务行；MySQL/Oracle 的命名空间位置和引用字符只能由冻结数据源的兼容模式决定，不能由浏览器或 Agent 自由输入 SQL。连接已建立后，元数据或零行读取被数据库拒绝统一投影为 `FAILED/OBJECT_NOT_ACCESSIBLE`，不区分权限不足、对象不存在或不可见；只有连接中断、超时、探针运行时异常或安全转义无法确认时才投影为 `UNKNOWN/OBJECT_ACCESS_UNAVAILABLE`，且两者都不得携带 SQLState、错误号或异常原文；
 - Agent 在租约确认且有效后，必须先按本机执行顺序完成 `TOOL_ENVIRONMENT`、`OUTPUT_PATH`、`OUTPUT_EMPTY`、`AVAILABLE_SPACE`。仅当四项均为 `PASSED` 时，才允许调用 `ResolvePrecheckSecretSlots` 并执行 `DATABASE_CONNECTIVITY`、`OBJECT_ACCESS`；任一为 `FAILED` 或 `UNKNOWN` 时，不得请求数据库槽位或启动 JDBC，后二项分别以 `UNKNOWN/DATABASE_CONNECTION_UNAVAILABLE`、`UNKNOWN/OBJECT_ACCESS_UNAVAILABLE` 收口。完成报告仍按固定六项契约顺序序列化，不随执行顺序改变；
 - 不接受任意 SQL、Shell、自由命令、任意文件路径或 OBDUMPER 启动请求；
 - 预检查短租约由控制面时间控制，结果绑定 precheckId、lease/epoch、Agent、草稿 revision、配置指纹、credential revision 和节点事实版本；
@@ -147,12 +147,12 @@ AD-R09 补充以下固定操作，但不改变正式任务的 `ClaimExecution` �
 | `OBDUMPER_EXPORT_RENEW_LEASE` | `POST /agent/v1/executions/{executionId}:renew-lease` | 控制面时间续期，不能切换任务、节点、参数或秘密 |
 | `OBDUMPER_EXPORT_RESOLVE_SECRET_SLOTS` | `POST /agent/v1/executions/{executionId}/secret-slots:resolve` | 只在当前租约、任务信封摘要、权限和凭据仍有效时返回短时数据库连接槽位 |
 | `OBDUMPER_EXPORT_APPEND_EVENT` | `POST /agent/v1/executions/{executionId}:events:append` | 只接受 `PROCESS_STARTED`、`PROCESS_EXITED`、工具终态、结果文件事实或无进程启动拒绝；序号连续 |
-| `OBDUMPER_EXPORT_APPEND_LOG` | `POST /agent/v1/executions/{executionId}:logs:append` | 只接受已密封、已完成第一层秘密脱敏的 stdout/stderr 批次；正文可保留已确认的非秘密运行上下文（路径、非密码命令令牌和工具诊断），不能承载原始文件字节或任何秘密。确认必须回显当前批次位置、摘要和下一期望序号；错位或不完整回执不得释放本地批次 |
-| `OBDUMPER_EXPORT_APPEND_LOG_GAP` | `POST /agent/v1/executions/{executionId}:logs:gap` | 只接受 Agent 私有队列容量已满时形成的无正文连续缺口；固定原因码为 `LOCAL_SPOOL_LIMIT`，确认必须回显来源范围、规范化缺口摘要和下一期望序号；错位或不完整回执不得释放本地缺口 |
+| `OBDUMPER_EXPORT_APPEND_LOG` | `POST /agent/v1/executions/{executionId}:logs:append` | 只接受已密封、已完成第一层秘密脱敏的 stdout/stderr 批次；正文可保留已确认的非秘密运行上下文（路径、非密码命令令牌和工具诊断），不能承载原始文件字节或任何秘密。正常上传要求活动未过期租约；终态补传仅接受同一机器身份、同一已释放租约和同一冻结信封。确认必须回显当前批次位置、摘要和下一期望序号；错位或不完整回执不得释放本地批次 |
+| `OBDUMPER_EXPORT_APPEND_LOG_GAP` | `POST /agent/v1/executions/{executionId}:logs:gap` | 只接受 Agent 私有队列容量已满时形成的无正文连续缺口；固定原因码为 `LOCAL_SPOOL_LIMIT`。正常上传要求活动未过期租约；终态补传只适用同一机器身份、同一已释放租约和同一冻结信封。确认必须回显来源范围、规范化缺口摘要和下一期望序号；错位或不完整回执不得释放本地缺口 |
 
 领取时控制面创建 eventSeq=1 的 `SCHEDULED` 事实。Agent 只能发送没有密码令牌的冻结 argv；密码经短时槽位写入任务私有官方安全文件后，直接 Java 启动包内主类。工具进程存活期间每 30 秒续期；进程已启动后即使事件上报失败，Agent 也先等待进程退出再清理安全材料，避免删除仍被 Java 使用的文件。
 
-当前 MVP 已提供仅用于**已第一层脱敏、已密封日志批次**的 Agent 私有可靠队列：批次在控制面确认前保留，Agent 启动后会按稳定顺序重放。它不恢复工具进程、不读取任意文件，也不等同于工具文件日志采集或自动对账。控制面发现 `ISSUED`、`ACKNOWLEDGED` 或 `ACTIVE` 租约已过期时，会将租约标为 `EXPIRED`，把关联 execution 收口为 `FAILED + reconciliation_required=1` 并记录审计；这会释放节点容量，但绝不自动重新领取同一任务或宣称成功。
+当前 MVP 已提供仅用于**已第一层脱敏、已密封日志批次**的 Agent 私有可靠队列：批次在控制面确认前保留，Agent 启动后会按稳定顺序重放。它不恢复工具进程、不读取任意文件，也不等同于工具文件日志采集或自动对账。终态 execution 的重放使用既有两个日志端点，不新增恢复入口：控制面重新计算不可变任务信封摘要，且只在请求的 Agent 身份、`leaseId`、`leaseEpoch` 与已释放终态租约完全一致时接受。新的 `bootId` 允许表示同一 Agent 进程重启；过期租约、其他机器、摘要不符、非终态已释放租约和所有状态/事件写入仍失败关闭。接受日志或缺口不会恢复 execution、延长租约、改变终态或降低事件证据要求。控制面仅在回显相同位置与摘要后允许 Agent 删除本地条目。控制面发现 `ISSUED`、`ACKNOWLEDGED` 或 `ACTIVE` 租约已过期时，会将租约标为 `EXPIRED`，把关联 execution 收口为 `FAILED + reconciliation_required=1` 并记录审计；这会释放节点容量，但绝不自动重新领取同一任务或宣称成功。
 
 ## 7. 心跳与节点在线事实
 

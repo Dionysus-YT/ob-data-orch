@@ -63,7 +63,7 @@ func TestPrecheckProbeFailsClosedForUnavailableOrUnreachableObject(t *testing.T)
 	}{
 		{name: "连接被拒绝", runnerError: jdbcprobe.ErrConnectionFailed, wantDB: agentpreflight.StatusFailed, wantDBCode: EvidenceDatabaseFailed, wantObject: agentpreflight.StatusUnknown, wantObjCode: EvidenceObjectUnavailable},
 		{name: "运行时不可用", runnerError: jdbcprobe.ErrDriverUnavailable, wantDB: agentpreflight.StatusUnknown, wantDBCode: EvidenceDatabaseUnavailable, wantObject: agentpreflight.StatusUnknown, wantObjCode: EvidenceObjectUnavailable},
-		{name: "对象不存在或无权", access: jdbcprobe.ObjectNotFound, wantDB: agentpreflight.StatusPassed, wantDBCode: EvidenceDatabaseConnected, wantObject: agentpreflight.StatusFailed, wantObjCode: EvidenceObjectNotAccessible},
+		{name: "对象不存在或无权", access: jdbcprobe.ObjectNotAccessible, wantDB: agentpreflight.StatusPassed, wantDBCode: EvidenceDatabaseConnected, wantObject: agentpreflight.StatusFailed, wantObjCode: EvidenceObjectNotAccessible},
 		{name: "对象元数据不可用", access: jdbcprobe.ObjectUnavailable, wantDB: agentpreflight.StatusPassed, wantDBCode: EvidenceDatabaseConnected, wantObject: agentpreflight.StatusUnknown, wantObjCode: EvidenceObjectUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {

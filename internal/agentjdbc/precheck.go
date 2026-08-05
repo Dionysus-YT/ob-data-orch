@@ -189,7 +189,7 @@ func objectAccessResult(access jdbcprobe.ObjectAccess) agentpreflight.Result {
 	switch access {
 	case jdbcprobe.ObjectAccessible:
 		return agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
-	case jdbcprobe.ObjectNotFound:
+	case jdbcprobe.ObjectNotAccessible:
 		return agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: EvidenceObjectNotAccessible}
 	default:
 		return unavailableObjectResult()

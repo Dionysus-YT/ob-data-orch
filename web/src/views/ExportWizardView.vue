@@ -7,7 +7,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import WizardFrame from '@/components/WizardFrame.vue'
 import { isExportEligibleDataSource } from './exportDataSourceEligibility'
 import { validateExportDraftInput } from './exportDraftInput'
-import { fixedPrecheckChecks, precheckCheckLabel, precheckResultDetail, precheckResultLabel } from './exportPrecheckPresentation'
+import { fixedPrecheckChecks, precheckCheckLabel, precheckResultBlocksSubmission, precheckResultDetail, precheckResultLabel } from './exportPrecheckPresentation'
 
 const api = browserApi()
 const route = useRoute()
@@ -64,7 +64,7 @@ const precheckRows = computed(() => fixedPrecheckChecks.map((check) => ({
   check,
   result: activePrecheck.value?.results.find((result) => result.check === check),
 })))
-const failedPrecheckRows = computed(() => precheckRows.value.filter((row) => row.result?.status === 'FAILED'))
+const blockingPrecheckRows = computed(() => precheckRows.value.filter((row) => precheckResultBlocksSubmission(row.result)))
 const canSubmit = computed(() => activePrecheck.value?.status === 'SUCCEEDED' && activePrecheck.value.integrityStatus === 'COMPLETE' && Boolean(currentDraft.value) && !submitting.value)
 const footerBaselineNote = computed(() => {
 	if (activeStep.value === 6) return canSubmit.value ? '预检查已通过。提交后，所选 Agent 将领取已冻结的导出任务并启动 OBDUMPER。' : (currentDraft.value ? '草稿已保存；请先完成当前版本的固定预检查，提交后才会启动 OBDUMPER。' : '尚未读取草稿；请返回上一步完成固定字段并创建草稿。')
@@ -459,9 +459,9 @@ function lastTestLabel(source: DataSourceSummary) {
           <p v-if="activePrecheck" class="precheck-current-status" :class="{ 'is-failed': activePrecheck.status === 'FAILED' }" :role="activePrecheck.status === 'FAILED' ? 'alert' : 'status'">当前状态：<strong>{{ precheckStatusLabel(activePrecheck.status) }}</strong></p>
           <section v-if="activePrecheck?.status === 'FAILED'" class="precheck-failure-summary" role="alert">
             <strong>预检查未通过</strong>
-            <p>以下 {{ failedPrecheckRows.length }} 项检查未通过。请修正后重新执行预检查。</p>
+            <p>以下 {{ blockingPrecheckRows.length }} 项检查未通过或未完成。请修正后重新执行预检查。</p>
             <ul>
-              <li v-for="row in failedPrecheckRows" :key="row.check">
+              <li v-for="row in blockingPrecheckRows" :key="row.check">
                 <strong>{{ precheckCheckLabel(row.check) }}</strong>
                 <span>{{ precheckResultDetail(row.result) }}</span>
                 <code>原因码：{{ row.result?.evidenceCode }}</code>
@@ -471,7 +471,7 @@ function lastTestLabel(source: DataSourceSummary) {
           <div v-for="row in precheckRows" :key="row.check" class="precheck-item" :class="{ 'is-failed': row.result?.status === 'FAILED' }">
             <span class="status-dot" :class="precheckDotClass(row.result)" />
             <strong>{{ precheckCheckLabel(row.check) }}</strong>
-            <span><b class="precheck-result-status" :class="{ 'is-failed': row.result?.status === 'FAILED' }">{{ precheckResultLabel(row.result, precheckRunning) }}</b><small v-if="precheckResultDetail(row.result)">{{ precheckResultDetail(row.result) }}</small><code v-if="row.result?.status === 'FAILED'">原因码：{{ row.result.evidenceCode }}</code></span>
+            <span><b class="precheck-result-status" :class="{ 'is-failed': row.result?.status === 'FAILED' }">{{ precheckResultLabel(row.result, precheckRunning) }}</b><small v-if="precheckResultDetail(row.result)">{{ precheckResultDetail(row.result) }}</small><code v-if="precheckResultBlocksSubmission(row.result)">原因码：{{ row.result?.evidenceCode }}</code></span>
           </div>
         </section>
         <section class="command-empty">

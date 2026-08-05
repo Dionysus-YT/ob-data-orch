@@ -124,11 +124,14 @@ func Test预检查请求使用固定V3帧且拒绝不安全对象标识(t *testi
 }
 
 func Test预检查响应只接受固定对象安全投影(t *testing.T) {
-	body := []byte(`{"status":"SUCCESS","productName":"OceanBase","productVersion":"4.3","driverName":"OceanBase Connector/J","driverVersion":"2.4.14","objectAccess":"ACCESSIBLE"}`)
-	result, err := parsePreflightResponse(body)
-	if err != nil || result.ObjectAccess != ObjectAccessible || result.Connection.DriverVersion != "2.4.14" {
-		t.Fatalf("parsePreflightResponse() = %#v, %v", result, err)
+	for _, access := range []ObjectAccess{ObjectAccessible, ObjectNotAccessible, ObjectUnavailable} {
+		body := []byte(`{"status":"SUCCESS","productName":"OceanBase","productVersion":"4.3","driverName":"OceanBase Connector/J","driverVersion":"2.4.14","objectAccess":"` + string(access) + `"}`)
+		result, err := parsePreflightResponse(body)
+		if err != nil || result.ObjectAccess != access || result.Connection.DriverVersion != "2.4.14" {
+			t.Fatalf("parsePreflightResponse(%q) = %#v, %v", access, result, err)
+		}
 	}
+	body := []byte(`{"status":"SUCCESS","productName":"OceanBase","productVersion":"4.3","driverName":"OceanBase Connector/J","driverVersion":"2.4.14","objectAccess":"ACCESSIBLE"}`)
 	for _, invalid := range []string{"", "LEAKED_OBJECT", "ACCESSIBLE\nunsafe"} {
 		invalidBody := []byte(`{"status":"SUCCESS","productName":"OceanBase","productVersion":"4.3","driverName":"OceanBase Connector/J","driverVersion":"2.4.14","objectAccess":"` + invalid + `"}`)
 		if _, err := parsePreflightResponse(invalidBody); !errors.Is(err, ErrProbeFailed) {

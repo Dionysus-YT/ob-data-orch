@@ -4064,34 +4064,42 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 	return state, nil
 }
 
-// ExecutionLeaseOwned 仅为日志上传复验当前 execution 租约归属。
-// 它不读取任务参数、凭据或日志正文，避免日志 API 获得额外执行能力。
-func (s *Store) ExecutionLeaseOwned(ctx context.Context, agentID, executionID, leaseID string, leaseEpoch int64, now time.Time) bool {
-	if s == nil || s.db == nil || agentID == "" || executionID == "" || leaseID == "" || leaseEpoch < 1 || now.IsZero() {
-		return false
+// AuthorizeExecutionLogAppend 只为已密封日志批次或无正文缺口复验原执行租约。
+// 正常运行要求活动且未过期的租约；终态后仅允许同一 Agent、同一已释放租约和同一冻结信封补传，
+// 补传不会恢复执行、延长租约或改变任务终态。过期、撤销、错配或非终态已释放的租约一律拒绝。
+func (s *Store) AuthorizeExecutionLogAppend(ctx context.Context, agentID, executionID, leaseID string, leaseEpoch int64, envelopeDigest string, now time.Time) (string, error) {
+	if s == nil || s.db == nil || agentID == "" || executionID == "" || leaseID == "" || leaseEpoch < 1 || !isSHA256(envelopeDigest) || now.IsZero() {
+		return "", ErrEventRejected
 	}
-	var found int
+	var taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, argvJSON string
 	err := s.db.QueryRowContext(ctx, `
-        SELECT 1 FROM execution_leases AS l
-        JOIN task_executions AS e ON e.execution_id = l.execution_id
-        WHERE l.execution_id = ? AND l.lease_id = ? AND l.lease_epoch = ? AND l.agent_id = ?
-          AND e.agent_id = ? AND l.status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE') AND l.expires_at > ?
-    `, executionID, leaseID, leaseEpoch, agentID, agentID, utcText(now)).Scan(&found)
-	return err == nil && found == 1
-}
-
-// ExecutionTaskID 返回日志投影所需的任务关联，不返回任务快照、参数或任何凭据材料。
-func (s *Store) ExecutionTaskID(ctx context.Context, executionID string) (string, error) {
-	if s == nil || s.db == nil || executionID == "" {
-		return "", errors.New("execution task lookup is invalid")
-	}
-	var taskID string
-	err := s.db.QueryRowContext(ctx, `SELECT task_id FROM task_executions WHERE execution_id = ?`, executionID).Scan(&taskID)
+        SELECT t.task_id, e.node_id, t.config_fingerprint, t.tool_version, t.metadata_version,
+               t.capability_version, t.planned_argv_json
+        FROM task_executions AS e
+        JOIN tasks AS t ON t.task_id = e.task_id
+        JOIN execution_leases AS l
+          ON l.execution_id = e.execution_id AND l.lease_id = ? AND l.lease_epoch = ?
+        WHERE e.execution_id = ? AND e.agent_id = ? AND l.agent_id = ?
+          AND (
+              (l.status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE') AND l.expires_at > ?)
+              OR (l.status = 'RELEASED' AND e.state IN ('SUCCEEDED', 'FAILED'))
+          )
+    `, leaseID, leaseEpoch, executionID, agentID, agentID, utcText(now)).Scan(
+		&taskID, &nodeID, &configFingerprint, &toolVersion, &metadataVersion, &capabilityVersion, &argvJSON,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrDataSourceNotFound
+		return "", ErrEventRejected
 	}
 	if err != nil {
-		return "", fmt.Errorf("read execution task id: %w", err)
+		return "", fmt.Errorf("read execution log append authorization: %w", err)
+	}
+	var argv []string
+	if err := json.Unmarshal([]byte(argvJSON), &argv); err != nil || !validExecutionArgv(argv) {
+		return "", ErrEventRejected
+	}
+	expectedDigest, err := executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, argv)
+	if err != nil || subtle.ConstantTimeCompare([]byte(expectedDigest), []byte(envelopeDigest)) != 1 {
+		return "", ErrEventRejected
 	}
 	return taskID, nil
 }

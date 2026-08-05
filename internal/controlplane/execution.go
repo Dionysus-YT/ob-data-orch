@@ -310,7 +310,7 @@ func (s *Server) appendAuthenticatedExecutionEvent(w http.ResponseWriter, r *htt
 }
 
 // appendAuthenticatedExecutionLog 接收已完成第一层脱敏的日志批次，并由控制面执行键值泄露拦截和序号核对。
-// Windows 本机 MVP 先提供受限内存查看投影；持久分段日志和崩溃补传仍需后续 G3 收口。
+// 终态后只接受同一已释放租约的已持久化补传，不能借日志端点恢复执行或改写任务状态。
 func (s *Server) appendAuthenticatedExecutionLog(w http.ResponseWriter, r *http.Request, executionID string) {
 	machine, _, ok := s.authenticatedExecutionAgent(w, r)
 	if !ok {
@@ -335,13 +335,9 @@ func (s *Server) appendAuthenticatedExecutionLog(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusServiceUnavailable, "LOG_BATCH_UNAVAILABLE", "日志批次暂时不可用", true)
 		return
 	}
-	if !database.ExecutionLeaseOwned(r.Context(), machine.AgentID, executionID, request.Payload.LeaseID, request.Payload.LeaseEpoch, time.Now().UTC()) {
-		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
-		return
-	}
-	taskID, err := database.ExecutionTaskID(r.Context(), executionID)
+	taskID, err := database.AuthorizeExecutionLogAppend(r.Context(), machine.AgentID, executionID, request.Payload.LeaseID, request.Payload.LeaseEpoch, request.Payload.EnvelopeDigest, time.Now().UTC())
 	if err != nil || taskID == "" {
-		writeError(w, http.StatusServiceUnavailable, "LOG_BATCH_UNAVAILABLE", "日志批次暂时无法保存", true)
+		writeExecutionStoreError(w, err)
 		return
 	}
 	result, err := s.logs.appendBatch(r.Context(), taskID, executionID, request.Payload.Batch)
@@ -381,13 +377,9 @@ func (s *Server) appendAuthenticatedExecutionLogGap(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusServiceUnavailable, "LOG_GAP_UNAVAILABLE", "日志缺口暂时无法保存", true)
 		return
 	}
-	if !database.ExecutionLeaseOwned(r.Context(), machine.AgentID, executionID, request.Payload.LeaseID, request.Payload.LeaseEpoch, time.Now().UTC()) {
-		writeError(w, http.StatusConflict, "EXECUTION_LEASE_REJECTED", "任务租约无效", false)
-		return
-	}
-	taskID, err := database.ExecutionTaskID(r.Context(), executionID)
+	taskID, err := database.AuthorizeExecutionLogAppend(r.Context(), machine.AgentID, executionID, request.Payload.LeaseID, request.Payload.LeaseEpoch, request.Payload.EnvelopeDigest, time.Now().UTC())
 	if err != nil || taskID == "" {
-		writeError(w, http.StatusServiceUnavailable, "LOG_GAP_UNAVAILABLE", "日志缺口暂时无法保存", true)
+		writeExecutionStoreError(w, err)
 		return
 	}
 	result, err := s.logs.appendGap(r.Context(), taskID, executionID, request.Payload.Gap)

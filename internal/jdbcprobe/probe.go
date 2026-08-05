@@ -90,9 +90,9 @@ const (
 type ObjectAccess string
 
 const (
-	ObjectAccessible  ObjectAccess = "ACCESSIBLE"
-	ObjectUnavailable ObjectAccess = "UNAVAILABLE"
-	ObjectNotFound    ObjectAccess = "NOT_ACCESSIBLE"
+	ObjectAccessible    ObjectAccess = "ACCESSIBLE"
+	ObjectUnavailable   ObjectAccess = "UNAVAILABLE"
+	ObjectNotAccessible ObjectAccess = "NOT_ACCESSIBLE"
 )
 
 // PreflightResult 同时保存一条 JDBC 连接和固定对象读取检查的安全结论。
@@ -371,7 +371,7 @@ func parsePreflightResponse(output []byte) (PreflightResult, error) {
 		return PreflightResult{}, err
 	}
 	objectAccess := ObjectAccess(response.ObjectAccess)
-	if objectAccess != ObjectAccessible && objectAccess != ObjectUnavailable && objectAccess != ObjectNotFound {
+	if objectAccess != ObjectAccessible && objectAccess != ObjectUnavailable && objectAccess != ObjectNotAccessible {
 		return PreflightResult{}, ErrProbeFailed
 	}
 	return PreflightResult{Connection: connection, ObjectAccess: objectAccess}, nil
