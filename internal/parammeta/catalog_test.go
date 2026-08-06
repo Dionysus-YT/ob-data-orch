@@ -2,6 +2,7 @@ package parammeta
 
 import (
 	"bytes"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -57,6 +58,44 @@ func TestCatalogReturnsDefensiveCopies(t *testing.T) {
 	got, ok := catalog.Definition("--host")
 	if !ok || got.LongName != "--host" || got.OfficialEvidence[0] == "changed" {
 		t.Fatal("catalog was mutated through a returned definition")
+	}
+}
+
+// TestEmbeddedResourceInventoryIsLoadable 固化嵌入资源清单：
+// resources/ 下只允许存在已确认可加载的元数据，新增资源必须同步提供加载路径与测试，
+// 避免再次出现嵌入文件无法被解析却没有测试发现的情况。
+func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
+	t.Parallel()
+	entries, err := fs.ReadDir(resourceFiles, "resources")
+	if err != nil {
+		t.Fatalf("read embedded resources: %v", err)
+	}
+	known := map[string]struct{}{
+		"obdumper-4.3.5-slice-v1.json": {},
+		"obdumper-4.3.5-slice-v2.json": {},
+		"obdumper-4.3.5-slice-v3.json": {},
+		"obdumper-4.3.5-slice-v4.json": {},
+		"obdumper-4.3.5-slice-v5.json": {},
+	}
+	for _, entry := range entries {
+		if _, ok := known[entry.Name()]; !ok {
+			t.Fatalf("unexpected embedded parameter metadata resource %q without loader support and tests", entry.Name())
+		}
+		delete(known, entry.Name())
+	}
+	if len(known) != 0 {
+		t.Fatalf("missing embedded parameter metadata resources: %v", known)
+	}
+	if _, err := loadFromFS(resourceFiles, defaultRevisionResource); err != nil {
+		t.Fatalf("embedded v5 revision is not loadable: %v", err)
+	}
+	base, err := resourceFiles.ReadFile("resources/obdumper-4.3.5-slice-v1.json")
+	if err != nil {
+		t.Fatalf("read embedded base: %v", err)
+	}
+	raw, err := decodeResource(base)
+	if err != nil || raw.MetadataVersion != "obdumper-4.3.5-slice-v1" {
+		t.Fatalf("embedded v1 base is not decodable: %v", err)
 	}
 }
 

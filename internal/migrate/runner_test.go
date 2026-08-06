@@ -35,16 +35,16 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	if tableCount != 26 || strictCount != 26 {
-		t.Fatalf("schema tables = %d, strict tables = %d; want 26 and 26", tableCount, strictCount)
+	if tableCount != 27 || strictCount != 27 {
+		t.Fatalf("schema tables = %d, strict tables = %d; want 27 and 27", tableCount, strictCount)
 	}
 
 	var migrationCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 13 {
-		t.Fatalf("migration count = %d, want 13", migrationCount)
+	if migrationCount != 14 {
+		t.Fatalf("migration count = %d, want 14", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -383,6 +383,10 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read thirteenth migration: %v", err)
 	}
+	fourteenthMigration, err := migrations.Files.ReadFile("0014_export_generalization.sql")
+	if err != nil {
+		t.Fatalf("read fourteenth migration: %v", err)
+	}
 	tampered := fstest.MapFS{
 		"0001_initial.sql":                                    &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
 		"0002_add_data_source_odc_identity.sql":               &fstest.MapFile{Data: secondMigration},
@@ -397,6 +401,7 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0011_add_execution_node_runtime_configuration.sql":   &fstest.MapFile{Data: eleventhMigration},
 		"0012_add_execution_secret_resolution_receipts.sql":   &fstest.MapFile{Data: twelfthMigration},
 		"0013_add_log_batch_projection_fields.sql":            &fstest.MapFile{Data: thirteenthMigration},
+		"0014_export_generalization.sql":                      &fstest.MapFile{Data: fourteenthMigration},
 	}
 	if err := ApplyFS(ctx, db, tampered); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("Apply() error = %v, want checksum mismatch", err)
@@ -443,14 +448,14 @@ func insertSyntheticTaskFixture(t *testing.T, db *sql.DB) {
 		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant', NULL)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
-		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '[]', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '[]', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO precheck_runs(
             precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
             credential_id, credential_revision, node_id, agent_id, status, lease_id,
             lease_epoch, lease_expires_at, result_json, integrity_status, valid_until,
             created_at, completed_at, node_facts_revision, binding_digest, binding_agent_id
         ) VALUES (?, ?, 1, ?, ?, ?, 1, ?, NULL, 'SUCCEEDED', NULL, NULL, NULL, '{}', 'COMPLETE', ?, ?, ?, 0, NULL, NULL)`, []any{"precheck-1", "draft-1", fingerprint, "source-1", "credential-1", "node-1", "2026-01-01T01:00:00Z", "2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z"}},
-		{`INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, '{}', '[]', ?, ?)`, []any{"task-1", "subject-1", "source-1", "node-1", "precheck-1", "credential-1", fingerprint, "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", "obdumper --user ******", "2026-01-01T00:02:00Z"}},
+		{`INSERT INTO tasks(task_id, creator_subject_id, data_source_id, node_id, precheck_id, credential_id, credential_revision, config_fingerprint, tool_version, metadata_version, capability_version, snapshot_json, planned_argv_json, planned_command_redacted, submitted_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, '{}', '[]', ?, ?)`, []any{"task-1", "subject-1", "source-1", "node-1", "precheck-1", "credential-1", fingerprint, "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", "obdumper --user ******", "2026-01-01T00:02:00Z"}},
 	}
 	for index, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement.query, statement.args...); err != nil {
@@ -477,7 +482,7 @@ func insertLegacyPrecheckFixture(t *testing.T, db *sql.DB) {
             created_at, revoked_at, last_heartbeat_request_id, last_heartbeat_request_digest
         ) VALUES (?, ?, X'010203', 1, 'ACTIVE', 'agent-v1', 'boot-legacy', '2026-01-01T00:00:00Z',
                   1, 0, NULL, 0, '2026-01-01T00:00:00Z', NULL, NULL, NULL)`, []any{"agent-legacy", "node-legacy"}},
-		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '{}', ?, ?)`, []any{"draft-legacy", "subject-legacy", "source-legacy", "node-legacy", "4.3.5-RELEASE", "metadata-legacy", "capability-legacy", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '{}', ?, ?)`, []any{"draft-legacy", "subject-legacy", "source-legacy", "node-legacy", "4.3.5-RELEASE", "metadata-legacy", "capability-legacy", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO precheck_runs(
             precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
             credential_id, credential_revision, node_id, agent_id, status, lease_id,

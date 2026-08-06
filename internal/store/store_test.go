@@ -820,6 +820,7 @@ func TestUpdateDraftUsesOptimisticRevisionAndRejectsSecretJSON(t *testing.T) {
 		DraftID:           "draft-1",
 		ExpectedRevision:  1,
 		ConfigJSON:        `{"database":"synthetic_db","table":"synthetic_table"}`,
+		ConfigVersion:     "v5",
 		ConfigFingerprint: strings.Repeat("b", 64),
 		InvalidationJSON:  `{}`,
 		UpdatedAt:         testTime.Add(time.Minute),
@@ -1603,7 +1604,7 @@ func TestCreateExportDraftBindsEnabledSourceAndNodeWithIdempotency(t *testing.T)
 		t.Fatalf("seed successful connection test: %v", err)
 	}
 	input := ExportDraftCreate{
-		ExportDraft: ExportDraft{DraftID: "draft-create", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v3", CapabilityVersion: "export-odp-single-table-csv-v1", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
+		ExportDraft: ExportDraft{DraftID: "draft-create", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v3", CapabilityVersion: "export-odp-single-table-csv-v1", ConfigVersion: "v5", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
 		RequestID:   "request-draft-create-1", IdempotencyKey: "idempotency-draft-create-1", RequestDigest: testFingerprint,
 	}
 	created, err := store.CreateExportDraft(context.Background(), input)
@@ -1634,13 +1635,77 @@ func TestCreateExportDraftRejectsEnabledSourceWithoutSuccessfulConnectionTest(t 
 		t.Fatalf("clear connection test: %v", err)
 	}
 	input := ExportDraftCreate{
-		ExportDraft: ExportDraft{DraftID: "draft-unverified", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v3", CapabilityVersion: "export-odp-single-table-csv-v1", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
+		ExportDraft: ExportDraft{DraftID: "draft-unverified", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v3", CapabilityVersion: "export-odp-single-table-csv-v1", ConfigVersion: "v5", ConfigJSON: `{"database":"synthetic_db","table":"synthetic_table","format":"CSV"}`, ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`, CreatedAt: testTime, UpdatedAt: testTime},
 		RequestID:   "request-draft-unverified", IdempotencyKey: "idempotency-draft-unverified", RequestDigest: testFingerprint,
 	}
 	if _, err := store.CreateExportDraft(context.Background(), input); !errors.Is(err, ErrDataSourceNotFound) {
 		t.Fatalf("CreateExportDraft() error = %v, want ErrDataSourceNotFound", err)
 	}
 	assertCount(t, store.db, "SELECT COUNT(*) FROM export_drafts WHERE draft_id = 'draft-unverified'", 0)
+}
+
+// TestExportDraftV6RoundTripAndLegacyCompatibility 验证 v6 草稿结构化列往返、
+// 存量 v5 草稿默认版本读取，以及 v2 快照的任务投影兼容。
+func TestExportDraftV6RoundTripAndLegacyCompatibility(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+
+	input := ExportDraftCreate{
+		ExportDraft: ExportDraft{
+			DraftID: "draft-v6", OwnerSubjectID: "subject-1", DataSourceID: "source-1", NodeID: "node-1",
+			ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v5", CapabilityVersion: "export-odp-single-table-csv-v1",
+			ConfigVersion:     "v6",
+			ConfigJSON:        `{"configVersion":"v6","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/tmp/output","config":{"dataFormat":{"formatKind":"CSV"}}}`,
+			ConfigFingerprint: testFingerprint, InvalidationJSON: `{}`,
+			ObjectScopeJSON: `{"scopeKind":"SPECIFIED"}`, ContentSelectionJSON: `{"contentKind":"DATA_ONLY"}`,
+			DataFormatJSON: `{"formatKind":"CSV"}`, OutputConfigJSON: `{"outputKind":"LOCAL","filePath":"/E:/tmp/output"}`,
+			PerformanceConfigJSON: `{}`, FilterConfigJSON: `{}`, DDLBehaviorJSON: `{}`,
+			CreatedAt: testTime, UpdatedAt: testTime,
+		},
+		RequestID: "request-draft-v6", IdempotencyKey: "idempotency-draft-v6", RequestDigest: testFingerprint,
+	}
+	if _, err := store.CreateExportDraft(ctx, input); err != nil {
+		t.Fatalf("v6 CreateExportDraft() error = %v", err)
+	}
+	draft, err := store.GetExportDraft(ctx, "draft-v6")
+	if err != nil {
+		t.Fatalf("v6 GetExportDraft() error = %v", err)
+	}
+	if draft.ConfigVersion != "v6" || draft.ObjectScopeJSON != `{"scopeKind":"SPECIFIED"}` || draft.DataFormatJSON != `{"formatKind":"CSV"}` || draft.OutputConfigJSON != `{"outputKind":"LOCAL","filePath":"/E:/tmp/output"}` || draft.DDLBehaviorJSON != `{}` {
+		t.Fatalf("v6 draft round trip mismatch: %#v", draft)
+	}
+
+	// 存量草稿未写入新列时必须读出默认 v5 版本与空结构化列。
+	legacy, err := store.GetExportDraft(ctx, "draft-1")
+	if err != nil {
+		t.Fatalf("legacy GetExportDraft() error = %v", err)
+	}
+	if legacy.ConfigVersion != "v5" || legacy.ObjectScopeJSON != "{}" || legacy.DDLBehaviorJSON != "{}" {
+		t.Fatalf("legacy draft version mismatch: %#v", legacy)
+	}
+
+	// v2 快照保留扁平投影键，任务摘要投影必须继续可读。
+	submission := validTaskSubmission("task-v2")
+	submission.SnapshotVersion = "v2"
+	submission.SnapshotJSON = input.ConfigJSON
+	if err := store.SubmitTask(ctx, submission); err != nil {
+		t.Fatalf("v2 SubmitTask() error = %v", err)
+	}
+	summary, err := store.GetTaskSummary(ctx, "task-v2")
+	if err != nil {
+		t.Fatalf("v2 GetTaskSummary() error = %v", err)
+	}
+	if summary.SnapshotVersion != "v2" || summary.Database != "synthetic_db" || summary.Table != "synthetic_table" || summary.Format != "CSV" {
+		t.Fatalf("v2 task summary projection mismatch: %#v", summary)
+	}
+
+	// 未知快照版本必须失败关闭。
+	invalid := validTaskSubmission("task-invalid-snapshot")
+	invalid.SnapshotVersion = "v9"
+	if err := store.SubmitTask(ctx, invalid); err == nil {
+		t.Fatalf("invalid snapshot version accepted")
+	}
 }
 
 func TestCreatePrecheckFreezesDraftBindingAndIdempotency(t *testing.T) {
@@ -2304,7 +2369,7 @@ func seedBaseFixture(t *testing.T, store *Store) {
             protocol_version, boot_id, last_heartbeat_at, capacity_total, capacity_used,
             facts_json, facts_revision, created_at, revoked_at
         ) VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, NULL, 1, ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "agent-v1", "boot-1", utcText(testTime), utcText(testTime)}},
-		{`INSERT INTO export_drafts VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{"database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/tmp/output"}', ?, '{}', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", testFingerprint, utcText(testTime), utcText(testTime)}},
+		{`INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{"database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/tmp/output"}', ?, '{}', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", testFingerprint, utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO precheck_runs(
             precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
             credential_id, credential_revision, node_id, agent_id, status, lease_id,
@@ -2333,6 +2398,7 @@ func validTaskSubmission(taskID string) TaskSubmission {
 		ToolVersion:            "4.3.5-RELEASE",
 		MetadataVersion:        "obdumper-4.3.5-slice-v3",
 		CapabilityVersion:      "export-odp-single-table-csv-v1",
+		SnapshotVersion:        "v1",
 		SnapshotJSON:           `{"credentialReference":{"credentialId":"credential-1","revision":1}}`,
 		PlannedArgvJSON:        `["--host","127.0.0.1","--port","2881","--user","synthetic_user@synthetic_tenant","--database","synthetic_db","--table","synthetic_table","--csv","--file-path","/E:/tmp/output"]`,
 		PlannedCommandRedacted: `obdumper --host 127.0.0.1 --port 2881 --user ****** --database synthetic_db --table synthetic_table --csv --file-path /E:/tmp/output`,

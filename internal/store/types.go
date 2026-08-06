@@ -54,21 +54,33 @@ type DraftUpdate struct {
 	ConfigFingerprint string
 	InvalidationJSON  string
 	UpdatedAt         time.Time
+	// ConfigVersion 标记更新后草稿配置的版本（v5 或 v6）。
+	ConfigVersion string
+	// 结构化子配置 JSON，仅 v6 草稿写入非空值；v5 更新时重置为 '{}'。
+	ObjectScopeJSON       string
+	ContentSelectionJSON  string
+	DataFormatJSON        string
+	OutputConfigJSON      string
+	PerformanceConfigJSON string
+	FilterConfigJSON      string
+	DDLBehaviorJSON       string
 }
 
 type TaskSubmission struct {
-	TaskID                 string
-	CreatorSubjectID       string
-	AuditActorID           string
-	DataSourceID           string
-	NodeID                 string
-	PrecheckID             string
-	CredentialID           string
-	CredentialRevision     int64
-	ConfigFingerprint      string
-	ToolVersion            string
-	MetadataVersion        string
-	CapabilityVersion      string
+	TaskID             string
+	CreatorSubjectID   string
+	AuditActorID       string
+	DataSourceID       string
+	NodeID             string
+	PrecheckID         string
+	CredentialID       string
+	CredentialRevision int64
+	ConfigFingerprint  string
+	ToolVersion        string
+	MetadataVersion    string
+	CapabilityVersion  string
+	// SnapshotVersion 标记快照结构版本：v1 为原始扁平快照，v2 为泛化快照。
+	SnapshotVersion        string
 	SnapshotJSON           string
 	PlannedArgvJSON        string
 	PlannedCommandRedacted string
@@ -85,15 +97,17 @@ type TaskSubmissionResult struct {
 // TaskSummary 是任务详情各只读投影共用的冻结非敏感字段。
 // HTTP 层必须按概览、快照、命令证据或执行事实再裁剪，不能把该内部结构整体返回。
 type TaskSummary struct {
-	TaskID                 string
-	CreatorSubjectID       string
-	DataSourceID           string
-	NodeID                 string
-	PrecheckID             string
-	ConfigFingerprint      string
-	ToolVersion            string
-	MetadataVersion        string
-	CapabilityVersion      string
+	TaskID            string
+	CreatorSubjectID  string
+	DataSourceID      string
+	NodeID            string
+	PrecheckID        string
+	ConfigFingerprint string
+	ToolVersion       string
+	MetadataVersion   string
+	CapabilityVersion string
+	// SnapshotVersion 标记冻结快照的结构版本（v1 或 v2），只读投影不得修改它。
+	SnapshotVersion        string
 	Database               string
 	Table                  string
 	Format                 string
@@ -653,6 +667,146 @@ type DataSourceUpdateResult struct {
 	ConnectionTestInvalidated bool
 }
 
+// ExportConfigTemplate 是从成功任务保存的导出配置模板。
+// 可用于创建新草稿，复用已验证的配置结构。
+type ExportConfigTemplate struct {
+	TemplateID        string
+	OwnerSubjectID    string
+	DisplayName       string
+	CapabilityVersion string
+	ConfigJSON        string
+	ConfigFingerprint string
+	SourceTaskID      string
+	Revision          int64
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// ExportConfigTemplateCreate 将模板与幂等记录绑定在同一事务内。
+type ExportConfigTemplateCreate struct {
+	ExportConfigTemplate
+	RequestID      string
+	IdempotencyKey string
+	RequestDigest  string
+}
+
+// ExportConfigTemplateCreateResult 为相同幂等请求提供稳定的模板标识。
+type ExportConfigTemplateCreateResult struct {
+	TemplateID string
+	Replayed   bool
+}
+
+// ExportConfigTemplateUpdate 是版本保护的模板名称更新。
+type ExportConfigTemplateUpdate struct {
+	TemplateID       string
+	ActorSubjectID   string
+	ExpectedRevision int64
+	DisplayName      string
+	RequestID        string
+	UpdatedAt        time.Time
+}
+
+// ExportConfig 是通用导出配置的结构化领域模型。
+// 它不等同于前端表单 JSON 或 CLI argv，而是经过类型安全的独立抽象。
+// json 标签与通用导出技术契约的 GeneralizedExportConfig 结构保持一致。
+type ExportConfig struct {
+	ObjectScope       ObjectScope       `json:"objectScope"`
+	ContentSelection  ContentSelection  `json:"contentSelection"`
+	DataFormat        DataFormat        `json:"dataFormat"`
+	OutputConfig      OutputConfig      `json:"outputConfig"`
+	PerformanceConfig PerformanceConfig `json:"performanceConfig"`
+	FilterConfig      FilterConfig      `json:"filterConfig"`
+	DDLBehavior       DDLBehavior       `json:"ddlBehavior"`
+}
+
+// ObjectScope 表达导出对象范围：全部对象或指定对象列表。
+type ObjectScope struct {
+	ScopeKind     string             `json:"scopeKind"` // ALL | SPECIFIED
+	ObjectTypes   []string           `json:"objectTypes"`
+	Expressions   []ObjectExpression `json:"expressions"`
+	ExcludeTables []string           `json:"excludeTables"`
+}
+
+// ObjectExpression 是单个对象表达式；Schema 为可选 schema（数据库）前缀，
+// Name 为对象名称或通配表达式。RawInput 只允许由控制面按 schema.name 生成规范值，
+// 浏览器提交的自由文本不得持久化，避免借此写入秘密或任意内容。
+type ObjectExpression struct {
+	Schema   string `json:"schema,omitempty"`
+	Name     string `json:"name"`
+	RawInput string `json:"rawInput,omitempty"`
+}
+
+// ContentSelection 表达导出内容类型。
+type ContentSelection struct {
+	ContentKind string `json:"contentKind"` // DDL_ONLY | DATA_ONLY | DDL_AND_DATA
+}
+
+// DataFormat 表达数据格式及专属序列化参数。
+type DataFormat struct {
+	FormatKind string `json:"formatKind"` // CSV | CUT | POS | SQL | PARQUET | ORC | AVRO
+}
+
+// OutputConfig 表达输出位置与文件布局。
+type OutputConfig struct {
+	OutputKind       string `json:"outputKind"` // LOCAL | OSS | S3 | COS | OBS
+	FilePath         string `json:"filePath"`
+	LogPath          string `json:"logPath,omitempty"`
+	SkipCheckDir     bool   `json:"skipCheckDir"`
+	NoNestedDir      bool   `json:"noNestedDir"`
+	MaxFileSize      *int64 `json:"maxFileSize,omitempty"`
+	RetainEmptyFiles bool   `json:"retainEmptyFiles"`
+}
+
+// PerformanceConfig 表达性能与资源参数。
+type PerformanceConfig struct {
+	Thread        *int   `json:"thread,omitempty"`
+	PageSize      *int   `json:"pageSize,omitempty"`
+	ParallelMacro *int   `json:"parallelMacro,omitempty"`
+	FetchSize     *int   `json:"fetchSize,omitempty"`
+	JvmMemory     string `json:"jvmMemory,omitempty"`
+	Retry         bool   `json:"retry"`
+}
+
+// FilterConfig 表达筛选与一致性参数。
+type FilterConfig struct {
+	QuerySql              string   `json:"querySql,omitempty"`
+	Where                 string   `json:"where,omitempty"`
+	Partition             string   `json:"partition,omitempty"`
+	IncludeColumnNames    []string `json:"includeColumnNames,omitempty"`
+	ExcludeColumnNames    []string `json:"excludeColumnNames,omitempty"`
+	ExcludeDataTypes      []string `json:"excludeDataTypes,omitempty"`
+	ExcludeVirtualColumns *bool    `json:"excludeVirtualColumns,omitempty"`
+	EnableHiddenPk        *bool    `json:"enableHiddenPk,omitempty"`
+	FlashbackScn          *int64   `json:"flashbackScn,omitempty"`
+	FlashbackTimestamp    string   `json:"flashbackTimestamp,omitempty"`
+	Snapshot              string   `json:"snapshot,omitempty"`
+	WeakRead              *bool    `json:"weakRead,omitempty"`
+}
+
+// DDLBehavior 表达 DDL 行为参数。
+type DDLBehavior struct {
+	DropObject      *bool  `json:"dropObject,omitempty"`
+	AddExtraMessage *bool  `json:"addExtraMessage,omitempty"`
+	RetainSchema    *bool  `json:"retainSchema,omitempty"`
+	CompactSchema   *bool  `json:"compactSchema,omitempty"`
+	SequencePolicy  string `json:"sequencePolicy,omitempty"` // RESTART | PRESERVE
+}
+
+// SubmissionSnapshot 是泛化后的提交快照领域模型。
+// 它替代当前 snapshot_json 中的硬编码结构，同时保持 v1 快照向后兼容。
+type SubmissionSnapshot struct {
+	ToolVersion       string
+	MetadataVersion   string
+	CapabilityVersion string
+	DataSourceID      string
+	NodeID            string
+	PrecheckID        string
+	ConfigFingerprint string
+	ParentTaskID      string // 检查点继续
+	DerivedFromTaskID string // 基于原配置新建
+	TemplateID        string // 模板来源
+}
+
 // ExportDraft 是首条 CSV 导出链路可持久化的非敏感草稿投影。
 // 它不保存密码、密文、秘密槽位解析结果或可执行进程信息。
 type ExportDraft struct {
@@ -664,11 +818,21 @@ type ExportDraft struct {
 	ToolVersion       string
 	MetadataVersion   string
 	CapabilityVersion string
+	// ConfigVersion 标记 config_json 的结构版本：v5 扁平结构或 v6 泛化标准文档。
+	ConfigVersion     string
 	ConfigJSON        string
 	ConfigFingerprint string
 	InvalidationJSON  string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// 结构化子配置 JSON，仅 v6 草稿持久化非空值；v5 草稿保持 '{}'。
+	ObjectScopeJSON       string
+	ContentSelectionJSON  string
+	DataFormatJSON        string
+	OutputConfigJSON      string
+	PerformanceConfigJSON string
+	FilterConfigJSON      string
+	DDLBehaviorJSON       string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 // ExportDraftCreate 将草稿、审计与创建幂等记录绑定在同一事务内。

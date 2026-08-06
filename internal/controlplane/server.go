@@ -634,8 +634,24 @@ type executionNodeWriteRequest struct {
 	JavaPath     string   `json:"javaPath"`
 }
 
-// exportDraftWriteRequest 固定首条切片的单表 CSV 输入，不接收任意参数文本。
+// exportDraftWriteRequest 接受浏览器导出草稿写入，支持 v5 扁平结构与 v6 泛化配置两种版本。
+// v5 继续固定首条切片的单表 CSV 输入；v6 只接受嵌套 config 对象，两者字段不得混用。
 type exportDraftWriteRequest struct {
+	ConfigVersion string              `json:"configVersion,omitempty"`
+	DataSourceID  string              `json:"dataSourceId"`
+	NodeID        string              `json:"nodeId"`
+	Database      string              `json:"database"`
+	Table         string              `json:"table"`
+	Format        string              `json:"format"`
+	FilePath      string              `json:"filePath"`
+	LogPath       string              `json:"logPath"`
+	SkipCheckDir  bool                `json:"skipCheckDir"`
+	Config        *store.ExportConfig `json:"config,omitempty"`
+}
+
+// exportDraftV5Config 是 v5 草稿持久化的扁平结构，必须与首条切片保持字节级一致，
+// 以兼容存量草稿、预检查上下文解析与幂等摘要。
+type exportDraftV5Config struct {
 	DataSourceID string `json:"dataSourceId"`
 	NodeID       string `json:"nodeId"`
 	Database     string `json:"database"`
@@ -644,6 +660,221 @@ type exportDraftWriteRequest struct {
 	FilePath     string `json:"filePath"`
 	LogPath      string `json:"logPath"`
 	SkipCheckDir bool   `json:"skipCheckDir"`
+}
+
+// storedDraftConfigV6 是 v6 草稿持久化的标准文档：同时内嵌扁平投影键与泛化配置。
+// 扁平键供预检查上下文与任务投影使用，不能作为额外命令输入来源。
+type storedDraftConfigV6 struct {
+	ConfigVersion string              `json:"configVersion"`
+	DataSourceID  string              `json:"dataSourceId"`
+	NodeID        string              `json:"nodeId"`
+	Database      string              `json:"database"`
+	Table         string              `json:"table"`
+	Format        string              `json:"format"`
+	FilePath      string              `json:"filePath"`
+	LogPath       string              `json:"logPath"`
+	SkipCheckDir  bool                `json:"skipCheckDir"`
+	Config        *store.ExportConfig `json:"config"`
+}
+
+// normalizedExportDraft 是 v5 或 v6 草稿归一化后统一的命令生成输入。
+// 当前只允许表达已验证的单表 CSV 能力。
+type normalizedExportDraft struct {
+	DataSourceID string
+	NodeID       string
+	Database     string
+	Table        string
+	Format       string
+	FilePath     string
+	LogPath      string
+	SkipCheckDir bool
+}
+
+// draftStructuredColumns 是 v6 草稿七个结构化子配置列的序列化结果。
+type draftStructuredColumns struct {
+	ObjectScopeJSON       string
+	ContentSelectionJSON  string
+	DataFormatJSON        string
+	OutputConfigJSON      string
+	PerformanceConfigJSON string
+	FilterConfigJSON      string
+	DDLBehaviorJSON       string
+}
+
+// validateDraftVersionRouting 校验写入请求的版本路由规则，违反即 400 失败关闭。
+// configVersion 缺省视为 v5；v5 不得携带 config，v6 不得携带扁平字段。
+func validateDraftVersionRouting(request exportDraftWriteRequest) error {
+	switch request.ConfigVersion {
+	case "", "v5":
+		if request.Config != nil {
+			return errors.New("v5 export draft must not carry generalized config")
+		}
+		return nil
+	case "v6":
+		if request.Config == nil {
+			return errors.New("v6 export draft requires generalized config")
+		}
+		if request.Database != "" || request.Table != "" || request.Format != "" || request.FilePath != "" || request.LogPath != "" || request.SkipCheckDir {
+			return errors.New("v6 export draft must not carry flat fields")
+		}
+		return nil
+	default:
+		return errors.New("export draft config version is unsupported")
+	}
+}
+
+// normalizeExportDraftRequest 把已通过版本路由校验的写入请求归一为单表 CSV 生成输入。
+// v6 配置必须严格表达已验证能力，超出范围即失败关闭。
+func normalizeExportDraftRequest(request exportDraftWriteRequest) (normalizedExportDraft, error) {
+	if request.ConfigVersion == "v6" {
+		return normalizeExportConfigV6(request.Config, request.DataSourceID, request.NodeID)
+	}
+	return normalizedExportDraft{
+		DataSourceID: request.DataSourceID, NodeID: request.NodeID,
+		Database: request.Database, Table: request.Table, Format: request.Format,
+		FilePath: request.FilePath, LogPath: request.LogPath, SkipCheckDir: request.SkipCheckDir,
+	}, nil
+}
+
+// normalizeExportConfigV6 严格校验 v6 泛化配置只表达已验证的单表 CSV 能力。
+// 全部范围、非 TABLE 对象、多表达式、排除表、非 DATA_ONLY 内容、非 CSV 格式、
+// 非 LOCAL 输出，或非零的性能/筛选/DDL 选项都会被拒绝。
+func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID string) (normalizedExportDraft, error) {
+	scope := config.ObjectScope
+	if scope.ScopeKind != "SPECIFIED" || len(scope.ObjectTypes) != 1 || scope.ObjectTypes[0] != "TABLE" || len(scope.Expressions) != 1 || len(scope.ExcludeTables) != 0 {
+		return normalizedExportDraft{}, errors.New("v6 object scope must be exactly one specified table")
+	}
+	expression := scope.Expressions[0]
+	if expression.Schema == "" || expression.Name == "" {
+		return normalizedExportDraft{}, errors.New("v6 object expression requires schema and name")
+	}
+	// RawInput 一律由服务端按 schema.name 重新生成规范值；
+	// 浏览器提交的自由文本不得进入草稿、快照或 SQLite，避免借此写入秘密或任意内容。
+	config.ObjectScope.Expressions[0].RawInput = expression.Schema + "." + expression.Name
+	if config.ContentSelection.ContentKind != "DATA_ONLY" {
+		return normalizedExportDraft{}, errors.New("v6 content selection must be data only")
+	}
+	if config.DataFormat.FormatKind != "CSV" {
+		return normalizedExportDraft{}, errors.New("v6 data format must be csv")
+	}
+	output := config.OutputConfig
+	if output.OutputKind != "LOCAL" || output.FilePath == "" || output.NoNestedDir || output.MaxFileSize != nil || output.RetainEmptyFiles {
+		return normalizedExportDraft{}, errors.New("v6 output config must be a local file path only")
+	}
+	performance := config.PerformanceConfig
+	if performance.Thread != nil || performance.PageSize != nil || performance.ParallelMacro != nil || performance.FetchSize != nil || performance.JvmMemory != "" || performance.Retry {
+		return normalizedExportDraft{}, errors.New("v6 performance config is not enabled")
+	}
+	filter := config.FilterConfig
+	if filter.QuerySql != "" || filter.Where != "" || filter.Partition != "" || len(filter.IncludeColumnNames) != 0 || len(filter.ExcludeColumnNames) != 0 || len(filter.ExcludeDataTypes) != 0 ||
+		filter.ExcludeVirtualColumns != nil || filter.EnableHiddenPk != nil || filter.FlashbackScn != nil || filter.FlashbackTimestamp != "" || filter.Snapshot != "" || filter.WeakRead != nil {
+		return normalizedExportDraft{}, errors.New("v6 filter config is not enabled")
+	}
+	ddl := config.DDLBehavior
+	if ddl.DropObject != nil || ddl.AddExtraMessage != nil || ddl.RetainSchema != nil || ddl.CompactSchema != nil || ddl.SequencePolicy != "" {
+		return normalizedExportDraft{}, errors.New("v6 ddl behavior is not enabled")
+	}
+	return normalizedExportDraft{
+		DataSourceID: dataSourceID, NodeID: nodeID,
+		Database: expression.Schema, Table: expression.Name, Format: "CSV",
+		FilePath: output.FilePath, LogPath: output.LogPath, SkipCheckDir: output.SkipCheckDir,
+	}, nil
+}
+
+// draftNormalized 按草稿 config_version 重建归一化生成输入。
+// v5 草稿按扁平结构解析，v6 标准文档必须含完整扁平投影键，缺失或不匹配即失败关闭。
+func draftNormalized(draft store.ExportDraft) (normalizedExportDraft, error) {
+	switch draft.ConfigVersion {
+	case "v5":
+		var request exportDraftWriteRequest
+		if err := json.Unmarshal([]byte(draft.ConfigJSON), &request); err != nil || request.Config != nil {
+			return normalizedExportDraft{}, errors.New("v5 draft configuration is unreadable")
+		}
+		return normalizedExportDraft{
+			DataSourceID: request.DataSourceID, NodeID: request.NodeID,
+			Database: request.Database, Table: request.Table, Format: request.Format,
+			FilePath: request.FilePath, LogPath: request.LogPath, SkipCheckDir: request.SkipCheckDir,
+		}, nil
+	case "v6":
+		var stored storedDraftConfigV6
+		if err := json.Unmarshal([]byte(draft.ConfigJSON), &stored); err != nil ||
+			stored.ConfigVersion != "v6" || stored.DataSourceID != draft.DataSourceID || stored.NodeID != draft.NodeID || stored.Config == nil {
+			return normalizedExportDraft{}, errors.New("v6 draft configuration is unreadable")
+		}
+		// 嵌套泛化配置必须重新通过严格单表 CSV 校验，并与扁平投影键完全一致；
+		// 数据损坏或语义冲突时失败关闭，不得只按扁平字段执行却冻结矛盾的 v2 快照。
+		nested, err := normalizeExportConfigV6(stored.Config, draft.DataSourceID, draft.NodeID)
+		if err != nil {
+			return normalizedExportDraft{}, errors.New("v6 draft nested configuration is inconsistent")
+		}
+		flat := normalizedExportDraft{
+			DataSourceID: draft.DataSourceID, NodeID: draft.NodeID,
+			Database: stored.Database, Table: stored.Table, Format: stored.Format,
+			FilePath: stored.FilePath, LogPath: stored.LogPath, SkipCheckDir: stored.SkipCheckDir,
+		}
+		if flat != nested {
+			return normalizedExportDraft{}, errors.New("v6 draft flat projection is inconsistent")
+		}
+		return flat, nil
+	default:
+		return normalizedExportDraft{}, errors.New("draft config version is unsupported")
+	}
+}
+
+// buildDraftPersistence 按版本生成持久化 config_json 与结构化列。
+// v5 输出与首条切片字节级一致；v6 输出标准文档并序列化子配置。
+func buildDraftPersistence(request exportDraftWriteRequest, normalized normalizedExportDraft) (string, string, draftStructuredColumns, error) {
+	if request.ConfigVersion == "v6" {
+		stored := storedDraftConfigV6{
+			ConfigVersion: "v6", DataSourceID: request.DataSourceID, NodeID: request.NodeID,
+			Database: normalized.Database, Table: normalized.Table, Format: normalized.Format,
+			FilePath: normalized.FilePath, LogPath: normalized.LogPath, SkipCheckDir: normalized.SkipCheckDir,
+			Config: request.Config,
+		}
+		raw, err := json.Marshal(stored)
+		if err != nil {
+			return "", "", draftStructuredColumns{}, err
+		}
+		structured, err := marshalDraftStructuredColumns(request.Config)
+		if err != nil {
+			return "", "", draftStructuredColumns{}, err
+		}
+		return "v6", string(raw), structured, nil
+	}
+	raw, err := json.Marshal(exportDraftV5Config{
+		DataSourceID: request.DataSourceID, NodeID: request.NodeID,
+		Database: request.Database, Table: request.Table, Format: request.Format,
+		FilePath: request.FilePath, LogPath: request.LogPath, SkipCheckDir: request.SkipCheckDir,
+	})
+	if err != nil {
+		return "", "", draftStructuredColumns{}, err
+	}
+	return "v5", string(raw), draftStructuredColumns{}, nil
+}
+
+// marshalDraftStructuredColumns 将 v6 泛化配置的七个子结构分别序列化为结构化列值。
+func marshalDraftStructuredColumns(config *store.ExportConfig) (draftStructuredColumns, error) {
+	var columns draftStructuredColumns
+	pairs := []struct {
+		target *string
+		value  any
+	}{
+		{&columns.ObjectScopeJSON, config.ObjectScope},
+		{&columns.ContentSelectionJSON, config.ContentSelection},
+		{&columns.DataFormatJSON, config.DataFormat},
+		{&columns.OutputConfigJSON, config.OutputConfig},
+		{&columns.PerformanceConfigJSON, config.PerformanceConfig},
+		{&columns.FilterConfigJSON, config.FilterConfig},
+		{&columns.DDLBehaviorJSON, config.DDLBehavior},
+	}
+	for _, pair := range pairs {
+		raw, err := json.Marshal(pair.value)
+		if err != nil {
+			return draftStructuredColumns{}, err
+		}
+		*pair.target = string(raw)
+	}
+	return columns, nil
 }
 
 // createDataSource 从不渲染或持久化密码本身。
@@ -915,7 +1146,16 @@ func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, princ
 		notFound(w, r)
 		return
 	}
-	preview, source, node, err := s.generateExportDraft(r.Context(), request)
+	if err := validateDraftVersionRouting(request); err != nil {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	normalized, err := normalizeExportDraftRequest(request)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	preview, source, node, err := s.generateExportDraft(r.Context(), normalized)
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
 		return
@@ -924,7 +1164,11 @@ func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	configJSON, _ := json.Marshal(request)
+	configVersion, configJSON, structured, err := buildDraftPersistence(request, normalized)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
 	draftID := newOpaqueID()
 	if draftID == "" {
 		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
@@ -933,9 +1177,14 @@ func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, princ
 	now := time.Now().UTC()
 	result, err := s.drafts.CreateExportDraft(r.Context(), store.ExportDraftCreate{ExportDraft: store.ExportDraft{
 		DraftID: draftID, OwnerSubjectID: principal.ID, DataSourceID: source.DataSourceID, NodeID: node.NodeID, ToolVersion: preview.ToolVersion,
-		MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion, ConfigJSON: string(configJSON), ConfigFingerprint: preview.ConfigFingerprint,
+		MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion,
+		ConfigVersion: configVersion, ConfigJSON: configJSON, ConfigFingerprint: preview.ConfigFingerprint,
+		ObjectScopeJSON: structured.ObjectScopeJSON, ContentSelectionJSON: structured.ContentSelectionJSON,
+		DataFormatJSON: structured.DataFormatJSON, OutputConfigJSON: structured.OutputConfigJSON,
+		PerformanceConfigJSON: structured.PerformanceConfigJSON, FilterConfigJSON: structured.FilterConfigJSON,
+		DDLBehaviorJSON:  structured.DDLBehaviorJSON,
 		InvalidationJSON: `{}`, CreatedAt: now, UpdatedAt: now,
-	}, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: exportDraftDigest(request)})
+	}, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: exportDraftDigest(configJSON)})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
 		return
@@ -983,13 +1232,33 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "DRAFT_BINDING_IMMUTABLE", "首条切片草稿不能通过更新更换数据源或执行节点", false)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), request)
+	if err := validateDraftVersionRouting(request); err != nil {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	normalized, err := normalizeExportDraftRequest(request)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	configJSON, _ := json.Marshal(request)
-	newRevision, err := s.drafts.UpdateDraft(r.Context(), store.DraftUpdate{DraftID: draftID, ExpectedRevision: expected, ConfigJSON: string(configJSON), ConfigFingerprint: preview.ConfigFingerprint, InvalidationJSON: `{}`, UpdatedAt: time.Now().UTC()})
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	configVersion, configJSON, structured, err := buildDraftPersistence(request, normalized)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
+		return
+	}
+	newRevision, err := s.drafts.UpdateDraft(r.Context(), store.DraftUpdate{
+		DraftID: draftID, ExpectedRevision: expected, ConfigJSON: configJSON, ConfigFingerprint: preview.ConfigFingerprint, InvalidationJSON: `{}`, UpdatedAt: time.Now().UTC(),
+		ConfigVersion:   configVersion,
+		ObjectScopeJSON: structured.ObjectScopeJSON, ContentSelectionJSON: structured.ContentSelectionJSON,
+		DataFormatJSON: structured.DataFormatJSON, OutputConfigJSON: structured.OutputConfigJSON,
+		PerformanceConfigJSON: structured.PerformanceConfigJSON, FilterConfigJSON: structured.FilterConfigJSON,
+		DDLBehaviorJSON: structured.DDLBehaviorJSON,
+	})
 	if errors.Is(err, store.ErrRevisionConflict) {
 		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
 		return
@@ -998,7 +1267,7 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	draft.Revision, draft.ConfigJSON, draft.ConfigFingerprint = newRevision, string(configJSON), preview.ConfigFingerprint
+	draft.Revision, draft.ConfigJSON, draft.ConfigFingerprint, draft.ConfigVersion = newRevision, configJSON, preview.ConfigFingerprint, configVersion
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": draftResponse(draft)})
 }
 
@@ -1025,12 +1294,12 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
 		return
 	}
-	var request exportDraftWriteRequest
-	if err := json.Unmarshal([]byte(draft.ConfigJSON), &request); err != nil {
+	normalized, err := draftNormalized(draft)
+	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), request)
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
@@ -1067,12 +1336,12 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusPreconditionFailed, "DRAFT_REVISION_CONFLICT", "草稿已发生变化，请刷新后重试", false)
 		return
 	}
-	var request exportDraftWriteRequest
-	if err := json.Unmarshal([]byte(draft.ConfigJSON), &request); err != nil {
+	normalized, err := draftNormalized(draft)
+	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, node, err := s.generateExportDraft(r.Context(), request)
+	preview, _, node, err := s.generateExportDraft(r.Context(), normalized)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
@@ -1206,25 +1475,25 @@ func decodeBrowserJSON(w http.ResponseWriter, r *http.Request, target any) bool 
 	return true
 }
 
-func (s *Server) generateExportDraft(ctx context.Context, request exportDraftWriteRequest) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
-	if request.DataSourceID == "" || request.NodeID == "" || request.Database == "" || request.Table == "" || request.Format != "CSV" || request.FilePath == "" {
+func (s *Server) generateExportDraft(ctx context.Context, input normalizedExportDraft) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
+	if input.DataSourceID == "" || input.NodeID == "" || input.Database == "" || input.Table == "" || input.Format != "CSV" || input.FilePath == "" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft fields are incomplete")
 	}
-	source, err := s.dataSource.GetDataSourceSummary(ctx, request.DataSourceID)
+	source, err := s.dataSource.GetDataSourceSummary(ctx, input.DataSourceID)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
 	if source.State != "ENABLED" || source.LastTestStatus != "SUCCEEDED" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export data source is not eligible")
 	}
-	node, err := s.nodes.GetExecutionNodeFact(ctx, request.NodeID)
+	node, err := s.nodes.GetExecutionNodeFact(ctx, input.NodeID)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
-	if !outputpath.IsExportOutputPath(string(node.Platform), request.FilePath) || (request.LogPath != "" && !outputpath.IsExportOutputPath(string(node.Platform), request.LogPath)) {
+	if !outputpath.IsExportOutputPath(string(node.Platform), input.FilePath) || (input.LogPath != "" && !outputpath.IsExportOutputPath(string(node.Platform), input.LogPath)) {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export output path is invalid")
 	}
-	credentialReference, err := s.credentials.GetDataSourceCredentialReference(ctx, request.DataSourceID)
+	credentialReference, err := s.credentials.GetDataSourceCredentialReference(ctx, input.DataSourceID)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
@@ -1233,18 +1502,18 @@ func (s *Server) generateExportDraft(ctx context.Context, request exportDraftWri
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("private ODP command identity is invalid")
 	}
 	fields := []commandgen.FieldInput{
-		{Name: "--host", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Host}}, {Name: "--port", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(source.Port)}}, {Name: "--user", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: commandUsername}}, {Name: "--password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: credentialReference.CredentialID, Revision: credentialReference.Revision}}}, {Name: "--database", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Database}}, {Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.Table}}, {Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}}, {Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.FilePath}},
+		{Name: "--host", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Host}}, {Name: "--port", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(source.Port)}}, {Name: "--user", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: commandUsername}}, {Name: "--password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: credentialReference.CredentialID, Revision: credentialReference.Revision}}}, {Name: "--database", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Database}}, {Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Table}}, {Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}}, {Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.FilePath}},
 	}
-	if request.LogPath != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: request.LogPath}})
+	if input.LogPath != "" {
+		fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.LogPath}})
 	}
-	fields = append(fields, commandgen.FieldInput{Name: "--skip-check-dir", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: request.SkipCheckDir}})
+	fields = append(fields, commandgen.FieldInput{Name: "--skip-check-dir", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: input.SkipCheckDir}})
 	result, err := s.generator.Generate(commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", MetadataVersion: "obdumper-4.3.5-slice-v5", CapabilityVersion: "export-odp-single-table-csv-v1", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, Fields: fields})
 	return result, source, node, err
 }
 
 func draftResponse(draft store.ExportDraft) map[string]any {
-	return map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
+	return map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "configVersion": draft.ConfigVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
 }
 
 // browserPreviewArgv 返回命令预览对应的独立参数副本。
@@ -1253,9 +1522,10 @@ func browserPreviewArgv(argv []string) []string {
 	return append([]string(nil), argv...)
 }
 
-func exportDraftDigest(request exportDraftWriteRequest) string {
-	raw, _ := json.Marshal(request)
-	digest := sha256.Sum256(raw)
+// exportDraftDigest 基于持久化 config_json 计算幂等摘要。
+// v5 的 config_json 与首条切片字节级一致，因此存量幂等记录的摘要保持可比。
+func exportDraftDigest(configJSON string) string {
+	digest := sha256.Sum256([]byte(configJSON))
 	return hex.EncodeToString(digest[:])
 }
 
@@ -1531,12 +1801,12 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "需要当前草稿的有效成功预检查", false)
 		return
 	}
-	var draftRequest exportDraftWriteRequest
-	if err := json.Unmarshal([]byte(draft.ConfigJSON), &draftRequest); err != nil {
+	normalized, err := draftNormalized(draft)
+	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), draftRequest)
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized)
 	if err != nil || preview.ConfigFingerprint != run.ConfigFingerprint {
 		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "草稿或预检查已失效，请重新预检查", false)
 		return
@@ -1556,7 +1826,7 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		TaskID: taskID, CreatorSubjectID: principal.ID, AuditActorID: principal.ID, DataSourceID: draft.DataSourceID, NodeID: draft.NodeID,
 		PrecheckID: run.PrecheckID, CredentialID: run.CredentialID, CredentialRevision: run.CredentialRevision,
 		ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion,
-		CapabilityVersion: preview.CapabilityVersion, SnapshotJSON: draft.ConfigJSON, PlannedArgvJSON: string(argv),
+		CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: draftSnapshotVersion(draft.ConfigVersion), SnapshotJSON: draft.ConfigJSON, PlannedArgvJSON: string(argv),
 		PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now,
 	}, key, taskSubmitDigest(draft, run.PrecheckID, preview.ConfigFingerprint))
 	if errors.Is(err, store.ErrIdempotencyConflict) {
@@ -1582,6 +1852,15 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		status = http.StatusOK
 	}
 	writeJSON(w, status, map[string]any{"requestId": requestID(w), "id": result.TaskID, "replayed": result.Replayed, "state": "WAITING_SCHEDULE", "realExecutionEnabled": s.realExecutionEnabled})
+}
+
+// draftSnapshotVersion 把草稿配置版本映射为任务快照版本。
+// v5 草稿冻结 v1 扁平快照；v6 草稿冻结 v2 泛化快照；未知版本失败关闭。
+func draftSnapshotVersion(configVersion string) string {
+	if configVersion == "v6" {
+		return "v2"
+	}
+	return "v1"
 }
 
 // parseTaskReadPath 只将固定读取后缀解释为任务只读投影。
@@ -1617,10 +1896,12 @@ type taskOverviewResponse struct {
 	SubmittedAt  string `json:"submittedAt"`
 }
 
-// taskSnapshotResponse 只返回当前单表 CSV 切片可安全解释的冻结配置事实。
+// taskSnapshotResponse 只返回当前切片可安全解释的冻结配置事实。
 // 输出和日志路径、凭据引用、完整原始快照均不下发，后续字段必须先完成专项脱敏规则。
+// 派生关系字段在本切片始终为空，待 EX-I8 实现后才会输出。
 type taskSnapshotResponse struct {
 	Type              string `json:"type"`
+	SnapshotVersion   string `json:"snapshotVersion"`
 	DataSourceID      string `json:"dataSourceId"`
 	NodeID            string `json:"nodeId"`
 	PrecheckID        string `json:"precheckId"`
@@ -1630,6 +1911,9 @@ type taskSnapshotResponse struct {
 	ToolVersion       string `json:"toolVersion"`
 	MetadataVersion   string `json:"metadataVersion"`
 	CapabilityVersion string `json:"capabilityVersion"`
+	ParentTaskID      string `json:"parentTaskId,omitempty"`
+	DerivedFromTaskID string `json:"derivedFromTaskId,omitempty"`
+	TemplateID        string `json:"templateId,omitempty"`
 }
 
 // taskCommandEvidenceResponse 只允许浏览器读取提交时冻结的脱敏计划命令。
@@ -1691,7 +1975,7 @@ func (s *Server) getTaskSnapshot(w http.ResponseWriter, r *http.Request, princip
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskSnapshotResponse{
-		Type: "OBDUMPER_EXPORT", DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
+		Type: "OBDUMPER_EXPORT", SnapshotVersion: summary.SnapshotVersion, DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
 		ObjectSummary: taskObjectSummary(summary.Database, summary.Table), Format: summary.Format,
 		ConfigFingerprint: summary.ConfigFingerprint, ToolVersion: summary.ToolVersion, MetadataVersion: summary.MetadataVersion,
 		CapabilityVersion: summary.CapabilityVersion,

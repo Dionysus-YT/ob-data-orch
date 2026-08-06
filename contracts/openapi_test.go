@@ -24,6 +24,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/data-source-connection-tests/{connectionTestId}": {"get"},
 		"/api/v1/data-sources/{dataSourceId}:disable":             {"post"},
 		"/api/v1/data-sources/{dataSourceId}:enable":              {"post"},
+		"/api/v1/export-config-templates":                         {"get", "post"},
+		"/api/v1/export-config-templates/{templateId}":            {"get", "patch", "delete"},
 		"/api/v1/export-drafts":                                   {"post"},
 		"/api/v1/export-drafts/{draftId}":                         {"get", "patch"},
 		"/api/v1/export-drafts/{draftId}:precheck":                {"post"},
@@ -85,8 +87,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 53 {
-		t.Fatalf("operation count = %d, want 53", operationCount)
+	if operationCount != 58 {
+		t.Fatalf("operation count = %d, want 58", operationCount)
 	}
 }
 

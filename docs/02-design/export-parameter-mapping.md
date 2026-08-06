@@ -1,6 +1,6 @@
 # OBDUMPER V4.3.5 导出参数映射基线
 
-> 文档状态：参数名称与官方含义已核查；官网冲突、未公开参数和行为边界待实测  
+> 文档状态：参数名称与官方含义已核查；V1.0 支持状态已标注；官网冲突、未公开参数和行为边界待实测
 > 核验日期：2026-07-17  
 > 发布包：`ob-loader-dumper-4.3.5-RELEASE.zip`  
 > 发布包 SHA-256：`C1A5D5EE053106803263015F00EC7F0B94B73EA4015A2E53CF1AFFF598983493`  
@@ -54,6 +54,8 @@
 分类按产品配置语义划分，不照搬命令行 Usage 的排列。导入侧、废弃兼容和官网未公开参数被保留在同一基线中，是为了防止命令解析器暴露的名称被误认成导出能力。
 
 ## 4. 109 个参数逐项映射
+
+> 本节提供参数名称、分类、官方含义、产品处置和来源的基线映射。每个参数的 V1.0 四元属性（sensitivity、riskLevel、evidenceState、v1State）见第 9 节汇总表及 [V1.0 支持矩阵](export-v1-support-matrix.md) 第 2 节。
 
 | 参数 | 分类 | 官方含义/核查结论 | 产品处置 | 来源 |
 |---|---|---|---|---|
@@ -212,3 +214,221 @@
 - 目标目录已非空时，未勾选跳过选项的预检查必须阻断；用户明确勾选时生成 `--skip-check-dir` 并把空性检查标记为已跳过。平台不得自动改路径或自行加入该参数。
 
 早期自动化验证曾在部分绝对路径运行中观察到 `file://nullE:/...`，同时相对路径运行成功；用户随后确认上述完整 Windows 绝对路径格式可以被 4.3.5 正确识别并成功导出。产品基线按直接绝对路径执行，`file://null` 作为环境差异回归项保留，不据此引入相对路径适配。
+
+## 9. V1.0 四元属性汇总
+
+> 本节为每个参数提供 sensitivity、riskLevel、evidenceState 和 v1State 四项 V1.0 属性，决策依据和完整矩阵见 [V1.0 支持矩阵](export-v1-support-matrix.md) 第 2 节。
+
+### 9.1 导入侧/未公开（5 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--file-suffix` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+| `--ignore-escape` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+| `--mix` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+| `--parallel` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+| `--commit-size` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+
+### 9.2 废弃兼容（3 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--storage-uri` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+| `--file-name` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+| `--upload-behavior` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+
+### 9.3 CLI 元参数（2 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--help` | NORMAL | LOW | VERIFIED | HIDDEN |
+| `--version` | NORMAL | LOW | VERIFIED | HIDDEN |
+
+### 9.4 运行模式/未公开（1 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--server` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+
+### 9.5 数据库对象/未公开（1 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--public-synonym` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+
+### 9.6 连接与会话/未公开（1 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--tenant` | IDENTIFIER | LOW | CONFLICT_PENDING | VALIDATION_GATED |
+
+### 9.7 对象范围（1 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--all` | NORMAL | LOW | VERIFIED | ENABLED |
+
+### 9.8 连接与会话（16 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--host` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--port` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--user` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--password` | SECRET | LOW | VERIFIED | ENABLED |
+| `--cluster` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--database` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--character-set` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--no-sys` | NORMAL | MEDIUM | VERIFIED | ENABLED |
+| `--public-cloud` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--sys-user` | IDENTIFIER | MEDIUM | VERIFIED | ENABLED |
+| `--sys-password` | SECRET | MEDIUM | VERIFIED | ENABLED |
+| `--logical-database` | NORMAL | HIGH | VERIFIED | ENABLED |
+| `--session-config` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--nls-date-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--nls-timestamp-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--nls-timestamp-tz-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+
+### 9.9 内容与数据格式（8 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--csv` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--cut` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--pos` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED |
+| `--sql` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--par` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--orc` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--avro` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--ddl` | NORMAL | LOW | VERIFIED | ENABLED |
+
+### 9.10 日期时间序列化（7 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--date-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--time-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--datetime-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--timestamp-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--timestamp-tz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--timestamp-ltz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--preserve-zero-datetime` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+
+### 9.11 输出与文件（8 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--file-path` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--log-path` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--no-nested-dir` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--ctl-path` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--block-size` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED |
+| `--tmp-path` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--retain-empty-files` | NORMAL | LOW | VERIFIED | ENABLED |
+
+### 9.12 数据库对象（14 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--table` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--table-group` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--view` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--trigger` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--obj-user` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--role` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--sequence` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--synonym` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--type` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--type-body` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--package` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--package-body` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--function` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--procedure` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+
+### 9.13 数据筛选与一致性（14 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--query-sql` | NORMAL | HIGH | VERIFIED | ENABLED |
+| `--where` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--partition` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--include-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--exclude-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--exclude-data-types` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--exclude-virtual-columns` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--exclude-table` | IDENTIFIER | LOW | VERIFIED | ENABLED |
+| `--enable-hidden-pk` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--flashback-scn` | NORMAL | MEDIUM | VERIFIED | ENABLED |
+| `--flashback-timestamp` | NORMAL | MEDIUM | VERIFIED | ENABLED |
+| `--snapshot` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--weak-read` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--distinct` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+
+### 9.14 文本序列化（6 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--escape-character` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--file-encoding` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--line-separator` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--null-string` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--with-trim` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED |
+
+### 9.15 CSV 序列化（5 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--skip-header` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--column-separator` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--column-quote` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--column-quote-mode` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--column-delimiter` | NORMAL | LOW | HELP_ONLY | HIDDEN |
+
+### 9.16 CUT/POS 序列化（2 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--column-splitter` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED |
+| `--trail-delimiter` | NORMAL | LOW | VERIFIED | ENABLED |
+
+### 9.17 DDL 与对象处理（5 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--drop-object` | NORMAL | HIGH | VERIFIED | ENABLED |
+| `--add-extra-message` | NORMAL | MEDIUM | VERIFIED | ENABLED |
+| `--retain-schema` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--compact-schema` | NORMAL | MEDIUM | CONFLICT_PENDING | VALIDATION_GATED |
+| `--sequence-policy` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED |
+
+### 9.18 性能与资源（7 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--thread` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--page-size` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--parallel-macro` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--fetch-size` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--mem` | NORMAL | MEDIUM | VERIFIED | ENABLED |
+| `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--retry` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+
+### 9.19 压缩（3 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State |
+|---|---|---|---|---|
+| `--compress` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--compression-algo` | NORMAL | LOW | VERIFIED | ENABLED |
+| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+
+### 9.20 V1.0 状态汇总
+
+| v1State | 参数数量 | 占比 |
+|---|---:|---:|
+| ENABLED | 63 | 57.8% |
+| VALIDATION_GATED | 35 | 32.1% |
+| HIDDEN | 11 | 10.1% |
+| BLOCKED | 0 | 0% |
+| **合计** | **109** | **100%** |

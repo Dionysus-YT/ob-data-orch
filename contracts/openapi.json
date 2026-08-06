@@ -21,7 +21,8 @@
     { "name": "AgentEnvironmentChecks" },
     { "name": "AgentPrechecks" },
     { "name": "AgentConnectionTests" },
-    { "name": "AgentExecutions" }
+    { "name": "AgentExecutions" },
+    { "name": "ExportConfigTemplates" }
   ],
   "paths": {
     "/api/v1/session": {
@@ -48,6 +49,16 @@
     "/api/v1/execution-nodes/{nodeId}:enable": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
       "post": { "operationId": "enableExecutionNode", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "仅当当前 Agent 在线、平台匹配、容量可用，且同一 factsRevision 的固定环境检查为 TOOL_RUNTIME_READY 时启用节点。该动作不连接数据库、不启动 OBDUMPER，任务仍须通过独立预检查。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-config-templates": {
+      "get": { "operationId": "listExportConfigTemplates", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体拥有的导出配置模板。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "从成功任务保存导出配置模板。控制面从冻结快照提取配置，浏览器只提供显示名称和源任务标识。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-config-templates/{templateId}": {
+      "parameters": [{ "name": "templateId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } }],
+      "get": { "operationId": "getExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "operationId": "updateExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "只允许更新模板显示名称。配置内容、capabilityVersion 和来源任务不可变。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateRename" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "deleteExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources": {
       "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
@@ -235,6 +246,8 @@
       "DataSourceWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceWrite" } } } },
       "DataSourceConnectionTestRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestRequest" } } } },
       "ExportDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportDraftWrite" } } } },
+      "ExportConfigTemplateWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportConfigTemplateWrite" } } } },
+      "ExportConfigTemplateRename": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportConfigTemplateRename" } } } },
       "LogDownload": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LogDownloadRequest" } } } },
       "EnrollmentExchange": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrollmentExchange" } } } },
       "AgentHeartbeat": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentHeartbeat" } } } },
@@ -367,6 +380,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "configVersion": { "type": "string", "enum": ["v5", "v6"], "description": "v5 uses flat fields (database/table/format/filePath); v6 uses nested config object. Defaults to v5 for backward compatibility." },
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
           "database": { "type": "string", "minLength": 1, "maxLength": 512 },
@@ -375,9 +389,24 @@
           "filePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
           "logPath": { "type": "string", "maxLength": 4096 },
           "skipCheckDir": { "type": "boolean" },
-          "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }
+          "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" },
+          "config": { "$ref": "#/components/schemas/GeneralizedExportConfig", "description": "Only used when configVersion is v6." }
         },
-        "description": "Only private ODP, one explicit table, CSV and one node-local absolute output path belong to this slice."
+        "oneOf": [
+          {
+            "description": "v5 扁平单表 CSV 请求：configVersion 缺省或 v5，必填扁平字段，不得携带泛化 config。",
+            "required": ["dataSourceId", "nodeId", "database", "table", "format", "filePath"],
+            "properties": { "configVersion": { "enum": ["v5"] } },
+            "not": { "required": ["config"] }
+          },
+          {
+            "description": "v6 泛化请求：configVersion 必须为 v6 且必填 config，不得携带任何扁平字段。",
+            "required": ["dataSourceId", "nodeId", "configVersion", "config"],
+            "properties": { "configVersion": { "const": "v6" } },
+            "not": { "anyOf": [ { "required": ["database"] }, { "required": ["table"] }, { "required": ["format"] }, { "required": ["filePath"] }, { "required": ["logPath"] }, { "required": ["skipCheckDir"] }, { "required": ["csvOptions"] } ] }
+          }
+        ],
+        "description": "v5 (default): private ODP, one explicit table, CSV and one node-local absolute output path. v6: generalized export config with object scope, format options and filter config."
       },
       "ExportPrecheckRun": {
         "type": "object",
@@ -894,18 +923,22 @@
       "TaskSnapshotRead": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "dataSourceId", "nodeId", "precheckId", "format", "configFingerprint", "toolVersion", "metadataVersion", "capabilityVersion"],
+        "required": ["type", "dataSourceId", "nodeId", "precheckId", "format", "configFingerprint", "toolVersion", "metadataVersion", "capabilityVersion", "snapshotVersion"],
         "properties": {
+          "snapshotVersion": { "type": "string", "enum": ["v1", "v2"], "description": "v1 is the original flat snapshot; v2 includes generalized config and derived relations." },
           "type": { "const": "OBDUMPER_EXPORT" },
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
           "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
-          "objectSummary": { "type": "string", "maxLength": 1025, "description": "从冻结单表快照提取的 database.table 摘要；不含路径或完整配置。" },
-          "format": { "const": "CSV" },
+          "objectSummary": { "type": "string", "maxLength": 1025, "description": "从冻结快照提取的 database.table 或 scope 摘要；不含路径或完整配置。" },
+          "format": { "type": "string", "description": "CSV, CUT, SQL, DDL, or combined format identifier." },
           "configFingerprint": { "type": "string", "minLength": 1, "maxLength": 256 },
           "toolVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
           "metadataVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "capabilityVersion": { "type": "string", "minLength": 1, "maxLength": 256 }
+          "capabilityVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "parentTaskId": { "$ref": "#/components/schemas/OpaqueId", "description": "检查点继续时的原任务标识。" },
+          "derivedFromTaskId": { "$ref": "#/components/schemas/OpaqueId", "description": "基于原配置新建时的源任务标识。" },
+          "templateId": { "$ref": "#/components/schemas/OpaqueId", "description": "模板来源标识。" }
         }
       },
       "TaskSnapshotReadEnvelope": {
@@ -1267,6 +1300,52 @@
             }
           }
         }
+      },
+      "GeneralizedExportConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "v6 通用导出配置结构。各子对象字段均为可选，按 capabilityVersion 决定哪些子对象参与活动。",
+        "properties": {
+          "objectScope": { "type": "object", "properties": { "scopeKind": { "enum": ["ALL", "SPECIFIED"] }, "objectTypes": { "type": "array", "items": { "type": "string" } }, "expressions": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "schema": { "type": "string" }, "name": { "type": "string" }, "rawInput": { "type": "string" } } } }, "excludeTables": { "type": "array", "items": { "type": "string" } } } },
+          "contentSelection": { "type": "object", "properties": { "contentKind": { "enum": ["DDL_ONLY", "DATA_ONLY", "DDL_AND_DATA"] } } },
+          "dataFormat": { "type": "object", "properties": { "formatKind": { "enum": ["CSV", "CUT", "POS", "SQL", "PARQUET", "ORC", "AVRO"] } } },
+          "outputConfig": { "type": "object", "properties": { "outputKind": { "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "输出目标类型；当前运行时只接受 LOCAL，其余值在控制面失败关闭。" }, "filePath": { "type": "string" }, "logPath": { "type": "string" }, "skipCheckDir": { "type": "boolean" }, "noNestedDir": { "type": "boolean" }, "maxFileSize": { "type": "integer" }, "retainEmptyFiles": { "type": "boolean" } } },
+          "performanceConfig": { "type": "object", "properties": { "thread": { "type": "integer" }, "pageSize": { "type": "integer" }, "parallelMacro": { "type": "integer" }, "fetchSize": { "type": "integer" }, "jvmMemory": { "type": "string" }, "retry": { "type": "boolean" } } },
+          "filterConfig": { "type": "object", "properties": { "querySql": { "type": "string" }, "where": { "type": "string" }, "partition": { "type": "string" }, "includeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeDataTypes": { "type": "array", "items": { "type": "string" } }, "excludeVirtualColumns": { "type": "boolean" }, "enableHiddenPk": { "type": "boolean" }, "flashbackScn": { "type": "integer" }, "flashbackTimestamp": { "type": "string" }, "snapshot": { "type": "string" }, "weakRead": { "type": "boolean" } } },
+          "ddlBehavior": { "type": "object", "properties": { "dropObject": { "type": "boolean" }, "addExtraMessage": { "type": "boolean" }, "retainSchema": { "type": "boolean" }, "compactSchema": { "type": "boolean" }, "sequencePolicy": { "enum": ["RESTART", "PRESERVE"] } } }
+        }
+      },
+      "ExportConfigTemplate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["templateId", "displayName", "capabilityVersion", "configFingerprint", "revision"],
+        "properties": {
+          "templateId": { "$ref": "#/components/schemas/OpaqueId" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "capabilityVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "config": { "$ref": "#/components/schemas/GeneralizedExportConfig" },
+          "configFingerprint": { "$ref": "#/components/schemas/SHA256Digest" },
+          "sourceTaskId": { "$ref": "#/components/schemas/OpaqueId" },
+          "revision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "ExportConfigTemplateWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["displayName", "sourceTaskId"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "sourceTaskId": { "$ref": "#/components/schemas/OpaqueId" }
+        }
+      },
+      "ExportConfigTemplateRename": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["displayName"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "description": "模板重命名专用请求体；配置内容、capabilityVersion 和来源任务不可变，不接受重复提交。"
       },
       "ErrorEnvelope": {
         "type": "object",

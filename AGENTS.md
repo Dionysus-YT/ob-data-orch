@@ -54,7 +54,7 @@ OB Data Orch 是 **OB Loader/Dumper 4.3.5 的轻量可视化编排平台**：降
 - 架构固定为 Vue 3 + TypeScript + Vite、Go 模块化单体控制面、SQLite、本机脱敏日志文件和主动出站的 Go Agent；Java 8 只运行官方工具及固定 JDBC 连接探针。
 - `/api/v1` 浏览器身份与 `/agent/v1` 机器身份完全隔离。认证、授权、CSRF、密钥或安全上下文不可用时失败关闭；无权对象不得通过状态、数量或错误差异被发现。
 - 控制面不直接操作执行节点文件或进程；页面不启动工具；Agent 不决定产品参数、调度策略或最终产品状态。
-- 不提供 SSH、WinRM、远程 Shell、任意命令、任意 SQL、任意文件浏览或平台主动入站控制 Agent 的能力。
+- 不提供 SSH、WinRM、远程 Shell、任意命令、任意文件浏览或平台主动入站控制 Agent 的能力。不提供 SQL 编辑器、SQL 文件浏览或任意 SQL 传递到非 OBDUMPER 目标；允许 OBDUMPER 官方 `--query-sql` 作为受限专家能力（CAP_SENSITIVE_COMMAND + 二次确认，详见 [导出模块决策 EX-R07](docs/02-design/export-module.md)）。
 - JDBC 探针只加载已核验的 `oceanbase-client-2.4.14.jar`，短时接收连接输入并固定执行连接与基础元信息读取；不得扩展任意 URL、SQL、驱动、主类或导入导出能力。
 - 秘密只作为短生命周期字节缓冲区使用；不得进入命令行、长期暴露的环境变量、日志、审计、错误、响应、任务快照、SQLite、Git 或测试输出。未知或脱敏不完整时阻断展示和执行。
 - 命令生成器是唯一命令拼装权威，必须同时产生确定性的执行形态和脱敏展示形态；调用方不得自行拼接 Shell 字符串绕过。

@@ -824,13 +824,214 @@ func TestExportDraftRejectsEnabledSourceWithoutSuccessfulConnectionTest(t *testi
 		t.Fatalf("create response=%d draft=%#v", created.Code, drafts.created)
 	}
 
-	drafts.created = store.ExportDraft{DraftID: "draft-unverified", OwnerSubjectID: "synthetic-subject", DataSourceID: "source-allowed", NodeID: "node-1", Revision: 1, ConfigJSON: body}
+	drafts.created = store.ExportDraft{DraftID: "draft-unverified", OwnerSubjectID: "synthetic-subject", DataSourceID: "source-allowed", NodeID: "node-1", Revision: 1, ConfigVersion: "v5", ConfigJSON: body}
 	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-unverified:preview-command", nil)
 	preview.Header.Set("If-Match", `"rev-1"`)
 	previewed := httptest.NewRecorder()
 	handler.ServeHTTP(previewed, preview)
 	if previewed.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("preview response=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+}
+
+// syntheticV6CSVBody 是 v6 泛化配置表达已验证单表 CSV 能力的固定合成请求体。
+// rawInput 故意携带秘密样式的自由文本，验证控制面只持久化服务端规范值。
+const syntheticV6CSVBody = `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"synthetic_db","name":"synthetic_table","rawInput":"synthetic-secret=leak-sample"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}}}`
+
+func TestExportDraftV6SingleTableCSVFollowsVerifiedSlice(t *testing.T) {
+	t.Parallel()
+	generator, err := commandgen.NewDefault()
+	if err != nil {
+		t.Fatalf("NewDefault() error = %v", err)
+	}
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	coordinator, err := agentstate.NewCoordinator(testClock{})
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
+	}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Tasks: tasks, Generator: generator, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
+	})
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(syntheticV6CSVBody))
+	create.Header.Set("Idempotency-Key", "synthetic-v6-draft-idempotency-key")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated || drafts.created.ConfigVersion != "v6" {
+		t.Fatalf("create response=%d draft=%#v", created.Code, drafts.created)
+	}
+	// v6 标准文档必须内嵌扁平投影键与嵌套配置，且不含秘密字段。
+	for _, required := range []string{`"configVersion":"v6"`, `"database":"synthetic_db"`, `"table":"synthetic_table"`, `"format":"CSV"`, `"config":{`} {
+		if !strings.Contains(drafts.created.ConfigJSON, required) {
+			t.Fatalf("v6 config json missing %s: %s", required, drafts.created.ConfigJSON)
+		}
+	}
+	if strings.Contains(drafts.created.ConfigJSON, "password") || strings.Contains(drafts.created.ConfigJSON, "leak-sample") || strings.Contains(drafts.created.ObjectScopeJSON, "leak-sample") {
+		t.Fatalf("v6 config json leaked secret material: %s / %s", drafts.created.ConfigJSON, drafts.created.ObjectScopeJSON)
+	}
+	if !strings.Contains(drafts.created.ConfigJSON, `"rawInput":"synthetic_db.synthetic_table"`) {
+		t.Fatalf("v6 config json did not replace rawInput with canonical value: %s", drafts.created.ConfigJSON)
+	}
+	if drafts.created.ObjectScopeJSON == "{}" || drafts.created.DataFormatJSON == "{}" || drafts.created.OutputConfigJSON == "{}" || drafts.created.PerformanceConfigJSON == "{}" {
+		t.Fatalf("v6 structured columns not persisted: %#v", drafts.created)
+	}
+	if !strings.Contains(draftResponse(drafts.created)["configVersion"].(string), "v6") {
+		t.Fatalf("draft response missing configVersion")
+	}
+	// 预览命令必须与等价 v5 草稿一致：相同连接参数与密码脱敏形态。
+	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:preview-command", nil)
+	preview.Header.Set("If-Match", `"rev-1"`)
+	previewed := httptest.NewRecorder()
+	handler.ServeHTTP(previewed, preview)
+	if previewed.Code != http.StatusOK || !bytes.Contains(previewed.Body.Bytes(), []byte("-h127.0.0.1")) || !bytes.Contains(previewed.Body.Bytes(), []byte("-usynthetic-user@synthetic-tenant#synthetic-cluster")) || !bytes.Contains(previewed.Body.Bytes(), []byte("-p ******")) || bytes.Contains(previewed.Body.Bytes(), []byte("--password")) {
+		t.Fatalf("v6 preview does not match verified slice=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
+	precheck.Header.Set("If-Match", `"rev-1"`)
+	precheck.Header.Set("Idempotency-Key", "synthetic-v6-precheck-idempotency-key")
+	prechecked := httptest.NewRecorder()
+	handler.ServeHTTP(prechecked, precheck)
+	if prechecked.Code != http.StatusAccepted || prechecks.created.DraftID != "draft-synthetic" {
+		t.Fatalf("v6 precheck response=%d binding=%#v", prechecked.Code, prechecks.created)
+	}
+	tasks.run = prechecks.created
+	tasks.run.Status, tasks.run.IntegrityStatus = "SUCCEEDED", "COMPLETE"
+	submit := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:submit", bytes.NewBufferString(`{"precheckId":"precheck-synthetic"}`))
+	submit.Header.Set("If-Match", `"rev-1"`)
+	submit.Header.Set("Idempotency-Key", "synthetic-v6-task-submit-key")
+	submitted := httptest.NewRecorder()
+	handler.ServeHTTP(submitted, submit)
+	if submitted.Code != http.StatusCreated || tasks.input.SnapshotVersion != "v2" || tasks.input.SnapshotJSON != drafts.created.ConfigJSON {
+		t.Fatalf("v6 submit response=%d task=%#v", submitted.Code, tasks.input)
+	}
+	snapshot := httptest.NewRecorder()
+	handler.ServeHTTP(snapshot, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+tasks.input.TaskID+"/snapshot", nil))
+	if snapshot.Code != http.StatusOK || !bytes.Contains(snapshot.Body.Bytes(), []byte(`"snapshotVersion":"v2"`)) || !bytes.Contains(snapshot.Body.Bytes(), []byte(`"capabilityVersion":"export-odp-single-table-csv-v1"`)) {
+		t.Fatalf("v6 task snapshot response=%d body=%s", snapshot.Code, snapshot.Body.String())
+	}
+	for _, forbidden := range []string{"parentTaskId", "derivedFromTaskId", "templateId", "filePath", "logPath"} {
+		if bytes.Contains(snapshot.Body.Bytes(), []byte(forbidden)) {
+			t.Fatalf("v6 task snapshot leaked forbidden field %q: %s", forbidden, snapshot.Body.String())
+		}
+	}
+}
+
+func TestExportDraftV6DetectsInconsistentStoredConfiguration(t *testing.T) {
+	t.Parallel()
+	generator, err := commandgen.NewDefault()
+	if err != nil {
+		t.Fatalf("NewDefault() error = %v", err)
+	}
+	drafts := &recordingDraftStore{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Generator: generator, CSRF: allowedCSRF{},
+	})
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(syntheticV6CSVBody))
+	create.Header.Set("Idempotency-Key", "synthetic-v6-inconsistency-key")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create response=%d body=%s", created.Code, created.Body.String())
+	}
+
+	// 扁平投影键与嵌套配置冲突时必须失败关闭，不得只按扁平字段继续执行。
+	corrupted := store.ExportDraft{DraftID: drafts.created.DraftID, OwnerSubjectID: drafts.created.OwnerSubjectID, DataSourceID: drafts.created.DataSourceID, NodeID: drafts.created.NodeID, Revision: drafts.created.Revision, ConfigVersion: "v6", ConfigJSON: strings.Replace(drafts.created.ConfigJSON, `"table":"synthetic_table"`, `"table":"other_table"`, 1)}
+	drafts.created = corrupted
+	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:preview-command", nil)
+	preview.Header.Set("If-Match", `"rev-1"`)
+	previewed := httptest.NewRecorder()
+	handler.ServeHTTP(previewed, preview)
+	if previewed.Code != http.StatusServiceUnavailable || !bytes.Contains(previewed.Body.Bytes(), []byte("DRAFT_CONFIGURATION_UNAVAILABLE")) {
+		t.Fatalf("inconsistent v6 preview response=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+
+	// 标准文档内数据源绑定与草稿事实不一致时同样失败关闭。
+	rebound := corrupted
+	rebound.ConfigJSON = strings.Replace(corrupted.ConfigJSON, `"dataSourceId":"source-allowed"`, `"dataSourceId":"source-other"`, 1)
+	drafts.created = rebound
+	reboundResponse := httptest.NewRecorder()
+	handler.ServeHTTP(reboundResponse, preview)
+	if reboundResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rebound v6 preview response=%d body=%s", reboundResponse.Code, reboundResponse.Body.String())
+	}
+}
+
+func TestExportDraftVersionRoutingFailsClosed(t *testing.T) {
+	t.Parallel()
+	generator, err := commandgen.NewDefault()
+	if err != nil {
+		t.Fatalf("NewDefault() error = %v", err)
+	}
+	newHandler := func() (http.Handler, *recordingDraftStore) {
+		drafts := &recordingDraftStore{}
+		handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+			Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+			CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Generator: generator, CSRF: allowedCSRF{},
+		})
+		return handler, drafts
+	}
+	cases := map[string]struct {
+		body string
+		code int
+	}{
+		// 未验证能力必须 422 失败关闭。
+		"全部对象范围":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"ALL"},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
+		"CUT 格式":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"synthetic_db","name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CUT"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
+		"仅 DDL 内容": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"synthetic_db","name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
+		"对象存储输出":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"synthetic_db","name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"OSS","filePath":"oss://bucket/out"}}}`, http.StatusUnprocessableEntity},
+		"筛选配置未启用":  {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"synthetic_db","name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"where":"id > 0"}}}`, http.StatusUnprocessableEntity},
+		"性能配置未启用":  {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"synthetic_db","name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"thread":4}}}`, http.StatusUnprocessableEntity},
+		// 版本路由与未知字段必须 400 失败关闭。
+		"v5 携带泛化配置":   {`{"configVersion":"v5","dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/tmp/out","config":{"dataFormat":{"formatKind":"CSV"}}}`, http.StatusBadRequest},
+		"v6 携带扁平字段":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","config":{"dataFormat":{"formatKind":"CSV"}}}`, http.StatusBadRequest},
+		"v6 缺少泛化配置":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1"}`, http.StatusBadRequest},
+		"未知配置版本":      {`{"configVersion":"v7","dataSourceId":"source-allowed","nodeId":"node-1","config":{"dataFormat":{"formatKind":"CSV"}}}`, http.StatusBadRequest},
+		"v6 配置未知字段":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"dataFormat":{"formatKind":"CSV","mystery":1}}}`, http.StatusBadRequest},
+		"v6 秘密字段失败关闭": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"outputConfig":{"filePath":"/E:/tmp/out","password":"synthetic-secret"}}}`, http.StatusBadRequest},
+	}
+	for name, testCase := range cases {
+		handler, drafts := newHandler()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(testCase.body))
+		request.Header.Set("Idempotency-Key", "synthetic-v6-negative-"+name+"-key-000")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != testCase.code || drafts.created.DraftID != "" {
+			t.Fatalf("%s response=%d want=%d draft=%#v body=%s", name, response.Code, testCase.code, drafts.created, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "synthetic-secret") {
+			t.Fatalf("%s echoed secret in error body: %s", name, response.Body.String())
+		}
+	}
+}
+
+func TestExportDraftV5PersistenceRemainsByteIdentical(t *testing.T) {
+	t.Parallel()
+	generator, err := commandgen.NewDefault()
+	if err != nil {
+		t.Fatalf("NewDefault() error = %v", err)
+	}
+	drafts := &recordingDraftStore{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Generator: generator, CSRF: allowedCSRF{},
+	})
+	body := `{"dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","logPath":"","skipCheckDir":false}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	request.Header.Set("Idempotency-Key", "synthetic-v5-regression-key")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || drafts.created.ConfigVersion != "v5" {
+		t.Fatalf("v5 create response=%d draft=%#v", response.Code, drafts.created)
+	}
+	// 存量 config_json 必须与首条切片字节级一致，结构化列保持默认空对象。
+	if drafts.created.ConfigJSON != body {
+		t.Fatalf("v5 config json changed: %s", drafts.created.ConfigJSON)
+	}
+	if drafts.created.ObjectScopeJSON != "" || drafts.created.DataFormatJSON != "" || drafts.created.DDLBehaviorJSON != "" {
+		t.Fatalf("v5 draft must not carry structured columns: %#v", drafts.created)
 	}
 }
 
@@ -1768,7 +1969,7 @@ func (s *recordingDraftStore) GetExportDraft(context.Context, string) (store.Exp
 }
 
 func (s *recordingDraftStore) UpdateDraft(_ context.Context, input store.DraftUpdate) (int64, error) {
-	s.created.ConfigJSON, s.created.ConfigFingerprint, s.created.Revision = input.ConfigJSON, input.ConfigFingerprint, input.ExpectedRevision+1
+	s.created.ConfigJSON, s.created.ConfigFingerprint, s.created.Revision, s.created.ConfigVersion = input.ConfigJSON, input.ConfigFingerprint, input.ExpectedRevision+1, input.ConfigVersion
 	return s.created.Revision, nil
 }
 
@@ -2021,7 +2222,7 @@ func (s *recordingTaskStore) GetAuthorizedTaskSummary(_ context.Context, _ strin
 	if s.summary.TaskID != "" {
 		return s.summary, nil
 	}
-	return store.TaskSummary{TaskID: s.input.TaskID, CreatorSubjectID: s.input.CreatorSubjectID, DataSourceID: s.input.DataSourceID, NodeID: s.input.NodeID, PrecheckID: s.input.PrecheckID, ConfigFingerprint: s.input.ConfigFingerprint, ToolVersion: s.input.ToolVersion, MetadataVersion: s.input.MetadataVersion, CapabilityVersion: s.input.CapabilityVersion, PlannedCommandRedacted: s.input.PlannedCommandRedacted, State: "WAITING_SCHEDULE", SubmittedAt: s.input.SubmittedAt}, nil
+	return store.TaskSummary{TaskID: s.input.TaskID, CreatorSubjectID: s.input.CreatorSubjectID, DataSourceID: s.input.DataSourceID, NodeID: s.input.NodeID, PrecheckID: s.input.PrecheckID, ConfigFingerprint: s.input.ConfigFingerprint, ToolVersion: s.input.ToolVersion, MetadataVersion: s.input.MetadataVersion, CapabilityVersion: s.input.CapabilityVersion, SnapshotVersion: s.input.SnapshotVersion, PlannedCommandRedacted: s.input.PlannedCommandRedacted, State: "WAITING_SCHEDULE", SubmittedAt: s.input.SubmittedAt}, nil
 }
 
 func (s *recordingTaskStore) ListTaskSummaries(_ context.Context, input store.TaskListQuery) ([]store.TaskListItem, error) {

@@ -18,6 +18,10 @@ const (
 	currentMetadataVersion  = "obdumper-4.3.5-slice-v5"
 )
 
+// resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
+// 尚未完成事实核验或加载器支持的设计稿（如 v6 泛化元数据）放在 drafts/ 目录，
+// 不被嵌入也不得被声明为已支持；接入前必须先通过对应切片的验证门禁。
+//
 //go:embed resources/*.json
 var resourceFiles embed.FS
 

@@ -1694,10 +1694,16 @@ func (s *Store) CreateExportDraft(ctx context.Context, input ExportDraftCreate) 
 		insert, err := tx.ExecContext(ctx, `
             INSERT INTO export_drafts(
                 draft_id, owner_subject_id, data_source_id, node_id, revision,
-                tool_version, metadata_version, capability_version, config_json,
-                config_fingerprint, invalidation_json, created_at, updated_at
+                tool_version, metadata_version, capability_version, config_version, config_json,
+                config_fingerprint, invalidation_json,
+                object_scope_json, content_selection_json, data_format_json, output_config_json,
+                performance_config_json, filter_config_json, ddl_behavior_json,
+                created_at, updated_at
             )
-            SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?
+            SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?,
+                   COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'),
+                   COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'),
+                   COALESCE(NULLIF(?, ''), '{}'), ?, ?
             WHERE EXISTS (
                 SELECT 1 FROM data_sources
                 WHERE data_source_id = ? AND state = 'ENABLED'
@@ -1705,8 +1711,11 @@ func (s *Store) CreateExportDraft(ctx context.Context, input ExportDraftCreate) 
             )
               AND EXISTS (SELECT 1 FROM execution_nodes WHERE node_id = ? AND management_state = 'ENABLED')
         `, input.DraftID, input.OwnerSubjectID, input.DataSourceID, input.NodeID,
-			input.ToolVersion, input.MetadataVersion, input.CapabilityVersion, input.ConfigJSON,
-			input.ConfigFingerprint, input.InvalidationJSON, utcText(input.CreatedAt), utcText(input.UpdatedAt),
+			input.ToolVersion, input.MetadataVersion, input.CapabilityVersion, input.ConfigVersion, input.ConfigJSON,
+			input.ConfigFingerprint, input.InvalidationJSON,
+			input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON,
+			input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON,
+			utcText(input.CreatedAt), utcText(input.UpdatedAt),
 			input.DataSourceID, input.NodeID)
 		if err != nil {
 			return fmt.Errorf("insert export draft: %w", err)
@@ -1744,12 +1753,18 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
         SELECT draft_id, owner_subject_id, data_source_id, COALESCE(node_id, ''), revision,
-               tool_version, metadata_version, capability_version, config_json,
-               COALESCE(config_fingerprint, ''), invalidation_json, created_at, updated_at
+               tool_version, metadata_version, capability_version, config_version, config_json,
+               COALESCE(config_fingerprint, ''), invalidation_json,
+               object_scope_json, content_selection_json, data_format_json, output_config_json,
+               performance_config_json, filter_config_json, ddl_behavior_json,
+               created_at, updated_at
         FROM export_drafts WHERE draft_id = ?
     `, draftID).Scan(&draft.DraftID, &draft.OwnerSubjectID, &draft.DataSourceID, &draft.NodeID, &draft.Revision,
-		&draft.ToolVersion, &draft.MetadataVersion, &draft.CapabilityVersion, &draft.ConfigJSON,
-		&draft.ConfigFingerprint, &draft.InvalidationJSON, &createdAt, &updatedAt)
+		&draft.ToolVersion, &draft.MetadataVersion, &draft.CapabilityVersion, &draft.ConfigVersion, &draft.ConfigJSON,
+		&draft.ConfigFingerprint, &draft.InvalidationJSON,
+		&draft.ObjectScopeJSON, &draft.ContentSelectionJSON, &draft.DataFormatJSON, &draft.OutputConfigJSON,
+		&draft.PerformanceConfigJSON, &draft.FilterConfigJSON, &draft.DDLBehaviorJSON,
+		&createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ExportDraft{}, ErrDataSourceNotFound
 	}
@@ -3234,9 +3249,20 @@ func (s *Store) UpdateDraft(ctx context.Context, input DraftUpdate) (int64, erro
                 config_json = ?,
                 config_fingerprint = ?,
                 invalidation_json = ?,
+                config_version = ?,
+                object_scope_json = COALESCE(NULLIF(?, ''), '{}'),
+                content_selection_json = COALESCE(NULLIF(?, ''), '{}'),
+                data_format_json = COALESCE(NULLIF(?, ''), '{}'),
+                output_config_json = COALESCE(NULLIF(?, ''), '{}'),
+                performance_config_json = COALESCE(NULLIF(?, ''), '{}'),
+                filter_config_json = COALESCE(NULLIF(?, ''), '{}'),
+                ddl_behavior_json = COALESCE(NULLIF(?, ''), '{}'),
                 updated_at = ?
             WHERE draft_id = ? AND revision = ?
-        `, input.ConfigJSON, input.ConfigFingerprint, input.InvalidationJSON, utcText(input.UpdatedAt), input.DraftID, input.ExpectedRevision)
+        `, input.ConfigJSON, input.ConfigFingerprint, input.InvalidationJSON, input.ConfigVersion,
+			input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON,
+			input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON,
+			utcText(input.UpdatedAt), input.DraftID, input.ExpectedRevision)
 		if err != nil {
 			return fmt.Errorf("update export draft: %w", err)
 		}
@@ -3312,10 +3338,10 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
             INSERT INTO tasks(
                 task_id, creator_subject_id, data_source_id, node_id, precheck_id,
                 credential_id, credential_revision, config_fingerprint, tool_version,
-                metadata_version, capability_version, snapshot_json, planned_argv_json,
+                metadata_version, capability_version, snapshot_version, snapshot_json, planned_argv_json,
                 planned_command_redacted, submitted_at
             )
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE EXISTS (
                 SELECT 1
                 FROM precheck_runs
@@ -3347,7 +3373,7 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
         `,
 		input.TaskID, input.CreatorSubjectID, input.DataSourceID, input.NodeID, input.PrecheckID,
 		input.CredentialID, input.CredentialRevision, input.ConfigFingerprint, input.ToolVersion,
-		input.MetadataVersion, input.CapabilityVersion, input.SnapshotJSON, input.PlannedArgvJSON,
+		input.MetadataVersion, input.CapabilityVersion, input.SnapshotVersion, input.SnapshotJSON, input.PlannedArgvJSON,
 		input.PlannedCommandRedacted, utcText(input.SubmittedAt),
 		input.PrecheckID, input.DataSourceID, input.NodeID, input.CredentialID,
 		input.CredentialRevision, input.ConfigFingerprint, utcText(input.SubmittedAt),
@@ -3378,6 +3404,7 @@ func (s *Store) GetTaskSummary(ctx context.Context, taskID string) (TaskSummary,
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
 		       t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
+		       t.snapshot_version,
 		       COALESCE(json_extract(t.snapshot_json, '$.database'), ''),
 		       COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
 		       COALESCE(json_extract(t.snapshot_json, '$.format'), ''),
@@ -3390,7 +3417,7 @@ func (s *Store) GetTaskSummary(ctx context.Context, taskID string) (TaskSummary,
         WHERE t.task_id = ?
     `, taskID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
-		&summary.CapabilityVersion, &summary.Database, &summary.Table, &summary.Format,
+		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
 		&submittedAt, &startedAt, &finishedAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -3428,6 +3455,7 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
 		       t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
+		       t.snapshot_version,
 		       COALESCE(json_extract(t.snapshot_json, '$.database'), ''),
 		       COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
 		       COALESCE(json_extract(t.snapshot_json, '$.format'), ''),
@@ -3453,7 +3481,7 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
           )
     `, taskID, subjectID, subjectID, subjectID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
-		&summary.CapabilityVersion, &summary.Database, &summary.Table, &summary.Format,
+		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
 		&submittedAt, &startedAt, &finishedAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -4737,6 +4765,9 @@ func validateDraftUpdate(input DraftUpdate) error {
 	if input.DraftID == "" || input.ExpectedRevision < 1 || input.ConfigFingerprint == "" || input.UpdatedAt.IsZero() {
 		return errors.New("draft update identity is invalid")
 	}
+	if !oneOf(input.ConfigVersion, "v5", "v6") {
+		return errors.New("draft configuration version is invalid")
+	}
 	if !isSHA256(input.ConfigFingerprint) {
 		return errors.New("draft configuration fingerprint is invalid")
 	}
@@ -4745,6 +4776,9 @@ func validateDraftUpdate(input DraftUpdate) error {
 	}
 	if err := validateSafeObjectJSON(input.InvalidationJSON); err != nil {
 		return fmt.Errorf("draft invalidation is invalid: %w", err)
+	}
+	if err := validateDraftStructuredJSON(input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON, input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON); err != nil {
+		return err
 	}
 	return nil
 }
@@ -5021,6 +5055,9 @@ func validateExportDraftCreate(input ExportDraftCreate) error {
 	if input.DraftID == "" || input.OwnerSubjectID == "" || input.DataSourceID == "" || input.NodeID == "" || input.ToolVersion == "" || input.MetadataVersion == "" || input.CapabilityVersion == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.UpdatedAt.IsZero() {
 		return errors.New("export draft create identity is invalid")
 	}
+	if !oneOf(input.ConfigVersion, "v5", "v6") {
+		return errors.New("export draft configuration version is invalid")
+	}
 	if !isSHA256(input.ConfigFingerprint) || !isSHA256(input.RequestDigest) {
 		return errors.New("export draft create fingerprint is invalid")
 	}
@@ -5029,6 +5066,23 @@ func validateExportDraftCreate(input ExportDraftCreate) error {
 	}
 	if err := validateSafeObjectJSON(input.InvalidationJSON); err != nil {
 		return fmt.Errorf("export draft invalidation is invalid: %w", err)
+	}
+	if err := validateDraftStructuredJSON(input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON, input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateDraftStructuredJSON 校验 v6 草稿的结构化子配置列。
+// 每个值允许为空（写入时回退为 '{}'），非空时必须是安全 JSON 对象。
+func validateDraftStructuredJSON(values ...string) error {
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if err := validateSafeObjectJSON(value); err != nil {
+			return fmt.Errorf("draft structured configuration is invalid: %w", err)
+		}
 	}
 	return nil
 }
@@ -5166,6 +5220,9 @@ func nullableString(value string) any {
 func validateTaskSubmission(input TaskSubmission) error {
 	if input.TaskID == "" || input.CreatorSubjectID == "" || input.AuditActorID == "" || input.DataSourceID == "" || input.NodeID == "" || input.PrecheckID == "" || input.CredentialID == "" || input.CredentialRevision < 1 || input.ToolVersion == "" || input.MetadataVersion == "" || input.CapabilityVersion == "" || input.RequestID == "" || input.SubmittedAt.IsZero() {
 		return errors.New("task submission identity is invalid")
+	}
+	if !oneOf(input.SnapshotVersion, "v1", "v2") {
+		return errors.New("task snapshot version is invalid")
 	}
 	if !isSHA256(input.ConfigFingerprint) {
 		return errors.New("task configuration fingerprint is invalid")
