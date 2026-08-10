@@ -107,6 +107,18 @@ function Wait-PortClosed {
 }
 
 New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
+# 证书过期时删除旧文件强制重新生成，避免证书到期后页面代理静默 502。
+if (Test-Path -LiteralPath $certificatePath -PathType Leaf) {
+    try {
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPemFile($certificatePath)
+        $expired = $certificate.NotAfter -le [DateTime]::UtcNow
+    } catch {
+        $expired = $true
+    }
+    if ($expired) {
+        Remove-Item -LiteralPath $certificatePath, $keyPath, $caPath -Force -ErrorAction SilentlyContinue
+    }
+}
 if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf) -or -not (Test-Path -LiteralPath $keyPath -PathType Leaf) -or -not (Test-Path -LiteralPath $caPath -PathType Leaf)) {
     & $certificateScript
 }

@@ -36,10 +36,12 @@ type PrecheckGrant struct {
 
 // PrecheckExecutionContext 是控制面从冻结草稿和节点声明派生的固定本地检查输入。
 // Agent 必须按原样使用它，不能通过命令行、本地环境或浏览器请求覆盖数据库对象、路径或根目录。
+// Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
 type PrecheckExecutionContext struct {
 	CompatibilityMode string
 	Database          string
-	Table             string
+	Objects           []string
+	ContentKind       string
 	OutputPath        string
 	LogPath           string
 	SkipCheckDir      bool
@@ -198,7 +200,8 @@ type precheckBindingPayload struct {
 type precheckExecutionContextPayload struct {
 	CompatibilityMode string   `json:"compatibilityMode"`
 	Database          string   `json:"database"`
-	Table             string   `json:"table"`
+	Objects           []string `json:"objects"`
+	ContentKind       string   `json:"contentKind"`
 	OutputPath        string   `json:"outputPath"`
 	LogPath           string   `json:"logPath"`
 	SkipCheckDir      bool     `json:"skipCheckDir"`
@@ -569,7 +572,8 @@ func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
 	return PrecheckExecutionContext{
 		CompatibilityMode: p.CompatibilityMode,
 		Database:          p.Database,
-		Table:             p.Table,
+		Objects:           append([]string(nil), p.Objects...),
+		ContentKind:       p.ContentKind,
 		OutputPath:        p.OutputPath,
 		LogPath:           p.LogPath,
 		SkipCheckDir:      p.SkipCheckDir,
@@ -624,8 +628,13 @@ func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
 }
 
 func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
-	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validOpaqueValue(context.Table, 256) || !validExportOutputPath(context.TargetPlatform, context.OutputPath) || (context.LogPath != "" && !validExportOutputPath(context.TargetPlatform, context.LogPath)) || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
+	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validPrecheckContentKind(context.ContentKind) || len(context.Objects) > 100 || !validExportOutputPath(context.TargetPlatform, context.OutputPath) || (context.LogPath != "" && !validExportOutputPath(context.TargetPlatform, context.LogPath)) || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
 		return false
+	}
+	for _, object := range context.Objects {
+		if !validOpaqueValue(object, 256) {
+			return false
+		}
 	}
 	for _, root := range context.AllowedRoots {
 		if !outputpath.IsAllowedRootPath(string(context.TargetPlatform), root) {
@@ -633,6 +642,11 @@ func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
 		}
 	}
 	return true
+}
+
+// validPrecheckContentKind 只接受控制面已确认的三种导出内容类型。
+func validPrecheckContentKind(contentKind string) bool {
+	return contentKind == "DATA_ONLY" || contentKind == "DDL_ONLY" || contentKind == "DDL_AND_DATA"
 }
 
 // validExportOutputPath 只接受控制面已声明目标平台可由 OBDUMPER 消费的导出目录。

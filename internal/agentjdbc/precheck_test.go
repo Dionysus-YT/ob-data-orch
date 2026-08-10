@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ob-data-orch/internal/agentpreflight"
@@ -105,7 +106,7 @@ func TestPrecheckProbeDoesNotResolveSlotForObjectFirstOrMismatchedRequest(t *tes
 		t.Fatalf("连接检查错误 = %v", err)
 	}
 	mismatched := validRequest()
-	mismatched.Table = "another_table"
+	mismatched.Objects = []string{"another_table"}
 	database, err := probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, mismatched)
 	if err != nil || database.Status != agentpreflight.StatusUnknown || database.EvidenceCode != EvidenceDatabaseUnavailable || resolver.calls != 1 || runCalls != 1 {
 		t.Fatalf("不匹配请求结果 = %#v, resolver/run=%d/%d, err=%v", database, resolver.calls, runCalls, err)
@@ -116,6 +117,91 @@ func TestPrecheckProbeRejectsOtherChecks(t *testing.T) {
 	_, err := (&PrecheckProbe{}).Probe(context.Background(), agentpreflight.CheckToolEnvironment, validRequest())
 	if !errors.Is(err, ErrUnsupportedCheck) {
 		t.Fatalf("非 JDBC 检查错误 = %v", err)
+	}
+}
+
+// TestPrecheckProbeExploresEachFrozenObjectOnce 验证 SPECIFIED 多对象逐个运行冻结探针，且只解析一次秘密槽位。
+func TestPrecheckProbeExploresEachFrozenObjectOnce(t *testing.T) {
+	resolver := &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}}
+	var probed []string
+	probe := &PrecheckProbe{
+		WorkspaceRoot: t.TempDir(),
+		Resolver:      resolver,
+		Run: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+			probed = append(probed, request.Table)
+			return jdbcprobe.PreflightResult{Connection: jdbcprobe.Result{ProductName: "OceanBase"}, ObjectAccess: jdbcprobe.ObjectAccessible}, nil
+		},
+	}
+	request := validRequest()
+	request.Objects = []string{"table_one", "table_two", "view_one"}
+	request.ContentKind = "DDL_ONLY"
+	connection, err := probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, request)
+	if err != nil || connection.Status != agentpreflight.StatusPassed {
+		t.Fatalf("多对象连接结果 = %#v, %v", connection, err)
+	}
+	object, err := probe.Probe(context.Background(), agentpreflight.CheckObjectAccess, request)
+	if err != nil || object.Status != agentpreflight.StatusPassed || object.EvidenceCode != EvidenceObjectAccessible {
+		t.Fatalf("多对象结果 = %#v, %v", object, err)
+	}
+	if strings.Join(probed, ",") != "table_one,table_two,view_one" || resolver.calls != 1 {
+		t.Fatalf("探测序列/槽位解析 = %#v / %d", probed, resolver.calls)
+	}
+}
+
+// TestPrecheckProbeFailsClosedWhenAnyObjectInaccessible 验证任一对象不可达即整体失败。
+func TestPrecheckProbeFailsClosedWhenAnyObjectInaccessible(t *testing.T) {
+	probe := &PrecheckProbe{
+		WorkspaceRoot: t.TempDir(),
+		Resolver:      &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}},
+		Run: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+			access := jdbcprobe.ObjectAccessible
+			if request.Table == "table_two" {
+				access = jdbcprobe.ObjectNotAccessible
+			}
+			return jdbcprobe.PreflightResult{ObjectAccess: access}, nil
+		},
+	}
+	request := validRequest()
+	request.Objects = []string{"table_one", "table_two"}
+	if _, err := probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, request); err != nil {
+		t.Fatalf("连接检查错误 = %v", err)
+	}
+	object, err := probe.Probe(context.Background(), agentpreflight.CheckObjectAccess, request)
+	if err != nil || object.Status != agentpreflight.StatusFailed || object.EvidenceCode != EvidenceObjectNotAccessible {
+		t.Fatalf("部分不可达结果 = %#v, %v", object, err)
+	}
+}
+
+// TestPrecheckProbeAllScopeProjectsDatabaseLevelAccess 验证 ALL 范围只运行连接探测并按可达性投影对象结论。
+func TestPrecheckProbeAllScopeProjectsDatabaseLevelAccess(t *testing.T) {
+	resolver := &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}}
+	preflightCalls := 0
+	connectionCalls := 0
+	probe := &PrecheckProbe{
+		WorkspaceRoot: t.TempDir(),
+		Resolver:      resolver,
+		Run: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+			preflightCalls++
+			return jdbcprobe.PreflightResult{ObjectAccess: jdbcprobe.ObjectAccessible}, nil
+		},
+		RunConnection: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, _ jdbcprobe.Request) (jdbcprobe.Result, error) {
+			connectionCalls++
+			return jdbcprobe.Result{ProductName: "OceanBase"}, nil
+		},
+	}
+	request := validRequest()
+	request.Objects = nil
+	request.ContentKind = "DATA_ONLY"
+	connection, err := probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, request)
+	if err != nil || connection.Status != agentpreflight.StatusPassed {
+		t.Fatalf("ALL 连接结果 = %#v, %v", connection, err)
+	}
+	object, err := probe.Probe(context.Background(), agentpreflight.CheckObjectAccess, request)
+	if err != nil || object.Status != agentpreflight.StatusPassed || object.EvidenceCode != EvidenceObjectAccessible {
+		t.Fatalf("ALL 对象投影 = %#v, %v", object, err)
+	}
+	if preflightCalls != 0 || connectionCalls != 1 || resolver.calls != 1 {
+		t.Fatalf("ALL 探测调用 = preflight/connection/resolver %d/%d/%d", preflightCalls, connectionCalls, resolver.calls)
 	}
 }
 
@@ -139,7 +225,8 @@ func validRequest() agentpreflight.Request {
 		LeaseEpoch:        1,
 		CompatibilityMode: "MYSQL",
 		Database:          "synthetic_db",
-		Table:             "synthetic_table",
+		Objects:           []string{"synthetic_table"},
+		ContentKind:       "DATA_ONLY",
 		TargetPlatform:    commandgen.PlatformWindowsAMD64,
 		OutputPath:        "/E:/output",
 		AllowedRoots:      []string{`E:\output`},

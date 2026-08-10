@@ -237,8 +237,57 @@ func TestOpenAPIReferencesResolveAndSecretInputsAreWriteOnly(t *testing.T) {
 		t.Fatal("data source state must use dedicated state actions, not the write schema")
 	}
 	gated := object(t, schemas, "GatedCsvOptions")
-	if gated["x-support-state"] != "VALIDATION_GATED" {
-		t.Fatal("CSV options must remain validation gated")
+	if gated["x-support-state"] != "ENABLED" {
+		t.Fatal("CSV serialization options must be enabled since EX-I3")
+	}
+	csvProperties := object(t, gated, "properties")
+	if _, exists := csvProperties["withTrim"]; !exists {
+		t.Fatal("CSV options must include withTrim")
+	}
+	cutOptions := object(t, schemas, "CutOptions")
+	if cutOptions["x-support-state"] != "ENABLED" {
+		t.Fatal("cut options must be enabled since EX-I4")
+	}
+	generalized := object(t, schemas, "GeneralizedExportConfig")
+	dataFormat := object(t, object(t, generalized, "properties"), "dataFormat")
+	dataFormatProperties := object(t, dataFormat, "properties")
+	if _, exists := dataFormatProperties["cutOptions"]; !exists {
+		t.Fatal("generalized data format must carry cut options")
+	}
+	if _, exists := dataFormatProperties["csvOptions"]; !exists {
+		t.Fatal("generalized data format must carry csv options")
+	}
+	// 2026-08-10：objectScope 必须声明 database 与 scopeKind 必填；
+	// outputConfig 必须携带 EX-I3 压缩字段；数据格式与输出类型枚举覆盖全部已启用能力。
+	generalizedProperties := object(t, generalized, "properties")
+	objectScope := object(t, generalizedProperties, "objectScope")
+	required, ok := objectScope["required"].([]any)
+	if !ok || len(required) != 2 {
+		t.Fatal("object scope must declare exactly database and scopeKind as required")
+	}
+	requiredSet := map[string]bool{}
+	for _, name := range required {
+		requiredSet[fmt.Sprint(name)] = true
+	}
+	if !requiredSet["database"] || !requiredSet["scopeKind"] {
+		t.Fatal("object scope required fields must include database and scopeKind")
+	}
+	outputConfig := object(t, generalizedProperties, "outputConfig")
+	outputConfigProperties := object(t, outputConfig, "properties")
+	for _, field := range []string{"compress", "compressionAlgo"} {
+		if _, exists := outputConfigProperties[field]; !exists {
+			t.Fatalf("output config must carry %s", field)
+		}
+	}
+	formatKind := object(t, dataFormatProperties, "formatKind")
+	formatKinds, ok := formatKind["enum"].([]any)
+	if !ok || len(formatKinds) != 7 {
+		t.Fatal("data format kind must enumerate all seven supported formats")
+	}
+	outputKind := object(t, outputConfigProperties, "outputKind")
+	outputKinds, ok := outputKind["enum"].([]any)
+	if !ok || len(outputKinds) != 5 {
+		t.Fatal("output kind must enumerate LOCAL plus four controlled storage types")
 	}
 }
 

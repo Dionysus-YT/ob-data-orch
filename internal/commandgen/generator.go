@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -42,6 +43,16 @@ type Generator struct {
 
 func NewDefault() (*Generator, error) {
 	catalog, err := parammeta.LoadDefault()
+	if err != nil {
+		return nil, err
+	}
+	return newGenerator(catalog)
+}
+
+// NewGeneralized 构建泛化能力生成器（v6 已取证子集）。
+// 该生成器不固定单一能力版本，按请求 capabilityVersion 筛选参数子集。
+func NewGeneralized() (*Generator, error) {
+	catalog, err := parammeta.LoadGeneralized()
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +107,8 @@ func (g *Generator) Generate(request Request) (Result, error) {
 	issues := g.validateRequestIdentity(request)
 	provided := make(map[string]FieldInput, len(request.Fields))
 	for _, field := range request.Fields {
-		if _, known := g.byName[field.Name]; !known {
+		definition, known := g.byName[field.Name]
+		if !known || !g.participatesInCapability(definition, request.CapabilityVersion) {
 			issues = append(issues, Issue{Code: "UNKNOWN_PARAMETER", Field: field.Name})
 			continue
 		}
@@ -107,12 +119,29 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		provided[field.Name] = cloneFieldInput(field)
 	}
 
+	// 数据格式参数单选：CSV/CUT/POS/SQL/PARQUET/ORC/AVRO 同时启用时失败关闭，防止多格式命令形态模糊。
+	// POS 于 2026-08-07 受控实测定版后加入候选（独立 --pos + --ctl-path）；
+	// EX-I5 结构化格式（2026-08-07）加入 --par/--orc/--avro 候选。
 	format := ""
-	if csv, ok := provided["--csv"]; ok && csv.Value.Kind == ValueBoolean && csv.Value.Boolean {
-		format = "CSV"
+	for _, candidate := range []struct {
+		name   string
+		format string
+	}{{"--csv", "CSV"}, {"--cut", "CUT"}, {"--pos", "POS"}, {"--sql", "SQL"}, {"--par", "PARQUET"}, {"--orc", "ORC"}, {"--avro", "AVRO"}} {
+		field, ok := provided[candidate.name]
+		if !ok || field.Value.Kind != ValueBoolean || !field.Value.Boolean {
+			continue
+		}
+		if format != "" {
+			issues = append(issues, Issue{Code: "MUTUALLY_EXCLUSIVE_FORMATS", Field: candidate.name})
+			continue
+		}
+		format = candidate.format
 	}
 	normalized := make([]NormalizedField, 0, len(g.definitions))
 	for _, definition := range g.definitions {
+		if !g.participatesInCapability(definition, request.CapabilityVersion) {
+			continue
+		}
 		field, present := provided[definition.LongName]
 		active := isActive(definition, format)
 		if !active {
@@ -141,7 +170,7 @@ func (g *Generator) Generate(request Request) (Result, error) {
 			state = StateBlocked
 			issues = append(issues, Issue{Code: "PARAMETER_SOURCE_MISMATCH", Field: definition.LongName})
 		}
-		value, valueIssues := normalizeValue(definition, field.Value, request.TargetPlatform)
+		value, valueIssues := normalizeValue(definition, field.Value, request.TargetPlatform, request.CapabilityVersion, request.OutputKind)
 		if len(valueIssues) > 0 {
 			state = StateBlocked
 			for _, code := range valueIssues {
@@ -169,11 +198,17 @@ func (g *Generator) Generate(request Request) (Result, error) {
 	display := make([]string, 0, 15)
 	tokenEvidence := make([]TokenEvidence, 0, 7)
 	secretSlots := make([]SecretSlot, 0, 1)
+	subset := make([]parammeta.Definition, 0, len(normalized))
+	for _, definition := range g.definitions {
+		if g.participatesInCapability(definition, request.CapabilityVersion) {
+			subset = append(subset, definition)
+		}
+	}
 	for index, field := range normalized {
 		if field.State != StateExplicit && field.State != StateDerived {
 			continue
 		}
-		definition := g.definitions[index]
+		definition := subset[index]
 		if definition.EmissionTarget == "SECURITY_FILE" {
 			secretSlots = append(secretSlots, SecretSlot{
 				SlotID:              secretSlotID,
@@ -210,7 +245,7 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		Tool:                g.tool,
 		ToolVersion:         g.toolVersion,
 		MetadataVersion:     g.metadataVersion,
-		CapabilityVersion:   g.capabilityVersion,
+		CapabilityVersion:   request.CapabilityVersion,
 		NormalizedFields:    normalized,
 		ArgvTemplate:        argv,
 		RedactedCommand:     renderCommand(request.TargetPlatform, "obdumper", display),
@@ -219,6 +254,16 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		TokenEvidence:       tokenEvidence,
 		ConfigFingerprint:   fingerprint,
 	}, nil
+}
+
+// participatesInCapability 判断定义是否参与请求能力：
+// 未声明 capabilityVersions 的定义参与当前目录的全部能力（v5 基线行为），
+// 已声明的定义只在列出的能力切片内活动。
+func (g *Generator) participatesInCapability(definition parammeta.Definition, capability string) bool {
+	if len(definition.CapabilityVersions) == 0 {
+		return true
+	}
+	return contains(definition.CapabilityVersions, capability)
 }
 
 // displayParameterName 优先返回已核验的短参数；未配置短参数时保留元数据中的规范长参数。
@@ -249,7 +294,13 @@ func (g *Generator) validateRequestIdentity(request Request) []Issue {
 	if request.MetadataVersion != g.metadataVersion {
 		issues = append(issues, Issue{Code: "METADATA_VERSION_MISMATCH", Field: "metadataVersion"})
 	}
-	if request.CapabilityVersion != g.capabilityVersion {
+	// 固定单能力目录（v5）要求能力版本逐字节一致；
+	// 泛化目录（能力版本为空）只要求请求声明非空能力，子集由定义绑定筛选。
+	if g.capabilityVersion != "" {
+		if request.CapabilityVersion != g.capabilityVersion {
+			issues = append(issues, Issue{Code: "CAPABILITY_VERSION_MISMATCH", Field: "capabilityVersion"})
+		}
+	} else if request.CapabilityVersion == "" {
 		issues = append(issues, Issue{Code: "CAPABILITY_VERSION_MISMATCH", Field: "capabilityVersion"})
 	}
 	if request.ConnectionKind != ConnectionODP {
@@ -267,7 +318,7 @@ func (g *Generator) validateRequestIdentity(request Request) []Issue {
 	return issues
 }
 
-func normalizeValue(definition parammeta.Definition, value Value, platform Platform) (NormalizedValue, []string) {
+func normalizeValue(definition parammeta.Definition, value Value, platform Platform, capability, outputKind string) (NormalizedValue, []string) {
 	if hasMixedValue(value) {
 		return NormalizedValue{}, []string{"PARAMETER_VALUE_AMBIGUOUS"}
 	}
@@ -297,11 +348,19 @@ func normalizeValue(definition parammeta.Definition, value Value, platform Platf
 		if definition.ValueType == "enum" && !contains(definition.AllowedValues, value.String) {
 			return NormalizedValue{}, []string{"PARAMETER_ENUM_INVALID"}
 		}
-		if definition.LongName == "--table" && (strings.Contains(value.String, "*") || strings.Contains(value.String, ",")) {
-			return NormalizedValue{}, []string{"TABLE_SCOPE_NOT_SINGLE"}
+		if code := validateObjectNameList(definition.LongName, value.String, capability); code != "" {
+			return NormalizedValue{}, []string{code}
 		}
-		if definition.ValueType == "path" && !validAbsolutePath(platform, value.String) {
-			return NormalizedValue{}, []string{"OUTPUT_PATH_NOT_ABSOLUTE"}
+		if definition.ValueType == "path" {
+			// EX-I6 对象存储（2026-08-07）：--file-path 在受控对象存储输出下按 URI 校验；
+			// 其余 path 参数（本地路径/日志/控制文件/临时分块）仍要求平台绝对路径。
+			if definition.LongName == "--file-path" && isStorageOutputKind(outputKind) {
+				if !validControlledStorageURI(outputKind, value.String) {
+					return NormalizedValue{}, []string{"STORAGE_URI_INVALID"}
+				}
+			} else if !validAbsolutePath(platform, value.String) {
+				return NormalizedValue{}, []string{"OUTPUT_PATH_NOT_ABSOLUTE"}
+			}
 		}
 		return NormalizedValue{Kind: value.Kind, String: value.String}, nil
 	case "secret-slot":
@@ -316,6 +375,38 @@ func normalizeValue(definition parammeta.Definition, value Value, platform Platf
 	default:
 		return NormalizedValue{}, []string{"PARAMETER_TYPE_UNSUPPORTED"}
 	}
+}
+
+// validateObjectNameList 校验对象类参数的取值：禁止通配符；
+// 单表 CSV 冻结能力仍要求单一表名（逗号拒绝），泛化能力允许逗号连接的多名称，
+// 每个名称必须非空、不超过 256 字符且不含逗号与通配符。
+func validateObjectNameList(longName, value, capability string) string {
+	switch longName {
+	case "--table", "--view", "--exclude-table":
+	default:
+		return ""
+	}
+	if strings.Contains(value, "*") {
+		if longName == "--table" {
+			return "TABLE_SCOPE_NOT_SINGLE"
+		}
+		return "PARAMETER_VALUE_INVALID"
+	}
+	if capability == "export-odp-single-table-csv-v1" || capability == "" {
+		if longName == "--table" && strings.Contains(value, ",") {
+			return "TABLE_SCOPE_NOT_SINGLE"
+		}
+		return ""
+	}
+	if !strings.Contains(value, ",") {
+		return ""
+	}
+	for _, name := range strings.Split(value, ",") {
+		if name == "" || len(name) > 256 || strings.Contains(name, "*") {
+			return "PARAMETER_VALUE_INVALID"
+		}
+	}
+	return ""
 }
 
 func hasMixedValue(value Value) bool {
@@ -339,6 +430,14 @@ func isActive(definition parammeta.Definition, format string) bool {
 		return true
 	case "FORMAT_IS":
 		return definition.Activation.Value == format
+	case "FORMAT_IN":
+		// 逗号分隔的多格式激活：如 "CSV,CUT" 表示参数在任一列出的格式下活动。
+		for _, candidate := range strings.Split(definition.Activation.Value, ",") {
+			if candidate == format {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -370,6 +469,39 @@ func normalizedValueString(value NormalizedValue) string {
 
 func validAbsolutePath(platform Platform, value string) bool {
 	return outputpath.IsExportOutputPath(string(platform), value)
+}
+
+// isStorageOutputKind 判断输出目标是否为受控对象存储（EX-I6，2026-08-07）。
+func isStorageOutputKind(outputKind string) bool {
+	return outputKind == "OSS" || outputKind == "S3" || outputKind == "COS" || outputKind == "OBS"
+}
+
+// validControlledStorageURI 校验对象存储输出 URI（与控制面归一化同一规则）：
+// scheme 与输出类型一致且在白名单内，bucket 非空，路径以 / 开头，
+// query 参数只允许 endpoint/region/storage-class；拒绝任何密钥参数，存储凭据走执行槽位。
+func validControlledStorageURI(outputKind, uri string) bool {
+	if uri == "" || len(uri) > 4096 || strings.ContainsRune(uri, 0) || strings.ContainsAny(uri, "\r\n") {
+		return false
+	}
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if !isStorageScheme(scheme) || !strings.EqualFold(scheme, outputKind) {
+		return false
+	}
+	for key := range parsed.Query() {
+		if key != "endpoint" && key != "region" && key != "storage-class" {
+			return false
+		}
+	}
+	return true
+}
+
+// isStorageScheme 判断 scheme 是否在 V1.0 受控对象存储白名单内。
+func isStorageScheme(scheme string) bool {
+	return scheme == "oss" || scheme == "s3" || scheme == "cos" || scheme == "obs"
 }
 
 func contains(values []string, target string) bool {
@@ -413,10 +545,11 @@ type fingerprintDocument struct {
 
 func fingerprint(request Request, generator *Generator, fields []NormalizedField) (string, error) {
 	document := fingerprintDocument{
-		Tool:                  generator.tool,
-		ToolVersion:           generator.toolVersion,
-		MetadataVersion:       generator.metadataVersion,
-		CapabilityVersion:     generator.capabilityVersion,
+		Tool:            generator.tool,
+		ToolVersion:     generator.toolVersion,
+		MetadataVersion: generator.metadataVersion,
+		// 指纹以请求能力版本为准：泛化目录下同一字段集在不同能力切片必须产生不同指纹。
+		CapabilityVersion:     request.CapabilityVersion,
 		ConnectionKind:        request.ConnectionKind,
 		DataSourceFactVersion: request.DataSourceFactVersion,
 		NodeFactVersion:       request.NodeFactVersion,

@@ -14,8 +14,12 @@ import (
 )
 
 const (
-	defaultRevisionResource = "resources/obdumper-4.3.5-slice-v5.json"
-	currentMetadataVersion  = "obdumper-4.3.5-slice-v5"
+	defaultRevisionResource     = "resources/obdumper-4.3.5-slice-v5.json"
+	generalizedRevisionResource = "resources/obdumper-4.3.5-slice-v6.json"
+	currentMetadataVersion      = "obdumper-4.3.5-slice-v5"
+	generalizedMetadataVersion  = "obdumper-4.3.5-slice-v6"
+	// maxInheritanceDepth 限制清单继承链深度，避免循环或过长的依赖链。
+	maxInheritanceDepth = 4
 )
 
 // resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
@@ -51,7 +55,9 @@ type Definition struct {
 	ConfirmationRule string   `json:"confirmationRule"`
 	EmissionTarget   string   `json:"emissionTarget,omitempty"`
 	SecurityProperty string   `json:"securityProperty,omitempty"`
-	OfficialEvidence []string `json:"officialEvidence"`
+	// CapabilityVersions 声明参数适用的能力切片；为空表示当前目录的全部能力均参与。
+	CapabilityVersions []string `json:"capabilityVersions,omitempty"`
+	OfficialEvidence   []string `json:"officialEvidence"`
 }
 
 type resource struct {
@@ -65,22 +71,32 @@ type resource struct {
 }
 
 type revisionManifest struct {
-	MetadataVersion   string               `json:"metadataVersion"`
-	BaseVersion       string               `json:"baseVersion"`
-	BaseResource      string               `json:"baseResource"`
-	BaseSHA256        string               `json:"baseSha256"`
-	CapabilityVersion string               `json:"capabilityVersion,omitempty"`
-	RevisionReason    string               `json:"revisionReason"`
-	Overrides         []definitionOverride `json:"overrides"`
-	Additions         []Definition         `json:"additions"`
+	MetadataVersion string `json:"metadataVersion"`
+	BaseVersion     string `json:"baseVersion"`
+	BaseResource    string `json:"baseResource"`
+	BaseSHA256      string `json:"baseSha256"`
+	// Inherits 声明先应用的上游修订清单文件名；链式加载从基线逐层叠加。
+	Inherits          string `json:"inherits,omitempty"`
+	CapabilityVersion string `json:"capabilityVersion,omitempty"`
+	// CategoryOrder 与 SourceDocuments 允许泛化清单在继承链末端声明新的分类顺序与证据来源。
+	CategoryOrder   []string             `json:"categoryOrder,omitempty"`
+	SourceDocuments []string             `json:"sourceDocuments,omitempty"`
+	RevisionReason  string               `json:"revisionReason"`
+	Overrides       []definitionOverride `json:"overrides"`
+	Additions       []Definition         `json:"additions"`
 }
 
 type definitionOverride struct {
-	DefinitionID     string   `json:"definitionId"`
-	ShortName        string   `json:"shortName,omitempty"`
-	EmissionTarget   string   `json:"emissionTarget"`
-	SecurityProperty string   `json:"securityProperty,omitempty"`
-	AppendEvidence   []string `json:"appendEvidence"`
+	DefinitionID     string `json:"definitionId"`
+	ShortName        string `json:"shortName,omitempty"`
+	EmissionTarget   string `json:"emissionTarget"`
+	SecurityProperty string `json:"securityProperty,omitempty"`
+	// SupportState 允许泛化修订把已取证参数从 VALIDATION_GATED 提升为 ENABLED；空值表示保持基线状态。
+	SupportState string `json:"supportState,omitempty"`
+	RequiredWhen *Rule  `json:"requiredWhen,omitempty"`
+	// Activation 允许泛化修订扩展参数激活规则（如把 CSV 专属参数扩展为 CSV/CUT 多格式）；空值表示保持基线规则。
+	Activation     *Rule    `json:"activation,omitempty"`
+	AppendEvidence []string `json:"appendEvidence"`
 }
 
 type Catalog struct {
@@ -99,44 +115,76 @@ func LoadDefault() (*Catalog, error) {
 	return loadFromFS(resourceFiles, defaultRevisionResource)
 }
 
+// LoadGeneralized 加载泛化能力目录（v6 链：v1 基线 → v5 → v6 已取证子集）。
+// 该目录 capabilityVersion 为空，由命令生成器按请求能力筛选参数子集。
+func LoadGeneralized() (*Catalog, error) {
+	return loadFromFS(resourceFiles, generalizedRevisionResource)
+}
+
 func loadFromFS(files fs.FS, revisionResource string) (*Catalog, error) {
-	manifestContent, err := fs.ReadFile(files, revisionResource)
+	raw, manifest, err := loadRevisionChain(files, revisionResource, 0)
 	if err != nil {
-		return nil, fmt.Errorf("read parameter metadata revision: %w", err)
-	}
-	manifest, err := decodeManifest(manifestContent)
-	if err != nil {
-		return nil, err
-	}
-	baseContent, err := fs.ReadFile(files, "resources/"+manifest.BaseResource)
-	if err != nil {
-		return nil, fmt.Errorf("read parameter metadata base: %w", err)
-	}
-	digest := sha256.Sum256(baseContent)
-	if fmt.Sprintf("%x", digest) != manifest.BaseSHA256 {
-		return nil, errors.New("parameter metadata base checksum mismatch")
-	}
-	raw, err := decodeResource(baseContent)
-	if err != nil {
-		return nil, err
-	}
-	if raw.MetadataVersion != manifest.BaseVersion {
-		return nil, errors.New("parameter metadata base version mismatch")
-	}
-	for index := range raw.Definitions {
-		raw.Definitions[index].EmissionTarget = "ARGV"
-	}
-	if err := applyOverrides(&raw, manifest.Overrides); err != nil {
-		return nil, err
-	}
-	if err := applyAdditions(&raw, manifest.Additions); err != nil {
 		return nil, err
 	}
 	raw.MetadataVersion = manifest.MetadataVersion
-	if manifest.CapabilityVersion != "" {
-		raw.CapabilityVersion = manifest.CapabilityVersion
+	// 顶层清单的能力版本是权威值：泛化目录用空值表示多能力子集模式。
+	raw.CapabilityVersion = manifest.CapabilityVersion
+	if len(manifest.CategoryOrder) != 0 {
+		raw.CategoryOrder = append([]string(nil), manifest.CategoryOrder...)
+	}
+	if len(manifest.SourceDocuments) != 0 {
+		raw.SourceDocuments = append([]string(nil), manifest.SourceDocuments...)
 	}
 	return buildCatalog(raw, manifest.BaseVersion, manifest.RevisionReason)
+}
+
+// loadRevisionChain 递归应用继承链：先加载上游修订结果，再叠加当前清单的 overrides/additions。
+func loadRevisionChain(files fs.FS, revisionResource string, depth int) (resource, revisionManifest, error) {
+	if depth > maxInheritanceDepth {
+		return resource{}, revisionManifest{}, errors.New("parameter metadata inheritance chain is too deep")
+	}
+	manifestContent, err := fs.ReadFile(files, revisionResource)
+	if err != nil {
+		return resource{}, revisionManifest{}, fmt.Errorf("read parameter metadata revision: %w", err)
+	}
+	manifest, err := decodeManifest(manifestContent)
+	if err != nil {
+		return resource{}, revisionManifest{}, err
+	}
+	var raw resource
+	if manifest.Inherits != "" {
+		inherited, _, err := loadRevisionChain(files, "resources/"+manifest.Inherits, depth+1)
+		if err != nil {
+			return resource{}, revisionManifest{}, err
+		}
+		raw = inherited
+	} else {
+		baseContent, err := fs.ReadFile(files, "resources/"+manifest.BaseResource)
+		if err != nil {
+			return resource{}, revisionManifest{}, fmt.Errorf("read parameter metadata base: %w", err)
+		}
+		digest := sha256.Sum256(baseContent)
+		if fmt.Sprintf("%x", digest) != manifest.BaseSHA256 {
+			return resource{}, revisionManifest{}, errors.New("parameter metadata base checksum mismatch")
+		}
+		raw, err = decodeResource(baseContent)
+		if err != nil {
+			return resource{}, revisionManifest{}, err
+		}
+		if raw.MetadataVersion != manifest.BaseVersion {
+			return resource{}, revisionManifest{}, errors.New("parameter metadata base version mismatch")
+		}
+		for index := range raw.Definitions {
+			raw.Definitions[index].EmissionTarget = "ARGV"
+		}
+	}
+	if err := applyOverrides(&raw, manifest.Overrides); err != nil {
+		return resource{}, revisionManifest{}, err
+	}
+	if err := applyAdditions(&raw, manifest.Additions); err != nil {
+		return resource{}, revisionManifest{}, err
+	}
+	return raw, manifest, nil
 }
 
 func (c *Catalog) MetadataVersion() string   { return c.metadataVersion }
@@ -217,14 +265,31 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return revisionManifest{}, errors.New("parameter metadata revision contains trailing JSON values")
 	}
-	if manifest.MetadataVersion != currentMetadataVersion || manifest.BaseVersion != "obdumper-4.3.5-slice-v1" {
-		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
-	}
-	if manifest.BaseResource != "obdumper-4.3.5-slice-v1.json" || len(manifest.BaseSHA256) != 64 {
+	if manifest.BaseVersion != "obdumper-4.3.5-slice-v1" || manifest.BaseResource != "obdumper-4.3.5-slice-v1.json" || len(manifest.BaseSHA256) != 64 || manifest.RevisionReason == "" {
 		return revisionManifest{}, errors.New("parameter metadata revision base is invalid")
 	}
-	if manifest.RevisionReason == "" || len(manifest.Overrides) != 4 || len(manifest.Additions) != 2 {
-		return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
+	switch manifest.MetadataVersion {
+	case currentMetadataVersion:
+		// v5 是冻结的单表 CSV 基线：固定 4 overrides + 2 additions，能力版本必填。
+		if manifest.Inherits != "" || manifest.CapabilityVersion != "export-odp-single-table-csv-v1" || len(manifest.CategoryOrder) != 0 || len(manifest.SourceDocuments) != 0 {
+			return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
+		}
+		if len(manifest.Overrides) != 4 || len(manifest.Additions) != 2 {
+			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
+		}
+	case generalizedMetadataVersion:
+		// v6 是泛化能力的已取证子集：必须继承 v5，不固定单一能力版本。
+		// EX-I4 POS 定版（2026-08-07）新增 --pos/--ctl-path 与 CUT 专属 --column-splitter，additions 由 25 增至 28；
+		// EX-I5 结构化格式（2026-08-07）新增 --par/--orc/--avro，additions 由 28 增至 31；
+		// EX-I6 对象存储（2026-08-07）新增 --tmp-path，additions 由 31 增至 32。
+		if manifest.Inherits != "obdumper-4.3.5-slice-v5.json" || manifest.CapabilityVersion != "" {
+			return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
+		}
+		if len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 10 || len(manifest.Additions) != 32 {
+			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
+		}
+	default:
+		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 	}
 	return manifest, nil
 }
@@ -232,7 +297,7 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 // applyAdditions 将当前版本确认新增的参数定义附加到不可变基础元数据。
 // 仅允许清单声明的受控定义进入目录，避免调用方以自由字段绕过参数校验。
 func applyAdditions(raw *resource, additions []Definition) error {
-	if raw == nil || len(additions) != 2 {
+	if raw == nil {
 		return errors.New("parameter metadata additions are invalid")
 	}
 	raw.Definitions = append(raw.Definitions, additions...)
@@ -257,27 +322,60 @@ func applyOverrides(raw *resource, overrides []definitionOverride) error {
 		raw.Definitions[index].EmissionTarget = override.EmissionTarget
 		raw.Definitions[index].SecurityProperty = override.SecurityProperty
 		raw.Definitions[index].ShortName = override.ShortName
+		if override.SupportState != "" {
+			if !oneOf(override.SupportState, "ENABLED", "VALIDATION_GATED") {
+				return fmt.Errorf("parameter metadata override %q has unsupported support state", override.DefinitionID)
+			}
+			raw.Definitions[index].SupportState = override.SupportState
+		}
+		if override.RequiredWhen != nil {
+			raw.Definitions[index].RequiredWhen = *override.RequiredWhen
+		}
+		if override.Activation != nil {
+			raw.Definitions[index].Activation = *override.Activation
+		}
 		raw.Definitions[index].OfficialEvidence = append(raw.Definitions[index].OfficialEvidence, override.AppendEvidence...)
 	}
 	return nil
 }
 
 func validateResource(raw resource) error {
-	if raw.MetadataVersion != currentMetadataVersion || raw.Tool != "OBDUMPER" || raw.ToolVersion != "4.3.5-RELEASE" {
+	if raw.Tool != "OBDUMPER" || raw.ToolVersion != "4.3.5-RELEASE" {
 		return errors.New("parameter metadata identity does not match the confirmed slice")
-	}
-	if raw.CapabilityVersion != "export-odp-single-table-csv-v1" {
-		return errors.New("parameter metadata capability version is unsupported")
 	}
 	if len(raw.SourceDocuments) == 0 {
 		return errors.New("parameter metadata has no source documents")
 	}
-	expectedCategoryOrder := []string{"CONNECTION", "DATABASE_CONNECTION", "OBJECT_SCOPE", "CONTENT_FORMAT", "FORMAT_SERIALIZATION", "OUTPUT_FILE"}
-	if strings.Join(raw.CategoryOrder, "\x00") != strings.Join(expectedCategoryOrder, "\x00") {
-		return errors.New("parameter metadata category order does not match the confirmed command order")
-	}
-	if len(raw.Definitions) != 18 {
-		return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
+	// 版本感知身份校验：v5 保持冻结基线，v6 是泛化能力的已取证子集。
+	switch raw.MetadataVersion {
+	case currentMetadataVersion:
+		if raw.CapabilityVersion != "export-odp-single-table-csv-v1" {
+			return errors.New("parameter metadata capability version is unsupported")
+		}
+		expectedCategoryOrder := []string{"CONNECTION", "DATABASE_CONNECTION", "OBJECT_SCOPE", "CONTENT_FORMAT", "FORMAT_SERIALIZATION", "OUTPUT_FILE"}
+		if strings.Join(raw.CategoryOrder, "\x00") != strings.Join(expectedCategoryOrder, "\x00") {
+			return errors.New("parameter metadata category order does not match the confirmed command order")
+		}
+		if len(raw.Definitions) != 18 {
+			return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
+		}
+	case generalizedMetadataVersion:
+		// v6 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
+		if raw.CapabilityVersion != "" {
+			return errors.New("parameter metadata capability version is unsupported")
+		}
+		expectedCategoryOrder := []string{"CONNECTION", "DATABASE_CONNECTION", "OBJECT_SCOPE", "CONTENT_FORMAT", "FORMAT_SERIALIZATION", "OUTPUT_FILE", "DATA_FILTER", "PERFORMANCE", "COMPRESSION"}
+		if strings.Join(raw.CategoryOrder, "\x00") != strings.Join(expectedCategoryOrder, "\x00") {
+			return errors.New("parameter metadata category order does not match the confirmed command order")
+		}
+		// EX-I4 POS 定版（2026-08-07）新增 --pos/--ctl-path 与 CUT 专属 --column-splitter，定义数由 43 增至 46；
+		// EX-I5 结构化格式（2026-08-07）新增 --par/--orc/--avro，定义数由 46 增至 49；
+		// EX-I6 对象存储（2026-08-07）新增 --tmp-path，定义数由 49 增至 50。
+		if len(raw.Definitions) != 50 {
+			return fmt.Errorf("parameter metadata has %d definitions, want 50", len(raw.Definitions))
+		}
+	default:
+		return errors.New("parameter metadata identity does not match the confirmed slice")
 	}
 
 	ids := make(map[string]struct{}, len(raw.Definitions))
@@ -349,7 +447,7 @@ func validateResource(raw resource) error {
 		if len(definition.OfficialEvidence) == 0 {
 			return fmt.Errorf("parameter %q has no evidence reference", definition.LongName)
 		}
-		if err := validateRule(definition.LongName, definition.Activation, "ALWAYS", "FORMAT_IS"); err != nil {
+		if err := validateRule(definition.LongName, definition.Activation, "ALWAYS", "FORMAT_IS", "FORMAT_IN"); err != nil {
 			return err
 		}
 		if err := validateRule(definition.LongName, definition.RequiredWhen, "SLICE_SUBMISSION", "NEVER"); err != nil {
@@ -374,15 +472,32 @@ func validateResource(raw resource) error {
 	if err := rejectDependencyCycles(dependencies); err != nil {
 		return err
 	}
-	if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
-		"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--file-path", "--log-path", "--skip-check-dir",
-	}); err != nil {
-		return err
+	switch raw.MetadataVersion {
+	case currentMetadataVersion:
+		if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
+			"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--file-path", "--log-path", "--skip-check-dir",
+		}); err != nil {
+			return err
+		}
+	case generalizedMetadataVersion:
+		// v6 已取证子集：EX-I2 六项 + EX-I3 的 CSV 序列化、压缩、文件布局、筛选与资源参数
+		// + EX-I4 的 CUT/SQL 数据格式及其专属序列化参数
+		// + EX-I4 POS 定版（2026-08-07 实测）的 --pos/--ctl-path 与 CUT 专属 --column-splitter
+		// + EX-I5 结构化格式（2026-08-07）的 --par/--orc/--avro
+		// + EX-I6 对象存储（2026-08-07）的 --tmp-path。
+		if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
+			"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--cut", "--sql", "--pos", "--par", "--orc", "--avro", "--file-path", "--log-path", "--skip-check-dir",
+			"--all", "--view", "--ddl", "--exclude-table",
+			"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode", "--escape-character", "--line-separator", "--null-string", "--file-encoding",
+			"--with-trim", "--trail-delimiter", "--remove-newline", "--column-splitter", "--compress", "--compression-algo", "--no-nested-dir", "--max-file-size", "--retain-empty-files",
+			"--ctl-path", "--tmp-path",
+			"--query-sql", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
+			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem",
+		}); err != nil {
+			return err
+		}
 	}
-	if err := requireNamesByState(raw.Definitions, "VALIDATION_GATED", []string{
-		"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode",
-		"--escape-character", "--line-separator", "--null-string", "--file-encoding",
-	}); err != nil {
+	if err := requireNamesByState(raw.Definitions, "VALIDATION_GATED", gatedNamesByVersion(raw.MetadataVersion)); err != nil {
 		return err
 	}
 	passwordIndex := -1
@@ -434,17 +549,42 @@ func rejectDependencyCycles(dependencies map[string][]string) error {
 	return nil
 }
 
+// validateRule 校验参数的激活与必填规则。FORMAT_IS 是单格式匹配；
+// FORMAT_IN 是逗号分隔的多格式匹配（如 "CSV,CUT"），用于跨格式共享的序列化参数。
+// 规则值白名单只含已取证的数据格式（CSV/CUT/POS/SQL）；POS 于 2026-08-07 受控实测定版后加入。
 func validateRule(parameter string, rule Rule, allowed ...string) error {
 	if !oneOf(rule.Kind, allowed...) {
 		return fmt.Errorf("parameter %q has unsupported rule kind %q", parameter, rule.Kind)
 	}
-	if rule.Kind == "FORMAT_IS" && rule.Value != "CSV" {
-		return fmt.Errorf("parameter %q has unsupported format rule", parameter)
-	}
-	if rule.Kind != "FORMAT_IS" && rule.Value != "" {
-		return fmt.Errorf("parameter %q has an unexpected rule value", parameter)
+	switch rule.Kind {
+	case "FORMAT_IS":
+		if !oneOf(rule.Value, "CSV", "CUT", "POS", "SQL") {
+			return fmt.Errorf("parameter %q has unsupported format rule", parameter)
+		}
+	case "FORMAT_IN":
+		for _, format := range strings.Split(rule.Value, ",") {
+			if !oneOf(format, "CSV", "CUT", "SQL", "PARQUET", "ORC", "AVRO") {
+				return fmt.Errorf("parameter %q has unsupported format rule", parameter)
+			}
+		}
+	default:
+		if rule.Value != "" {
+			return fmt.Errorf("parameter %q has an unexpected rule value", parameter)
+		}
 	}
 	return nil
+}
+
+// gatedNamesByVersion 返回各版本期望的 VALIDATION_GATED 参数名单。
+// v5 保留 CSV 序列化八项为 gated；v6 已取证子集在 EX-I3 中全部提升为 ENABLED。
+func gatedNamesByVersion(metadataVersion string) []string {
+	if metadataVersion == generalizedMetadataVersion {
+		return nil
+	}
+	return []string{
+		"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode",
+		"--escape-character", "--line-separator", "--null-string", "--file-encoding",
+	}
 }
 
 func requireNamesByState(definitions []Definition, state string, expected []string) error {
@@ -476,6 +616,7 @@ func cloneDefinition(input Definition) Definition {
 	result.AllowedValues = append([]string(nil), input.AllowedValues...)
 	result.ConflictsWith = append([]string(nil), input.ConflictsWith...)
 	result.DependsOn = append([]string(nil), input.DependsOn...)
+	result.CapabilityVersions = append([]string(nil), input.CapabilityVersions...)
 	result.OfficialEvidence = append([]string(nil), input.OfficialEvidence...)
 	return result
 }

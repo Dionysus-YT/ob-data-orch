@@ -389,12 +389,15 @@ describe('浏览器 API 客户端', () => {
     const { api, calls } = apiWith(Response.json({ id: 'draft-1' }))
 
     await api.createExportDraft({
+      configVersion: 'v6',
       dataSourceId: 'source-1',
       nodeId: 'node-1',
-      database: 'synthetic_db',
-      table: 'synthetic_table',
-      format: 'CSV',
-      filePath: '/E:/tmp/output',
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+        contentSelection: { contentKind: 'DATA_ONLY' },
+        dataFormat: { formatKind: 'CSV' },
+        outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' },
+      },
     })
 
     expect(calls[0]?.path).toBe('/api/v1/export-drafts')
@@ -468,13 +471,13 @@ describe('浏览器 API 客户端', () => {
 
     const snapshot = apiWith(Response.json({
       item: {
-        type: 'OBDUMPER_EXPORT', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', objectSummary: 'synthetic_db.synthetic_table',
-        format: 'CSV', configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1', filePath: 'must-not-be-read',
+        type: 'OBDUMPER_EXPORT', snapshotVersion: 'v2', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', objectSummary: 'synthetic_db.synthetic_table',
+        format: 'DDL_CSV', configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1', filePath: 'must-not-be-read',
       },
     }))
     await expect(snapshot.api.getTaskSnapshot('task/1')).resolves.toEqual({
-      type: 'OBDUMPER_EXPORT', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', objectSummary: 'synthetic_db.synthetic_table',
-      format: 'CSV', configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1',
+      type: 'OBDUMPER_EXPORT', snapshotVersion: 'v2', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', objectSummary: 'synthetic_db.synthetic_table',
+      format: 'DDL_CSV', configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1',
     })
     expect(snapshot.calls[0]?.path).toBe('/api/v1/tasks/task%2F1/snapshot')
 
@@ -568,14 +571,25 @@ describe('浏览器 API 客户端', () => {
         dataSourceId: 'source-1',
         nodeId: 'node-1',
         revision: 3,
+        configVersion: 'v6',
         config: {
+          configVersion: 'v6',
           dataSourceId: 'source-1',
           nodeId: 'node-1',
           database: 'synthetic_db',
+          scopeKind: 'SPECIFIED',
           table: 'synthetic_table',
+          contentKind: 'DATA_ONLY',
           format: 'CSV',
           filePath: '/E:/tmp/output',
-          username: 'must-not-be-read',
+          logPath: '',
+          skipCheckDir: false,
+          config: {
+            objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }], username: 'must-not-be-read' },
+            contentSelection: { contentKind: 'DATA_ONLY' },
+            dataFormat: { formatKind: 'CSV' },
+            outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' },
+          },
         },
         configFingerprint: 'synthetic-fingerprint',
       },
@@ -586,21 +600,147 @@ describe('浏览器 API 客户端', () => {
       dataSourceId: 'source-1',
       nodeId: 'node-1',
       revision: 3,
+      configVersion: 'v6',
       config: {
-        dataSourceId: 'source-1',
-        nodeId: 'node-1',
-        database: 'synthetic_db',
-        table: 'synthetic_table',
-        format: 'CSV',
-        filePath: '/E:/tmp/output',
-        logPath: '',
-        skipCheckDir: false,
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }], excludeTables: undefined },
+        contentSelection: { contentKind: 'DATA_ONLY' },
+        dataFormat: { formatKind: 'CSV' },
+        outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output', logPath: '', skipCheckDir: false, controlFilePath: '', tmpPath: '' },
       },
       configFingerprint: 'synthetic-fingerprint',
     })
 
     expect(calls[0]?.path).toBe('/api/v1/export-drafts/draft-1')
     expect(calls[0]?.init).toMatchObject({ method: 'GET' })
+  })
+
+  it('解析全部对象草稿时把 null 可选数组视为缺省', async () => {
+    const { api } = apiWith(Response.json({
+      item: {
+        id: 'draft-all',
+        dataSourceId: 'source-1',
+        nodeId: 'node-1',
+        revision: 1,
+        configVersion: 'v6',
+        config: {
+          configVersion: 'v6',
+          dataSourceId: 'source-1',
+          nodeId: 'node-1',
+          database: 'synthetic_db',
+          scopeKind: 'ALL',
+          table: '',
+          contentKind: 'DDL_AND_DATA',
+          format: 'DDL_CSV',
+          filePath: '/E:/tmp/output',
+          logPath: '',
+          skipCheckDir: false,
+          config: {
+            objectScope: { database: 'synthetic_db', scopeKind: 'ALL', objectTypes: null, expressions: null, excludeTables: null },
+            contentSelection: { contentKind: 'DDL_AND_DATA' },
+            dataFormat: { formatKind: 'CSV' },
+            outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' },
+            performanceConfig: { retry: false },
+            filterConfig: {},
+            ddlBehavior: {},
+          },
+        },
+        configFingerprint: 'synthetic-fingerprint',
+      },
+    }))
+
+    await expect(api.getExportDraft('draft-all')).resolves.toMatchObject({
+      configVersion: 'v6',
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'ALL', objectTypes: undefined, expressions: undefined, excludeTables: undefined },
+        contentSelection: { contentKind: 'DDL_AND_DATA' },
+        dataFormat: { formatKind: 'CSV' },
+      },
+    })
+  })
+
+  it('解析 EX-I3 全量选项的标准文档', async () => {
+    const { api } = apiWith(Response.json({
+      item: {
+        id: 'draft-exi3',
+        dataSourceId: 'source-1',
+        nodeId: 'node-1',
+        revision: 1,
+        configVersion: 'v6',
+        config: {
+          configVersion: 'v6',
+          dataSourceId: 'source-1',
+          nodeId: 'node-1',
+          database: 'synthetic_db',
+          scopeKind: 'SPECIFIED',
+          table: 'synthetic_table',
+          contentKind: 'DATA_ONLY',
+          format: 'CSV',
+          filePath: '/E:/tmp/output',
+          logPath: '',
+          skipCheckDir: false,
+          config: {
+            objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+            contentSelection: { contentKind: 'DATA_ONLY' },
+            dataFormat: { formatKind: 'CSV', csvOptions: { skipHeader: true, columnSeparator: '|', columnQuoteMode: 'minimal', escapeCharacter: '\\', withTrim: true } },
+            outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output', noNestedDir: true, maxFileSize: 1048576, retainEmptyFiles: true, compress: true, compressionAlgo: 'zstd' },
+            filterConfig: { includeColumnNames: ['col_a', 'col_b'], excludeVirtualColumns: true, flashbackScn: 100 },
+            performanceConfig: { thread: 4, pageSize: 1000, jvmMemory: '4G' },
+          },
+        },
+        configFingerprint: 'synthetic-fingerprint',
+      },
+    }))
+
+    await expect(api.getExportDraft('draft-exi3')).resolves.toMatchObject({
+      configVersion: 'v6',
+      config: {
+        dataFormat: { formatKind: 'CSV', csvOptions: { skipHeader: true, columnSeparator: '|', columnQuoteMode: 'minimal', escapeCharacter: '\\', withTrim: true } },
+        outputConfig: { noNestedDir: true, maxFileSize: 1048576, retainEmptyFiles: true, compress: true, compressionAlgo: 'zstd' },
+        filterConfig: { includeColumnNames: ['col_a', 'col_b'], excludeVirtualColumns: true, flashbackScn: 100 },
+        performanceConfig: { thread: 4, pageSize: 1000, jvmMemory: '4G' },
+      },
+    })
+  })
+
+  it('解析仅 DDL 草稿时把空 formatKind 视为无数据格式', async () => {
+    const { api } = apiWith(Response.json({
+      item: {
+        id: 'draft-ddl',
+        dataSourceId: 'source-1',
+        nodeId: 'node-1',
+        revision: 1,
+        configVersion: 'v6',
+        config: {
+          configVersion: 'v6',
+          dataSourceId: 'source-1',
+          nodeId: 'node-1',
+          database: 'synthetic_db',
+          scopeKind: 'SPECIFIED',
+          table: 'table_one',
+          contentKind: 'DDL_ONLY',
+          format: 'DDL',
+          filePath: '/E:/tmp/output',
+          logPath: '',
+          skipCheckDir: false,
+          config: {
+            objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'table_one' }] },
+            contentSelection: { contentKind: 'DDL_ONLY' },
+            dataFormat: { formatKind: '' },
+            outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' },
+          },
+        },
+        configFingerprint: 'synthetic-fingerprint',
+      },
+    }))
+
+    await expect(api.getExportDraft('draft-ddl')).resolves.toMatchObject({
+      configVersion: 'v6',
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'table_one' }] },
+        contentSelection: { contentKind: 'DDL_ONLY' },
+        dataFormat: undefined,
+      },
+    })
   })
 
   it('命令预览使用 CSRF 与草稿版本，且允许展示非密码参数', async () => {
@@ -613,7 +753,13 @@ describe('浏览器 API 客户端', () => {
       dataSourceId: 'source-1',
       nodeId: 'node-1',
       revision: 3,
-      config: { dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', table: 'synthetic_table', format: 'CSV' as const, filePath: '/E:/tmp/output' },
+      configVersion: 'v6' as const,
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED' as const, objectTypes: ['TABLE' as const], expressions: [{ name: 'synthetic_table' }] },
+        contentSelection: { contentKind: 'DATA_ONLY' as const },
+        dataFormat: { formatKind: 'CSV' as const },
+        outputConfig: { outputKind: 'LOCAL' as const, filePath: '/E:/tmp/output' },
+      },
       configFingerprint: 'synthetic-fingerprint',
     }
 
@@ -640,7 +786,13 @@ describe('浏览器 API 客户端', () => {
       dataSourceId: 'source-1',
       nodeId: 'node-1',
       revision: 3,
-      config: { dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', table: 'synthetic_table', format: 'CSV' as const, filePath: '/E:/tmp/output' },
+      configVersion: 'v6' as const,
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED' as const, objectTypes: ['TABLE' as const], expressions: [{ name: 'synthetic_table' }] },
+        contentSelection: { contentKind: 'DATA_ONLY' as const },
+        dataFormat: { formatKind: 'CSV' as const },
+        outputConfig: { outputKind: 'LOCAL' as const, filePath: '/E:/tmp/output' },
+      },
       configFingerprint: 'synthetic-fingerprint',
     }
 
@@ -657,7 +809,13 @@ describe('浏览器 API 客户端', () => {
       dataSourceId: 'source-1',
       nodeId: 'node-1',
       revision: 3,
-      config: { dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', table: 'synthetic_table', format: 'CSV' as const, filePath: '/E:/tmp/output' },
+      configVersion: 'v6' as const,
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED' as const, objectTypes: ['TABLE' as const], expressions: [{ name: 'synthetic_table' }] },
+        contentSelection: { contentKind: 'DATA_ONLY' as const },
+        dataFormat: { formatKind: 'CSV' as const },
+        outputConfig: { outputKind: 'LOCAL' as const, filePath: '/E:/tmp/output' },
+      },
       configFingerprint: 'synthetic-fingerprint',
     }
 
@@ -872,7 +1030,14 @@ describe('浏览器 API 客户端', () => {
     const { api, calls } = apiWith(Response.json({ id: 'draft-1' }), '')
 
     await expect(api.createExportDraft({
-      dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', table: 'synthetic_table', format: 'CSV', filePath: '/E:/tmp/output',
+      configVersion: 'v6',
+      dataSourceId: 'source-1', nodeId: 'node-1',
+      config: {
+        objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+        contentSelection: { contentKind: 'DATA_ONLY' },
+        dataFormat: { formatKind: 'CSV' },
+        outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' },
+      },
     })).rejects.toMatchObject({ code: 'CSRF_TOKEN_UNAVAILABLE' })
 
     expect(calls).toHaveLength(0)
@@ -892,5 +1057,90 @@ describe('浏览器 API 客户端', () => {
     expect(taskDetailErrorMessage({ status: 404, message: 'unsafe' }, '请求失败。')).toContain('任务不存在')
     expect(executionNodeErrorMessage({ code: 'EXECUTION_NODE_NAME_UNAVAILABLE', message: 'unsafe' }, '请求失败。')).toContain('名称不可用')
     expect(executionNodeErrorMessage({ status: 404, message: 'unsafe' }, '请求失败。')).toContain('无权访问')
+  })
+
+  it('v6 对象存储、CUT 与 POS 草稿 get → update 往返不丢失已支持字段', async () => {
+    const cases = [
+      {
+        name: 'OSS',
+        item: {
+          id: 'draft-oss', dataSourceId: 'source-1', nodeId: 'node-1', revision: 2, configVersion: 'v6',
+          config: {
+            configVersion: 'v6', dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', scopeKind: 'SPECIFIED', table: 'synthetic_table', contentKind: 'DATA_ONLY', format: 'CSV',
+            filePath: 'oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com', logPath: '', skipCheckDir: false,
+            config: {
+              objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+              contentSelection: { contentKind: 'DATA_ONLY' },
+              dataFormat: { formatKind: 'CSV' },
+              outputConfig: { outputKind: 'OSS', filePath: 'oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com', tmpPath: '/E:/tmp/staging' },
+            },
+          },
+          configFingerprint: 'synthetic-fingerprint',
+        },
+      },
+      {
+        name: 'CUT',
+        item: {
+          id: 'draft-cut', dataSourceId: 'source-1', nodeId: 'node-1', revision: 2, configVersion: 'v6',
+          config: {
+            configVersion: 'v6', dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', scopeKind: 'SPECIFIED', table: 'synthetic_table', contentKind: 'DATA_ONLY', format: 'CUT',
+            filePath: '/E:/tmp/output', logPath: '', skipCheckDir: false,
+            config: {
+              objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+              contentSelection: { contentKind: 'DATA_ONLY' },
+              dataFormat: { formatKind: 'CUT', csvOptions: { columnSplitter: '|', lineSeparator: '\\n', fileEncoding: 'UTF-8' }, cutOptions: { trailDelimiter: true } },
+              outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' },
+            },
+          },
+          configFingerprint: 'synthetic-fingerprint',
+        },
+      },
+      {
+        name: 'POS',
+        item: {
+          id: 'draft-pos', dataSourceId: 'source-1', nodeId: 'node-1', revision: 2, configVersion: 'v6',
+          config: {
+            configVersion: 'v6', dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', scopeKind: 'SPECIFIED', table: 'synthetic_table', contentKind: 'DATA_ONLY', format: 'POS',
+            filePath: '/E:/tmp/output', logPath: '', skipCheckDir: false,
+            config: {
+              objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+              contentSelection: { contentKind: 'DATA_ONLY' },
+              dataFormat: { formatKind: 'POS' },
+              outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output', controlFilePath: '/E:/tmp/controls' },
+            },
+          },
+          configFingerprint: 'synthetic-fingerprint',
+        },
+      },
+    ]
+    for (const testCase of cases) {
+      // 每次请求都返回新的 Response：同一 Response 的 body 只能消费一次。
+      const fetcher = (async () => Response.json({ item: testCase.item })) as FetchLike
+      const api = createBrowserApi({ fetcher, csrfToken: () => 'synthetic-csrf-token', idempotencyKey: () => 'synthetic-idempotency-key' })
+      const draft = await api.getExportDraft(testCase.item.id)
+      const updated = await api.updateExportDraft(draft)
+      expect(updated.config.outputConfig).toEqual(draft.config.outputConfig)
+      expect(updated.config.dataFormat).toEqual(draft.config.dataFormat)
+      expect(updated.config.objectScope).toEqual(draft.config.objectScope)
+    }
+  })
+
+  it('任务快照接受 POS/PARQUET/ORC/AVRO 格式并拒绝未知格式', async () => {
+    for (const format of ['POS', 'PARQUET', 'ORC', 'AVRO'] as const) {
+      const { api } = apiWith(Response.json({
+        item: {
+          type: 'OBDUMPER_EXPORT', snapshotVersion: 'v2', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', format,
+          configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1',
+        },
+      }))
+      await expect(api.getTaskSnapshot('task-1')).resolves.toMatchObject({ format })
+    }
+    const unknown = apiWith(Response.json({
+      item: {
+        type: 'OBDUMPER_EXPORT', snapshotVersion: 'v2', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', format: 'MIX',
+        configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1',
+      },
+    }))
+    await expect(unknown.api.getTaskSnapshot('task-1')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 })

@@ -34,13 +34,13 @@
 
 ```text
 ExportConfig {
-  objectScope:      ObjectScope        // 对象范围
+  objectScope:      ObjectScope        // 对象范围（基础选项 · 功能选项 · 数据库对象类型）
   contentSelection: ContentSelection   // 导出内容
-  dataFormat:       DataFormat         // 数据格式及专属参数
-  outputConfig:     OutputConfig       // 输出位置与文件布局
-  performanceConfig: PerformanceConfig // 性能与资源
-  filterConfig:     FilterConfig       // 筛选与一致性
-  ddlBehavior:      DDLBehavior        // DDL 行为
+  dataFormat:       DataFormat         // 数据格式及专属参数（基础选项 · 功能选项 · 文件格式）
+  outputConfig:     OutputConfig       // 输出位置与文件布局（基础选项 · 功能选项 · 存储路径）
+  performanceConfig: PerformanceConfig // 高级选项 · 性能选项
+  filterConfig:     FilterConfig       // 高级选项 · 功能选项 · 黑白名单筛选 / 时间戳格式
+  ddlBehavior:      DDLBehavior        // 文件格式（DDL 伴生）/ 数据库对象类型 / 高级选项 · 其他选项
 }
 ```
 
@@ -48,9 +48,10 @@ ExportConfig {
 
 ```text
 ObjectScope {
+  database:      string            // 对象所在数据库（--database），全部与指定范围均必填
   scopeKind:       ALL | SPECIFIED     // 全部/指定
   objectTypes:     [ObjectType]        // 对象类型列表（表/视图/触发器/...）
-  expressions:     [ObjectExpression]  // 对象表达式（含可选 schema 前缀）
+  expressions:     [ObjectExpression]  // 对象表达式（可选 schema 前缀只允许缺省或与 database 一致，跨库未取证）
   excludeTables:   [string]            // 排除表表达式
 }
 
@@ -59,7 +60,7 @@ ObjectType = TABLE | TABLE_GROUP | VIEW | TRIGGER | USER | ROLE
            | PACKAGE_BODY | FUNCTION | PROCEDURE
 
 ObjectExpression {
-  schema:    string?    // 可选 schema 前缀（多库模式标识）
+  schema:    string?    // 可选 schema 前缀（多库模式标识）；EX-I2 只接受缺省或与 database 一致，跨库失败关闭
   name:      string     // 对象名称或通配表达式
   rawInput:  string     // 控制面按 schema.name 生成的规范值；浏览器自由文本不得持久化，避免借此写入秘密或任意内容
 }
@@ -106,7 +107,7 @@ OutputConfig {
 }
 ```
 
-**PerformanceConfig（性能与资源）**
+**PerformanceConfig（高级选项 · 性能选项）**
 
 ```text
 PerformanceConfig {
@@ -119,7 +120,7 @@ PerformanceConfig {
 }
 ```
 
-**FilterConfig（筛选与一致性）**
+**FilterConfig（高级选项 · 功能选项 · 黑白名单筛选 / 时间戳格式 / 错误处理）**
 
 ```text
 FilterConfig {
@@ -138,7 +139,7 @@ FilterConfig {
 }
 ```
 
-**DDLBehavior（DDL 行为）**
+**DDLBehavior（基础选项 · 功能选项 · 文件格式 DDL 伴生 / 数据库对象类型 / 高级选项 · 其他选项）**
 
 ```text
 DDLBehavior {
@@ -212,11 +213,11 @@ export-odp-{scope}-{format}-v{N}
 | capabilityVersion | 含义 | V1.0 状态 |
 |---|---|---|
 | `export-odp-single-table-csv-v1` | 单表 CSV（已冻结基线） | ENABLED（已实现） |
-| `export-odp-full-csv-v1` | 全对象 CSV（含 all/多表/多对象类型） | 设计完成，待实现 |
-| `export-odp-ddl-v1` | 纯 DDL 导出 | 设计完成，待实现 |
-| `export-odp-ddl-csv-v1` | DDL + CSV 数据 | 设计完成，待实现 |
-| `export-odp-cut-v1` | CUT 格式 | 设计完成，待实现 |
-| `export-odp-sql-v1` | Insert SQL 格式 | 设计完成，待实现 |
+| `export-odp-full-csv-v1` | 全对象 CSV（含 all/多表/多对象类型） | ENABLED（已实现，EX-I2） |
+| `export-odp-ddl-v1` | 纯 DDL 导出 | ENABLED（已实现，EX-I2） |
+| `export-odp-ddl-csv-v1` | DDL + CSV 数据 | ENABLED（已实现，EX-I2） |
+| `export-odp-cut-v1` | CUT 格式 | ENABLED（已实现，EX-I4） |
+| `export-odp-sql-v1` | Insert SQL 格式 | ENABLED（已实现，EX-I4） |
 | `export-odp-parquet-v1` | Parquet 格式 | VALIDATION_GATED |
 | `export-odp-orc-v1` | ORC 格式 | VALIDATION_GATED |
 | `export-odp-avro-v1` | Avro 格式 | VALIDATION_GATED |
@@ -433,13 +434,27 @@ type ContentSelection struct {
 }
 
 type DataFormat struct {
-    FormatKind      string `json:"formatKind"` // CSV | CUT | POS | SQL | PARQUET | ORC | AVRO
-    CsvOptions      map[string]interface{} `json:"csvOptions,omitempty"`
+    FormatKind string      `json:"formatKind"` // CSV | CUT | POS | SQL | PARQUET | ORC | AVRO
+    CsvOptions CsvOptions  `json:"csvOptions,omitempty"`
     CutOptions      map[string]interface{} `json:"cutOptions,omitempty"`
     PosOptions      map[string]interface{} `json:"posOptions,omitempty"`
     TextOptions     map[string]interface{} `json:"textOptions,omitempty"`
     DateTimeOptions map[string]interface{} `json:"dateTimeOptions,omitempty"`
     Compression     map[string]interface{} `json:"compression,omitempty"`
+}
+
+// 偏差记录：初稿用 map[string]interface{} 表达格式专属选项；EX-I3 起 CSV 选项改为类型化 CsvOptions，
+// 拒绝自由键值进入草稿与快照（与 rawInput 同因的安全收紧）。其余格式选项仍保持待实现状态。
+type CsvOptions struct {
+    SkipHeader      bool   `json:"skipHeader,omitempty"`
+    ColumnSeparator string `json:"columnSeparator,omitempty"`
+    ColumnQuote     string `json:"columnQuote,omitempty"`
+    ColumnQuoteMode string `json:"columnQuoteMode,omitempty"`
+    EscapeCharacter string `json:"escapeCharacter,omitempty"`
+    LineSeparator   string `json:"lineSeparator,omitempty"`
+    NullString      string `json:"nullString,omitempty"`
+    FileEncoding    string `json:"fileEncoding,omitempty"`
+    WithTrim        bool   `json:"withTrim,omitempty"`
 }
 
 type OutputConfig struct {
@@ -552,6 +567,8 @@ v6 从 v5 的 18 参数（overrides + additions）扩展为覆盖全部 63 个 E
 
 **v6 分类体系**（11 类）：
 
+> 元数据 `category` 是命令发射顺序的技术标识（与 `order` 配合驱动 plannedArgv 排序），不是产品分类。产品与文档按 OBDUMPER 官方选项分类组织（基础选项：连接/功能/其他；高级选项：功能/性能/其他，见 [参数映射基线](../02-design/export-parameter-mapping.md) 第 3 节）。
+
 | 序号 | 分类标识 | 含义 | ENABLED 参数数 |
 |---|---|---|---|
 | 1 | CONNECTION | 连接与会话 | 12 |
@@ -576,8 +593,12 @@ v6 从 v5 的 18 参数（overrides + additions）扩展为覆盖全部 63 个 E
 | `export-odp-full-csv-v1` | host/port/user/password/database | csv + csvOptions | all/table/exclude-table |
 | `export-odp-ddl-v1` | host/port/user/password/database | ddl | drop-object/retain-schema |
 | `export-odp-ddl-csv-v1` | host/port/user/password/database | ddl + csv | 全 DDL + CSV 参数 |
-| `export-odp-cut-v1` | host/port/user/password/database | cut + cutOptions | column-splitter |
-| `export-odp-sql-v1` | host/port/user/password/database | sql | — |
+| `export-odp-cut-v1` | host/port/user/password/database | cut + cutOptions | 共享文本序列化（escape/null/with-trim/line-separator/file-encoding）、压缩、存储路径、筛选与性能参数（官方复核：不限定格式，2026-08-07 起绑定 CUT 能力） |
+| `export-odp-sql-v1` | host/port/user/password/database | sql | 行分隔符/文件编码、压缩、存储路径、筛选与性能参数（官方复核：不限定格式，2026-08-07 起绑定 SQL 能力） |
+| `export-odp-pos-v1` | host/port/user/password/database | pos + ctl-path | 控制文件目录（用户提供来源已接入；自动生成为后续切片）、存储路径、筛选与性能参数（2026-08-07 POS 实测定版） |
+| `export-odp-parquet-v1` | host/port/user/password/database | par | 文件编码、闪回/筛选/性能/存储路径参数（官方格式表，2026-08-07）；压缩与序列化不适用 |
+| `export-odp-orc-v1` | host/port/user/password/database | orc | 文件编码、闪回/筛选/性能/存储路径参数（官方格式表，2026-08-07）；压缩与序列化不适用，内存风险较高 |
+| `export-odp-avro-v1` | host/port/user/password/database | avro | 文件编码、闪回/筛选/性能/存储路径参数（官方格式表，2026-08-07）；压缩与序列化不适用 |
 
 ### 5.3 命令生成泛化
 
@@ -628,6 +649,8 @@ v6 从 v5 的 18 参数（overrides + additions）扩展为覆盖全部 63 个 E
 - `export-odp-single-table-csv-v1`：层 1/2/4/5/6/9/10/11（当前已实现）
 - `export-odp-ddl-v1`：层 1/2/3/4/5/6/9/10/11（新增权限层）
 - `export-odp-full-csv-v1`：层 1/2/4/5/6/7/8/9/10/11（新增存储层）
+
+EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 对 SPECIFIED 范围逐对象运行冻结单对象 JDBC 探针（数据可读性是 DDL 可读性的保守超集），对 ALL 范围按数据库级可达性投影，逐对象枚举由工具运行时完成。层 3 SYS_PRIVILEGE 仅在 `--add-extra-message` 等 DDL 行为参数启用后才需要，EX-I2 未激活；层 7/8 存储层属对象存储切片（EX-I6+），输出仅 LOCAL 时不适用。
 
 ### 6.4 local-first 策略保持
 
@@ -799,6 +822,12 @@ ManifestObject {
 | EX-I6 | export-odp-sql-v1 | Insert SQL 格式 |
 | EX-I7 | export-odp-pos-v1 | POS 定长格式 + ctl-path |
 | EX-I8 | 压缩/对象存储/检查点 | 跨切片能力验证 |
+
+EX-I2 交付收敛：按任务地图权威，EX-I2 一次实现 full-csv、ddl、ddl-csv 三个能力，上表 EX-I2~EX-I4 三行测试焦点已在同一切片内覆盖（对象矩阵正反例、仅 DDL 不生成数据格式参数、DDL + CSV 联合激活）；EX-I3/EX-I4 行后续仅保留 DDL 行为参数与权限层的增量工作。多库 schema 前缀（EX-F012）保持 VALIDATION_GATED，控制面对跨库表达式失败关闭。
+
+EX-I3 交付收敛：25 个 ENABLED 参数一次启用（CSV 序列化 9、压缩 2、文件布局 3、筛选 6、资源 5）。任务地图行文中的“日期时间”按字段规则 EX-F055~F064（全部 VALIDATION_GATED）保持关闭；--compression-level（EX-F042）、--where/--partition/--exclude-data-types 等同理。带任一选项的单表 CSV 离开冻结 v5 路径，改走 v6 泛化生成器（capability 仍为 full-csv/ddl-csv）；无选项单表保持字节级不变。
+
+EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v1）已启用并实现。CUT 启用 --cut、--trail-delimiter、--remove-newline（高风险）及与 CSV 共享的转义字符/行分隔符/空串/编码/修剪（FORMAT_IN CSV,CUT）；SQL 启用 --sql 及行分隔符/文件编码（FORMAT_IN CSV,CUT,SQL），共享文本之外的 CSV 专属与筛选/资源参数在 CUT/SQL 能力下按 UNKNOWN_PARAMETER 失败关闭。服务端归一化按格式校验 CsvOptions/CutOptions 越界（422），DDL_AND_DATA 固定 CSV、DDL_ONLY 不得声明数据格式、POS 未定版保持 VALIDATION_GATED。前端向导新增格式单选与 CUT 高级配置面板，按格式收敛请求体。契约测试覆盖正例、互斥、边界与 ORACLE 负例；生成器格式单选在元数据误配置时仍失败关闭。
 
 ### 9.3 测试约束
 

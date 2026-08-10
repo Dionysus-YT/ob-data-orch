@@ -59,6 +59,7 @@ var databaseChecks = []CheckID{
 
 // Request 是不可变预检查租约在 Agent 本地的非敏感投影。
 // 其中不包含密码、SQL、Shell 文本、工具 argv 或可执行文件路径。
+// Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
 type Request struct {
 	Capability        Capability
 	PrecheckID        string
@@ -69,7 +70,8 @@ type Request struct {
 	Binding           agentstate.PrecheckBinding
 	CompatibilityMode string
 	Database          string
-	Table             string
+	Objects           []string
+	ContentKind       string
 	TargetPlatform    commandgen.Platform
 	OutputPath        string
 	LogPath           string
@@ -227,11 +229,23 @@ func validateRequest(request Request) error {
 	if request.ActiveExecution {
 		return ErrActiveExecution
 	}
-	if blank(request.PrecheckID, request.NodeID, request.AgentID, request.LeaseID, request.CompatibilityMode, request.Database, request.Table, request.OutputPath, request.Binding.PrecheckID, request.Binding.NodeID, request.Binding.ConfigFingerprint) || request.LeaseEpoch < 1 || request.Binding.DraftRevision < 1 || request.Binding.CredentialRevision < 1 || request.Binding.NodeFactsVersion < 1 {
+	if blank(request.PrecheckID, request.NodeID, request.AgentID, request.LeaseID, request.CompatibilityMode, request.Database, request.ContentKind, request.OutputPath, request.Binding.PrecheckID, request.Binding.NodeID, request.Binding.ConfigFingerprint) || request.LeaseEpoch < 1 || request.Binding.DraftRevision < 1 || request.Binding.CredentialRevision < 1 || request.Binding.NodeFactsVersion < 1 {
 		return ErrInvalidRequest
 	}
 	if request.CompatibilityMode != "MYSQL" && request.CompatibilityMode != "ORACLE" {
 		return ErrInvalidRequest
+	}
+	if request.ContentKind != "DATA_ONLY" && request.ContentKind != "DDL_ONLY" && request.ContentKind != "DDL_AND_DATA" {
+		return ErrInvalidRequest
+	}
+	// ALL 范围允许空对象清单；SPECIFIED 范围的对象数量与名称受冻结边界约束。
+	if len(request.Objects) > 100 {
+		return ErrInvalidRequest
+	}
+	for _, object := range request.Objects {
+		if blank(object) || len(object) > 256 || strings.ContainsAny(object, "\x00\r\n") {
+			return ErrInvalidRequest
+		}
 	}
 	if request.PrecheckID != request.Binding.PrecheckID || request.NodeID != request.Binding.NodeID || !supportedPlatform(request.TargetPlatform) || !validExportOutputPath(request.TargetPlatform, request.OutputPath) || (request.LogPath != "" && !validExportOutputPath(request.TargetPlatform, request.LogPath)) || !validAllowedRoots(request.TargetPlatform, request.AllowedRoots) {
 		return ErrInvalidRequest

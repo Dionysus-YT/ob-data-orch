@@ -410,7 +410,8 @@ func precheckClaimResponse(precheckID, leaseID string) map[string]any {
 		"executionContext": map[string]any{
 			"compatibilityMode": "MYSQL",
 			"database":          "synthetic_db",
-			"table":             "synthetic_table",
+			"objects":           []string{"synthetic_table"},
+			"contentKind":       "DATA_ONLY",
 			"outputPath":        "/E:/tmp/output",
 			"targetPlatform":    "WINDOWS_AMD64",
 			"allowedRoots":      []string{`E:\tmp`},

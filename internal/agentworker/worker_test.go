@@ -436,7 +436,8 @@ func testGrant(now time.Time) agentwire.PrecheckGrant {
 		Context: agentwire.PrecheckExecutionContext{
 			CompatibilityMode: "MYSQL",
 			Database:          "test_database",
-			Table:             "test_table",
+			Objects:           []string{"test_table"},
+			ContentKind:       "DATA_ONLY",
 			OutputPath:        "/E:/approved-output",
 			TargetPlatform:    commandgen.PlatformWindowsAMD64,
 			AllowedRoots:      []string{"E:\\approved-output"},

@@ -34,7 +34,7 @@ func Test预检查通过后才启动假工具(t *testing.T) {
 }
 
 func validPreflightRequest() agentpreflight.Request {
-	return agentpreflight.Request{Capability: agentpreflight.CapabilityExportPreflight, PrecheckID: "precheck-1", NodeID: "node-1", AgentID: "agent-1", LeaseID: "precheck-lease-1", LeaseEpoch: 1, Binding: agentstate.PrecheckBinding{PrecheckID: "precheck-1", NodeID: "node-1", DraftRevision: 1, ConfigFingerprint: "synthetic-fingerprint", CredentialRevision: 1, NodeFactsVersion: 1}, CompatibilityMode: "MYSQL", Database: "synthetic_db", Table: "synthetic_table", TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: "/E:/synthetic/output", AllowedRoots: []string{`E:\synthetic`}}
+	return agentpreflight.Request{Capability: agentpreflight.CapabilityExportPreflight, PrecheckID: "precheck-1", NodeID: "node-1", AgentID: "agent-1", LeaseID: "precheck-lease-1", LeaseEpoch: 1, Binding: agentstate.PrecheckBinding{PrecheckID: "precheck-1", NodeID: "node-1", DraftRevision: 1, ConfigFingerprint: "synthetic-fingerprint", CredentialRevision: 1, NodeFactsVersion: 1}, CompatibilityMode: "MYSQL", Database: "synthetic_db", Objects: []string{"synthetic_table"}, ContentKind: "DATA_ONLY", TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: "/E:/synthetic/output", AllowedRoots: []string{`E:\synthetic`}}
 }
 
 type fixedPreflightProbe struct {

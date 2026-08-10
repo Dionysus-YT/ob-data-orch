@@ -36,7 +36,9 @@ try {
     $san.AddIpAddress([System.Net.IPAddress]::Loopback)
     $san.AddDnsName('localhost')
     $request.CertificateExtensions.Add($san.Build())
-    $certificate = $request.CreateSelfSigned([System.DateTimeOffset]::UtcNow.AddMinutes(-5), [System.DateTimeOffset]::UtcNow.AddDays(7))
+    # 本机回环自签名证书有效期取 100 年，避免 7 天周期到期后页面代理静默失败；
+    # 该证书仅用于回环 TLS 联调，不扩大任何权限或身份边界（本机身份本就只认回环地址）。
+    $certificate = $request.CreateSelfSigned([System.DateTimeOffset]::UtcNow.AddMinutes(-5), [System.DateTimeOffset]::UtcNow.AddYears(100))
     $utf8 = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($certificatePath, $certificate.ExportCertificatePem(), $utf8)
     [System.IO.File]::WriteAllText($privateKeyPath, $rsa.ExportPkcs8PrivateKeyPem(), $utf8)

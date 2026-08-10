@@ -2890,17 +2890,18 @@ func validateCurrentPrecheckBinding(ctx context.Context, tx *sql.Tx, agentID str
 
 // readPrecheckExecutionContext 只从仍与冻结绑定一致的草稿和节点读取固定本地检查输入。
 // Agent 不会从浏览器、命令行或秘密槽位请求中获得这些字段，因此无法借此扩展检查范围。
+// v5 草稿解析为单表 DATA_ONLY 上下文；v6 标准文档按范围与内容泛化为对象清单。
 func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding PrecheckBinding) (PrecheckExecutionContext, error) {
-	var configJSON, compatibilityMode, platform, allowedRootsJSON string
+	var configVersion, configJSON, compatibilityMode, platform, allowedRootsJSON string
 	err := tx.QueryRowContext(ctx, `
-        SELECT d.config_json, s.compatibility_mode, n.platform, n.allowed_roots_json
+        SELECT d.config_version, d.config_json, s.compatibility_mode, n.platform, n.allowed_roots_json
         FROM export_drafts AS d
         JOIN data_sources AS s ON s.data_source_id = d.data_source_id
         JOIN execution_nodes AS n ON n.node_id = d.node_id
         WHERE d.draft_id = ? AND d.revision = ? AND d.config_fingerprint = ?
           AND d.data_source_id = ? AND d.node_id = ? AND n.management_state = 'ENABLED'
     `, binding.DraftID, binding.DraftRevision, binding.ConfigFingerprint, binding.DataSourceID, binding.NodeID).Scan(
-		&configJSON, &compatibilityMode, &platform, &allowedRootsJSON,
+		&configVersion, &configJSON, &compatibilityMode, &platform, &allowedRootsJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
@@ -2908,33 +2909,97 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 	if err != nil {
 		return PrecheckExecutionContext{}, fmt.Errorf("read precheck execution context: %w", err)
 	}
-	var config struct {
-		Database     string `json:"database"`
-		Table        string `json:"table"`
-		Format       string `json:"format"`
-		FilePath     string `json:"filePath"`
-		LogPath      string `json:"logPath"`
-		SkipCheckDir bool   `json:"skipCheckDir"`
-	}
-	if err := json.Unmarshal([]byte(configJSON), &config); err != nil || (compatibilityMode != "MYSQL" && compatibilityMode != "ORACLE") || config.Format != "CSV" ||
-		!validPrecheckObjectName(config.Database) || !validPrecheckObjectName(config.Table) ||
-		!validPrecheckOutputPath(platform, config.FilePath) || (config.LogPath != "" && !validPrecheckOutputPath(platform, config.LogPath)) {
+	executionContext, ok := parsePrecheckExecutionContext(configVersion, configJSON)
+	if !ok || (compatibilityMode != "MYSQL" && compatibilityMode != "ORACLE") ||
+		!validPrecheckObjectName(executionContext.Database) ||
+		!validPrecheckOutputPath(platform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validPrecheckOutputPath(platform, executionContext.LogPath)) {
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+	}
+	for _, object := range executionContext.Objects {
+		if !validPrecheckObjectName(object) {
+			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+		}
 	}
 	var allowedRoots []string
 	if err := json.Unmarshal([]byte(allowedRootsJSON), &allowedRoots); err != nil || !ValidateExecutionNodeConfiguration(platform, allowedRoots) {
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
 	}
-	return PrecheckExecutionContext{
-		CompatibilityMode: compatibilityMode,
-		Database:          config.Database,
-		Table:             config.Table,
-		OutputPath:        config.FilePath,
-		LogPath:           config.LogPath,
-		SkipCheckDir:      config.SkipCheckDir,
-		TargetPlatform:    platform,
-		AllowedRoots:      append([]string(nil), allowedRoots...),
-	}, nil
+	executionContext.CompatibilityMode = compatibilityMode
+	executionContext.TargetPlatform = platform
+	executionContext.AllowedRoots = append([]string(nil), allowedRoots...)
+	return executionContext, nil
+}
+
+// maxPrecheckObjects 限制预检查上下文可携带的冻结对象数量，与控制面草稿校验保持一致。
+const maxPrecheckObjects = 100
+
+// parsePrecheckExecutionContext 按草稿配置版本解析固定检查上下文；任何结构缺失或越界都返回 ok=false 失败关闭。
+func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckExecutionContext, bool) {
+	switch configVersion {
+	case "v5":
+		var config struct {
+			Database     string `json:"database"`
+			Table        string `json:"table"`
+			Format       string `json:"format"`
+			FilePath     string `json:"filePath"`
+			LogPath      string `json:"logPath"`
+			SkipCheckDir bool   `json:"skipCheckDir"`
+		}
+		if err := json.Unmarshal([]byte(configJSON), &config); err != nil || config.Format != "CSV" || config.Table == "" {
+			return PrecheckExecutionContext{}, false
+		}
+		return PrecheckExecutionContext{
+			Database: config.Database, Objects: []string{config.Table}, ContentKind: "DATA_ONLY",
+			OutputPath: config.FilePath, LogPath: config.LogPath, SkipCheckDir: config.SkipCheckDir,
+		}, true
+	case "v6":
+		var config struct {
+			Database     string `json:"database"`
+			ScopeKind    string `json:"scopeKind"`
+			Table        string `json:"table"`
+			ContentKind  string `json:"contentKind"`
+			Format       string `json:"format"`
+			FilePath     string `json:"filePath"`
+			LogPath      string `json:"logPath"`
+			SkipCheckDir bool   `json:"skipCheckDir"`
+		}
+		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+			return PrecheckExecutionContext{}, false
+		}
+		switch config.ContentKind {
+		case "DATA_ONLY", "DDL_ONLY", "DDL_AND_DATA":
+		default:
+			return PrecheckExecutionContext{}, false
+		}
+		switch config.ScopeKind {
+		case "ALL":
+			if config.Table != "" {
+				return PrecheckExecutionContext{}, false
+			}
+		case "SPECIFIED":
+		default:
+			return PrecheckExecutionContext{}, false
+		}
+		executionContext := PrecheckExecutionContext{
+			Database: config.Database, ContentKind: config.ContentKind,
+			OutputPath: config.FilePath, LogPath: config.LogPath, SkipCheckDir: config.SkipCheckDir,
+		}
+		if config.ScopeKind == "SPECIFIED" {
+			objects := strings.Split(config.Table, ",")
+			if len(objects) == 0 || len(objects) > maxPrecheckObjects {
+				return PrecheckExecutionContext{}, false
+			}
+			for _, object := range objects {
+				if object == "" {
+					return PrecheckExecutionContext{}, false
+				}
+			}
+			executionContext.Objects = objects
+		}
+		return executionContext, true
+	default:
+		return PrecheckExecutionContext{}, false
+	}
 }
 
 func validPrecheckObjectName(value string) bool {

@@ -44,13 +44,19 @@ type SecretResolver interface {
 // 生产默认实现只允许 jdbcprobe.TestPreflightInWorkspace，测试替身不得改变外部协议语义。
 type PreflightRunner func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error)
 
+// ConnectionRunner 是 ALL 范围的数据库级可达性探测边界。
+// 生产默认实现只允许 jdbcprobe.TestConnectionInWorkspace，不携带对象输入。
+type ConnectionRunner func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.Request) (jdbcprobe.Result, error)
+
 // PrecheckProbe 实现固定 DATABASE_CONNECTIVITY 与 OBJECT_ACCESS 检查。
-// 同一实例只能为一个冻结请求解析一次槽位并启动一次探针；对象结论来自同一已建立连接的 JDBC 元数据与固定零行读取。
+// 同一实例只能为一个冻结请求解析一次槽位；SPECIFIED 范围逐对象运行冻结单对象探针，
+// ALL 范围只运行数据库级连接探测，对象结论由可达性投影，逐对象枚举由工具运行时完成。
 type PrecheckProbe struct {
 	WorkspaceRoot string
 	Runtime       jdbcprobe.Runtime
 	Resolver      SecretResolver
 	Run           PreflightRunner
+	RunConnection ConnectionRunner
 
 	mu    sync.Mutex
 	state jdbcState
@@ -69,7 +75,20 @@ type jdbcRequestIdentity struct {
 	binding           agentstate.PrecheckBinding
 	compatibilityMode jdbcprobe.CompatibilityMode
 	database          string
-	table             string
+	// objects 是逗号连接的冻结对象清单；ALL 范围为空。
+	objects     string
+	contentKind string
+}
+
+func newJdbcRequestIdentity(request agentpreflight.Request) jdbcRequestIdentity {
+	return jdbcRequestIdentity{
+		precheckID:        request.PrecheckID,
+		binding:           request.Binding,
+		compatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
+		database:          request.Database,
+		objects:           strings.Join(request.Objects, ","),
+		contentKind:       request.ContentKind,
+	}
 }
 
 // Probe 执行短时 JDBC 连接、固定对象元数据和零行读取验证，并始终以安全状态码投影失败。
@@ -89,7 +108,7 @@ func (p *PrecheckProbe) databaseResult(ctx context.Context, request agentpreflig
 	if p == nil || p.Resolver == nil || strings.TrimSpace(p.WorkspaceRoot) == "" {
 		return unavailableDatabaseResult()
 	}
-	identity := jdbcRequestIdentity{precheckID: request.PrecheckID, binding: request.Binding, compatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode), database: request.Database, table: request.Table}
+	identity := newJdbcRequestIdentity(request)
 	p.mu.Lock()
 	if p.state.completed {
 		if p.state.request != identity {
@@ -122,7 +141,7 @@ func (p *PrecheckProbe) objectResult(request agentpreflight.Request) agentprefli
 	if p == nil {
 		return unavailableObjectResult()
 	}
-	identity := jdbcRequestIdentity{precheckID: request.PrecheckID, binding: request.Binding, compatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode), database: request.Database, table: request.Table}
+	identity := newJdbcRequestIdentity(request)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.state.completed || p.state.request != identity {
@@ -149,28 +168,55 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 	if resolveErr != nil {
 		return unavailableDatabaseResult(), unavailableObjectResult()
 	}
+	jdbcConnection := jdbcprobe.Request{
+		Host:     connection.Host,
+		Port:     connection.Port,
+		Username: connection.Username,
+		Password: connection.Password,
+	}
+	// ALL 范围：只用冻结连接探针完成数据库级可达性检查；对象结论由可达性投影，
+	// 逐对象枚举由工具运行时完成，预检查不代替运行时事实。
+	if len(request.Objects) == 0 {
+		runConnection := p.RunConnection
+		if runConnection == nil {
+			runConnection = jdbcprobe.TestConnectionInWorkspace
+		}
+		if _, runErr := runConnection(ctx, workspace, p.Runtime, jdbcConnection); runErr != nil {
+			if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
+				return failedDatabaseResult(), unavailableObjectResult()
+			}
+			return unavailableDatabaseResult(), unavailableObjectResult()
+		}
+		return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
+	}
 	run := p.Run
 	if run == nil {
 		run = jdbcprobe.TestPreflightInWorkspace
 	}
-	result, runErr := run(ctx, workspace, p.Runtime, jdbcprobe.PreflightRequest{
-		Connection: jdbcprobe.Request{
-			Host:     connection.Host,
-			Port:     connection.Port,
-			Username: connection.Username,
-			Password: connection.Password,
-		},
-		CompatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
-		Database:          request.Database,
-		Table:             request.Table,
-	})
-	if runErr != nil {
-		if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
-			return failedDatabaseResult(), unavailableObjectResult()
+	// SPECIFIED 范围：对每个冻结对象运行一次固定单对象探针；任一对象不可达即整体失败。
+	for _, object := range request.Objects {
+		result, runErr := run(ctx, workspace, p.Runtime, jdbcprobe.PreflightRequest{
+			Connection:        jdbcConnection,
+			CompatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
+			Database:          request.Database,
+			Table:             object,
+		})
+		if runErr != nil {
+			if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
+				return failedDatabaseResult(), unavailableObjectResult()
+			}
+			return unavailableDatabaseResult(), unavailableObjectResult()
 		}
-		return unavailableDatabaseResult(), unavailableObjectResult()
+		switch result.ObjectAccess {
+		case jdbcprobe.ObjectAccessible:
+			continue
+		case jdbcprobe.ObjectNotAccessible:
+			return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: EvidenceObjectNotAccessible}
+		default:
+			return connectedDatabaseResult(), unavailableObjectResult()
+		}
 	}
-	return connectedDatabaseResult(), objectAccessResult(result.ObjectAccess)
+	return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
 }
 
 func connectedDatabaseResult() agentpreflight.Result {
@@ -183,17 +229,6 @@ func failedDatabaseResult() agentpreflight.Result {
 
 func unavailableDatabaseResult() agentpreflight.Result {
 	return agentpreflight.Result{Check: agentpreflight.CheckDatabaseConnectivity, Status: agentpreflight.StatusUnknown, EvidenceCode: EvidenceDatabaseUnavailable}
-}
-
-func objectAccessResult(access jdbcprobe.ObjectAccess) agentpreflight.Result {
-	switch access {
-	case jdbcprobe.ObjectAccessible:
-		return agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
-	case jdbcprobe.ObjectNotAccessible:
-		return agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: EvidenceObjectNotAccessible}
-	default:
-		return unavailableObjectResult()
-	}
 }
 
 func unavailableObjectResult() agentpreflight.Result {

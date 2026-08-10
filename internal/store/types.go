@@ -720,7 +720,10 @@ type ExportConfig struct {
 }
 
 // ObjectScope 表达导出对象范围：全部对象或指定对象列表。
+// Database 是对象所在数据库（--database），全部与指定范围均必填；
+// 表达式的可选 schema 前缀只允许缺省或与 Database 一致，跨库未取证。
 type ObjectScope struct {
+	Database      string             `json:"database,omitempty"`
 	ScopeKind     string             `json:"scopeKind"` // ALL | SPECIFIED
 	ObjectTypes   []string           `json:"objectTypes"`
 	Expressions   []ObjectExpression `json:"expressions"`
@@ -742,11 +745,41 @@ type ContentSelection struct {
 }
 
 // DataFormat 表达数据格式及专属序列化参数。
+// CsvOptions 与 CutOptions 采用类型化结构而非自由 map，避免任意键值进入草稿与快照。
 type DataFormat struct {
-	FormatKind string `json:"formatKind"` // CSV | CUT | POS | SQL | PARQUET | ORC | AVRO
+	FormatKind string     `json:"formatKind"` // CSV | CUT | SQL | POS | PARQUET | ORC | AVRO
+	CsvOptions CsvOptions `json:"csvOptions,omitempty"`
+	CutOptions CutOptions `json:"cutOptions,omitempty"`
+}
+
+// CsvOptions 是 EX-I3 已启用的 CSV 序列化参数集合；仅数据格式为 CSV 时参与活动，
+// 其中的跨格式文本选项（转义字符、行分隔符、NULL 替换、文件编码、去除空格）
+// 在 EX-I4 中随 FORMAT_IN 规则在 CUT/SQL 格式下同样活动；
+// ColumnSplitter 为 CUT 专属列分隔字符串（POS 定版后解锁，2026-08-07）。
+type CsvOptions struct {
+	SkipHeader      bool   `json:"skipHeader,omitempty"`
+	ColumnSeparator string `json:"columnSeparator,omitempty"`
+	ColumnQuote     string `json:"columnQuote,omitempty"`
+	ColumnQuoteMode string `json:"columnQuoteMode,omitempty"`
+	EscapeCharacter string `json:"escapeCharacter,omitempty"`
+	LineSeparator   string `json:"lineSeparator,omitempty"`
+	NullString      string `json:"nullString,omitempty"`
+	FileEncoding    string `json:"fileEncoding,omitempty"`
+	WithTrim        bool   `json:"withTrim,omitempty"`
+	ColumnSplitter  string `json:"columnSplitter,omitempty"`
+}
+
+// CutOptions 是 EX-I4 已启用的 CUT 序列化参数集合；仅数据格式为 CUT 时参与活动。
+// RemoveNewline 会改变导出数据（高风险），二次确认机制由后续切片提供。
+type CutOptions struct {
+	TrailDelimiter bool `json:"trailDelimiter,omitempty"`
+	RemoveNewline  bool `json:"removeNewline,omitempty"`
 }
 
 // OutputConfig 表达输出位置与文件布局。
+// Compress 与 CompressionAlgo 是 EX-I3 启用的压缩选项；算法仅在启用压缩时有效。
+// ControlFilePath 是 EX-I4 POS 定版（2026-08-07 实测）后的控制文件目录（--ctl-path），仅 POS 格式使用。
+// TmpPath 是 EX-I6 对象存储（2026-08-07）的 Multipart 本地临时分块目录（--tmp-path）。
 type OutputConfig struct {
 	OutputKind       string `json:"outputKind"` // LOCAL | OSS | S3 | COS | OBS
 	FilePath         string `json:"filePath"`
@@ -755,6 +788,10 @@ type OutputConfig struct {
 	NoNestedDir      bool   `json:"noNestedDir"`
 	MaxFileSize      *int64 `json:"maxFileSize,omitempty"`
 	RetainEmptyFiles bool   `json:"retainEmptyFiles"`
+	Compress         bool   `json:"compress,omitempty"`
+	CompressionAlgo  string `json:"compressionAlgo,omitempty"`
+	ControlFilePath  string `json:"controlFilePath,omitempty"`
+	TmpPath          string `json:"tmpPath,omitempty"`
 }
 
 // PerformanceConfig 表达性能与资源参数。
@@ -941,10 +978,12 @@ type PrecheckLeaseGrant struct {
 
 // PrecheckExecutionContext 是固定 EXPORT_PREFLIGHT 在 Agent 本地执行六项检查所需的最小非秘密输入。
 // 所有字段都必须由当前冻结草稿和节点配置重新核验，Agent 不能用本地参数覆盖它们。
+// Objects 是冻结对象清单：SPECIFIED 范围为名称列表，ALL 范围为空清单（按数据库级投影检查）。
 type PrecheckExecutionContext struct {
 	CompatibilityMode string
 	Database          string
-	Table             string
+	Objects           []string
+	ContentKind       string // DATA_ONLY | DDL_ONLY | DDL_AND_DATA
 	OutputPath        string
 	LogPath           string
 	SkipCheckDir      bool

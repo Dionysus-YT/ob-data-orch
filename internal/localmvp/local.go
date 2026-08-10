@@ -48,6 +48,11 @@ func Dependencies(database *store.Store, keyring *credential.Keyring, agentJDBCC
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("加载本机 MVP 导出命令生成器: %w", err)
 	}
+	// 泛化能力生成器加载失败同样阻止启动，避免 EX-I2 能力在缺少确定性命令规则时继续处理。
+	generalizedGenerator, err := commandgen.NewGeneralized()
+	if err != nil {
+		return controlplane.Dependencies{}, fmt.Errorf("加载本机 MVP 泛化导出命令生成器: %w", err)
+	}
 	persistentLogs, err := logstream.NewPersistentStore("var/local-mvp-logs", database)
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("初始化本机 MVP 日志段存储: %w", err)
@@ -55,7 +60,7 @@ func Dependencies(database *store.Store, keyring *credential.Keyring, agentJDBCC
 	if err := persistentLogs.Recover(context.Background()); err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("恢复本机 MVP 已登记日志段: %w", err)
 	}
-	return controlplane.Dependencies{Identity: localIdentity{}, Authorizer: localAuthorizer{}, Roles: localAuthorizer{}, DataSources: database, Creator: database, StateChanger: database, Deleter: database, ConnectionTests: database, Updater: database, CredentialRefs: database, Drafts: database, Prechecks: database, Tasks: database, Executions: database, LogLedger: logstream.NewBatchLedger(), PersistentLogs: persistentLogs, Nodes: localExecutionNodeReader{database: database}, NodeManagement: database, NodeEnvironment: database, NodeDeleter: database, NodeCandidates: database, AgentProtocol: database, AgentEnvironmentChecks: database, AgentPrechecks: database, PrecheckSecrets: database, AgentConnectionTests: database, ConnectionTestSecrets: database, Generator: generator, PrecheckTTL: 2 * time.Minute, AgentJDBCConnectionTestEnabled: agentJDBCConnectionTestEnabled, RealExecutionEnabled: realExecutionEnabled, EnrollmentTTL: 15 * time.Minute, HeartbeatTTL: 2 * time.Minute, ConnectionTestTTL: 2 * time.Minute, Encryptor: keyring, Decryptor: keyring, CSRF: localCSRF{}, CredentialKeyID: "local-mvp-root-v1"}, nil
+	return controlplane.Dependencies{Identity: localIdentity{}, Authorizer: localAuthorizer{}, Roles: localAuthorizer{}, DataSources: database, Creator: database, StateChanger: database, Deleter: database, ConnectionTests: database, Updater: database, CredentialRefs: database, Drafts: database, Prechecks: database, Tasks: database, Executions: database, LogLedger: logstream.NewBatchLedger(), PersistentLogs: persistentLogs, Nodes: localExecutionNodeReader{database: database}, NodeManagement: database, NodeEnvironment: database, NodeDeleter: database, NodeCandidates: database, AgentProtocol: database, AgentEnvironmentChecks: database, AgentPrechecks: database, PrecheckSecrets: database, AgentConnectionTests: database, ConnectionTestSecrets: database, Generator: generator, GeneralizedGenerator: generalizedGenerator, PrecheckTTL: 2 * time.Minute, AgentJDBCConnectionTestEnabled: agentJDBCConnectionTestEnabled, RealExecutionEnabled: realExecutionEnabled, EnrollmentTTL: 15 * time.Minute, HeartbeatTTL: 2 * time.Minute, ConnectionTestTTL: 2 * time.Minute, Encryptor: keyring, Decryptor: keyring, CSRF: localCSRF{}, CredentialKeyID: "local-mvp-root-v1"}, nil
 }
 
 // localExecutionNodeReader 仅将已持久化的受认证 Agent 事实转换为命令生成所需投影。

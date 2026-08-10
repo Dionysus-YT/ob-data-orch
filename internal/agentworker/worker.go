@@ -204,7 +204,8 @@ func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflig
 		Binding:           grant.Binding,
 		CompatibilityMode: grant.Context.CompatibilityMode,
 		Database:          grant.Context.Database,
-		Table:             grant.Context.Table,
+		Objects:           append([]string(nil), grant.Context.Objects...),
+		ContentKind:       grant.Context.ContentKind,
 		TargetPlatform:    grant.Context.TargetPlatform,
 		OutputPath:        grant.Context.OutputPath,
 		LogPath:           grant.Context.LogPath,
@@ -240,8 +241,13 @@ func fixedCheckSet(checkSet []agentpreflight.CheckID) bool {
 }
 
 func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) bool {
-	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || !validOpaque(executionContext.Table, 256) || !validExportOutputPath(executionContext.TargetPlatform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validExportOutputPath(executionContext.TargetPlatform, executionContext.LogPath)) || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
+	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || (executionContext.ContentKind != "DATA_ONLY" && executionContext.ContentKind != "DDL_ONLY" && executionContext.ContentKind != "DDL_AND_DATA") || len(executionContext.Objects) > 100 || !validExportOutputPath(executionContext.TargetPlatform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validExportOutputPath(executionContext.TargetPlatform, executionContext.LogPath)) || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
 		return false
+	}
+	for _, object := range executionContext.Objects {
+		if !validOpaque(object, 256) {
+			return false
+		}
 	}
 	for _, root := range executionContext.AllowedRoots {
 		if !outputpath.IsAllowedRootPath(string(executionContext.TargetPlatform), root) {

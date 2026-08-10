@@ -25,3 +25,7 @@
 .vscode/
 .DS_Store
 Thumbs.db
+
+# IDE/Agent tool configuration
+/.codex/
+/.codex-diagnose-precheck/

@@ -156,7 +156,7 @@ func TestValidateReport拒绝缺项乱序与伪造成功(t *testing.T) {
 
 func validRequest() Request {
 	binding := agentstate.PrecheckBinding{PrecheckID: "precheck-1", NodeID: "node-1", DraftRevision: 1, ConfigFingerprint: "synthetic-fingerprint", CredentialRevision: 1, NodeFactsVersion: 1}
-	return Request{Capability: CapabilityExportPreflight, PrecheckID: binding.PrecheckID, NodeID: binding.NodeID, AgentID: "agent-1", LeaseID: "lease-1", LeaseEpoch: 1, Binding: binding, CompatibilityMode: "MYSQL", Database: "synthetic_db", Table: "synthetic_table", TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: "/E:/synthetic/output", AllowedRoots: []string{`E:\synthetic`}}
+	return Request{Capability: CapabilityExportPreflight, PrecheckID: binding.PrecheckID, NodeID: binding.NodeID, AgentID: "agent-1", LeaseID: "lease-1", LeaseEpoch: 1, Binding: binding, CompatibilityMode: "MYSQL", Database: "synthetic_db", Objects: []string{"synthetic_table"}, ContentKind: "DATA_ONLY", TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: "/E:/synthetic/output", AllowedRoots: []string{`E:\synthetic`}}
 }
 
 func executionCheckOrder() []CheckID {

@@ -59,13 +59,7 @@
 |---|---|---|---|---|---|
 | `--tenant` | IDENTIFIER | LOW | CONFLICT_PENDING | VALIDATION_GATED | 独立长参数与 user@tenant#cluster 优先级待实测 |
 
-### 2.7 对象范围（1 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--all` | NORMAL | LOW | VERIFIED | ENABLED | 全部对象导出 |
-
-### 2.8 连接与会话（16 个）
+### 2.6 基础选项 · 连接选项（11 个）
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
@@ -75,31 +69,88 @@
 | `--password` | SECRET | LOW | VERIFIED | ENABLED | 秘密槽位，不进入 argv |
 | `--cluster` | IDENTIFIER | LOW | VERIFIED | ENABLED | 数据源快照派生 |
 | `--database` | IDENTIFIER | LOW | VERIFIED | ENABLED | 任务显式值，数据源可回填 |
-| `--character-set` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 专家配置，字符集影响待验证 |
 | `--no-sys` | NORMAL | MEDIUM | VERIFIED | ENABLED | 数据源类型派生，影响元数据能力 |
 | `--public-cloud` | NORMAL | LOW | VERIFIED | ENABLED | 数据源类型派生 |
 | `--sys-user` | IDENTIFIER | MEDIUM | VERIFIED | ENABLED | 安全配置派生，依赖 sys 权限可用性 |
 | `--sys-password` | SECRET | MEDIUM | VERIFIED | ENABLED | 安全配置派生，秘密槽位 |
 | `--logical-database` | NORMAL | HIGH | VERIFIED | ENABLED | 专家配置+风险确认，结果不能直接导入 |
-| `--session-config` | NORMAL | LOW | VERIFIED | ENABLED | 节点只读派生 |
-| `--nls-date-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Oracle 专家配置 |
-| `--nls-timestamp-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Oracle 专家配置 |
-| `--nls-timestamp-tz-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Oracle 专家配置 |
 
-### 2.9 内容与数据格式（8 个）
+### 2.7 基础选项 · 功能选项 · 文件格式（24 个）
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
 | `--csv` | NORMAL | LOW | VERIFIED | ENABLED | 推荐格式 |
 | `--cut` | NORMAL | LOW | VERIFIED | ENABLED | 字符串分隔格式 |
-| `--pos` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED | 定长格式，独立 --pos 与 CUT 组合口径冲突，待 EVT-P0 |
+| `--pos` | NORMAL | LOW | VERIFIED（2026-08-07 实测） | ENABLED（待产品接入） | 定长格式，独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，见 [受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) |
 | `--sql` | NORMAL | LOW | VERIFIED | ENABLED | Insert SQL 格式 |
-| `--par` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Parquet 列式格式，资源特性待验证 |
-| `--orc` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | ORC 列式格式，内存风险待验证 |
-| `--avro` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Avro 格式，V4.3.5 官方支持 |
+| `--par` | NORMAL | LOW | VERIFIED（官方格式表，2026-08-07 接入） | ENABLED | Parquet 列式格式；压缩/序列化不适用，--block-size 不生效 |
+| `--orc` | NORMAL | MEDIUM | VERIFIED（官方格式表，2026-08-07 接入） | ENABLED | ORC 列式格式；内存风险较高，压缩/序列化不适用 |
+| `--avro` | NORMAL | LOW | VERIFIED（官方格式表，2026-08-07 接入） | ENABLED | Avro 格式；压缩/序列化不适用，--block-size 未取证 |
 | `--ddl` | NORMAL | LOW | VERIFIED | ENABLED | 对象定义导出 |
+| `--character-set` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 专家配置，字符集影响待验证 |
+| `--escape-character` | NORMAL | LOW | VERIFIED | ENABLED | CSV/CUT 转义字符 |
+| `--file-encoding` | NORMAL | LOW | VERIFIED | ENABLED | 输出文件编码 |
+| `--line-separator` | NORMAL | LOW | VERIFIED | ENABLED | 行分隔符 |
+| `--null-string` | NORMAL | LOW | VERIFIED | ENABLED | NULL 替换字符串 |
+| `--with-trim` | NORMAL | LOW | VERIFIED | ENABLED | 去除左右空格 |
+| `--skip-header` | NORMAL | LOW | VERIFIED | ENABLED | 省略 CSV 字段头 |
+| `--column-separator` | NORMAL | LOW | VERIFIED | ENABLED | CSV 列分隔符 |
+| `--column-quote` | NORMAL | LOW | VERIFIED | ENABLED | CSV 列包围符 |
+| `--column-quote-mode` | NORMAL | LOW | VERIFIED | ENABLED | CSV 包围模式（5 种枚举） |
+| `--column-delimiter` | NORMAL | LOW | HELP_ONLY | HIDDEN | 已过时，与 --column-quote 同义 |
+| `--column-splitter` | NORMAL | LOW | VERIFIED（CUT 专属；POS 已实测定版为独立 `--pos`） | ENABLED（待产品接入） | CUT 分隔字符串 |
+| `--trail-delimiter` | NORMAL | LOW | VERIFIED | ENABLED | 行尾分隔符 |
+| `--drop-object` | NORMAL | HIGH | VERIFIED | ENABLED | 前置 DROP（高风险+二次确认） |
+| `--compact-schema` | NORMAL | MEDIUM | CONFLICT_PENDING | VALIDATION_GATED | 紧凑 Schema，4.3.5 约束不完整 |
+| `--flashback-scn` | NORMAL | MEDIUM | VERIFIED | ENABLED | 闪回 SCN，官方归类为文件格式伴生参数 |
 
-### 2.10 日期时间序列化（7 个）
+### 2.8 基础选项 · 功能选项 · 压缩导出（3 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
+|---|---|---|---|---|---|
+| `--compress` | NORMAL | LOW | VERIFIED | ENABLED | 启用压缩 |
+| `--compression-algo` | NORMAL | LOW | VERIFIED | ENABLED | 压缩算法（zstd/zlib/gzip/snappy） |
+| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 压缩等级，随算法变化 |
+
+### 2.9 基础选项 · 功能选项 · 数据库对象类型（16 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
+|---|---|---|---|---|---|
+| `--all` | NORMAL | LOW | VERIFIED | ENABLED | 全部对象导出 |
+| `--table` | IDENTIFIER | LOW | VERIFIED | ENABLED | 表，支持多名称和表达式 |
+| `--table-group` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 表组，仅 DDL，版本条件待确认 |
+| `--view` | IDENTIFIER | LOW | VERIFIED | ENABLED | 视图，仅 DDL |
+| `--trigger` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 触发器，仅 Oracle，仅 DDL |
+| `--obj-user` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 用户定义，公有云限制待确认 |
+| `--role` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 角色，仅 Oracle，公有云限制 |
+| `--sequence` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 序列，数据库版本条件待确认 |
+| `--sequence-policy` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED | 序列策略，4.3.5 约束待确认 |
+| `--synonym` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 同义词，仅 Oracle |
+| `--type` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 类型，仅 Oracle |
+| `--type-body` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 类型体，依赖 --type |
+| `--package` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 包，仅 Oracle |
+| `--package-body` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 包体，仅 Oracle |
+| `--function` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 函数，兼容模式条件待确认 |
+| `--procedure` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 存储过程，兼容模式条件待确认 |
+
+### 2.10 基础选项 · 功能选项 · 存储路径（5 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
+|---|---|---|---|---|---|
+| `--file-path` | NORMAL | LOW | VERIFIED | ENABLED | 必填，本地路径或受控 URI |
+| `--log-path` | NORMAL | LOW | VERIFIED | ENABLED | 可选日志目录 |
+| `--no-nested-dir` | NORMAL | LOW | VERIFIED | ENABLED | 扁平目录 |
+| `--ctl-path` | NORMAL | LOW | VERIFIED（2026-08-07 实测） | ENABLED（待产品接入） | 控制文件目录，仅 POS 显示；用户提供 / 自动生成双来源 |
+| `--tmp-path` | NORMAL | MEDIUM | VERIFIED（jar 字节码取证，2026-08-07） | ENABLED | 对象存储 Multipart 本地临时分块目录；存储凭据走执行槽位（HADOOP_CONF_DIR/core-site.xml），URI 拒绝密钥参数 |
+
+### 2.11 基础选项 · 其他选项（2 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
+|---|---|---|---|---|---|
+| `--help` | NORMAL | LOW | VERIFIED | HIDDEN | 显示帮助 |
+| `--version` | NORMAL | LOW | VERIFIED | HIDDEN | 显示版本（节点版本核验使用） |
+
+### 2.12 高级选项 · 功能选项 · 时间戳格式（11 个）
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
@@ -110,40 +161,12 @@
 | `--timestamp-tz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT + Oracle |
 | `--timestamp-ltz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT + Oracle |
 | `--preserve-zero-datetime` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | MySQL 专家配置 |
+| `--nls-date-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Oracle 专家配置 |
+| `--nls-timestamp-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Oracle 专家配置 |
+| `--nls-timestamp-tz-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | Oracle 专家配置 |
+| `--flashback-timestamp` | NORMAL | MEDIUM | VERIFIED | ENABLED | 闪回时间戳，仅 Oracle |
 
-### 2.11 输出与文件（8 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--file-path` | NORMAL | LOW | VERIFIED | ENABLED | 必填，本地路径或受控 URI |
-| `--log-path` | NORMAL | LOW | VERIFIED | ENABLED | 可选日志目录 |
-| `--no-nested-dir` | NORMAL | LOW | VERIFIED | ENABLED | 扁平目录 |
-| `--ctl-path` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 控制文件目录，POS/数据处理场景 |
-| `--block-size` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED | 默认值官网冲突（0 vs 1024MB） |
-| `--tmp-path` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 对象存储临时目录，空间预检查待验证 |
-| `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED | 导出总量上限 |
-| `--retain-empty-files` | NORMAL | LOW | VERIFIED | ENABLED | 空结果文件保留 |
-
-### 2.12 数据库对象（14 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--table` | IDENTIFIER | LOW | VERIFIED | ENABLED | 表，支持多名称和表达式 |
-| `--table-group` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 表组，仅 DDL，版本条件待确认 |
-| `--view` | IDENTIFIER | LOW | VERIFIED | ENABLED | 视图，仅 DDL |
-| `--trigger` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 触发器，仅 Oracle，仅 DDL |
-| `--obj-user` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 用户定义，公有云限制待确认 |
-| `--role` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 角色，仅 Oracle，公有云限制 |
-| `--sequence` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 序列，数据库版本条件待确认 |
-| `--synonym` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 同义词，仅 Oracle |
-| `--type` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 类型，仅 Oracle |
-| `--type-body` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 类型体，依赖 --type |
-| `--package` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 包，仅 Oracle |
-| `--package-body` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 包体，仅 Oracle |
-| `--function` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 函数，兼容模式条件待确认 |
-| `--procedure` | IDENTIFIER | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 存储过程，兼容模式条件待确认 |
-
-### 2.13 数据筛选与一致性（14 个）
+### 2.13 高级选项 · 功能选项 · 黑白名单筛选（12 个）
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
@@ -156,77 +179,45 @@
 | `--exclude-virtual-columns` | NORMAL | LOW | VERIFIED | ENABLED | 排除生成列 |
 | `--exclude-table` | IDENTIFIER | LOW | VERIFIED | ENABLED | 排除表 |
 | `--enable-hidden-pk` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 隐藏主键，版本/权限条件待确认 |
-| `--flashback-scn` | NORMAL | MEDIUM | VERIFIED | ENABLED | 闪回 SCN |
-| `--flashback-timestamp` | NORMAL | MEDIUM | VERIFIED | ENABLED | 闪回时间戳，仅 Oracle |
+| `--fetch-size` | NORMAL | LOW | VERIFIED | ENABLED | 游标抓取行数（官方正文归列黑白名单筛选节） |
+| `--add-extra-message` | NORMAL | MEDIUM | VERIFIED | ENABLED | 附加对象信息，依赖 sys 权限 |
+| `--retain-empty-files` | NORMAL | LOW | VERIFIED | ENABLED | 空结果文件保留 |
+
+### 2.14 高级选项 · 功能选项 · 错误处理（6 个）
+
+| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
+|---|---|---|---|---|---|
+| `--skip-check-dir` | NORMAL | MEDIUM | VERIFIED | ENABLED | 跳过导出目录空性检查；仍检查路径、允许根目录、可写性和空间 |
+| `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED | 导出总量上限 |
+| `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED | 删除换行（仅 CUT，高风险+二次确认） |
+| `--retry` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 检查点继续，兼容条件待验证 |
 | `--snapshot` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 一致性快照，组合条件待确认 |
 | `--weak-read` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 备副本弱读，环境条件待确认 |
-| `--distinct` | NORMAL | LOW | HELP_ONLY | HIDDEN | 已过时 |
 
-### 2.14 文本序列化（6 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--escape-character` | NORMAL | LOW | VERIFIED | ENABLED | CSV/CUT 转义字符 |
-| `--file-encoding` | NORMAL | LOW | VERIFIED | ENABLED | 输出文件编码 |
-| `--line-separator` | NORMAL | LOW | VERIFIED | ENABLED | 行分隔符 |
-| `--null-string` | NORMAL | LOW | VERIFIED | ENABLED | NULL 替换字符串 |
-| `--with-trim` | NORMAL | LOW | VERIFIED | ENABLED | 去除左右空格 |
-| `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED | 删除换行（仅 CUT，高风险+二次确认） |
-
-### 2.15 CSV 序列化（5 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--skip-header` | NORMAL | LOW | VERIFIED | ENABLED | 省略 CSV 字段头 |
-| `--column-separator` | NORMAL | LOW | VERIFIED | ENABLED | CSV 列分隔符 |
-| `--column-quote` | NORMAL | LOW | VERIFIED | ENABLED | CSV 列包围符 |
-| `--column-quote-mode` | NORMAL | LOW | VERIFIED | ENABLED | CSV 包围模式（5 种枚举） |
-| `--column-delimiter` | NORMAL | LOW | HELP_ONLY | HIDDEN | 已过时，与 --column-quote 同义 |
-
-### 2.16 CUT/POS 序列化（2 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--column-splitter` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED | CUT 分隔字符串，POS 方案待实测 |
-| `--trail-delimiter` | NORMAL | LOW | VERIFIED | ENABLED | 行尾分隔符 |
-
-### 2.17 DDL 与对象处理（5 个）
-
-| 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
-|---|---|---|---|---|---|
-| `--drop-object` | NORMAL | HIGH | VERIFIED | ENABLED | 前置 DROP（高风险+二次确认） |
-| `--add-extra-message` | NORMAL | MEDIUM | VERIFIED | ENABLED | 附加对象信息，依赖 sys 权限 |
-| `--retain-schema` | NORMAL | LOW | VERIFIED | ENABLED | 保留 Schema 前缀 |
-| `--compact-schema` | NORMAL | MEDIUM | CONFLICT_PENDING | VALIDATION_GATED | 紧凑 Schema，4.3.5 约束不完整 |
-| `--sequence-policy` | NORMAL | LOW | CONFLICT_PENDING | VALIDATION_GATED | 序列策略，4.3.5 约束待确认 |
-
-### 2.18 性能与资源（7 个）
+### 2.15 高级选项 · 性能选项（5 个）
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
 | `--thread` | NORMAL | LOW | VERIFIED | ENABLED | 导出线程数 |
 | `--page-size` | NORMAL | LOW | VERIFIED | ENABLED | 分页大小 |
 | `--parallel-macro` | NORMAL | LOW | VERIFIED | ENABLED | 每线程宏块数 |
-| `--fetch-size` | NORMAL | LOW | VERIFIED | ENABLED | 游标抓取行数 |
 | `--mem` | NORMAL | MEDIUM | VERIFIED | ENABLED | JVM 内存（节点资源风险） |
-| `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED | 导出总量上限 |
-| `--retry` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 检查点继续，兼容条件待验证 |
+| `--block-size` | NORMAL | LOW | CONFLICT_PENDING（默认值残余；显式传值已实测 MB/ROW 生效） | VALIDATION_GATED（待产品接入） | 默认值官网冲突（0 vs 1024MB）保留 |
 
-### 2.19 压缩（3 个）
+### 2.16 高级选项 · 其他选项（2 个）
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
-| `--compress` | NORMAL | LOW | VERIFIED | ENABLED | 启用压缩 |
-| `--compression-algo` | NORMAL | LOW | VERIFIED | ENABLED | 压缩算法（zstd/zlib/gzip/snappy） |
-| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 压缩等级，随算法变化 |
+| `--session-config` | NORMAL | LOW | VERIFIED | ENABLED | 节点只读派生 |
+| `--retain-schema` | NORMAL | LOW | VERIFIED | ENABLED | 保留 Schema 前缀 |
 
-### 2.20 V1.0 状态汇总
+### 2.17 V1.0 状态汇总
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 63 | 57.8% |
+| ENABLED | 60 | 55.0% |
 | VALIDATION_GATED | 35 | 32.1% |
-| HIDDEN | 11 | 10.1% |
+| HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |
 
@@ -264,12 +255,12 @@
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
 | EX-F016 | 导出内容 | ENABLED | 仅 DDL/仅数据/DDL+数据 |
-| EX-F017 | 数据格式 | ENABLED | CSV 已实现；CUT/SQL ENABLED；POS/Parquet/ORC/Avro VALIDATION_GATED |
-| EX-F018 | POS 映射状态 | VALIDATION_GATED | 独立 --pos 与 CUT 组合口径冲突待实测 |
+| EX-F017 | 数据格式 | ENABLED | CSV 已实现；CUT/SQL ENABLED；POS 映射已定版（产品接入待实现）；Parquet/ORC/Avro VALIDATION_GATED |
+| EX-F018 | POS 映射状态 | ENABLED（待产品接入） | 独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，2026-08-07 实测定版 |
 | EX-F019 | DDL 行为分组 | VALIDATION_GATED | 依赖 sys 权限和对象类型矩阵 |
-| EX-F020 | 数据行为分组 | ENABLED | 筛选/格式/性能参数按各自 supportState 显示 |
+| EX-F020 | 数据行为分组 | ENABLED | 文件格式、压缩导出、存储路径、时间戳格式、黑白名单筛选、错误处理与性能选项参数按各自 supportState 显示 |
 
-### 3.4 步骤 5：输出与资源（EX-F021~F042）
+### 3.4 步骤 5：输出、筛选与性能（EX-F021~F042；官方分类：存储路径 / 压缩导出 / 时间戳格式 / 黑白名单筛选 / 错误处理 / 性能选项）
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
@@ -281,9 +272,9 @@
 | EX-F026 | 存储凭据 | VALIDATION_GATED | 对象存储凭据安全评审待完成 |
 | EX-F027 | 日志路径 | ENABLED | 当前已实现 |
 | EX-F028 | 扁平目录 | ENABLED | --no-nested-dir |
-| EX-F029 | 控制文件目录 | VALIDATION_GATED | 依赖 POS/数据处理场景实测 |
+| EX-F029 | 控制文件目录 | ENABLED（待产品接入） | 仅 POS 显示；用户提供 / 自动生成双来源（2026-08-07 确认） |
 | EX-F030 | 对象存储临时目录 | VALIDATION_GATED | 空间预检查待验证 |
-| EX-F031 | 文件拆分 | VALIDATION_GATED | --block-size 默认值冲突 |
+| EX-F031 | 文件拆分 | VALIDATION_GATED（待产品接入） | --block-size 显式传值已实测 MB/ROW 生效；默认值冲突保留 |
 | EX-F032 | 导出总量上限 | ENABLED | --max-file-size |
 | EX-F033 | 空结果文件 | ENABLED | --retain-empty-files |
 | EX-F034 | 跳过目录空性检查 | ENABLED | --skip-check-dir |
@@ -296,7 +287,7 @@
 | EX-F041 | 压缩算法 | ENABLED | --compression-algo |
 | EX-F042 | 压缩等级 | VALIDATION_GATED | --compression-level，随算法变化 |
 
-### 3.5 格式序列化（EX-F043~F054）
+### 3.5 格式序列化（EX-F043~F054；基础选项 · 功能选项 · 文件格式）
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
@@ -305,7 +296,7 @@
 | EX-F045 | CSV 列包围符 | ENABLED | --column-quote |
 | EX-F046 | CSV 包围模式 | ENABLED | --column-quote-mode |
 | EX-F047 | 转义字符 | ENABLED | --escape-character |
-| EX-F048 | CUT 列分隔字符串 | VALIDATION_GATED | --column-splitter，POS 方案待实测 |
+| EX-F048 | CUT 列分隔字符串 | ENABLED（待产品接入） | --column-splitter，CUT 专属（POS 已定版为独立 --pos） |
 | EX-F049 | 行分隔符 | ENABLED | --line-separator |
 | EX-F050 | 行尾分隔符 | ENABLED | --trail-delimiter |
 | EX-F051 | NULL 替换 | ENABLED | --null-string |
@@ -313,7 +304,7 @@
 | EX-F053 | 去除左右空格 | ENABLED | --with-trim |
 | EX-F054 | 删除换行 | ENABLED | --remove-newline，高风险+二次确认 |
 
-### 3.6 日期时间（EX-F055~F064）
+### 3.6 日期时间（EX-F055~F064；高级选项 · 功能选项 · 时间戳格式）
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
@@ -328,7 +319,7 @@
 | EX-F063 | NLS TIMESTAMP | VALIDATION_GATED | Oracle 专家配置 |
 | EX-F064 | NLS TIMESTAMP TZ | VALIDATION_GATED | Oracle 专家配置 |
 
-### 3.7 DDL 行为（EX-F065~F069）
+### 3.7 DDL 行为（EX-F065~F069；官方分类：文件格式伴生 / 数据库对象类型 / 高级选项 · 其他选项）
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
@@ -338,7 +329,7 @@
 | EX-F068 | 紧凑 Schema | VALIDATION_GATED | 4.3.5 约束不完整 |
 | EX-F069 | 序列策略 | VALIDATION_GATED | 4.3.5 约束待确认 |
 
-### 3.8 筛选与一致性（EX-F070~F081）
+### 3.8 筛选与一致性（EX-F070~F081；高级选项 · 功能选项 · 黑白名单筛选 / 时间戳格式 / 错误处理）
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
@@ -411,14 +402,14 @@
 | 内容 | CSV | CUT | POS | SQL | Parquet | ORC | Avro |
 |---|---|---|---|---|---|---|---|
 | 仅 DDL | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| 仅数据 | ENABLED | ENABLED | GATED | ENABLED | GATED | GATED | GATED |
+| 仅数据 | ENABLED | ENABLED | ENABLED（待产品接入） | ENABLED | ENABLED（2026-08-07） | ENABLED（2026-08-07） | ENABLED（2026-08-07） |
 | DDL + 数据 | ENABLED | ENABLED | GATED | ENABLED | GATED | GATED | GATED |
 
 **规则**：
 - 仅 DDL 时不生成数据格式参数，跳过格式步骤
 - 同一任务只允许一种数据格式
 - 格式切换保留各格式草稿值（命名空间隔离），提交只保存当前格式
-- POS 待 EVT-P0 实测前最终命令阻断
+- POS 映射已实测定版（独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，2026-08-07）；产品接入后放开格式选择，无控制文件时阻断提交
 
 ### 4.3 输出位置
 
@@ -512,13 +503,13 @@
 - export-module.md EX-R07 需更新
 - export-field-rules.md EX-F070 需更新
 
-### 6.2 POS 映射（保持 VALIDATION_GATED）
+### 6.2 POS 映射（已定版，待产品接入）
 
-等待 EVT-P0-01~03 受控实测解决独立 `--pos` 与 CUT 组合的口径冲突。实测完成前，POS 格式卡片可选择但最终命令阻断。
+2026-08-07 受控实测定版：4.3.5 实际二进制支持独立 `--pos`，必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)` 定义定长列）；官网 4.3.6“CUT + 空 splitter”口径与 4.3.5 行为不符，不再使用。控制文件来源“用户提供 / 自动生成”双支持已确认。详见 [Windows POS 受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)。
 
-### 6.3 --block-size（保持 VALIDATION_GATED）
+### 6.3 --block-size（显式传值已实测，默认值残余）
 
-等待官网默认值冲突（正文 0 vs 选项表 1024MB）通过受控实测解决。
+`--block-size 1`（1MB）与 `--block-size 256ROW`（256 行/文件）已在 4.3.5 上实测生效（按行粒度切分，命名 `<表名>.<序号>.dat`）；官网默认值冲突（正文 0 vs 选项表 1024MB）在 ≤1024MB 数据下不可证伪区分，保留为低风险残余，V1.0 显式传值时按参数生效。
 
 ### 6.4 --sequence-policy（保持 VALIDATION_GATED）
 

@@ -77,7 +77,10 @@ type Request struct {
 	DataSourceFactVersion string
 	NodeFactVersion       string
 	TargetPlatform        Platform
-	Fields                []FieldInput
+	// OutputKind 是 EX-I6 对象存储（2026-08-07）引入的输出目标类型：
+	// LOCAL 或受控对象存储（OSS/S3/COS/OBS）；为空时保持本地绝对路径旧行为。
+	OutputKind string
+	Fields     []FieldInput
 }
 
 type NormalizedValue struct {

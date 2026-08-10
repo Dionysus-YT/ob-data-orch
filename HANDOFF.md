@@ -1,6 +1,6 @@
 # OB Data Orch 交接说明
 
-> 快照日期：2026-08-06
+> 快照日期：2026-08-10
 > 权威状态：[开发任务地图](docs/03-technical/development-task-map.md)、[开发准入收口](docs/03-technical/development-readiness-closure.md) 与对应验证证据
 > 安全说明：不记录真实端点、身份、密码、密钥、完整命令、输出路径或工具原始输出。
 
@@ -8,7 +8,7 @@
 
 项目已具备 Windows 本机 Local MVP 的受控固定单表 CSV 导出链路，以及任务、详情和持久日志的授权读取。该能力现统一标记为 `CSV_SINGLE_TABLE_V1`，只是导出模块的已实现基线，不代表完整导出模块、G3、WI-01～WI-12、麒麟目标或生产发布通过。
 
-开发路线已从“继续逐项完成 WI 现场验证”切换为“先完成导出模块全功能设计与技术契约，再按能力切片实现和验证”。**EX-D0 当前实现盘点与能力冻结**、**EX-D1 导出模块完整产品设计**、**EX-D2 导出模块完整技术契约**和 **EX-I1 通用导出骨架**均已完成。EX-I1 产出包括：草稿 `config_version` v5/v6 与七个结构化子配置列、任务 `snapshot_version` v1/v2、v6 标准文档（扁平投影键 + 嵌套泛化配置）与归一化命令生成入口、v5 config_json 字节级兼容回归，以及未知字段与未验证能力失败关闭负例；v6 当前仅放行 `export-odp-single-table-csv-v1` 单表 CSV 表达，前端向导仍使用 v5。EX-I1 评审后额外修复：`rawInput` 改为服务端按 schema.name 生成规范值（浏览器自由文本不入库）、v6 标准文档与草稿事实的一致性复验失败关闭、ExportDraftWrite 用 oneOf 分隔 v5/v6 并补 outputKind、模板 PATCH 拆分为专用重命名请求体。参数元数据 v6 经评审降级为设计稿（`internal/parammeta/drafts/`，不嵌入不加载）：其 sys 秘密槽位的官方安全文件属性未取证、部分内容与现有加载器不兼容，接入前需先完成事实核验、加载器支持与测试。当前唯一任务是任务地图中的 **EX-I2 对象范围与 DDL**。
+开发路线已从“继续逐项完成 WI 现场验证”切换为“先完成导出模块全功能设计与技术契约，再按能力切片实现和验证”。**EX-D0**、**EX-D1**、**EX-D2**、**EX-I1 通用导出骨架**、**EX-I2 对象范围与 DDL**、**EX-I3 CSV 完整能力**、**EX-I4 CUT、SQL 与 POS**、**EX-I5 Parquet/ORC/Avro** 均已完成；**EX-I6 第一段**（对象存储受控 URI、--tmp-path、输出类型 LOCAL/OSS/S3/COS/OBS 全链路）已交付。POS 映射已于 2026-08-07 受控实测定版：4.3.5 支持独立 `--pos` 且必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)` 定义定长列），全量 6 表真实导出成功。当前执行任务地图中的 **EX-I6 后续切片**（存储凭据槽位：SQLite 加密存储 + 控制面解析 + Agent core-site.xml 生成；存储专用预检查；真实对象存储验证需授权，归 EX-V1 排期）。
 
 真实连接、预检查和工具启动默认失败关闭。它们只能在回环 Local MVP、显式运行开关、登记对象、受认证 Agent、固定任务信封及当次用户授权同时满足时发生；控制面不提供任意命令、SQL、路径浏览或远程 Shell。
 
@@ -24,7 +24,7 @@
 - **G3 仍未通过。** WI-03 低权限对象负例已通过；WI-04 CSV 特殊值已由两次独立正式 Agent 导出和测试负责人人工确认通过。长期不可达、跨目标环境、正式认证/备份恢复及其余 WI 收口仍待完成。
 - 终态日志补传协议已完成：只接受同一 Agent、原租约 epoch、重新计算的冻结信封摘要与 `RELEASED + SUCCEEDED/FAILED` 的持久化批次/缺口；它不恢复执行、不延长租约、不改变任务终态，且错误摘要、其他 Agent 与过期租约均拒绝。相关仓储测试已通过。
 - 已完成现场重启回归：此前实际终态任务留下的 1 个已 `fsync` 待确认批次，经当前源码构建的独立标准 Agent 重启补传后清至 0；账本末尾为 `RECOVERY_REPLAY_ATTEMPT`、`CONTROL_PLANE_CONFIRMED`。全程未启动工具、未重新连接数据库、未停止常驻 Agent，详见[Windows 终态日志补传重启验证](docs/03-technical/evidence/windows-terminal-log-replay-recovery-validation-2026-08-04.md)。
-- 当前下一工程动作以任务地图为准：执行 EX-I2，实现全部/指定对象、多对象、对象类型与仅 DDL/DDL + 数据能力及其专属预检查。EX-D0、EX-D1、EX-D2、EX-I1 已完成，技术契约见 [export-general-contract.md](docs/03-technical/export-general-contract.md)。
+- 当前下一工程动作以任务地图为准：执行 EX-I6 后续切片（存储凭据槽位与存储专用预检查；真实对象存储验证需授权，归 EX-V1 排期）。EX-D0、EX-D1、EX-D2、EX-I1~EX-I5 已完成，EX-I4 的 POS 映射已实测定版并完成产品接入，EX-I6 第一段已交付；技术契约见 [export-general-contract.md](docs/03-technical/export-general-contract.md)。对象存储草稿在存储专用预检查完成前，固定预检查与提交保持功能门禁阻断（STORAGE_PRECHECK_UNAVAILABLE），不把存储 URI 伪装成本地路径。
 - WI-05 已完成第一阶段只读核对，但现场进程 argv 取证暂停；它保持未通过，并在对应能力进入 EX-V1 时继续。未取得新的真实工具启动授权前，不再次启动 OBDUMPER。
 - F3 的列表、详情和日志读取是已实现的只读能力，不替代 G3 结论。筛选、跨任务日志检索、下载、取消、重试和普通/旁路导入仍不在当前切片范围内。
 

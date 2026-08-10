@@ -1706,6 +1706,21 @@ func TestExportDraftV6RoundTripAndLegacyCompatibility(t *testing.T) {
 	if err := store.SubmitTask(ctx, invalid); err == nil {
 		t.Fatalf("invalid snapshot version accepted")
 	}
+
+	// 多对象 DDL+CSV 的 v2 快照投影：$.table 存逗号连接清单，$.format 存 DDL_CSV。
+	multiObject := validTaskSubmission("task-v2-multi")
+	multiObject.SnapshotVersion = "v2"
+	multiObject.SnapshotJSON = `{"configVersion":"v6","database":"synthetic_db","scopeKind":"SPECIFIED","table":"table_one,table_two","contentKind":"DDL_AND_DATA","format":"DDL_CSV","filePath":"/E:/tmp/output","config":{}}`
+	if err := store.SubmitTask(ctx, multiObject); err != nil {
+		t.Fatalf("v2 multi-object SubmitTask() error = %v", err)
+	}
+	multiSummary, err := store.GetTaskSummary(ctx, "task-v2-multi")
+	if err != nil {
+		t.Fatalf("v2 multi-object GetTaskSummary() error = %v", err)
+	}
+	if multiSummary.SnapshotVersion != "v2" || multiSummary.Table != "table_one,table_two" || multiSummary.Format != "DDL_CSV" {
+		t.Fatalf("v2 multi-object projection mismatch: %#v", multiSummary)
+	}
 }
 
 func TestCreatePrecheckFreezesDraftBindingAndIdempotency(t *testing.T) {

@@ -216,15 +216,108 @@ export interface ExecutionNodeEnrollment {
   readonly displayedOnce: true
 }
 
+export type ExportScopeKind = 'ALL' | 'SPECIFIED'
+export type ExportObjectType = 'TABLE' | 'VIEW'
+export type ExportContentKind = 'DATA_ONLY' | 'DDL_ONLY' | 'DDL_AND_DATA'
+// EX-I4/EX-I5：数据格式单选；CSV/CUT/POS/SQL 为文本格式，PARQUET/ORC/AVRO 为结构化格式（2026-08-07 接入）。
+export type ExportDataFormatKind = 'CSV' | 'CUT' | 'POS' | 'SQL' | 'PARQUET' | 'ORC' | 'AVRO'
+
+// StructuredFormat 判断是否结构化格式：压缩与序列化选项不适用。
+export function isStructuredFormat(formatKind: ExportDataFormatKind): boolean {
+  return formatKind === 'PARQUET' || formatKind === 'ORC' || formatKind === 'AVRO'
+}
+
+export interface ExportObjectExpression {
+  readonly schema?: string
+  readonly name: string
+}
+
+export interface ExportObjectScope {
+  readonly database: string
+  readonly scopeKind: ExportScopeKind
+  readonly objectTypes?: readonly ExportObjectType[]
+  readonly expressions?: readonly ExportObjectExpression[]
+  readonly excludeTables?: readonly string[]
+}
+
+export type CsvQuoteMode = 'all' | 'all_not_null' | 'minimal' | 'non_numeric' | 'none'
+export type CompressionAlgo = 'zstd' | 'zlib' | 'gzip' | 'snappy'
+
+// CsvOptions 是 EX-I3 启用的 CSV 序列化选项集合；
+// EX-I4 起其中的共享文本选项（转义字符、行分隔符、NULL 替换、文件编码、去除空格）
+// 随服务端 FORMAT_IN 规则在 CUT/SQL 格式下同样活动；columnSplitter 为 CUT 专属列分隔字符串。
+export interface CsvOptions {
+  readonly skipHeader?: boolean
+  readonly columnSeparator?: string
+  readonly columnQuote?: string
+  readonly columnQuoteMode?: CsvQuoteMode
+  readonly escapeCharacter?: string
+  readonly lineSeparator?: string
+  readonly nullString?: string
+  readonly fileEncoding?: string
+  readonly withTrim?: boolean
+  readonly columnSplitter?: string
+}
+
+// CutOptions 是 EX-I4 启用的 CUT 序列化选项集合；仅数据格式为 CUT 时活动。
+export interface CutOptions {
+  readonly trailDelimiter?: boolean
+  readonly removeNewline?: boolean
+}
+
+export interface FilterOptions {
+  readonly querySql?: string
+  readonly includeColumnNames?: readonly string[]
+  readonly excludeColumnNames?: readonly string[]
+  readonly excludeVirtualColumns?: boolean
+  readonly flashbackScn?: number
+  readonly flashbackTimestamp?: string
+}
+
+export interface PerformanceOptions {
+  readonly thread?: number
+  readonly pageSize?: number
+  readonly parallelMacro?: number
+  readonly fetchSize?: number
+  readonly jvmMemory?: string
+}
+
+// EX-I6 对象存储（2026-08-07）：输出目标类型；对象存储要求受控 URI（凭据走执行槽位，不进 URI）。
+export type ExportOutputKind = 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS'
+
+export interface GeneralizedExportConfig {
+  readonly objectScope: ExportObjectScope
+  readonly contentSelection: { readonly contentKind: ExportContentKind }
+  readonly dataFormat?: {
+    readonly formatKind: ExportDataFormatKind
+    readonly csvOptions?: CsvOptions
+    readonly cutOptions?: CutOptions
+  }
+  readonly outputConfig: {
+    readonly outputKind: ExportOutputKind
+    readonly filePath: string
+    readonly logPath?: string
+    readonly skipCheckDir?: boolean
+    readonly noNestedDir?: boolean
+    readonly maxFileSize?: number
+    readonly retainEmptyFiles?: boolean
+    readonly compress?: boolean
+    readonly compressionAlgo?: CompressionAlgo
+    // EX-I4 POS 定版：控制文件目录（--ctl-path），仅 POS 格式使用。
+    readonly controlFilePath?: string
+    // EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
+    readonly tmpPath?: string
+  }
+  readonly filterConfig?: FilterOptions
+  readonly performanceConfig?: PerformanceOptions
+}
+
+// ExportDraftInput 是向导提交的 v6 泛化草稿请求；v5 扁平形态仅由历史兼容路径使用。
 export interface ExportDraftInput {
+  readonly configVersion: 'v6'
   readonly dataSourceId: string
   readonly nodeId: string
-  readonly database: string
-  readonly table: string
-  readonly format: 'CSV'
-  readonly filePath: string
-  readonly logPath?: string
-  readonly skipCheckDir?: boolean
+  readonly config: GeneralizedExportConfig
 }
 
 export interface ExportDraft {
@@ -232,7 +325,8 @@ export interface ExportDraft {
   readonly dataSourceId: string
   readonly nodeId: string
   readonly revision: number
-  readonly config: ExportDraftInput
+  readonly configVersion: 'v5' | 'v6'
+  readonly config: GeneralizedExportConfig
   readonly configFingerprint: string
 }
 
@@ -270,11 +364,12 @@ export interface TaskOverview {
 
 export interface TaskSnapshot {
   readonly type: 'OBDUMPER_EXPORT'
+  readonly snapshotVersion: 'v1' | 'v2'
   readonly dataSourceId: string
   readonly nodeId: string
   readonly precheckId: string
   readonly objectSummary?: string
-  readonly format: 'CSV'
+  readonly format: 'CSV' | 'CUT' | 'SQL' | 'POS' | 'PARQUET' | 'ORC' | 'AVRO' | 'DDL' | 'DDL_CSV'
   readonly configFingerprint: string
   readonly toolVersion: string
   readonly metadataVersion: string
@@ -495,7 +590,9 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       return parseExportDraft(requiredObject(body, 'item'))
     },
     async updateExportDraft(draft) {
-      const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draft.id)}`, writeRequest(options, draft.config, draft.revision, 'PATCH'))
+      // 草稿更新必须提交完整 v6 写请求；服务端按 configVersion 路由并重新失败关闭校验。
+      const input: ExportDraftInput = { configVersion: 'v6', dataSourceId: draft.dataSourceId, nodeId: draft.nodeId, config: draft.config }
+      const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draft.id)}`, writeRequest(options, input, draft.revision, 'PATCH'))
       return parseExportDraft(requiredObject(body, 'item'))
     },
     async previewExportCommand(draft) {
@@ -873,31 +970,227 @@ function parseExecutionNodePlatform(value: Record<string, unknown>): ExecutionNo
 }
 
 function parseExportDraft(value: Record<string, unknown>): ExportDraft {
+  const configVersion = requiredString(value, 'configVersion')
+  if (configVersion !== 'v5' && configVersion !== 'v6') {
+    throw localError('RESPONSE_INVALID', '控制面返回了未知的草稿配置版本。')
+  }
   return {
     id: requiredString(value, 'id'),
     dataSourceId: requiredString(value, 'dataSourceId'),
     nodeId: requiredString(value, 'nodeId'),
     revision: requiredNumber(value, 'revision'),
+    configVersion,
     config: parseDraftInput(requiredObject(value, 'config')),
     configFingerprint: requiredString(value, 'configFingerprint'),
   }
 }
 
-function parseDraftInput(value: Record<string, unknown>): ExportDraftInput {
-  const format = requiredString(value, 'format')
-  if (format !== 'CSV') {
-    throw localError('UNSUPPORTED_DRAFT_FORMAT', '当前页面只支持 CSV 草稿。')
+// parseDraftInput 解析 v6 标准文档：嵌套泛化配置位于 config 键内，
+// 顶层扁平投影键（database/scopeKind/table/contentKind/format/filePath 等）只用于展示，不参与输入重建。
+// Go 对 nil 切片序列化为 null，可选数组字段的 null 与缺省等价。
+function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfig {
+  const nested = requiredObject(value, 'config')
+  const scope = requiredObject(nested, 'objectScope')
+  const scopeKind = requiredString(scope, 'scopeKind')
+  if (scopeKind !== 'ALL' && scopeKind !== 'SPECIFIED') {
+    throw localError('RESPONSE_INVALID', '控制面返回了未知的对象范围。')
+  }
+  const expressionsRaw = scope['expressions']
+  const expressions: ExportObjectExpression[] = []
+  if (expressionsRaw !== undefined && expressionsRaw !== null) {
+    if (!Array.isArray(expressionsRaw)) throw localError('RESPONSE_INVALID', '控制面返回了无效对象表达式。')
+    for (const item of expressionsRaw) {
+      if (typeof item !== 'object' || item === null) throw localError('RESPONSE_INVALID', '控制面返回了无效对象表达式。')
+      const expression = item as Record<string, unknown>
+      const name = expression['name']
+      const schema = expression['schema']
+      if (typeof name !== 'string' || !name) throw localError('RESPONSE_INVALID', '控制面返回了无效对象名称。')
+      if (schema !== undefined && typeof schema !== 'string') throw localError('RESPONSE_INVALID', '控制面返回了无效对象 Schema。')
+      expressions.push(schema === undefined ? { name } : { schema, name })
+    }
+  }
+  const objectTypesRaw = scope['objectTypes']
+  const objectTypes: ExportObjectType[] = []
+  if (objectTypesRaw !== undefined && objectTypesRaw !== null) {
+    if (!Array.isArray(objectTypesRaw)) throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
+    for (const item of objectTypesRaw) {
+      if (item !== 'TABLE' && item !== 'VIEW') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的对象类型。')
+      objectTypes.push(item)
+    }
+  }
+  const excludeTablesRaw = scope['excludeTables']
+  const excludeTables: string[] = []
+  if (excludeTablesRaw !== undefined && excludeTablesRaw !== null) {
+    if (!Array.isArray(excludeTablesRaw) || excludeTablesRaw.some((item) => typeof item !== 'string')) {
+      throw localError('RESPONSE_INVALID', '控制面返回了无效排除表清单。')
+    }
+    excludeTables.push(...(excludeTablesRaw as string[]))
+  }
+  const contentSelection = requiredObject(nested, 'contentSelection')
+  const contentKind = requiredString(contentSelection, 'contentKind')
+  if (contentKind !== 'DATA_ONLY' && contentKind !== 'DDL_ONLY' && contentKind !== 'DDL_AND_DATA') {
+    throw localError('RESPONSE_INVALID', '控制面返回了未知的导出内容。')
+  }
+  let dataFormat: { readonly formatKind: ExportDataFormatKind; readonly csvOptions?: CsvOptions; readonly cutOptions?: CutOptions } | undefined
+  const dataFormatRaw = nested['dataFormat']
+  if (dataFormatRaw !== undefined && dataFormatRaw !== null) {
+    const dataFormatObject = requiredObject(nested, 'dataFormat')
+    const formatKind = dataFormatObject['formatKind']
+    // 仅 DDL 场景服务端会把 formatKind 序列化为空字符串，等价于未选择数据格式。
+    if (formatKind !== undefined && formatKind !== null && formatKind !== '') {
+      if (formatKind !== 'CSV' && formatKind !== 'CUT' && formatKind !== 'POS' && formatKind !== 'SQL' && formatKind !== 'PARQUET' && formatKind !== 'ORC' && formatKind !== 'AVRO') throw localError('UNSUPPORTED_DRAFT_FORMAT', '当前页面不支持该数据格式。')
+      dataFormat = { formatKind, csvOptions: parseCsvOptions(dataFormatObject), cutOptions: parseCutOptions(dataFormatObject) }
+    }
+  }
+  const outputConfig = requiredObject(nested, 'outputConfig')
+  const outputKind = requiredString(outputConfig, 'outputKind')
+  // EX-I6：接受本地路径与受控对象存储输出类型；未知输出目标失败关闭。
+  if (outputKind !== 'LOCAL' && outputKind !== 'OSS' && outputKind !== 'S3' && outputKind !== 'COS' && outputKind !== 'OBS') {
+    throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的输出目标。')
   }
   return {
-    dataSourceId: requiredString(value, 'dataSourceId'),
-    nodeId: requiredString(value, 'nodeId'),
-    database: requiredString(value, 'database'),
-    table: requiredString(value, 'table'),
-    format,
-    filePath: requiredString(value, 'filePath'),
-    logPath: optionalDraftString(value, 'logPath'),
-    skipCheckDir: optionalDraftBoolean(value, 'skipCheckDir'),
+    objectScope: {
+      database: requiredString(scope, 'database'),
+      scopeKind,
+      objectTypes: objectTypes.length > 0 ? objectTypes : undefined,
+      expressions: expressions.length > 0 ? expressions : undefined,
+      excludeTables: excludeTables.length > 0 ? excludeTables : undefined,
+    },
+    contentSelection: { contentKind },
+    dataFormat,
+    outputConfig: {
+      outputKind,
+      filePath: requiredString(outputConfig, 'filePath'),
+      logPath: optionalDraftString(outputConfig, 'logPath'),
+      skipCheckDir: optionalDraftBoolean(outputConfig, 'skipCheckDir'),
+      noNestedDir: optionalBoolean(outputConfig, 'noNestedDir'),
+      maxFileSize: optionalNumber(outputConfig, 'maxFileSize'),
+      retainEmptyFiles: optionalBoolean(outputConfig, 'retainEmptyFiles'),
+      compress: optionalBoolean(outputConfig, 'compress'),
+      compressionAlgo: parseCompressionAlgo(outputConfig),
+      // EX-I4 POS 定版：控制文件目录（--ctl-path），仅 POS 格式携带。
+      controlFilePath: optionalDraftString(outputConfig, 'controlFilePath'),
+      // EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
+      tmpPath: optionalDraftString(outputConfig, 'tmpPath'),
+    },
+    filterConfig: parseFilterConfig(nested),
+    performanceConfig: parsePerformanceConfig(nested),
   }
+}
+
+// parseCsvOptions 解析 CSV 序列化选项；缺省、null 或空值视为未设置。
+function parseCsvOptions(dataFormat: Record<string, unknown>): CsvOptions | undefined {
+  const raw = dataFormat['csvOptions']
+  if (raw === undefined || raw === null) return undefined
+  const options = asRecord(raw)
+  const quoteMode = options['columnQuoteMode']
+  if (quoteMode !== undefined && quoteMode !== null && quoteMode !== '' && (quoteMode !== 'all' && quoteMode !== 'all_not_null' && quoteMode !== 'minimal' && quoteMode !== 'non_numeric' && quoteMode !== 'none')) {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效的 CSV 包围模式。')
+  }
+  return {
+    skipHeader: optionalBoolean(options, 'skipHeader'),
+    columnSeparator: optionalOptionText(options, 'columnSeparator'),
+    columnQuote: optionalOptionText(options, 'columnQuote'),
+    columnQuoteMode: (quoteMode as CsvQuoteMode | undefined) ?? undefined,
+    escapeCharacter: optionalOptionText(options, 'escapeCharacter'),
+    lineSeparator: optionalOptionText(options, 'lineSeparator'),
+    nullString: optionalOptionText(options, 'nullString'),
+    fileEncoding: optionalOptionText(options, 'fileEncoding'),
+    withTrim: optionalBoolean(options, 'withTrim'),
+    // EX-I4 POS 定版：CUT 列分隔字符串（--column-splitter）随 CUT 格式往返。
+    columnSplitter: optionalOptionText(options, 'columnSplitter'),
+  }
+}
+
+// parseCutOptions 解析 CUT 序列化选项；缺省、null 或全空值视为未设置。
+function parseCutOptions(dataFormat: Record<string, unknown>): CutOptions | undefined {
+  const raw = dataFormat['cutOptions']
+  if (raw === undefined || raw === null) return undefined
+  const options = asRecord(raw)
+  const trailDelimiter = optionalBoolean(options, 'trailDelimiter')
+  const removeNewline = optionalBoolean(options, 'removeNewline')
+  if (trailDelimiter === undefined && removeNewline === undefined) return undefined
+  return {
+    trailDelimiter: trailDelimiter || undefined,
+    removeNewline: removeNewline || undefined,
+  }
+}
+
+// parseCompressionAlgo 校验压缩算法枚举；缺省视为未设置。
+function parseCompressionAlgo(outputConfig: Record<string, unknown>): CompressionAlgo | undefined {
+  const raw = outputConfig['compressionAlgo']
+  if (raw === undefined || raw === null || raw === '') return undefined
+  if (raw !== 'zstd' && raw !== 'zlib' && raw !== 'gzip' && raw !== 'snappy') {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效的压缩算法。')
+  }
+  return raw
+}
+
+// parseFilterConfig 解析 EX-I3 筛选选项；缺省或 null 视为未设置。
+function parseFilterConfig(nested: Record<string, unknown>): FilterOptions | undefined {
+  const raw = nested['filterConfig']
+  if (raw === undefined || raw === null) return undefined
+  const options = asRecord(raw)
+  const querySql = optionalOptionText(options, 'querySql')
+  const includeColumnNames = optionalStringList(options, 'includeColumnNames')
+  const excludeColumnNames = optionalStringList(options, 'excludeColumnNames')
+  if (querySql === undefined && includeColumnNames === undefined && excludeColumnNames === undefined && options['excludeVirtualColumns'] === undefined && options['flashbackScn'] === undefined && options['flashbackTimestamp'] === undefined) {
+    return undefined
+  }
+  return {
+    querySql,
+    includeColumnNames,
+    excludeColumnNames,
+    excludeVirtualColumns: optionalBoolean(options, 'excludeVirtualColumns'),
+    flashbackScn: optionalNumber(options, 'flashbackScn'),
+    flashbackTimestamp: optionalOptionText(options, 'flashbackTimestamp'),
+  }
+}
+
+// parsePerformanceConfig 解析 EX-I3 资源选项；缺省或 null 视为未设置。
+function parsePerformanceConfig(nested: Record<string, unknown>): PerformanceOptions | undefined {
+  const raw = nested['performanceConfig']
+  if (raw === undefined || raw === null) return undefined
+  const options = asRecord(raw)
+  const thread = optionalNumber(options, 'thread')
+  const pageSize = optionalNumber(options, 'pageSize')
+  const parallelMacro = optionalNumber(options, 'parallelMacro')
+  const fetchSize = optionalNumber(options, 'fetchSize')
+  const jvmMemory = optionalOptionText(options, 'jvmMemory')
+  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined) {
+    return undefined
+  }
+  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory }
+}
+
+function optionalBoolean(value: Record<string, unknown>, field: string): boolean | undefined {
+  const raw = value[field]
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'boolean') throw localError('RESPONSE_INVALID', `控制面返回了无效字段：${field}。`)
+  return raw
+}
+
+function optionalNumber(value: Record<string, unknown>, field: string): number | undefined {
+  const raw = value[field]
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw)) throw localError('RESPONSE_INVALID', `控制面返回了无效字段：${field}。`)
+  return raw
+}
+
+function optionalOptionText(value: Record<string, unknown>, field: string): string | undefined {
+  const raw = value[field]
+  if (raw === undefined || raw === null || raw === '') return undefined
+  if (typeof raw !== 'string') throw localError('RESPONSE_INVALID', `控制面返回了无效字段：${field}。`)
+  return raw
+}
+
+function optionalStringList(value: Record<string, unknown>, field: string): readonly string[] | undefined {
+  const raw = value[field]
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== 'string' || !entry.trim())) {
+    throw localError('RESPONSE_INVALID', `控制面返回了无效字段：${field}。`)
+  }
+  return raw as readonly string[]
 }
 
 function optionalDraftString(value: Record<string, unknown>, field: string): string {
@@ -965,12 +1258,14 @@ function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
 
 function parseTaskSnapshot(value: Record<string, unknown>): TaskSnapshot {
   const type = requiredString(value, 'type')
+  const snapshotVersion = requiredString(value, 'snapshotVersion')
   const format = requiredString(value, 'format')
-  if (type !== 'OBDUMPER_EXPORT' || format !== 'CSV') {
+  if (type !== 'OBDUMPER_EXPORT' || (snapshotVersion !== 'v1' && snapshotVersion !== 'v2') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV')) {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务快照。')
   }
   return {
     type,
+    snapshotVersion,
     dataSourceId: requiredString(value, 'dataSourceId'),
     nodeId: requiredString(value, 'nodeId'),
     precheckId: requiredString(value, 'precheckId'),

@@ -1,9 +1,9 @@
 # 导出模块开发任务地图
 
-> 文档状态：EX-D0、EX-D1、EX-D2、EX-I1 已完成，进入能力切片实现阶段
+> 文档状态：EX-D0~EX-D2、EX-I1~EX-I5 已完成；EX-I6 第一段已交付（受控 URI/输出类型/--tmp-path，凭据槽位与真实取证为后续切片）
 > 适用范围：OBDUMPER 4.3.5 的 V1.0 导出模块全能力；现有单表 CSV 仅作为已实现基线
-> 当前唯一任务：EX-I2 对象范围与 DDL
-> 更新日期：2026-08-06
+> 当前唯一任务：EX-I6 后续切片（存储凭据槽位与 Agent 侧 HADOOP_CONF_DIR 注入，需真实网络取证授权）
+> 更新日期：2026-08-07
 
 ## 1. 怎么使用这份计划
 
@@ -50,9 +50,9 @@ EX-D1、EX-D2 完成前，不继续用现场 WI 缺口驱动新增导出功能�
 | 导出内容 | 仅 DDL、仅数据、DDL + 数据；对象类型、兼容模式、数据库版本和权限共同决定可用组合 |
 | 数据格式 | CSV、CUT、POS、Insert SQL、Parquet、ORC、Avro；同一任务只允许一个数据格式，DDL 不作为数据格式 |
 | 输出位置 | 执行节点本地、OSS、S3、COS、OBS；不提供任意 URI，存储凭据按秘密处理 |
-| 序列化与文件 | CSV/CUT/POS/SQL 专属设置、日期时间格式、编码、压缩、控制文件、目录布局、文件拆分、总量上限和空结果文件 |
-| DDL、筛选与一致性 | DROP、附加对象信息、Schema/序列策略、where、partition、列筛选、数据类型筛选、flashback、snapshot、weak-read 和隐藏主键；`--query-sql` 作为受限专家能力（ENABLED，CAP_SENSITIVE_COMMAND + 二次确认，详见 EX-R07） |
-| 性能与资源 | 导出线程、分页、宏块并行、抓取行数、JVM 内存、临时目录和执行节点资源预检查 |
+| 序列化与文件 | CSV/CUT/POS/SQL 专属设置、日期时间格式、编码、压缩、控制文件、目录布局、文件拆分、总量上限和空结果文件（官方分类：基础选项 · 功能选项 · 文件格式 / 压缩导出 / 存储路径） |
+| DDL、筛选与一致性 | DROP、附加对象信息、Schema/序列策略、where、partition、列筛选、数据类型筛选、flashback、snapshot、weak-read 和隐藏主键；`--query-sql` 作为受限专家能力（ENABLED，CAP_SENSITIVE_COMMAND + 二次确认，详见 EX-R07）（官方分类：高级选项 · 功能选项 · 时间戳格式 / 黑白名单筛选 / 错误处理） |
+| 性能与资源 | 导出线程、分页、宏块并行、抓取行数、JVM 内存、临时目录和执行节点资源预检查（官方分类：高级选项 · 性能选项） |
 | 确认与执行 | 六步向导、活动配置摘要、确定性脱敏命令、风险确认、全量预检查、不可变快照、提交、状态和日志 |
 | 结果与恢复 | 可靠结果事实、失败原因、基于原配置新建、从头执行、满足条件时通过 `dump.ckpt` 创建新的继续任务 |
 | 复用与治理 | 参数元数据版本、历史兼容、从成功任务保存导出模板及模板创建草稿；模板实现是否进入 V1.0 仍按产品范围决策，不因本路线静默升为 P0 |
@@ -65,20 +65,22 @@ EX-D1、EX-D2 完成前，不继续用现场 WI 缺口驱动新增导出功能�
 |---:|---|---|---|
 | 1 | **EX-D0 当前实现盘点与能力冻结** ✅ | 页面/API/OpenAPI/SQLite/参数元数据/命令生成/预检查/Agent/结果/测试的现状矩阵；`CSV_SINGLE_TABLE_V1` 兼容边界；专用结构与完整设计的差距清单 | 已完成：[盘点文档](ex-d0-implementation-inventory.md)；每项结论可追溯到源码、契约或测试 |
 | 2 | **EX-D1 完整产品设计** ✅ | 六步向导全状态低保真；对象、内容、格式、输出、参数、风险、预检查、结果、失败恢复和复用规则；能力组合与版本矩阵 | 已完成：[V1.0 支持矩阵](../02-design/export-v1-support-matrix.md)、[低保真](../02-design/export-low-fidelity.md)、[字段规则](../02-design/export-field-rules.md)、[参数映射](../02-design/export-parameter-mapping.md)；109 参数 + 87 字段全部标注支持状态；--query-sql 决策为受限专家能力 |
-| 3 | **EX-D2 完整技术契约** ✅ | 通用导出领域模型、OpenAPI、SQLite、参数元数据、确定性命令、凭据槽位、预检查、Agent 信封、快照、结果和检查点契约 | 已完成：[通用导出技术契约](export-general-contract.md)、迁移 0014、Go 类型泛化、OpenAPI 更新；第 5.2 节门禁全部满足。参数元数据 v6 经 EX-I1 评审后降级为设计稿（`internal/parammeta/drafts/`，未接入运行时）：sys 秘密槽位的官方安全文件属性未取证、部分内容与加载器不兼容，接入前需先完成事实核验与测试 |
+| 3 | **EX-D2 完整技术契约** ✅ | 通用导出领域模型、OpenAPI、SQLite、参数元数据、确定性命令、凭据槽位、预检查、Agent 信封、快照、结果和检查点契约 | 已完成：[通用导出技术契约](export-general-contract.md)、迁移 0014、Go 类型泛化、OpenAPI 更新；第 5.2 节门禁全部满足。参数元数据 v6 全量集经 EX-I1 评审后降为设计稿（`internal/parammeta/drafts/`）；EX-I2 另建立已取证子集的运行时 v6 链式清单（`resources/`），全量集接入前仍需事实核验与测试 |
 | 4 | **EX-I1 通用导出骨架** ✅ | 将单表 CSV 专用草稿、快照和生成入口泛化为版本化通用模型，同时保留现有行为 | 已完成：草稿 config_version v5/v6 与结构化列、任务 snapshot_version v1/v2、v6 标准文档与归一化生成入口、v5 字节级兼容回归、未知字段/未验证能力失败关闭负例；仍只启用 `export-odp-single-table-csv-v1`。评审修复：rawInput 改服务端规范值、v6 存储一致性复验、ExportDraftWrite oneOf 与 outputKind、模板 PATCH 请求体拆分、嵌入资源清单可加载测试 |
-| 5 | **EX-I2 对象范围与 DDL** | 全部/指定对象、多对象、多库、对象类型、仅 DDL 与 DDL + 数据、DDL 专属预检查与结果 | 对象类型 × 兼容模式 × 数据库版本 × 权限矩阵有正反例；仅 DDL 不生成数据格式参数 |
-| 6 | **EX-I3 CSV 完整能力** | EX-F043～EX-F047 等 CSV 序列化、日期时间、压缩、文件布局、筛选和适用资源参数 | 参数活动/清值/默认/互斥/风险规则有契约测试；受控数据结果满足对应语义验收 |
-| 7 | **EX-I4 CUT、POS、SQL** | 三种可读格式及通用文本/压缩能力 | POS 映射冲突先完成受控实测；未定版时保持 `VALIDATION_GATED`，不得猜测命令 |
-| 8 | **EX-I5 Parquet、ORC、Avro** | 三种结构化格式、格式专属限制、资源与结果事实 | 每种格式分别有参数、资源、结果和失败负例；不得沿用文本格式的行数或压缩假设 |
-| 9 | **EX-I6 对象存储** | OSS/S3/COS/OBS 受控 URI、凭据槽位、临时目录、网络/权限/空间预检查和脱敏展示 | 不接受任意 URI；密钥不进入 argv、日志、错误、快照或 SQLite 普通字段；四类存储逐类取证 |
+| 5 | **EX-I2 对象范围与 DDL** ✅ | 全部/指定对象、多对象、多库、对象类型、仅 DDL 与 DDL + 数据、DDL 专属预检查与结果 | 已完成：full-csv/ddl/ddl-csv 三能力一次交付（v6 链式元数据 + 能力子集命令生成）、对象矩阵正反例（gated 类型/跨库前缀/通配符/超限/视图+数据均失败关闭）、仅 DDL 不生成数据格式参数、OBJECT_ACCESS 逐对象与 ALL 数据库级投影、向导对象/内容步骤切 v6；多库 schema 前缀保持 VALIDATION_GATED |
+| 6 | **EX-I3 CSV 完整能力** ✅ | EX-F043～EX-F047 等 CSV 序列化、日期时间、压缩、文件布局、筛选和适用资源参数 | 已完成：25 个 ENABLED 参数一次启用（CSV 序列化 9、压缩 2、文件布局 3、筛选 6、资源 5），v6 元数据扩容（8 翻转 + 17 新增，39 定义）、类型化 CsvOptions、互斥/边界/ORACLE 规则契约测试、向导 CSV 高级配置与筛选/压缩/资源面板；日期时间与 --compression-level 等 VALIDATION_GATED 字段保持关闭 |
+| 7 | **EX-I4 CUT、POS、SQL** ✅ 部分 | CUT 与 Insert SQL 格式、通用文本/压缩能力；POS 定长格式 | CUT/SQL 已完成：v6 元数据 7 个 ENABLED 参数（--cut/--sql/--trail-delimiter/--remove-newline + 共享文本激活）、能力子集命令生成与格式单选、控制面归一化与快照投影、向导格式单选与 CUT 高级面板、正例/互斥/边界/ORACLE 负例契约测试。2026-08-07 官方复核（V4.3.6 命令行选项页）确认文件布局、筛选与性能参数不限定格式，v6 元数据能力绑定扩展至 CUT/SQL，向导步骤 5 面板对所有数据格式开放，命令生成、控制面与前端构建/校验同步放宽并补齐正负例。**POS 映射已实测定版并完成产品接入**（2026-08-07）：4.3.5 支持独立 `--pos` 且必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)`），全量 6 表真实导出成功、退出码 0、900 行严格定长；`--block-size` 显式传值按 MB/ROW 生效（1MB 与 256ROW 切分实证），默认值冲突保留低风险残余；产品接入包括 v6 元数据解锁 --pos/--ctl-path/--column-splitter（新增 export-odp-pos-v1 能力，additions 25→28、定义 43→46）、命令生成与格式单选、控制面归一化/快照投影/越界失败关闭、OpenAPI 与前端向导（POS 格式卡片 + 控制文件目录输入 + 契约测试）。控制文件“用户提供”来源已接入；**“自动生成”来源（预检查阶段 Agent 按对象元数据生成 .ctrl）为后续补充切片**，见 [Windows POS 受控实测与定版](evidence/windows-pos-format-validation-2026-08-07.md) |
+| 8 | **EX-I5 Parquet、ORC、Avro** ✅ | 三种结构化格式、格式专属限制、资源与结果事实 | 已完成（2026-08-07）：v6 元数据新增 --par/--orc/--avro（export-odp-parquet-v1/export-odp-orc-v1/export-odp-avro-v1，additions 28→31、定义 46→49）；官方 V4.3.6 格式表驱动绑定：文件编码（FORMAT_IN 扩至六格式）与闪回/筛选/性能/文件布局通用参数绑定结构化能力，压缩保持可读格式专属（结构化格式携带压缩 422）、序列化选项不适用；命令生成与格式单选扩展（互斥失败关闭）、控制面归一化/快照投影/越界失败关闭、前端 Parquet/ORC/Avro 格式卡片与结构化配置面板（ORC 内存警告）、契约测试（三格式正例 + 压缩/序列化/缺格式负例）。`--block-size` 不绑定（ORC/Parquet 官方明确不生效，Avro 未取证）。真实格式输出验证归 EX-V1 排期 |
+| 9 | **EX-I6 对象存储** ✅ 部分 | OSS/S3/COS/OBS 受控 URI、凭据槽位、临时目录、网络/权限/空间预检查和脱敏展示 | 第一段已交付（2026-08-07）：jar 字节码取证确认 OBDUMPER 走 Hadoop FileSystem 抽象且 access-key/secret-key 非必填（可走 HADOOP_CONF_DIR/core-site.xml 配置链），**存储凭据可不进 argv**——URI 拒绝任何密钥参数（access-key/secret-key 进 URI 即 422），凭据走执行槽位（Agent 侧 core-site.xml 短生命周期注入，方案见 [EX-I6 决策](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) 与本文）；v6 元数据解锁 --tmp-path（绑定全部 9 个能力）、受控 URI 校验（scheme 白名单/参数白名单 endpoint/region/storage-class/拒绝任意 URI）、输出类型 LOCAL/OSS/S3/COS/OBS 归一化与生成器路径分流校验（STORAGE_URI_INVALID）、前端步骤 5 输出类型单选与对象存储区域（不收集密钥）、契约测试（OSS 全流程 + 8 类越界负例）。后续切片：存储凭据槽位（SQLite 加密存储 + 控制面解析 + Agent core-site.xml 生成）、网络/权限/空间预检查与四类存储真实取证（需授权外网，归 EX-V1 排期） |
 | 10 | **EX-I7 高级与专家能力** | DDL 行为、筛选、一致性、性能、资源和高风险确认 | 高风险能力需要明确权限、二次确认、失效规则和负例；无法证明为受限、可校验语义的 `--query-sql` 不得实现，任意 SQL 编辑器和任意 SQL 传递均不在范围内 |
 | 11 | **EX-I8 结果、失败恢复与复用** | 结果清单、失败操作、派生任务关系、`dump.ckpt` 继续、基于原配置新建、从头执行，以及获准范围内的模板复用 | 继续任务保持原快照/路径/工具版本条件且生成新任务 ID；模板不复用凭据、节点、预检查或风险确认 |
 | 12 | **EX-V1 分切片 Windows 验证** | 每个已启用能力的授权真实证据 | G3/WI 只验证已实现切片，不再反向决定产品设计顺序；一个组合通过不得外推其他组合 |
 | 13 | **EX-V2 三目标认证** | Windows AMD64、麒麟 Linux AMD64、麒麟 Linux ARM64 的正式构建与运行证据 | 目标机原生验证通过；交叉编译不能替代运行证据 |
 | 14 | **EX-R 发布评审** | 安全、恢复、备份、升级、兼容、运维和残余风险结论 | 只有已设计、已实现、已验证且有证据的能力进入发布声明 |
 
-当前执行 **EX-I2**。EX-D0、EX-D1、EX-D2、EX-I1 已完成，技术契约见 [export-general-contract.md](export-general-contract.md)。EX-I1 已把草稿、快照和生成入口泛化为 v5/v6 与 v1/v2 版本化模型，v6 当前仅放行已验证的单表 CSV 表达。WI-05 的现场进程 argv 取证暂停，不作为 EX-I2 的前置；没有新的明确授权时，不启动 OBDUMPER、不连接用户数据库，也不新增现场任务。
+当前执行 **EX-I6 后续切片**。EX-D0~EX-D2、EX-I1~EX-I5 已完成，技术契约见 [export-general-contract.md](export-general-contract.md)。**EX-I6 第一段已交付（2026-08-07）**：通过 jar 字节码取证确认 OBDUMPER 对象存储走 Hadoop FileSystem 抽象（fs.s3a/fs.oss/fs.cosn/fs.obs.impl），URI 的 access-key/secret-key 非必填（仅 bucket/endpoint 强制）——**存储凭据可以不进 argv**，由 Agent 在 execution 私有目录生成 core-site.xml 并以 HADOOP_CONF_DIR 注入（与 security.properties 同类的短生命周期官方机制）。第一段交付：--tmp-path 解锁、受控 URI 校验（拒绝密钥参数/任意 URI）、输出类型 LOCAL/OSS/S3/COS/OBS 全链路（归一化/生成器/快照/前端/契约测试）。后续切片：存储凭据槽位（SQLite 加密 + 控制面解析 + Agent core-site.xml 生成）、网络/权限/空间预检查与四类存储真实取证（需真实外网授权，归 EX-V1 排期）。POS 自动生成控制文件来源为后续补充切片。`--block-size` 默认值冲突保留为低风险残余。日期时间等 gated 字段保持关闭。WI-05 的现场进程 argv 取证暂停，后续由 EX-V1 重新排期；没有新的明确授权时，不启动 OBDUMPER、不连接用户数据库，也不新增现场任务。
+
+**2026-08-07 参数分类重构**：向导面板（步骤 4/5）、[参数映射基线](../02-design/export-parameter-mapping.md)、[支持矩阵](../02-design/export-v1-support-matrix.md)、[字段规则](../02-design/export-field-rules.md)、[低保真](../02-design/export-low-fidelity.md) 与 [导出契约](export-general-contract.md) 已统一按 OBDUMPER 官方选项分类组织（基础选项：连接选项 / 功能选项（文件格式、压缩导出、数据库对象类型、存储路径）/ 其他选项；高级选项：功能选项（时间戳格式、黑白名单筛选、错误处理）/ 性能选项 / 其他选项）。v6 元数据 `category` 仍为命令发射顺序的技术标识，不随产品分类改名。
 
 ## 5. 设计阶段门禁
 
