@@ -75,6 +75,8 @@ const maxFileSize = ref('')
 const retainEmptyFiles = ref(false)
 const compress = ref(false)
 const compressionAlgo = ref<CompressionAlgo | ''>('')
+// EX-I7 压缩等级（2026-08-10）：--compression-level，按所选算法分范围。
+const compressionLevel = ref('')
 const querySql = ref('')
 const includeColumnNames = ref('')
 const excludeColumnNames = ref('')
@@ -86,10 +88,15 @@ const pageSize = ref('')
 const parallelMacro = ref('')
 const fetchSize = ref('')
 const jvmMemory = ref('')
+// EX-I7 文件拆分（2026-08-10）：--block-size（正整数 MB 或正整数+MB/ROW 后缀）。
+const blockSize = ref('')
+// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时生效。
+const dropObject = ref(false)
+const retainSchema = ref(false)
 const dataOptionsActive = computed(() => contentKind.value !== 'DDL_ONLY')
 // EX-I4：序列化面板按数据格式适用；文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均有效。
 const hasFilterOptions = computed(() => Boolean(querySql.value.trim() || includeColumnNames.value.trim() || excludeColumnNames.value.trim() || excludeVirtualColumns.value || flashbackScn.value.trim() || flashbackTimestamp.value.trim()))
-const hasPerformanceOptions = computed(() => Boolean(thread.value.trim() || pageSize.value.trim() || parallelMacro.value.trim() || fetchSize.value.trim() || jvmMemory.value.trim()))
+const hasPerformanceOptions = computed(() => Boolean(thread.value.trim() || pageSize.value.trim() || parallelMacro.value.trim() || fetchSize.value.trim() || jvmMemory.value.trim() || blockSize.value.trim()))
 const hasCsvOptions = computed(() => formatKind.value === 'CSV' && Boolean(skipHeader.value || withTrim.value || columnSeparator.value || columnQuote.value || columnQuoteMode.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
 const hasCutOptions = computed(() => formatKind.value === 'CUT' && Boolean(trailDelimiter.value || removeNewline.value || withTrim.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
 const hasSqlOptions = computed(() => formatKind.value === 'SQL' && Boolean(lineSeparator.value || fileEncoding.value))
@@ -206,6 +213,7 @@ const draftValidation = computed(() => validateExportDraftInput({
   retainEmptyFiles: retainEmptyFiles.value,
   compress: compress.value,
   compressionAlgo: compressionAlgo.value,
+  compressionLevel: compressionLevel.value,
   querySql: querySql.value,
   includeColumnNames: includeColumnNames.value,
   excludeColumnNames: excludeColumnNames.value,
@@ -217,6 +225,9 @@ const draftValidation = computed(() => validateExportDraftInput({
   parallelMacro: parallelMacro.value,
   fetchSize: fetchSize.value,
   jvmMemory: jvmMemory.value,
+  blockSize: blockSize.value,
+  dropObject: dropObject.value,
+  retainSchema: retainSchema.value,
 }))
 const draftInput = computed(() => draftValidation.value.valid ? draftValidation.value.input : undefined)
 const draftValidationMessage = computed(() => draftValidation.value.valid ? '' : draftValidation.value.message)
@@ -255,7 +266,7 @@ watch(selectedSource, (source, previousSource) => {
   clearDraftState()
 })
 
-watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, querySql, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, thread, pageSize, parallelMacro, fetchSize, jvmMemory], () => {
+watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema], () => {
   // 任一配置变化都会作废已创建草稿并清除服务端错误提示。
   clearDraftState()
 }, { deep: true })
@@ -272,8 +283,16 @@ watch(objectType, (type, previousType) => {
 })
 
 watch(compress, (enabled) => {
-  // 取消压缩时清除算法值，避免禁用态下拉保留旧值造成校验死锁。
-  if (!enabled) compressionAlgo.value = ''
+  // 取消压缩时清除算法与等级值，避免禁用态控件保留旧值造成校验死锁。
+  if (!enabled) {
+    compressionAlgo.value = ''
+    compressionLevel.value = ''
+  }
+})
+
+// 切换压缩算法时清除不适用或越界的等级值（gzip/snappy 不支持等级）。
+watch(compressionAlgo, (algo) => {
+  if (algo === 'gzip' || algo === 'snappy') compressionLevel.value = ''
 })
 
 watch(contentKind, (kind) => {
@@ -312,6 +331,11 @@ watch(contentKind, (kind) => {
   // DDL + 数据只支持 CSV 数据格式：切换到该内容类型时重置非 CSV 格式，
   // 其余格式专属残留由 formatKind 监听器在离开对应格式时清理。
   if (kind === 'DDL_AND_DATA' && formatKind.value !== 'CSV') formatKind.value = 'CSV'
+  // EX-I7 DDL 行为：仅数据内容不携带前置 DROP 与保留 Schema，切换时清除残留。
+  if (kind === 'DATA_ONLY') {
+    dropObject.value = false
+    retainSchema.value = false
+  }
 })
 
 // 切换数据格式时清空不适用格式的选项，避免残留值进入下一个草稿。
@@ -330,6 +354,8 @@ watch(formatKind, (kind, previousKind) => {
     removeNewline.value = false
     columnSplitter.value = ''
   }
+  // 结构化格式不支持文件拆分参数；隐藏输入时同步清空，避免旧值进入新草稿。
+  if (kind === 'PARQUET' || kind === 'ORC' || kind === 'AVRO') blockSize.value = ''
   // 离开 POS：清空控制文件目录（--ctl-path）。
   if (kind !== 'POS') controlFilePath.value = ''
   // SQL 只支持行分隔符与文件编码。
@@ -698,11 +724,11 @@ function lastTestLabel(source: DataSourceSummary) {
           <details class="tree-node" open>
             <summary>基础选项 · 功能选项 · 文件格式 <span class="tree-note">DDL 伴生参数</span></summary>
             <div class="tree-body">
-              <div class="tree-row pending">
+              <div class="tree-row">
                 <span class="tree-label">前置 DROP</span>
-                <input type="checkbox" disabled />
-                <span class="tree-note">--drop-object，待接入（包含 DDL 时生效）</span>
+                <label class="checkbox-label"><input v-model="dropObject" type="checkbox" />--drop-object（高风险：在对象创建语句前追加 DROP）</label>
               </div>
+              <p v-if="dropObject" class="section-hint">--drop-object 会在导入侧重建对象前删除同名对象，可能造成数据丢失，请确认已了解影响。</p>
               <div class="tree-row pending">
                 <span class="tree-label">紧凑 Schema</span>
                 <input type="checkbox" disabled />
@@ -723,10 +749,14 @@ function lastTestLabel(source: DataSourceSummary) {
           <details class="tree-node">
             <summary>高级选项 · 其他选项 <span class="tree-note">DDL 专属</span></summary>
             <div class="tree-body">
-              <div class="tree-row pending">
+              <div class="tree-row">
                 <span class="tree-label">保留 Schema</span>
+                <label class="checkbox-label"><input v-model="retainSchema" type="checkbox" />--retain-schema（保留 schema.table 前缀）</label>
+              </div>
+              <div class="tree-row pending">
+                <span class="tree-label">附加对象信息</span>
                 <input type="checkbox" disabled />
-                <span class="tree-note">--retain-schema，待接入（包含 DDL 时生效）</span>
+                <span class="tree-note">--add-extra-message，依赖 sys 凭据可用性，待接入</span>
               </div>
             </div>
           </details>
@@ -870,7 +900,11 @@ function lastTestLabel(source: DataSourceSummary) {
                 <span class="tree-label">压缩算法</span>
                 <select v-model="compressionAlgo" class="tree-input tree-select" :disabled="!compress"><option value="">继承官方默认（zstd）</option><option value="zstd">zstd</option><option value="zlib">zlib</option><option value="gzip">gzip</option><option value="snappy">snappy</option></select>
               </div>
-              <p class="section-hint">压缩仅适用于 CSV/CUT/POS/SQL 可读格式；Parquet/ORC/Avro 结构化格式不适用。</p>
+              <div v-if="compressionAlgo !== 'gzip' && compressionAlgo !== 'snappy'" class="tree-row">
+                <span class="tree-label">压缩等级 <span class="muted">（--compression-level）</span></span>
+                <input v-model.trim="compressionLevel" class="tree-input" :disabled="!compress" :placeholder="compressionAlgo === 'zlib' ? '例如 5（zlib 支持 -1~9）' : '例如 3（zstd 支持 1~22）'" />
+              </div>
+              <p class="section-hint">压缩仅适用于 CSV/CUT/POS/SQL 可读格式；Parquet/ORC/Avro 结构化格式不适用。压缩等级按算法分范围：zstd 1~22、zlib -1~9；gzip/snappy 不支持指定等级。</p>
             </div>
           </details>
         </template>
@@ -1024,6 +1058,11 @@ function lastTestLabel(source: DataSourceSummary) {
               <span class="tree-label">JVM 内存</span>
               <input v-model.trim="jvmMemory" class="tree-input" placeholder="例如 4G（K/M/G/T）" />
             </div>
+            <div v-if="!['PARQUET', 'ORC', 'AVRO'].includes(formatKind)" class="tree-row">
+              <span class="tree-label">文件拆分 <span class="muted">（--block-size）</span></span>
+              <input v-model.trim="blockSize" class="tree-input" placeholder="例如 1024（MB）或 256ROW" />
+            </div>
+            <p v-if="['PARQUET', 'ORC', 'AVRO'].includes(formatKind)" class="section-hint">文件拆分（--block-size）对 Parquet/ORC 官方不生效，Avro 未取证，结构化格式不适用。</p>
           </div>
         </details>
         <p v-if="optionPanelsMessage" class="feedback feedback-error" role="alert">{{ optionPanelsMessage }}</p>

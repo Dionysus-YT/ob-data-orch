@@ -162,7 +162,12 @@ func seedSyntheticMetadata(t *testing.T, databasePath string) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "synthetic-external", "Synthetic User", now, now}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant', 'AGENT_JDBC')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic-user", "synthetic_db", "11111111-1111-4111-8111-111111111111", now, "subject-1", now, now}},
+		{`INSERT INTO data_sources(
+                data_source_id, display_name, normalized_name, environment, connection_kind,
+                compatibility_mode, host, port, cluster_name, tenant_name, username, default_database,
+                credential_id, current_credential_revision, state, revision, last_test_status,
+                last_tested_at, last_test_safe_summary_json, last_test_source, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, 'synthetic-cluster', 'synthetic-tenant', ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', 'AGENT_JDBC', ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic-user", "synthetic_db", "11111111-1111-4111-8111-111111111111", now, "subject-1", now, now}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"11111111-1111-4111-8111-111111111111", "source-1", "synthetic-key", []byte{1, 2, 3}, []byte{4, 5, 6}, now}},
 		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_home, java_path, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', ?, ?, ?, NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", allowedRootsJSON, `E:\synthetic\ob-loader-dumper`, `C:\synthetic\java8\bin\java.exe`, "subject-1", now, now}},
 		{`INSERT INTO agents(

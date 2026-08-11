@@ -276,20 +276,25 @@ func (c *EncryptedExecutionDatabaseConnection) Destroy() {
 // DataSourceSummary 是列表与详情 API 可返回的非敏感数据源投影。
 // 它刻意排除凭据密文、nonce、明文及任何可推断密码长度的字段。
 type DataSourceSummary struct {
-	DataSourceID            string
-	DisplayName             string
-	Environment             string
-	ConnectionKind          string
-	CompatibilityMode       string
-	Host                    string
-	Port                    int
-	ClusterName             string
-	TenantName              string
-	Username                string
-	DefaultDatabase         string
-	State                   string
-	Revision                int64
-	CredentialRevision      int64
+	DataSourceID       string
+	DisplayName        string
+	Environment        string
+	ConnectionKind     string
+	CompatibilityMode  string
+	Host               string
+	Port               int
+	ClusterName        string
+	TenantName         string
+	Username           string
+	DefaultDatabase    string
+	State              string
+	Revision           int64
+	CredentialRevision int64
+	// SysUser 是可选的 sys 凭据账号（--sys-user）；SysCredentialRevision 大于 0 表示已配置 sys 凭据。
+	// SysCredentialID 仅供受控写路径识别当前 sys 凭据版本，绝不进入浏览器响应投影。
+	SysUser                 string
+	SysCredentialID         string
+	SysCredentialRevision   int64
 	LastTestStatus          string
 	LastTestedAt            *time.Time
 	LastTestSafeSummaryJSON string
@@ -573,10 +578,14 @@ type DataSourceCreate struct {
 	KeyID             string
 	Nonce             []byte
 	Ciphertext        []byte
-	RequestID         string
-	IdempotencyKey    string
-	RequestDigest     string
-	CreatedAt         time.Time
+	// SysUser 与 SysPassword 是可选的 sys 凭据（参考 ODC 数据源高级设置）；
+	// 两者要么同时提供（创建 SYS_PASSWORD 修订），要么同时为空（不配置 sys 凭据）。
+	SysUser        string
+	SysPassword    *EncryptedDataSourcePassword
+	RequestID      string
+	IdempotencyKey string
+	RequestDigest  string
+	CreatedAt      time.Time
 }
 
 // DataSourceCreateResult 让 HTTP 适配器在幂等重试时返回原始资源，
@@ -655,8 +664,13 @@ type DataSourceUpdate struct {
 	Username          string
 	DefaultDatabase   string
 	Password          *EncryptedDataSourcePassword
-	RequestID         string
-	UpdatedAt         time.Time
+	// SysUser 是合并后的 sys 账号值（空表示不配置）；SysPassword 非 nil 表示轮换/设置 sys 密码；
+	// ClearSysCredential 为 true 时同时清除 sys 账号与 sys 凭据修订。
+	SysUser            string
+	SysPassword        *EncryptedDataSourcePassword
+	ClearSysCredential bool
+	RequestID          string
+	UpdatedAt          time.Time
 }
 
 // DataSourceUpdateResult 返回安全的版本变化及旧连接测试结论是否失效。
@@ -790,6 +804,8 @@ type OutputConfig struct {
 	RetainEmptyFiles bool   `json:"retainEmptyFiles"`
 	Compress         bool   `json:"compress,omitempty"`
 	CompressionAlgo  string `json:"compressionAlgo,omitempty"`
+	// CompressionLevel 是 EX-I7 压缩等级（2026-08-10）的 --compression-level：官方按算法分范围（zstd 1-22、zlib -1~9；gzip/snappy 不支持）。
+	CompressionLevel *int64 `json:"compressionLevel,omitempty"`
 	ControlFilePath  string `json:"controlFilePath,omitempty"`
 	TmpPath          string `json:"tmpPath,omitempty"`
 }
@@ -802,6 +818,8 @@ type PerformanceConfig struct {
 	FetchSize     *int   `json:"fetchSize,omitempty"`
 	JvmMemory     string `json:"jvmMemory,omitempty"`
 	Retry         bool   `json:"retry"`
+	// BlockSize 是 EX-I7 文件拆分（2026-08-10）的 --block-size：数字（MB）或数字+MB/ROW 后缀，显式传值已受控实测。
+	BlockSize string `json:"blockSize,omitempty"`
 }
 
 // FilterConfig 表达筛选与一致性参数。
@@ -1112,6 +1130,7 @@ type PrecheckCompletionResult struct {
 
 // DataSourceConnectionTestRun 是一次由指定执行节点 Agent 运行的基础连接测试安全投影。
 // 它冻结连接配置、凭据修订、节点事实和 Agent 绑定，不包含密码、原始 JDBC 错误或连接字符串。
+// Sys 字段是可选的 sys 凭据（--sys-user/--sys-password）验证事实，与数据库结果相互独立。
 type DataSourceConnectionTestRun struct {
 	ConnectionTestID       string
 	DataSourceID           string
@@ -1124,13 +1143,17 @@ type DataSourceConnectionTestRun struct {
 	BindingAgentID         string
 	BindingDigest          string
 	Status                 string
-	// VerificationSource 区分 G2 合成闭环与未来固定 JDBC 探针事实，防止合成结果被误作为真实验证。
-	VerificationSource string
-	ResultCode         string
-	SafeSummaryJSON    string
-	ValidUntil         time.Time
-	CreatedAt          time.Time
-	CompletedAt        time.Time
+	// VerificationSource 区分 G2 合成闭环与固定 JDBC 探针事实，防止合成结果被误作为真实验证。
+	VerificationSource    string
+	ResultCode            string
+	SafeSummaryJSON       string
+	SysCredentialID       string
+	SysCredentialRevision int64
+	SysVerificationStatus string
+	SysResultCode         string
+	ValidUntil            time.Time
+	CreatedAt             time.Time
+	CompletedAt           time.Time
 }
 
 // DataSourceConnectionTestCreate 只提交测试意图、选定节点和浏览器幂等信息。
@@ -1158,6 +1181,7 @@ type DataSourceConnectionTestCreateResult struct {
 
 // DataSourceConnectionTestBinding 是领取、确认、秘密槽位解析和完成共用的不可变非敏感绑定。
 // 它只表达受控数据源连接事实，不能承载 URL、SQL、命令、路径或秘密原文。
+// SysCredentialID/SysCredentialRevision 是可选的 sys 凭据引用（大于 0 表示需要额外验证 sys 租户）。
 type DataSourceConnectionTestBinding struct {
 	ConnectionTestID       string
 	DataSourceID           string
@@ -1169,6 +1193,8 @@ type DataSourceConnectionTestBinding struct {
 	BindingAgentID         string
 	BindingDigest          string
 	VerificationSource     string
+	SysCredentialID        string
+	SysCredentialRevision  int64
 	ValidUntil             time.Time
 }
 
@@ -1270,29 +1296,34 @@ type DataSourceConnectionTestSecretResolutionOutcome struct {
 
 // AgentDataSourceConnectionTestCompletion 是 Agent 在当前租约内提交的受控基础连接测试终态。
 // 状态、证据码和来源均为固定枚举，不能传入 JDBC 原始异常、URL、用户名或其他自由文本。
+// SysVerificationStatus/SysResultCode 只表达可选的 sys 凭据验证事实，与数据库结果相互独立。
 type AgentDataSourceConnectionTestCompletion struct {
-	AgentID            string
-	ConnectionTestID   string
-	LeaseID            string
-	LeaseEpoch         int64
-	BindingDigest      string
-	RequestID          string
-	RequestDigest      string
-	Status             string
-	EvidenceCode       string
-	VerificationSource string
-	Now                time.Time
+	AgentID               string
+	ConnectionTestID      string
+	LeaseID               string
+	LeaseEpoch            int64
+	BindingDigest         string
+	RequestID             string
+	RequestDigest         string
+	Status                string
+	EvidenceCode          string
+	VerificationSource    string
+	SysVerificationStatus string
+	SysResultCode         string
+	Now                   time.Time
 }
 
 // DataSourceConnectionTestCompletionResult 是完成或同一请求重放后可返回给受控协议层的安全状态投影。
 type DataSourceConnectionTestCompletionResult struct {
-	ConnectionTestID   string
-	LeaseID            string
-	LeaseEpoch         int64
-	BindingDigest      string
-	Status             string
-	EvidenceCode       string
-	VerificationSource string
-	CompletedAt        time.Time
-	Replayed           bool
+	ConnectionTestID      string
+	LeaseID               string
+	LeaseEpoch            int64
+	BindingDigest         string
+	Status                string
+	EvidenceCode          string
+	VerificationSource    string
+	SysVerificationStatus string
+	SysResultCode         string
+	CompletedAt           time.Time
+	Replayed              bool
 }

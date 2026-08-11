@@ -6,8 +6,11 @@ package credential
 import "errors"
 
 const (
-	FormatVersion       = "credential-aes-gcm-v1"
-	DatabasePassword    = "DATABASE_PASSWORD"
+	FormatVersion    = "credential-aes-gcm-v1"
+	DatabasePassword = "DATABASE_PASSWORD"
+	// SysPassword 是数据源可选 sys 凭据（--sys-user/--sys-password）的秘密槽位类型；
+	// 与数据库密码同机制加密存储，绝不进入命令行、日志、审计、响应或快照。
+	SysPassword         = "SYS_PASSWORD"
 	SecurityPropertyKey = "oceanbase.jdbc.password"
 )
 

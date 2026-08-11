@@ -40,6 +40,7 @@ const completeValues: ExportDraftFormValues = {
   retainEmptyFiles: false,
   compress: false,
   compressionAlgo: '',
+  compressionLevel: '',
   querySql: '',
   includeColumnNames: '',
   excludeColumnNames: '',
@@ -51,6 +52,9 @@ const completeValues: ExportDraftFormValues = {
   parallelMacro: '',
   fetchSize: '',
   jvmMemory: '',
+  blockSize: '',
+  dropObject: false,
+  retainSchema: false,
 }
 
 describe('泛化导出草稿输入', () => {
@@ -352,5 +356,54 @@ describe('泛化导出草稿输入', () => {
     })
     // DDL + 数据保持 CSV 时正常通过。
     expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', formatKind: 'CSV' })).toMatchObject({ valid: true })
+  })
+
+  it('EX-I7 DDL 行为：仅 DDL 内容发送 drop-object/retain-schema，仅数据内容阻断', () => {
+    const ddlOnly = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', dropObject: true, retainSchema: true })
+    expect(ddlOnly).toMatchObject({ valid: true })
+    if (ddlOnly.valid) {
+      expect(ddlOnly.input.config.ddlBehavior).toEqual({ dropObject: true, retainSchema: true })
+      expect(ddlOnly.input.config.dataFormat).toBeUndefined()
+    }
+    const ddlAndData = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', dropObject: true })
+    expect(ddlAndData).toMatchObject({ valid: true })
+    if (ddlAndData.valid) {
+      expect(ddlAndData.input.config.ddlBehavior).toEqual({ dropObject: true })
+    }
+    // 仅数据内容携带 DDL 行为即阻断，未设置时不发送。
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DATA_ONLY', dropObject: true })).toMatchObject({ valid: false, message: expect.stringContaining('DDL 行为参数仅在导出 DDL 内容时生效') })
+    const dataOnlyClean = validateExportDraftInput({ ...completeValues, contentKind: 'DATA_ONLY' })
+    expect(dataOnlyClean).toMatchObject({ valid: true })
+    if (dataOnlyClean.valid) {
+      expect(dataOnlyClean.input.config.ddlBehavior).toBeUndefined()
+    }
+  })
+
+  it('EX-I7 文件拆分：--block-size 接受正整数与 MB/ROW 后缀并随性能配置发送', () => {
+    const valid = validateExportDraftInput({ ...completeValues, blockSize: '256ROW' })
+    expect(valid).toMatchObject({ valid: true })
+    if (valid.valid) {
+      expect(valid.input.config.performanceConfig).toMatchObject({ blockSize: '256ROW' })
+    }
+    expect(validateExportDraftInput({ ...completeValues, blockSize: '1024' })).toMatchObject({ valid: true })
+    expect(validateExportDraftInput({ ...completeValues, blockSize: '1024MB' })).toMatchObject({ valid: true })
+    expect(validateExportDraftInput({ ...completeValues, blockSize: '1GB' })).toMatchObject({ valid: false, message: expect.stringContaining('文件拆分') })
+    expect(validateExportDraftInput({ ...completeValues, blockSize: '0' })).toMatchObject({ valid: false, message: expect.stringContaining('文件拆分') })
+    expect(validateExportDraftInput({ ...completeValues, blockSize: 'abc' })).toMatchObject({ valid: false, message: expect.stringContaining('文件拆分') })
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'PARQUET', blockSize: '1024MB' })).toMatchObject({ valid: false, message: expect.stringContaining('结构化格式') })
+  })
+
+  it('EX-I7 压缩等级：按算法分范围（zstd 1~22、zlib -1~9；gzip/snappy 不支持）', () => {
+    const zstd = validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'zstd', compressionLevel: '5' })
+    expect(zstd).toMatchObject({ valid: true })
+    if (zstd.valid) {
+      expect(zstd.input.config.outputConfig).toMatchObject({ compress: true, compressionAlgo: 'zstd', compressionLevel: 5 })
+    }
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'zlib', compressionLevel: '-1' })).toMatchObject({ valid: true })
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'zstd', compressionLevel: '0' })).toMatchObject({ valid: false, message: expect.stringContaining('1~22') })
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'zstd', compressionLevel: '23' })).toMatchObject({ valid: false, message: expect.stringContaining('1~22') })
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'zlib', compressionLevel: '10' })).toMatchObject({ valid: false, message: expect.stringContaining('-1~9') })
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'gzip', compressionLevel: '5' })).toMatchObject({ valid: false, message: expect.stringContaining('不支持指定压缩等级') })
+    expect(validateExportDraftInput({ ...completeValues, compress: false, compressionAlgo: '', compressionLevel: '5' })).toMatchObject({ valid: false, message: expect.stringContaining('先启用压缩') })
   })
 })

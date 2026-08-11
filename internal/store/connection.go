@@ -70,10 +70,12 @@ func (s *Store) RequestDataSourceConnectionTest(ctx context.Context, input DataS
                 connection_test_id, data_source_id, creator_subject_id, connection_config_digest,
                 credential_id, credential_revision, node_id, binding_agent_id, node_facts_revision,
                 binding_digest, status, verification_source, lease_id, lease_epoch, lease_expires_at,
-                result_code, safe_summary_json, created_at, completed_at, valid_until
+                result_code, safe_summary_json, created_at, completed_at, valid_until,
+                sys_credential_id, sys_credential_revision
             )
             SELECT ?, ds.data_source_id, ?, ?, ds.credential_id, ds.current_credential_revision,
-                   ?, ?, ?, ?, 'PENDING', ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?
+                   ?, ?, ?, ?, 'PENDING', ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?,
+                   ds.sys_credential_id, ds.sys_credential_revision
             FROM data_sources AS ds
             JOIN credential_revisions AS cr
               ON cr.credential_id = ds.credential_id
@@ -155,6 +157,10 @@ func (s *Store) GetDataSourceConnectionTestRun(ctx context.Context, connectionTe
 		VerificationSource:     run.Binding.VerificationSource,
 		ResultCode:             run.ResultCode,
 		SafeSummaryJSON:        run.SafeSummaryJSON,
+		SysCredentialID:        run.Binding.SysCredentialID,
+		SysCredentialRevision:  run.Binding.SysCredentialRevision,
+		SysVerificationStatus:  run.SysVerificationStatus,
+		SysResultCode:          run.SysResultCode,
 		ValidUntil:             run.Binding.ValidUntil,
 		CreatedAt:              run.CreatedAt,
 		CompletedAt:            run.CompletedAt,
@@ -385,6 +391,95 @@ func (s *Store) ResolveDataSourceConnectionTestDatabaseConnection(ctx context.Co
 	return connection, nil
 }
 
+// ResolveDataSourceConnectionTestSysCredential 在有效且已确认的连接测试租约内返回加密 sys 凭据材料。
+// 仅当绑定冻结了 sys 凭据引用（SysCredentialRevision > 0）时可解析；未配置 sys 凭据时失败关闭。
+// 该方法只写入无秘密回执和审计意图；实际 AES-GCM 解密必须在事务外的受控控制面服务中短时完成。
+func (s *Store) ResolveDataSourceConnectionTestSysCredential(ctx context.Context, input DataSourceConnectionTestSecretResolutionRequest) (EncryptedDataSourceConnectionTestDatabaseConnection, error) {
+	if err := validateDataSourceConnectionTestSecretResolutionRequest(input); err != nil {
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, err
+	}
+	var connection EncryptedDataSourceConnectionTestDatabaseConnection
+	var outcomeErr error
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		if _, err := expireDataSourceConnectionTestsTx(ctx, tx, input.Now); err != nil {
+			return err
+		}
+		receipt, found, err := readDataSourceConnectionTestSecretResolutionReceipt(ctx, tx, input.AgentID, input.RequestID)
+		if err != nil {
+			return err
+		}
+		if found && !sameDataSourceConnectionTestSecretResolutionReceipt(receipt, input) {
+			return ErrIdempotencyConflict
+		}
+		run, err := readStoredDataSourceConnectionTest(ctx, tx, input.ConnectionTestID)
+		if err != nil {
+			return err
+		}
+		if run.Status == "EXPIRED" {
+			outcomeErr = ErrDataSourceConnectionTestLeaseExpired
+			return nil
+		}
+		if run.Status != "LEASED" || run.AgentID != input.AgentID || run.LeaseID != input.LeaseID ||
+			run.LeaseEpoch != input.LeaseEpoch || run.Binding.BindingDigest != input.BindingDigest {
+			return ErrDataSourceConnectionTestLeaseRejected
+		}
+		if !run.Binding.ValidUntil.After(input.Now) || !run.LeaseExpiresAt.After(input.Now) {
+			if err := markDataSourceConnectionTestExpiredTx(ctx, tx, run.Binding.ConnectionTestID, input.Now); err != nil {
+				return err
+			}
+			outcomeErr = ErrDataSourceConnectionTestLeaseExpired
+			return nil
+		}
+		if err := validateOrInvalidateDataSourceConnectionTestBinding(ctx, tx, input.AgentID, run, input.Now); err != nil {
+			if errors.Is(err, ErrDataSourceConnectionTestLeaseRejected) {
+				outcomeErr = err
+				return nil
+			}
+			return err
+		}
+		acknowledged, err := hasDataSourceConnectionTestAcknowledgementReceipt(ctx, tx, input.AgentID, run)
+		if err != nil {
+			return err
+		}
+		if !acknowledged {
+			return ErrDataSourceConnectionTestLeaseRejected
+		}
+		// 仅当绑定冻结了 sys 凭据引用时可解析 sys 槽位（可选增强，参考 ODC 的 sys 账号验证）。
+		if run.Binding.SysCredentialRevision < 1 {
+			return ErrDataSourceConnectionTestLeaseRejected
+		}
+		connection, err = readEncryptedDataSourceConnectionTestSysCredential(ctx, tx, run)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+		if err := insertDataSourceConnectionTestSecretResolutionReceipt(ctx, tx, dataSourceConnectionTestSecretResolutionReceipt{
+			AgentID: input.AgentID, RequestID: input.RequestID, RequestDigest: input.RequestDigest,
+			ConnectionTestID: input.ConnectionTestID, LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch,
+			BindingDigest: input.BindingDigest, Status: "AUTHORIZED", CreatedAt: input.Now,
+		}); err != nil {
+			connection.Destroy()
+			return err
+		}
+		if err := insertDataSourceConnectionTestSecretResolutionAudit(ctx, tx, input.AgentID, input.ConnectionTestID, input.RequestID, "DATA_SOURCE_CONNECTION_TEST_SYS_SECRET_RESOLVE_REQUESTED", "SUCCEEDED", input.Now); err != nil {
+			connection.Destroy()
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		connection.Destroy()
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, err
+	}
+	if outcomeErr != nil {
+		connection.Destroy()
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, outcomeErr
+	}
+	return connection, nil
+}
+
 // FinishDataSourceConnectionTestSecretResolution 记录短时解密结束后的无秘密结果。
 // 即使是重放或解密失败，也会先重新核验当前冻结绑定，避免失效连接测试继续保存为可执行状态。
 func (s *Store) FinishDataSourceConnectionTestSecretResolution(ctx context.Context, input DataSourceConnectionTestSecretResolutionOutcome) error {
@@ -509,6 +604,10 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		if input.VerificationSource != run.Binding.VerificationSource {
 			return ErrDataSourceConnectionTestLeaseRejected
 		}
+		hasSysCredential := run.Binding.SysCredentialID != "" && run.Binding.SysCredentialRevision > 0
+		if hasSysCredential == (input.SysVerificationStatus == "NOT_CONFIGURED") {
+			return ErrDataSourceConnectionTestLeaseRejected
+		}
 		if found {
 			if receipt.Status == "EXPIRED" {
 				if run.Status != "EXPIRED" {
@@ -517,7 +616,8 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 				result = DataSourceConnectionTestCompletionResult{
 					ConnectionTestID: receipt.ConnectionTestID, LeaseID: receipt.LeaseID, LeaseEpoch: receipt.LeaseEpoch,
 					BindingDigest: receipt.BindingDigest, Status: "EXPIRED", EvidenceCode: "LEASE_EXPIRED",
-					VerificationSource: run.Binding.VerificationSource, CompletedAt: receipt.CompletedAt, Replayed: true,
+					VerificationSource: run.Binding.VerificationSource, SysVerificationStatus: run.SysVerificationStatus,
+					SysResultCode: run.SysResultCode, CompletedAt: receipt.CompletedAt, Replayed: true,
 				}
 				outcomeErr = ErrDataSourceConnectionTestLeaseExpired
 				return nil
@@ -529,7 +629,8 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 			result = DataSourceConnectionTestCompletionResult{
 				ConnectionTestID: receipt.ConnectionTestID, LeaseID: receipt.LeaseID, LeaseEpoch: receipt.LeaseEpoch,
 				BindingDigest: receipt.BindingDigest, Status: receipt.Status, EvidenceCode: run.ResultCode,
-				VerificationSource: run.Binding.VerificationSource, CompletedAt: receipt.CompletedAt, Replayed: true,
+				VerificationSource: run.Binding.VerificationSource, SysVerificationStatus: run.SysVerificationStatus,
+				SysResultCode: run.SysResultCode, CompletedAt: receipt.CompletedAt, Replayed: true,
 			}
 			return nil
 		}
@@ -576,9 +677,11 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		}
 		updated, err := tx.ExecContext(ctx, `
             UPDATE data_source_connection_test_runs
-            SET status = ?, result_code = ?, safe_summary_json = ?, completed_at = ?
+            SET status = ?, result_code = ?, safe_summary_json = ?, completed_at = ?,
+                sys_verification_status = ?, sys_result_code = ?
             WHERE connection_test_id = ? AND status = 'LEASED'
-        `, input.Status, input.EvidenceCode, safeSummaryJSON, utcText(input.Now), input.ConnectionTestID)
+        `, input.Status, input.EvidenceCode, safeSummaryJSON, utcText(input.Now),
+			nullableString(input.SysVerificationStatus), nullableString(input.SysResultCode), input.ConnectionTestID)
 		if err != nil {
 			return fmt.Errorf("complete data source connection test: %w", err)
 		}
@@ -622,7 +725,8 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		result = DataSourceConnectionTestCompletionResult{
 			ConnectionTestID: input.ConnectionTestID, LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch,
 			BindingDigest: input.BindingDigest, Status: input.Status, EvidenceCode: input.EvidenceCode,
-			VerificationSource: input.VerificationSource, CompletedAt: input.Now,
+			VerificationSource: input.VerificationSource, SysVerificationStatus: input.SysVerificationStatus,
+			SysResultCode: input.SysResultCode, CompletedAt: input.Now,
 		}
 		return nil
 	})
@@ -650,17 +754,19 @@ func (s *Store) ExpireDataSourceConnectionTests(ctx context.Context, now time.Ti
 // storedDataSourceConnectionTest 仅供同一短事务内复验租约与冻结绑定使用。
 // 它不会作为浏览器响应直接序列化，避免泄露 Agent 回执、密文或内部租约细节。
 type storedDataSourceConnectionTest struct {
-	Binding          DataSourceConnectionTestBinding
-	CreatorSubjectID string
-	AgentID          string
-	Status           string
-	LeaseID          string
-	LeaseEpoch       int64
-	LeaseExpiresAt   time.Time
-	ResultCode       string
-	SafeSummaryJSON  string
-	CreatedAt        time.Time
-	CompletedAt      time.Time
+	Binding               DataSourceConnectionTestBinding
+	CreatorSubjectID      string
+	AgentID               string
+	Status                string
+	LeaseID               string
+	LeaseEpoch            int64
+	LeaseExpiresAt        time.Time
+	ResultCode            string
+	SafeSummaryJSON       string
+	SysVerificationStatus string
+	SysResultCode         string
+	CreatedAt             time.Time
+	CompletedAt           time.Time
 }
 
 // agentDataSourceConnectionTestReceipt 仅保存 Agent 幂等重放所需的摘要、租约与安全状态投影。
@@ -700,14 +806,17 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 }, connectionTestID string) (storedDataSourceConnectionTest, error) {
 	var run storedDataSourceConnectionTest
 	var leaseID, resultCode, safeSummaryJSON sql.NullString
+	var sysCredentialID, sysVerificationStatus, sysResultCode sql.NullString
 	var leaseEpoch sql.NullInt64
+	var sysCredentialRevision sql.NullInt64
 	var createdAt string
 	var leaseExpiresAt, completedAt, validUntil sql.NullString
 	err := queryer.QueryRowContext(ctx, `
         SELECT connection_test_id, data_source_id, creator_subject_id, connection_config_digest,
                credential_id, credential_revision, node_id, binding_agent_id, node_facts_revision,
 		       binding_digest, status, verification_source, lease_id, lease_epoch,
-               lease_expires_at, result_code, safe_summary_json, created_at, completed_at, valid_until
+               lease_expires_at, result_code, safe_summary_json, created_at, completed_at, valid_until,
+               sys_credential_id, sys_credential_revision, sys_verification_status, sys_result_code
         FROM data_source_connection_test_runs
         WHERE connection_test_id = ?
     `, connectionTestID).Scan(
@@ -716,6 +825,7 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 		&run.Binding.NodeID, &run.Binding.BindingAgentID, &run.Binding.NodeFactsRevision,
 		&run.Binding.BindingDigest, &run.Status, &run.Binding.VerificationSource, &leaseID, &leaseEpoch,
 		&leaseExpiresAt, &resultCode, &safeSummaryJSON, &createdAt, &completedAt, &validUntil,
+		&sysCredentialID, &sysCredentialRevision, &sysVerificationStatus, &sysResultCode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedDataSourceConnectionTest{}, ErrDataSourceConnectionTestLeaseRejected
@@ -729,6 +839,9 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 	}
 	run.AgentID, run.LeaseID, run.LeaseEpoch = run.Binding.BindingAgentID, leaseID.String, leaseEpoch.Int64
 	run.ResultCode, run.SafeSummaryJSON = resultCode.String, safeSummaryJSON.String
+	run.Binding.SysCredentialID = sysCredentialID.String
+	run.Binding.SysCredentialRevision = sysCredentialRevision.Int64
+	run.SysVerificationStatus, run.SysResultCode = sysVerificationStatus.String, sysResultCode.String
 	if validUntil.Valid {
 		if run.Binding.ValidUntil, parseErr = time.Parse(time.RFC3339Nano, validUntil.String); parseErr != nil {
 			return storedDataSourceConnectionTest{}, fmt.Errorf("parse data source connection test validity: %w", parseErr)
@@ -757,16 +870,24 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 	var binding DataSourceConnectionTestBinding
 	var connectionKind, compatibilityMode, host, clusterName, tenantName, username, credentialStatus, nodePlatform string
 	var lastHeartbeatAt, factsJSON sql.NullString
+	var sysCredentialID, sysCredentialStatus string
+	var sysCredentialRevision int64
 	var port, capacityTotal, capacityUsed int
 	err := tx.QueryRowContext(ctx, `
         SELECT ds.connection_kind, ds.compatibility_mode, ds.host, ds.port, ds.cluster_name,
                ds.tenant_name, ds.username, ds.credential_id, ds.current_credential_revision,
                cr.status, n.platform, a.agent_id, a.facts_revision, a.last_heartbeat_at,
-               a.capacity_total, a.capacity_used, a.facts_json
+               a.capacity_total, a.capacity_used, a.facts_json,
+               COALESCE(ds.sys_credential_id, ''), COALESCE(ds.sys_credential_revision, 0),
+               COALESCE(scr.status, '')
         FROM data_sources AS ds
         JOIN credential_revisions AS cr
           ON cr.credential_id = ds.credential_id
          AND cr.revision = ds.current_credential_revision
+		LEFT JOIN sys_credential_revisions AS scr
+		  ON scr.credential_id = ds.sys_credential_id
+		 AND scr.revision = ds.sys_credential_revision
+		 AND scr.data_source_id = ds.data_source_id
         JOIN execution_nodes AS n ON n.node_id = ?
         JOIN agents AS a ON a.node_id = n.node_id AND a.status = 'ACTIVE'
         JOIN auth_subjects AS subject ON subject.subject_id = ? AND subject.account_status = 'ACTIVE'
@@ -780,6 +901,7 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 		&binding.CredentialID, &binding.CredentialRevision, &credentialStatus, &nodePlatform,
 		&binding.BindingAgentID, &binding.NodeFactsRevision, &lastHeartbeatAt,
 		&capacityTotal, &capacityUsed, &factsJSON,
+		&sysCredentialID, &sysCredentialRevision, &sysCredentialStatus,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DataSourceConnectionTestBinding{}, ErrDataSourceConnectionTestInvalid
@@ -788,6 +910,9 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 		return DataSourceConnectionTestBinding{}, fmt.Errorf("read current data source connection test binding: %w", err)
 	}
 	if credentialStatus != "ACTIVE" {
+		return DataSourceConnectionTestBinding{}, ErrDataSourceConnectionTestInvalid
+	}
+	if (sysCredentialID == "") != (sysCredentialRevision == 0) || (sysCredentialRevision > 0 && sysCredentialStatus != "ACTIVE") {
 		return DataSourceConnectionTestBinding{}, ErrDataSourceConnectionTestInvalid
 	}
 	if !lastHeartbeatAt.Valid || capacityTotal < 1 || capacityUsed < 0 || capacityUsed >= capacityTotal || !factsJSON.Valid {
@@ -808,7 +933,7 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 	if err != nil {
 		return DataSourceConnectionTestBinding{}, err
 	}
-	return DataSourceConnectionTestBinding{
+	binding = DataSourceConnectionTestBinding{
 		ConnectionTestID:       input.ConnectionTestID,
 		DataSourceID:           input.DataSourceID,
 		ConnectionConfigDigest: connectionConfigDigest,
@@ -819,7 +944,13 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 		BindingAgentID:         binding.BindingAgentID,
 		VerificationSource:     input.VerificationSource,
 		ValidUntil:             input.ValidUntil.UTC(),
-	}, nil
+	}
+	// G2 合成测试不解析真实秘密，因此不能冻结一个自身无法验证的 sys 槽位。
+	if input.VerificationSource == "AGENT_JDBC" {
+		binding.SysCredentialID = sysCredentialID
+		binding.SysCredentialRevision = sysCredentialRevision
+	}
+	return binding, nil
 }
 
 func claimDataSourceConnectionTestTx(ctx context.Context, tx *sql.Tx, connectionTestID string, input DataSourceConnectionTestClaimNext) (DataSourceConnectionTestLeaseGrant, error) {
@@ -911,15 +1042,22 @@ func validateCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql
 	var connectionKind, compatibilityMode, host, clusterName, tenantName, username string
 	var port int
 	var credentialID, credentialStatus, sourceState, nodeState, currentAgentID, agentStatus string
-	var credentialRevision, factsRevision int64
+	var sysCredentialID, sysCredentialStatus string
+	var credentialRevision, factsRevision, sysCredentialRevision int64
 	err := tx.QueryRowContext(ctx, `
         SELECT ds.connection_kind, ds.compatibility_mode, ds.host, ds.port, ds.cluster_name,
                ds.tenant_name, ds.username, ds.credential_id, ds.current_credential_revision,
-               ds.state, cr.status, n.management_state, a.agent_id, a.status, a.facts_revision
+               ds.state, cr.status, n.management_state, a.agent_id, a.status, a.facts_revision,
+		       COALESCE(ds.sys_credential_id, ''), COALESCE(ds.sys_credential_revision, 0),
+		       COALESCE(scr.status, '')
         FROM data_sources AS ds
         JOIN credential_revisions AS cr
           ON cr.credential_id = ds.credential_id
          AND cr.revision = ds.current_credential_revision
+		LEFT JOIN sys_credential_revisions AS scr
+		  ON scr.credential_id = ds.sys_credential_id
+		 AND scr.revision = ds.sys_credential_revision
+		 AND scr.data_source_id = ds.data_source_id
         JOIN execution_nodes AS n ON n.node_id = ?
         JOIN agents AS a ON a.agent_id = ? AND a.node_id = n.node_id
         WHERE ds.data_source_id = ?
@@ -927,6 +1065,7 @@ func validateCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql
 		&connectionKind, &compatibilityMode, &host, &port, &clusterName, &tenantName, &username,
 		&credentialID, &credentialRevision, &sourceState, &credentialStatus, &nodeState,
 		&currentAgentID, &agentStatus, &factsRevision,
+		&sysCredentialID, &sysCredentialRevision, &sysCredentialStatus,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrDataSourceConnectionTestLeaseRejected
@@ -934,10 +1073,13 @@ func validateCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql
 	if err != nil {
 		return fmt.Errorf("read current data source connection test binding: %w", err)
 	}
+	sysBindingMatches := binding.VerificationSource != "AGENT_JDBC" ||
+		(sysCredentialID == binding.SysCredentialID && sysCredentialRevision == binding.SysCredentialRevision &&
+			(sysCredentialRevision == 0 || sysCredentialStatus == "ACTIVE"))
 	if sourceState == "ARCHIVED" || credentialStatus != "ACTIVE" || !dataSourceConnectionTestNodeStateAllowed(nodeState) ||
 		currentAgentID != binding.BindingAgentID || agentStatus != "ACTIVE" ||
 		credentialID != binding.CredentialID || credentialRevision != binding.CredentialRevision ||
-		factsRevision != binding.NodeFactsRevision {
+		factsRevision != binding.NodeFactsRevision || !sysBindingMatches {
 		return ErrDataSourceConnectionTestLeaseRejected
 	}
 	connectionConfigDigest, err := dataSourceConnectionConfigDigest(
@@ -1015,6 +1157,8 @@ func dataSourceConnectionTestBindingDigest(binding DataSourceConnectionTestBindi
 		DataSourceID           string `json:"dataSourceId"`
 		NodeFactsRevision      int64  `json:"nodeFactsRevision"`
 		NodeID                 string `json:"nodeId"`
+		SysCredentialID        string `json:"sysCredentialId"`
+		SysCredentialRevision  int64  `json:"sysCredentialRevision"`
 		ValidUntil             string `json:"validUntil"`
 		VerificationSource     string `json:"verificationSource"`
 	}{
@@ -1022,6 +1166,7 @@ func dataSourceConnectionTestBindingDigest(binding DataSourceConnectionTestBindi
 		ConnectionTestID: binding.ConnectionTestID, CredentialID: binding.CredentialID,
 		CredentialRevision: binding.CredentialRevision, DataSourceID: binding.DataSourceID,
 		NodeFactsRevision: binding.NodeFactsRevision, NodeID: binding.NodeID,
+		SysCredentialID: binding.SysCredentialID, SysCredentialRevision: binding.SysCredentialRevision,
 		ValidUntil: utcText(binding.ValidUntil), VerificationSource: binding.VerificationSource,
 	})
 	if err != nil {
@@ -1244,6 +1389,56 @@ func readEncryptedDataSourceConnectionTestDatabaseConnection(ctx context.Context
 	return connection, nil
 }
 
+// readEncryptedDataSourceConnectionTestSysCredential 从冻结的 sys 凭据引用读取加密材料并组装 sys 租户身份。
+// sys 身份为 sysUser@sys#cluster（参考 ODC：账号勿填 @sys#集群 后缀，由平台组装）。
+func readEncryptedDataSourceConnectionTestSysCredential(ctx context.Context, tx *sql.Tx, run storedDataSourceConnectionTest) (EncryptedDataSourceConnectionTestDatabaseConnection, error) {
+	var connection EncryptedDataSourceConnectionTestDatabaseConnection
+	var sysUser, clusterName string
+	err := tx.QueryRowContext(ctx, `
+        SELECT ds.host, ds.port, ds.cluster_name, ds.sys_user,
+               scr.key_id, scr.nonce, scr.ciphertext,
+               subject.subject_id
+        FROM data_sources AS ds
+        JOIN sys_credential_revisions AS scr
+          ON scr.credential_id = ds.sys_credential_id
+         AND scr.data_source_id = ds.data_source_id
+         AND scr.revision = ds.sys_credential_revision
+        JOIN auth_subjects AS subject ON subject.subject_id = ?
+        WHERE ds.data_source_id = ?
+          AND ds.sys_credential_id = ?
+          AND ds.sys_credential_revision = ?
+          AND ds.state != 'ARCHIVED'
+          AND scr.status = 'ACTIVE'
+          AND subject.account_status = 'ACTIVE'
+    `, run.CreatorSubjectID, run.Binding.DataSourceID, run.Binding.SysCredentialID, run.Binding.SysCredentialRevision).Scan(
+		&connection.Host, &connection.Port, &clusterName, &sysUser,
+		&connection.KeyID, &connection.Nonce, &connection.Ciphertext, &connection.OwnerSubjectID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, ErrDataSourceConnectionTestLeaseRejected
+	}
+	if err != nil {
+		connection.Destroy()
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, fmt.Errorf("read encrypted data source connection test sys credential: %w", err)
+	}
+	var identityOK bool
+	connection.Username, identityOK = composePrivateODPJDBCIdentity(sysUser, "sys", clusterName)
+	if !identityOK {
+		connection.Destroy()
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, ErrDataSourceConnectionTestLeaseRejected
+	}
+	connection.DataSourceID = run.Binding.DataSourceID
+	connection.NodeID = run.Binding.NodeID
+	connection.CredentialID = run.Binding.SysCredentialID
+	connection.Revision = run.Binding.SysCredentialRevision
+	if connection.Host == "" || connection.Port < 1 || connection.Port > 65535 || len(connection.Username) == 0 ||
+		connection.OwnerSubjectID != run.CreatorSubjectID || connection.KeyID == "" || len(connection.Nonce) == 0 || len(connection.Ciphertext) == 0 {
+		connection.Destroy()
+		return EncryptedDataSourceConnectionTestDatabaseConnection{}, ErrDataSourceConnectionTestLeaseRejected
+	}
+	return connection, nil
+}
+
 func hasDataSourceConnectionTestAcknowledgementReceipt(ctx context.Context, tx *sql.Tx, agentID string, run storedDataSourceConnectionTest) (bool, error) {
 	var count int
 	err := tx.QueryRowContext(ctx, `
@@ -1416,6 +1611,9 @@ func validateDataSourceConnectionTestBinding(binding DataSourceConnectionTestBin
 		binding.ValidUntil.IsZero() {
 		return ErrDataSourceConnectionTestInvalid
 	}
+	if (binding.SysCredentialID == "") != (binding.SysCredentialRevision == 0) {
+		return ErrDataSourceConnectionTestInvalid
+	}
 	return nil
 }
 
@@ -1480,7 +1678,31 @@ func validateAgentDataSourceConnectionTestCompletion(input AgentDataSourceConnec
 	default:
 		return ErrDataSourceConnectionTestInvalid
 	}
+	// 可选的 sys 凭据验证结果只允许受控枚举与证据码（镜像数据库结果，SYS_ 前缀）。
+	if !validAgentJDBCSysVerificationOutcome(input.VerificationSource, input.SysVerificationStatus, input.SysResultCode) {
+		return ErrDataSourceConnectionTestInvalid
+	}
 	return nil
+}
+
+// validAgentJDBCSysVerificationOutcome 校验可选的 sys 凭据验证结果（与数据库结果相互独立）。
+func validAgentJDBCSysVerificationOutcome(verificationSource, status, resultCode string) bool {
+	if verificationSource != "AGENT_JDBC" {
+		return status == "NOT_CONFIGURED" && resultCode == ""
+	}
+	switch status {
+	case "NOT_CONFIGURED":
+		return resultCode == ""
+	case "SUCCEEDED":
+		return resultCode == "SYS_CONNECTED"
+	case "FAILED":
+		return resultCode == "SYS_HOST_UNRESOLVABLE" || resultCode == "SYS_TCP_REFUSED" ||
+			resultCode == "SYS_TCP_TIMEOUT" || resultCode == "SYS_TCP_UNREACHABLE" || resultCode == "SYS_CONNECTION_FAILED"
+	case "UNKNOWN":
+		return resultCode == "SYS_CONNECTION_UNAVAILABLE"
+	default:
+		return false
+	}
 }
 
 func validAgentJDBCConnectionTestOutcome(status, evidenceCode string) bool {

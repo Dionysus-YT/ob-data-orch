@@ -26,7 +26,7 @@ func TestRunNextG2合成连接测试仅确认并回写固定结果(t *testing.T)
 		t.Fatalf("协议调用 = %#v，期望 %#v", protocol.callNames(), want)
 	}
 	completion := protocol.completion()
-	if completion.Status != agentwire.DataSourceConnectionTestSucceeded || completion.EvidenceCode != "SYNTHETIC_OK" || completion.VerificationSource != agentwire.DataSourceConnectionTestG2Synthetic {
+	if completion.Status != agentwire.DataSourceConnectionTestSucceeded || completion.EvidenceCode != "SYNTHETIC_OK" || completion.VerificationSource != agentwire.DataSourceConnectionTestG2Synthetic || completion.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured {
 		t.Fatalf("G2 完成输入 = %#v", completion)
 	}
 }
@@ -149,10 +149,18 @@ type protocolStub struct {
 	claimRelease    chan struct{}
 }
 
-type jdbcRunnerStub struct{}
+type jdbcRunnerStub struct {
+	sysStatus agentwire.DataSourceConnectionTestSysVerificationStatus
+	sysCode   string
+}
 
-func (jdbcRunnerStub) RunConnectionTest(_ context.Context, grant agentwire.DataSourceConnectionTestGrant) Outcome {
-	return Outcome{ConnectionTestID: grant.ConnectionTestID, Status: agentwire.DataSourceConnectionTestSucceeded, EvidenceCode: "DATABASE_CONNECTED", VerificationSource: agentwire.DataSourceConnectionTestAgentJDBC}
+func (j jdbcRunnerStub) RunConnectionTest(_ context.Context, grant agentwire.DataSourceConnectionTestGrant) Outcome {
+	outcome := Outcome{ConnectionTestID: grant.ConnectionTestID, Status: agentwire.DataSourceConnectionTestSucceeded, EvidenceCode: "DATABASE_CONNECTED", VerificationSource: agentwire.DataSourceConnectionTestAgentJDBC, SysVerificationStatus: agentwire.DataSourceConnectionTestSysNotConfigured}
+	if grant.Binding.SysCredentialRevision > 0 {
+		outcome.SysVerificationStatus = j.sysStatus
+		outcome.SysEvidenceCode = j.sysCode
+	}
+	return outcome
 }
 
 func (p *protocolStub) AgentIdentity() (agentwire.AgentIdentity, error) {

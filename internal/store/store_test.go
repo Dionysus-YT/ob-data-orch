@@ -1213,7 +1213,12 @@ func TestListDataSourceSummariesExcludesCredentialMaterial(t *testing.T) {
 	seedBaseFixture(t, store)
 	ctx := context.Background()
 	if _, err := store.db.ExecContext(ctx, `
-		INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2882, ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?, '', '', NULL)
+		INSERT INTO data_sources(
+                data_source_id, display_name, normalized_name, environment, connection_kind,
+                compatibility_mode, host, port, cluster_name, tenant_name, username, default_database,
+                credential_id, current_credential_revision, state, revision, last_test_status,
+                last_tested_at, last_test_safe_summary_json, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2882, 'synthetic-cluster', 'synthetic-tenant', ?, ?, ?, 1, 'ARCHIVED', 1, NULL, NULL, NULL, ?, ?, ?)
     `, "source-archived", "Archived", "archived", "127.0.0.2", "synthetic_user", "synthetic_db", "credential-archived", "subject-1", utcText(testTime), utcText(testTime)); err != nil {
 		t.Fatalf("seed archived data source: %v", err)
 	}
@@ -2376,7 +2381,12 @@ func seedBaseFixture(t *testing.T, store *Store) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "external-1", "Synthetic User", utcText(testTime), utcText(testTime)}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant', 'AGENT_JDBC')`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", utcText(testTime), "subject-1", utcText(testTime), utcText(testTime)}},
+		{`INSERT INTO data_sources(
+                data_source_id, display_name, normalized_name, environment, connection_kind,
+                compatibility_mode, host, port, cluster_name, tenant_name, username, default_database,
+                credential_id, current_credential_revision, state, revision, last_test_status,
+                last_tested_at, last_test_safe_summary_json, last_test_source, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, 'synthetic-cluster', 'synthetic-tenant', ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', 'AGENT_JDBC', ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", utcText(testTime), "subject-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, utcText(testTime)}},
 		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_home, java_path, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '["E:\\tmp"]', 'E:\\tools\\ob-loader-dumper-4.3.5', 'C:\\Java\\bin\\java.exe', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO agents(
@@ -2445,5 +2455,105 @@ func assertCount(t *testing.T, db *sql.DB, query string, want int) {
 	}
 	if got != want {
 		t.Fatalf("count query %q = %d, want %d", query, got, want)
+	}
+}
+
+// TestDataSourceSysCredentialLifecycle 验证可选 sys 凭据（参考 ODC 数据源高级设置）：
+// 创建时成对持久化 SYS_PASSWORD 修订，轮换递增修订，清除时标记 REVOKED 并清空投影。
+func TestDataSourceSysCredentialLifecycle(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	base := DataSourceCreate{
+		DataSourceID: "source-sys", CredentialID: "credential-sys", CreatorSubjectID: "subject-1",
+		DisplayName: "Sys Source", NormalizedName: "sys-source", Environment: "TEST",
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.4", Port: 2881,
+		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", KeyID: "key-sys",
+		Nonce: []byte{1}, Ciphertext: []byte{2}, RequestID: "request-sys-1",
+		IdempotencyKey: "idempotency-sys-1", RequestDigest: testFingerprint, CreatedAt: testTime,
+	}
+	// 非成对必须拒绝：有密码信封但没有账号。
+	invalid := base
+	invalid.SysPassword = &EncryptedDataSourcePassword{CredentialID: "sys-credential-1", Revision: 1, KeyID: "key-sys", Nonce: []byte{9}, Ciphertext: []byte{8}}
+	if _, err := store.CreateDataSource(ctx, invalid); err == nil {
+		t.Fatal("CreateDataSource() must reject a sys password without a sys user")
+	}
+	// 成对创建。
+	valid := base
+	valid.SysUser = "root"
+	valid.SysPassword = &EncryptedDataSourcePassword{CredentialID: "sys-credential-1", Revision: 1, KeyID: "key-sys", Nonce: []byte{9}, Ciphertext: []byte{8}}
+	created, err := store.CreateDataSource(ctx, valid)
+	if err != nil || created.DataSourceID != valid.DataSourceID {
+		t.Fatalf("CreateDataSource(sys) = %#v, %v", created, err)
+	}
+	summary, err := store.GetDataSourceSummary(ctx, "source-sys")
+	if err != nil || summary.SysUser != "root" || summary.SysCredentialRevision != 1 || summary.SysCredentialID != "sys-credential-1" {
+		t.Fatalf("GetDataSourceSummary(sys) = %#v, %v", summary, err)
+	}
+	// 轮换：修订 1 -> 2，旧修订 SUPERSEDED。
+	rotated, err := store.UpdateDataSource(ctx, DataSourceUpdate{
+		DataSourceID: "source-sys", ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		DisplayName: "Sys Source", NormalizedName: "sys-source", Environment: "TEST",
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.4", Port: 2881,
+		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user",
+		SysUser:     "root",
+		SysPassword: &EncryptedDataSourcePassword{CredentialID: "sys-credential-1", Revision: 2, KeyID: "key-sys", Nonce: []byte{7}, Ciphertext: []byte{6}},
+		RequestID:   "request-sys-2", UpdatedAt: testTime.Add(time.Minute),
+	})
+	if err != nil || rotated.Revision != 2 {
+		t.Fatalf("UpdateDataSource(rotate sys) = %#v, %v", rotated, err)
+	}
+	afterRotation, err := store.GetDataSourceSummary(ctx, "source-sys")
+	if err != nil || afterRotation.SysCredentialRevision != 2 {
+		t.Fatalf("sys revision after rotation = %#v, %v", afterRotation, err)
+	}
+	// 清除：账号置空、修订标记 REVOKED。
+	cleared, err := store.UpdateDataSource(ctx, DataSourceUpdate{
+		DataSourceID: "source-sys", ActorSubjectID: "subject-1", ExpectedRevision: 2,
+		DisplayName: "Sys Source", NormalizedName: "sys-source", Environment: "TEST",
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.4", Port: 2881,
+		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user",
+		ClearSysCredential: true, RequestID: "request-sys-3", UpdatedAt: testTime.Add(2 * time.Minute),
+	})
+	if err != nil || cleared.Revision != 3 {
+		t.Fatalf("UpdateDataSource(clear sys) = %#v, %v", cleared, err)
+	}
+	afterClear, err := store.GetDataSourceSummary(ctx, "source-sys")
+	if err != nil || afterClear.SysUser != "" || afterClear.SysCredentialRevision != 0 || afterClear.SysCredentialID != "" {
+		t.Fatalf("sys projection after clear = %#v, %v", afterClear, err)
+	}
+	var revokedCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sys_credential_revisions WHERE data_source_id = 'source-sys' AND status = 'REVOKED'`).Scan(&revokedCount); err != nil || revokedCount != 1 {
+		t.Fatalf("revoked sys revisions = %d, %v", revokedCount, err)
+	}
+	// 清除后重新配置使用新的凭据标识并从修订 1 开始，不能与历史已撤销修订冲突。
+	reconfigured, err := store.UpdateDataSource(ctx, DataSourceUpdate{
+		DataSourceID: "source-sys", ActorSubjectID: "subject-1", ExpectedRevision: 3,
+		DisplayName: "Sys Source", NormalizedName: "sys-source", Environment: "TEST",
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.4", Port: 2881,
+		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user",
+		SysUser:     "root2",
+		SysPassword: &EncryptedDataSourcePassword{CredentialID: "sys-credential-2", Revision: 1, KeyID: "key-sys", Nonce: []byte{5}, Ciphertext: []byte{4}},
+		RequestID:   "request-sys-4", UpdatedAt: testTime.Add(3 * time.Minute),
+	})
+	if err != nil || reconfigured.Revision != 4 || !reconfigured.ConnectionTestInvalidated {
+		t.Fatalf("UpdateDataSource(reconfigure sys) = %#v, %v", reconfigured, err)
+	}
+	afterReconfigure, err := store.GetDataSourceSummary(ctx, "source-sys")
+	if err != nil || afterReconfigure.SysUser != "root2" || afterReconfigure.SysCredentialID != "sys-credential-2" || afterReconfigure.SysCredentialRevision != 1 {
+		t.Fatalf("sys projection after reconfigure = %#v, %v", afterReconfigure, err)
+	}
+	// 清除与轮换同时发生必须拒绝。
+	conflict := DataSourceUpdate{
+		DataSourceID: "source-sys", ActorSubjectID: "subject-1", ExpectedRevision: 4,
+		DisplayName: "Sys Source", NormalizedName: "sys-source", Environment: "TEST",
+		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.4", Port: 2881,
+		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user",
+		ClearSysCredential: true,
+		SysPassword:        &EncryptedDataSourcePassword{CredentialID: "sys-credential-1", Revision: 1, KeyID: "key-sys", Nonce: []byte{5}, Ciphertext: []byte{4}},
+		RequestID:          "request-sys-5", UpdatedAt: testTime.Add(4 * time.Minute),
+	}
+	if _, err := store.UpdateDataSource(ctx, conflict); err == nil {
+		t.Fatal("UpdateDataSource() must reject clearing and rotating sys credential at once")
 	}
 }

@@ -612,6 +612,42 @@ func TestUpdateDataSourceEncryptsPasswordAndKeepsItOutOfResponses(t *testing.T) 
 	}
 }
 
+func TestUpdateDataSource普通字段更新保留sys账号(t *testing.T) {
+	t.Parallel()
+	updater := &recordingUpdater{}
+	sources := staticDataSources{summaries: []store.DataSourceSummary{{
+		DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP",
+		CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster",
+		TenantName: "synthetic-tenant", Username: "synthetic-user", State: "DISABLED", Revision: 1,
+		CredentialRevision: 1, SysUser: "root", SysCredentialID: "sys-credential-1", SysCredentialRevision: 1,
+	}}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		DataSources: sources, Updater: updater, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/data-sources/source-allowed", bytes.NewBufferString(`{"displayName":"Updated"}`))
+	request.Header.Set("If-Match", `"rev-1"`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || updater.input.SysUser != "root" || updater.input.SysPassword != nil || updater.input.ClearSysCredential {
+		t.Fatalf("ordinary update response=%d input=%#v body=%s", response.Code, updater.input, response.Body.String())
+	}
+}
+
+func TestCreateDataSource幂等摘要区分sys账号(t *testing.T) {
+	t.Parallel()
+	base := dataSourceCreateRequest{
+		DisplayName: "Synthetic", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL",
+		Host: "127.0.0.1", Port: 2881, ClusterName: "cluster", TenantName: "tenant", Username: "user",
+		Password: "synthetic-password", SysPassword: "synthetic-sys-password",
+	}
+	first, second := base, base
+	first.SysUser, second.SysUser = "root", "operator"
+	if createRequestDigest(first) == createRequestDigest(second) {
+		t.Fatal("不同 sys 账号不能共享数据源创建幂等摘要")
+	}
+}
+
 func TestExportDraftCreateAndPreviewStayWithinSyntheticCSVSlice(t *testing.T) {
 	t.Parallel()
 	generator, err := commandgen.NewDefault()
@@ -1105,6 +1141,155 @@ func TestExportDraftV6DDLAndCSVFlow(t *testing.T) {
 	}
 	if !strings.Contains(snapshotBody, `"format":"DDL_CSV"`) {
 		t.Fatalf("ddl-csv snapshot unexpected: %s", snapshotBody)
+	}
+}
+
+// TestExportDraftV6DDLBehaviorFlow 验证 EX-I7 DDL 行为（2026-08-10）：
+// 前置 DROP 与保留 Schema 仅随 DDL 内容发射，能力保持 ddl/ddl-csv。
+func TestExportDraftV6DDLBehaviorFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"table_one"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"},"ddlBehavior":{"dropObject":true,"retainSchema":true}}}`
+	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi7-ddl")
+	if drafts.created.CapabilityVersion != "export-odp-ddl-v1" {
+		t.Fatalf("ddl behavior draft capability=%s", drafts.created.CapabilityVersion)
+	}
+	for _, token := range []string{`"--ddl"`, `"--drop-object"`, `"--retain-schema"`} {
+		if !strings.Contains(previewBody, token) {
+			t.Fatalf("ddl behavior preview missing %s: %s", token, previewBody)
+		}
+	}
+}
+
+// TestExportDraftV6DDLBehaviorDDLAndDataFlow 验证 DDL + 数据携带 DDL 行为时随 ddl-csv 能力发射。
+func TestExportDraftV6DDLBehaviorDDLAndDataFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"table_one"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"},"ddlBehavior":{"dropObject":true}}}`
+	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi7-ddl-csv")
+	if drafts.created.CapabilityVersion != "export-odp-ddl-csv-v1" {
+		t.Fatalf("ddl-csv behavior draft capability=%s", drafts.created.CapabilityVersion)
+	}
+	for _, token := range []string{`"--ddl"`, `"--csv"`, `"--drop-object"`} {
+		if !strings.Contains(previewBody, token) {
+			t.Fatalf("ddl-csv behavior preview missing %s: %s", token, previewBody)
+		}
+	}
+}
+
+// TestExportDraftV6DDLBehaviorFailClosed 验证 DDL 行为越界失败关闭：
+// 仅数据内容携带 DDL 行为、附加对象信息/紧凑 Schema/序列策略携带均拒绝。
+func TestExportDraftV6DDLBehaviorFailClosed(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	cases := map[string]string{
+		"仅数据携带 DDL 行为": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"dropObject":true}}}`,
+		"携带附加对象信息":     `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"addExtraMessage":true}}}`,
+		"携带紧凑 Schema":  `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"compactSchema":true}}}`,
+		"携带序列策略":       `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"sequencePolicy":"RESTART"}}}`,
+	}
+	for name, body := range cases {
+		create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+		create.Header.Set("Idempotency-Key", "synthetic-ddl-behavior-negative-"+name+"-key-000")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, create)
+		if response.Code != http.StatusUnprocessableEntity || drafts.created.DraftID != "" {
+			t.Fatalf("%s response=%d draft=%#v body=%s", name, response.Code, drafts.created, response.Body.String())
+		}
+	}
+}
+
+// TestExportDraftV6BlockSizeFlow 验证 EX-I7 文件拆分（2026-08-10）：
+// --block-size 显式传值（MB/ROW）随可读格式能力发射（2026-08-07 受控实测确认 MB/ROW 生效）。
+func TestExportDraftV6BlockSizeFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"},"performanceConfig":{"blockSize":"1024MB"}}}`
+	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi7-block-size")
+	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" {
+		t.Fatalf("block-size draft capability=%s", drafts.created.CapabilityVersion)
+	}
+	if !strings.Contains(previewBody, `"--block-size"`) || !strings.Contains(previewBody, `"1024MB"`) {
+		t.Fatalf("block-size preview missing --block-size 1024MB: %s", previewBody)
+	}
+}
+
+// TestExportDraftV6BlockSizeFailClosed 验证 --block-size 越界失败关闭：
+// 非法值（非官方 MB/ROW 表达）与结构化格式携带均拒绝。
+func TestExportDraftV6BlockSizeFailClosed(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	cases := map[string]string{
+		"非法值 1GB":    `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"blockSize":"1GB"}}}`,
+		"非法值 0":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"blockSize":"0"}}}`,
+		"PARQUET 携带": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"PARQUET"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"blockSize":"1024MB"}}}`,
+	}
+	for name, body := range cases {
+		create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+		create.Header.Set("Idempotency-Key", "synthetic-block-size-negative-"+name+"-key-000")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, create)
+		if response.Code != http.StatusUnprocessableEntity || drafts.created.DraftID != "" {
+			t.Fatalf("%s response=%d draft=%#v body=%s", name, response.Code, drafts.created, response.Body.String())
+		}
+	}
+}
+
+// TestExportDraftV6CompressionLevelFlow 验证 EX-I7 压缩等级（2026-08-10）：
+// --compression-level 按官方算法范围随压缩发射。
+func TestExportDraftV6CompressionLevelFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"zstd","compressionLevel":5}}}`
+	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi7-compression-level")
+	for _, token := range []string{`"--compress"`, `"--compression-algo"`, `"zstd"`, `"--compression-level"`, `"5"`} {
+		if !strings.Contains(previewBody, token) {
+			t.Fatalf("compression-level preview missing %s: %s", token, previewBody)
+		}
+	}
+}
+
+// TestExportDraftV6CompressionLevelFailClosed 验证 --compression-level 越界失败关闭：
+// 未启用压缩/算法未选择、算法越界（zstd 0/23、zlib 10）、gzip/snappy 携带等级均拒绝。
+func TestExportDraftV6CompressionLevelFailClosed(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	cases := map[string]string{
+		"未启用压缩携带等级":  `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compressionLevel":5}}}`,
+		"zstd 越界 0":  `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compress":true,"compressionAlgo":"zstd","compressionLevel":0}}}`,
+		"zstd 越界 23": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compress":true,"compressionAlgo":"zstd","compressionLevel":23}}}`,
+		"zlib 越界 10": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compress":true,"compressionAlgo":"zlib","compressionLevel":10}}}`,
+		"gzip 携带等级":  `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compress":true,"compressionAlgo":"gzip","compressionLevel":5}}}`,
+	}
+	for name, body := range cases {
+		create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+		create.Header.Set("Idempotency-Key", "synthetic-compression-level-negative-"+name+"-key-000")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, create)
+		if response.Code != http.StatusUnprocessableEntity || drafts.created.DraftID != "" {
+			t.Fatalf("%s response=%d draft=%#v body=%s", name, response.Code, drafts.created, response.Body.String())
+		}
 	}
 }
 

@@ -316,7 +316,7 @@
 |---|---|---|---|---|
 | `--compress` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--compression-algo` | NORMAL | LOW | VERIFIED | ENABLED |
-| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | ENABLED（2026-08-10 接入，按算法分范围） |
 
 ### 9.9 基础选项 · 功能选项 · 数据库对象类型（16 个）
 
@@ -408,7 +408,7 @@
 | `--page-size` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--parallel-macro` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--mem` | NORMAL | MEDIUM | VERIFIED | ENABLED |
-| `--block-size` | NORMAL | LOW | CONFLICT_PENDING（默认值残余；显式传值已实测生效） | VALIDATION_GATED（MB/ROW 语义已实测） |
+| `--block-size` | NORMAL | LOW | CONFLICT_PENDING（默认值残余；显式传值已实测生效） | ENABLED（2026-08-10 接入） |
 
 ### 9.16 高级选项 · 其他选项（2 个）
 
@@ -421,8 +421,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 60 | 55.0% |
-| VALIDATION_GATED | 35 | 32.1% |
+| ENABLED | 62 | 56.9% |
+| VALIDATION_GATED | 33 | 30.3% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |

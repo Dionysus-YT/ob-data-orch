@@ -69,6 +69,9 @@ export interface DataSourceSummary {
   readonly state: string
   readonly revision: number
   readonly credentialRevision: number
+  // sysCredentialState 只表达数据源是否配置了可用的 sys 凭据（AVAILABLE/UNAVAILABLE），
+  // 不下发账号或任何秘密（参考 ODC 数据源高级设置）。
+  readonly sysCredentialState?: string
   readonly lastTestStatus?: string
   readonly lastTestedAt?: string
 }
@@ -85,6 +88,9 @@ export interface DataSourceWrite {
   readonly username: string
   readonly defaultDatabase?: string
   readonly password: string
+  // 可选的 sys 凭据（参考 ODC 数据源高级设置）：账号与密码必须同时提供或同时留空。
+  readonly sysUser?: string
+  readonly sysPassword?: string
 }
 
 export interface DataSourceUpdate {
@@ -99,11 +105,16 @@ export interface DataSourceUpdate {
   readonly username?: string
   readonly defaultDatabase?: string
   readonly password?: string
+  // 可选的 sys 凭据（参考 ODC 数据源高级设置）：缺省保持现状，两者同空表示清除，两者同非空表示设置/轮换。
+  readonly sysUser?: string
+  readonly sysPassword?: string
 }
 
 export type DataSourceConnectionTestStatus = 'PENDING' | 'LEASED' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN' | 'EXPIRED' | 'INVALIDATED'
 
 export type DataSourceConnectionTestVerificationSource = 'G2_SYNTHETIC' | 'AGENT_JDBC'
+
+export type DataSourceConnectionTestSysVerificationStatus = 'NOT_CONFIGURED' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
 
 export interface DataSourceConnectionTestRequest {
   readonly id: string
@@ -122,6 +133,10 @@ export interface DataSourceConnectionTest {
   readonly completedAt?: string
   readonly verificationSource: DataSourceConnectionTestVerificationSource
   readonly realConnectionVerified: boolean
+  // 可选的 sys 凭据验证事实（参考 ODC 的 sys 账号验证）：与数据库结果相互独立。
+  readonly sysCredentialConfigured: boolean
+  readonly sysVerificationStatus?: DataSourceConnectionTestSysVerificationStatus
+  readonly sysResultCode?: string
 }
 
 export interface DataSourceStateChange {
@@ -280,10 +295,19 @@ export interface PerformanceOptions {
   readonly parallelMacro?: number
   readonly fetchSize?: number
   readonly jvmMemory?: string
+  // EX-I7 文件拆分（2026-08-10）：--block-size（数字 MB 或数字+MB/ROW 后缀），显式传值已受控实测。
+  readonly blockSize?: string
 }
 
 // EX-I6 对象存储（2026-08-07）：输出目标类型；对象存储要求受控 URI（凭据走执行槽位，不进 URI）。
 export type ExportOutputKind = 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS'
+
+// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时携带；
+// 其余 DDL 行为（附加对象信息/紧凑 Schema/序列策略）尚未取证或依赖 sys 凭据，保持关闭。
+export interface DDLBehaviorOptions {
+  readonly dropObject?: boolean
+  readonly retainSchema?: boolean
+}
 
 export interface GeneralizedExportConfig {
   readonly objectScope: ExportObjectScope
@@ -303,6 +327,8 @@ export interface GeneralizedExportConfig {
     readonly retainEmptyFiles?: boolean
     readonly compress?: boolean
     readonly compressionAlgo?: CompressionAlgo
+    // EX-I7 压缩等级（2026-08-10）：--compression-level，官方按算法分范围（zstd 1-22、zlib -1~9；gzip/snappy 不支持）。
+    readonly compressionLevel?: number
     // EX-I4 POS 定版：控制文件目录（--ctl-path），仅 POS 格式使用。
     readonly controlFilePath?: string
     // EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
@@ -310,6 +336,8 @@ export interface GeneralizedExportConfig {
   }
   readonly filterConfig?: FilterOptions
   readonly performanceConfig?: PerformanceOptions
+  // EX-I7 DDL 行为（2026-08-10）：仅 DDL 内容时携带。
+  readonly ddlBehavior?: DDLBehaviorOptions
 }
 
 // ExportDraftInput 是向导提交的 v6 泛化草稿请求；v5 扁平形态仅由历史兼容路径使用。
@@ -758,6 +786,7 @@ function parseDataSourceSummary(value: unknown): DataSourceSummary {
     state: requiredString(source, 'state'),
     revision: requiredNumber(source, 'revision'),
     credentialRevision: requiredNumber(source, 'credentialRevision'),
+    sysCredentialState: optionalString(source, 'sysCredentialState'),
     lastTestStatus: optionalString(source, 'lastTestStatus'),
     lastTestedAt: optionalString(source, 'lastTestedAt'),
   }
@@ -794,6 +823,9 @@ function parseDataSourceConnectionTest(value: Record<string, unknown>): DataSour
     completedAt,
     verificationSource,
     realConnectionVerified,
+    sysCredentialConfigured: requiredBoolean(value, 'sysCredentialConfigured'),
+    sysVerificationStatus: optionalString(value, 'sysVerificationStatus') as DataSourceConnectionTestSysVerificationStatus | undefined,
+    sysResultCode: optionalString(value, 'sysResultCode'),
   }
 }
 

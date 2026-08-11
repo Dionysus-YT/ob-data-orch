@@ -27,3 +27,17 @@ export function dataSourceConnectionTestNotice(result: DataSourceConnectionTest)
   if (result.status === 'EXPIRED') return '连接测试租约已过期，不能作为数据源可用性依据。'
   return '连接测试绑定的配置、凭据、节点或节点事实已变化，结果已失效。'
 }
+
+export function sysCredentialVerificationNotice(result: DataSourceConnectionTest) {
+  if (!result.sysCredentialConfigured) return ''
+  if (result.sysVerificationStatus === 'SUCCEEDED') {
+    return 'sys 租户凭据验证成功（固定 JDBC 探针已建立 sys 租户连接），可作为依赖 sys 凭据的导出能力依据。'
+  }
+  if (result.sysVerificationStatus === 'FAILED') {
+    return `sys 租户凭据验证失败（${result.sysResultCode ?? 'SYS_CONNECTION_FAILED'}）。数据库连接不受影响，但依赖 sys 凭据的导出能力不可用。`
+  }
+  if (result.sysVerificationStatus === 'UNKNOWN') {
+    return 'sys 租户凭据未能形成可验证的结论，依赖 sys 凭据的导出能力保持不可用。'
+  }
+  return ''
+}

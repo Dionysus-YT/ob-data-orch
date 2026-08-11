@@ -228,10 +228,11 @@ type AgentDataSourceConnectionTestStore interface {
 	CompleteAgentDataSourceConnectionTest(context.Context, store.AgentDataSourceConnectionTestCompletion) (store.DataSourceConnectionTestCompletionResult, error)
 }
 
-// AgentDataSourceConnectionTestSecretStore 只在已确认的基础连接测试租约内解析唯一数据库槽位。
+// AgentDataSourceConnectionTestSecretStore 只在已确认的基础连接测试租约内解析唯一数据库或 sys 槽位。
 // 浏览器、普通数据源读取和预检查路径均不能调用它。
 type AgentDataSourceConnectionTestSecretStore interface {
 	ResolveDataSourceConnectionTestDatabaseConnection(context.Context, store.DataSourceConnectionTestSecretResolutionRequest) (store.EncryptedDataSourceConnectionTestDatabaseConnection, error)
+	ResolveDataSourceConnectionTestSysCredential(context.Context, store.DataSourceConnectionTestSecretResolutionRequest) (store.EncryptedDataSourceConnectionTestDatabaseConnection, error)
 	FinishDataSourceConnectionTestSecretResolution(context.Context, store.DataSourceConnectionTestSecretResolutionOutcome) error
 }
 
@@ -612,6 +613,10 @@ type dataSourceCreateRequest struct {
 	Username          string `json:"username"`
 	DefaultDatabase   string `json:"defaultDatabase"`
 	Password          string `json:"password"`
+	// SysUser/SysPassword 是可选的 sys 凭据（参考 ODC 数据源高级设置）；
+	// 两者要么同时提供（创建 SYS_PASSWORD 加密修订），要么同时为空（不配置 sys 凭据）。
+	SysUser     string `json:"sysUser"`
+	SysPassword string `json:"sysPassword"`
 }
 
 // dataSourceUpdateRequest 使用指针与 RawMessage 保留 PATCH 的字段存在语义。
@@ -628,6 +633,10 @@ type dataSourceUpdateRequest struct {
 	Username          *string         `json:"username"`
 	DefaultDatabase   json.RawMessage `json:"defaultDatabase"`
 	Password          *string         `json:"password"`
+	// SysUser/SysPassword 是可选的 sys 凭据（参考 ODC 数据源高级设置）：
+	// 缺省表示保持现状；两者同空表示清除；两者同非空表示设置/轮换。
+	SysUser     *string `json:"sysUser"`
+	SysPassword *string `json:"sysPassword"`
 }
 
 // executionNodeWriteRequest 只接收节点管理员在注册时声明的固定本机配置。
@@ -704,10 +713,12 @@ type normalizedExportDraft struct {
 	LogPath       string
 	SkipCheckDir  bool
 	// EX-I3/EX-I4 选项：格式序列化、压缩、文件布局、筛选与资源参数。
-	CsvOptions            store.CsvOptions
-	CutOptions            store.CutOptions
-	Compress              bool
-	CompressionAlgo       string
+	CsvOptions      store.CsvOptions
+	CutOptions      store.CutOptions
+	Compress        bool
+	CompressionAlgo string
+	// EX-I7 压缩等级（2026-08-10）：--compression-level，官方按算法分范围（zstd 1-22、zlib -1~9；gzip/snappy 不支持）。
+	CompressionLevel      *int64
 	NoNestedDir           bool
 	MaxFileSize           *int64
 	RetainEmptyFiles      bool
@@ -722,12 +733,17 @@ type normalizedExportDraft struct {
 	ParallelMacro         *int
 	FetchSize             *int
 	JvmMemory             string
+	// EX-I7 文件拆分（2026-08-10）：--block-size（数字 MB 或数字+MB/ROW 后缀），显式传值已受控实测。
+	BlockSize string
 	// EX-I4 POS 定版（2026-08-07 实测）：控制文件目录（--ctl-path），仅 POS 格式有效。
 	ControlFilePath string
 	// EX-I6 对象存储（2026-08-07）：Multipart 本地临时分块目录（--tmp-path）。
 	TmpPath string
 	// EX-I6 对象存储（2026-08-07）：输出目标类型（LOCAL/OSS/S3/COS/OBS），传递给生成器做路径分流校验。
 	OutputKind string
+	// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅在 DDL 内容时活动。
+	DropObject   bool
+	RetainSchema bool
 }
 
 // maxExportObjectExpressions 限制单个草稿的对象表达式与排除表数量，
@@ -744,11 +760,11 @@ func (n normalizedExportDraft) isFrozenSingleTableCSV() bool {
 
 // hasZeroOptions 判断全部 EX-I3/EX-I4 选项均为零值。
 func (n normalizedExportDraft) hasZeroOptions() bool {
-	return n.CsvOptions == (store.CsvOptions{}) && n.CutOptions == (store.CutOptions{}) && !n.Compress && n.CompressionAlgo == "" &&
+	return n.CsvOptions == (store.CsvOptions{}) && n.CutOptions == (store.CutOptions{}) && !n.Compress && n.CompressionAlgo == "" && n.CompressionLevel == nil &&
 		!n.NoNestedDir && n.MaxFileSize == nil && !n.RetainEmptyFiles &&
 		n.QuerySql == "" && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
-		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == ""
+		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == ""
 }
 
 // draftCapability 按归一结果推导泛化能力版本。
@@ -968,8 +984,29 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 			return normalizedExportDraft{}, errors.New("v6 compression algorithm is unsupported")
 		}
 	}
+	// EX-I7 压缩等级（2026-08-10）：官方按算法分范围——zstd 1~22（默认 3）、zlib -1~9（默认 -1），
+	// gzip/snappy 不支持指定等级；未启用压缩或算法未选择时携带等级即失败关闭。
+	if output.CompressionLevel != nil {
+		if !output.Compress || output.CompressionAlgo == "" {
+			return normalizedExportDraft{}, errors.New("v6 compression level requires compression and an algorithm")
+		}
+		switch output.CompressionAlgo {
+		case "zstd":
+			if *output.CompressionLevel < 1 || *output.CompressionLevel > 22 {
+				return normalizedExportDraft{}, errors.New("v6 zstd compression level must be within 1..22")
+			}
+		case "zlib":
+			if *output.CompressionLevel < -1 || *output.CompressionLevel > 9 {
+				return normalizedExportDraft{}, errors.New("v6 zlib compression level must be within -1..9")
+			}
+		default:
+			// gzip/snappy 官方不支持指定压缩等级。
+			return normalizedExportDraft{}, errors.New("v6 compression level is unsupported for this algorithm")
+		}
+	}
 	normalized.NoNestedDir, normalized.MaxFileSize, normalized.RetainEmptyFiles = output.NoNestedDir, output.MaxFileSize, output.RetainEmptyFiles
 	normalized.Compress, normalized.CompressionAlgo = output.Compress, output.CompressionAlgo
+	normalized.CompressionLevel = output.CompressionLevel
 	// EX-I4 POS：控制文件目录（--ctl-path）只允许 POS 格式携带；其他格式携带即失败关闭。
 	normalized.ControlFilePath = output.ControlFilePath
 	if normalized.Format == "POS" {
@@ -1004,6 +1041,12 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		return normalizedExportDraft{}, errors.New("v6 jvm memory must match the official K/M/G/T form")
 	}
 	normalized.JvmMemory = performance.JvmMemory
+	// EX-I7 文件拆分（2026-08-10）：--block-size 显式传值按 MB/ROW 生效（2026-08-07 受控实测）；
+	// 值为正整数或正整数+MB/ROW 后缀，默认值 0/1024MB 的官方冲突只影响未显式设置场景，不阻断显式传值。
+	if performance.BlockSize != "" && !blockSizePattern.MatchString(performance.BlockSize) {
+		return normalizedExportDraft{}, errors.New("v6 block size must be a positive integer with optional MB/ROW suffix")
+	}
+	normalized.BlockSize = performance.BlockSize
 
 	filter := config.FilterConfig
 	if filter.Where != "" || filter.Partition != "" || len(filter.ExcludeDataTypes) != 0 || filter.EnableHiddenPk != nil || filter.Snapshot != "" || filter.WeakRead != nil {
@@ -1037,8 +1080,17 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		}
 	}
 	ddl := config.DDLBehavior
-	if ddl.DropObject != nil || ddl.AddExtraMessage != nil || ddl.RetainSchema != nil || ddl.CompactSchema != nil || ddl.SequencePolicy != "" {
+	// EX-I7 DDL 行为（2026-08-10）：--drop-object/--retain-schema 仅在 DDL 内容时活动并随 DDL 能力发射；
+	// --add-extra-message 依赖 sys 凭据可用性（未取证）、--compact-schema/--sequence-policy 仍为 VALIDATION_GATED，携带即失败关闭。
+	if ddl.AddExtraMessage != nil || ddl.CompactSchema != nil || ddl.SequencePolicy != "" {
 		return normalizedExportDraft{}, errors.New("v6 ddl behavior is not enabled")
+	}
+	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) {
+		if normalized.ContentKind == "DATA_ONLY" {
+			return normalizedExportDraft{}, errors.New("v6 ddl behavior requires ddl content")
+		}
+		normalized.DropObject = ddl.DropObject != nil && *ddl.DropObject
+		normalized.RetainSchema = ddl.RetainSchema != nil && *ddl.RetainSchema
 	}
 	// EX-I4：序列化选项按格式适用性校验；跨格式文本选项随 FORMAT_IN 激活，
 	// CSV/CUT 专属字段越界即失败关闭，防止命令生成器收到不可能的参数组合。
@@ -1168,6 +1220,10 @@ var compressionAlgoValues = []string{"zstd", "zlib", "gzip", "snappy"}
 
 // memSizePattern 匹配官方 JVM 内存表达：数字加可选 K/M/G/T 后缀。
 var memSizePattern = regexp.MustCompile(`^[1-9][0-9]*[KMGTP]?$`)
+
+// blockSizePattern 匹配官方 --block-size 表达：正整数（MB）或正整数+MB/ROW 后缀；
+// 不支持 1GB/1M 等格式（2026-08-07 受控实测确认）。
+var blockSizePattern = regexp.MustCompile(`^[1-9][0-9]*(MB|ROW)?$`)
 
 // validateOptionText 校验选项文本：非空时长度受限且不含控制字符。
 func validateOptionText(value string, maxLength int) error {
@@ -1339,6 +1395,7 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
 		return
 	}
+	request.SysUser = strings.TrimSpace(request.SysUser)
 	password := []byte(request.Password)
 	request.Password = ""
 	defer credential.Zero(password)
@@ -1346,6 +1403,14 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
 		return
 	}
+	// 可选的 sys 凭据必须成对提供（参考 ODC 数据源高级设置）。
+	if (request.SysUser == "") != (request.SysPassword == "") {
+		writeError(w, http.StatusUnprocessableEntity, "SYS_CREDENTIAL_REQUIRED_PAIR", "sys 账号与密码必须同时提供或同时留空", false)
+		return
+	}
+	sysPassword := []byte(request.SysPassword)
+	request.SysPassword = ""
+	defer credential.Zero(sysPassword)
 	dataSourceID, credentialID, err := newOpaqueID(), newOpaqueID(), error(nil)
 	if dataSourceID == "" || credentialID == "" {
 		err = errors.New("generate identifier")
@@ -1354,6 +1419,24 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
 		return
 	}
+	// 可选的 sys 凭据加密（AAD 绑定 dataSourceID，与解密时一致）。
+	var sysEnvelope *credential.Envelope
+	var sysCredentialID string
+	if request.SysUser != "" {
+		sysCredentialID = newOpaqueID()
+		if sysCredentialID == "" {
+			writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+			return
+		}
+		encrypted, encryptErr := s.encryptor.Encrypt(s.keyID, credential.Reference{CredentialID: sysCredentialID, Revision: 1, SecretType: credential.SysPassword, DataSourceID: dataSourceID}, sysPassword)
+		if encryptErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据安全上下文不可用", true)
+			return
+		}
+		defer credential.Zero(encrypted.Nonce)
+		defer credential.Zero(encrypted.Ciphertext)
+		sysEnvelope = &encrypted
+	}
 	envelope, err := s.encryptor.Encrypt(s.keyID, credential.Reference{CredentialID: credentialID, Revision: 1, SecretType: credential.DatabasePassword, DataSourceID: dataSourceID}, password)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据安全上下文不可用", true)
@@ -1361,12 +1444,18 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 	}
 	defer credential.Zero(envelope.Nonce)
 	defer credential.Zero(envelope.Ciphertext)
+	// 可选的 sys 凭据信封（创建时修订恒为 1）。
+	var sysPasswordEnvelope *store.EncryptedDataSourcePassword
+	if sysEnvelope != nil {
+		sysPasswordEnvelope = &store.EncryptedDataSourcePassword{CredentialID: sysCredentialID, Revision: 1, KeyID: sysEnvelope.KeyID, Nonce: sysEnvelope.Nonce, Ciphertext: sysEnvelope.Ciphertext}
+	}
 	result, err := s.creator.CreateDataSource(r.Context(), store.DataSourceCreate{
 		DataSourceID: dataSourceID, CredentialID: credentialID, CreatorSubjectID: principal.ID,
 		DisplayName: request.DisplayName, NormalizedName: normalizeName(request.DisplayName),
 		Environment: request.Environment, ConnectionKind: request.ConnectionKind, CompatibilityMode: request.CompatibilityMode,
 		Host: request.Host, Port: request.Port, ClusterName: request.ClusterName, TenantName: request.TenantName, Username: request.Username, DefaultDatabase: request.DefaultDatabase,
 		KeyID: envelope.KeyID, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
+		SysUser: request.SysUser, SysPassword: sysPasswordEnvelope,
 		RequestID: requestID(w), IdempotencyKey: idempotencyKey, RequestDigest: createRequestDigest(request), CreatedAt: time.Now().UTC(),
 	})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
@@ -1434,6 +1523,7 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		DisplayName: merged.DisplayName, NormalizedName: normalizeName(merged.DisplayName), Environment: merged.Environment,
 		ConnectionKind: merged.ConnectionKind, CompatibilityMode: merged.CompatibilityMode, Host: merged.Host,
 		Port: merged.Port, ClusterName: merged.ClusterName, TenantName: merged.TenantName, Username: merged.Username, DefaultDatabase: merged.DefaultDatabase,
+		SysUser:   merged.SysUser,
 		RequestID: requestID(w), UpdatedAt: time.Now().UTC(),
 	}
 	if request.Password != nil {
@@ -1466,6 +1556,43 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		defer credential.Zero(envelope.Ciphertext)
 		update.Password = &store.EncryptedDataSourcePassword{CredentialID: envelope.Reference.CredentialID, Revision: envelope.Reference.Revision, KeyID: envelope.KeyID, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext}
 	}
+	// 可选的 sys 凭据更新（参考 ODC 数据源高级设置）：账号与密码同空表示清除，同非空表示设置/轮换。
+	if request.SysUser != nil || request.SysPassword != nil {
+		if s.credentials == nil || s.encryptor == nil || strings.TrimSpace(s.keyID) == "" {
+			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_UPDATE_NOT_CONFIGURED", "当前环境尚未配置凭据轮换依赖", false)
+			return
+		}
+		if merged.SysUser == "" && *request.SysPassword == "" {
+			// 清除 sys 凭据：账号已由 merge 置空，仓储将 ACTIVE 的 sys 修订标记 REVOKED。
+			update.ClearSysCredential = true
+		} else {
+			sysPassword := []byte(*request.SysPassword)
+			*request.SysPassword = ""
+			defer credential.Zero(sysPassword)
+			if len(sysPassword) == 0 {
+				writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
+				return
+			}
+			// 复用当前 sys 凭据版本以轮换，未配置过则新建凭据标识。
+			sysCredentialID := current.SysCredentialID
+			if sysCredentialID == "" {
+				sysCredentialID = newOpaqueID()
+				if sysCredentialID == "" {
+					writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+					return
+				}
+			}
+			sysEnvelope, encryptErr := s.encryptor.Encrypt(s.keyID, credential.Reference{CredentialID: sysCredentialID, Revision: current.SysCredentialRevision + 1, SecretType: credential.SysPassword, DataSourceID: dataSourceID}, sysPassword)
+			if encryptErr != nil {
+				writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据安全上下文不可用", true)
+				return
+			}
+			defer credential.Zero(sysEnvelope.Nonce)
+			defer credential.Zero(sysEnvelope.Ciphertext)
+			update.SysUser = merged.SysUser
+			update.SysPassword = &store.EncryptedDataSourcePassword{CredentialID: sysCredentialID, Revision: sysEnvelope.Reference.Revision, KeyID: sysEnvelope.KeyID, Nonce: sysEnvelope.Nonce, Ciphertext: sysEnvelope.Ciphertext}
+		}
+	}
 	result, err := s.updater.UpdateDataSource(r.Context(), update)
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
@@ -1496,7 +1623,7 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 }
 
 func (r dataSourceUpdateRequest) hasChanges() bool {
-	return r.DisplayName != nil || r.Environment != nil || r.ConnectionKind != nil || r.CompatibilityMode != nil || r.Host != nil || r.Port != nil || r.ClusterName != nil || r.TenantName != nil || r.Username != nil || r.DefaultDatabase != nil || r.Password != nil
+	return r.DisplayName != nil || r.Environment != nil || r.ConnectionKind != nil || r.CompatibilityMode != nil || r.Host != nil || r.Port != nil || r.ClusterName != nil || r.TenantName != nil || r.Username != nil || r.DefaultDatabase != nil || r.Password != nil || r.SysUser != nil || r.SysPassword != nil
 }
 
 func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.DataSourceSummary, error) {
@@ -1538,6 +1665,13 @@ func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.D
 		} else {
 			merged.DefaultDatabase = *value
 		}
+	}
+	// 可选的 sys 凭据（参考 ODC 数据源高级设置）：账号与密码必须同时更新；合并后的账号空值表示清除。
+	if (r.SysUser == nil) != (r.SysPassword == nil) {
+		return store.DataSourceSummary{}, errors.New("sys credential must be updated as a pair")
+	}
+	if r.SysUser != nil {
+		merged.SysUser = strings.TrimSpace(*r.SysUser)
 	}
 	return merged, nil
 }
@@ -2039,6 +2173,13 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	default:
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft content kind is unsupported")
 	}
+	// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema 仅随 DDL 内容发射（归一化已保证非 DDL 内容携带即失败关闭）。
+	if input.DropObject {
+		fields = append(fields, commandgen.FieldInput{Name: "--drop-object", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
+	}
+	if input.RetainSchema {
+		fields = append(fields, commandgen.FieldInput{Name: "--retain-schema", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
+	}
 	fields = append(fields, commandgen.FieldInput{Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.FilePath}})
 	if input.LogPath != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.LogPath}})
@@ -2139,6 +2280,10 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.CompressionAlgo != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--compression-algo", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.CompressionAlgo}})
 	}
+	// EX-I7 压缩等级（2026-08-10）：显式传值时发射（归一化已按算法范围校验）。
+	if input.CompressionLevel != nil {
+		fields = append(fields, commandgen.FieldInput{Name: "--compression-level", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: *input.CompressionLevel}})
+	}
 	if input.QuerySql != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--query-sql", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.QuerySql}})
 	}
@@ -2172,6 +2317,10 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	}
 	if input.JvmMemory != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--mem", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.JvmMemory}})
+	}
+	// EX-I7 文件拆分（2026-08-10）：--block-size 显式传值时发射（归一化已按可读格式能力校验）。
+	if input.BlockSize != "" {
+		fields = append(fields, commandgen.FieldInput{Name: "--block-size", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.BlockSize}})
 	}
 	requestBase.MetadataVersion = "obdumper-4.3.5-slice-v6"
 	requestBase.CapabilityVersion = draftCapability(input)
@@ -2894,9 +3043,13 @@ func parseIfMatchRevision(value string) (int64, bool) {
 func normalizeName(displayName string) string { return strings.ToLower(strings.TrimSpace(displayName)) }
 
 func createRequestDigest(request dataSourceCreateRequest) string {
-	// Password content is not incorporated; retaining a password hash would be
-	// a new sensitive persistence surface. Presence still distinguishes omission.
-	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|password=true", request.DisplayName, request.Environment, request.ConnectionKind, request.CompatibilityMode, request.Host, request.Port, request.ClusterName, request.TenantName, request.Username, request.DefaultDatabase)
+	// 密码内容不进入摘要，避免持久化密码派生哈希形成新的敏感面；只记录是否提供密码。
+	// sys 密码只以存在性参与摘要；sys 账号是非秘密连接标识，必须进入摘要以区分不同创建请求。
+	sysPresence := "sys=false"
+	if request.SysUser != "" || request.SysPassword != "" {
+		sysPresence = "sys=true"
+	}
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|password=true|%s|sysUser=%s", request.DisplayName, request.Environment, request.ConnectionKind, request.CompatibilityMode, request.Host, request.Port, request.ClusterName, request.TenantName, request.Username, request.DefaultDatabase, sysPresence, strings.TrimSpace(request.SysUser))
 	digest := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(digest[:])
 }
@@ -3290,6 +3443,9 @@ type agentConnectionTestCompletionPayload struct {
 	BindingDigest string `json:"bindingDigest"`
 	Status        string `json:"status"`
 	EvidenceCode  string `json:"evidenceCode"`
+	// SysVerificationStatus/SysEvidenceCode 是可选的 sys 凭据验证结果（与数据库结果相互独立）。
+	SysVerificationStatus string `json:"sysVerificationStatus"`
+	SysEvidenceCode       string `json:"sysEvidenceCode"`
 }
 
 // authenticatedPrecheckAgent 使用独立机器凭据认证预检查请求。
@@ -3781,6 +3937,7 @@ func (s *Server) claimNextAuthenticatedConnectionTest(w http.ResponseWriter, r *
 			"connectionTestId": grant.Binding.ConnectionTestID, "dataSourceId": grant.Binding.DataSourceID,
 			"connectionConfigDigest": grant.Binding.ConnectionConfigDigest, "credentialRevision": grant.Binding.CredentialRevision,
 			"nodeId": grant.Binding.NodeID, "nodeFactsRevision": grant.Binding.NodeFactsRevision,
+			"sysCredentialId": grant.Binding.SysCredentialID, "sysCredentialRevision": grant.Binding.SysCredentialRevision,
 		},
 		"bindingDigest": grant.Binding.BindingDigest, "verificationSource": grant.Binding.VerificationSource,
 		"realExecutionEnabled": false,
@@ -3834,17 +3991,29 @@ func (s *Server) resolveAuthenticatedConnectionTestSecret(w http.ResponseWriter,
 	}
 	if !validConnectionTestEnvelope(machine, request.agentConnectionTestEnvelope, "DATA_SOURCE_CONNECTION_TEST_RESOLVE_SECRET_SLOTS") ||
 		!validDataSourceConnectionTestPathID(connectionTestID) || !validAgentPrecheckOpaque(request.Payload.LeaseID) ||
-		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) || request.Payload.Slot != "DATABASE_CONNECTION" {
+		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) ||
+		(request.Payload.Slot != "DATABASE_CONNECTION" && request.Payload.Slot != "SYS_CONNECTION") {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
 	now := time.Now().UTC()
 	requestDigest := agentConnectionTestRequestDigest("RESOLVE_SECRET", request.agentConnectionTestEnvelope, connectionTestID, request.Payload)
-	encrypted, err := s.connectionTestSecrets.ResolveDataSourceConnectionTestDatabaseConnection(r.Context(), store.DataSourceConnectionTestSecretResolutionRequest{
-		AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
-		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
-		RequestDigest: requestDigest, Now: now,
-	})
+	var encrypted store.EncryptedDataSourceConnectionTestDatabaseConnection
+	var err error
+	if request.Payload.Slot == "SYS_CONNECTION" {
+		// 可选的 sys 凭据槽位：仅绑定冻结了 sys 引用时可由 Store 解析（参考 ODC 的 sys 账号验证）。
+		encrypted, err = s.connectionTestSecrets.ResolveDataSourceConnectionTestSysCredential(r.Context(), store.DataSourceConnectionTestSecretResolutionRequest{
+			AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
+			LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+			RequestDigest: requestDigest, Now: now,
+		})
+	} else {
+		encrypted, err = s.connectionTestSecrets.ResolveDataSourceConnectionTestDatabaseConnection(r.Context(), store.DataSourceConnectionTestSecretResolutionRequest{
+			AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
+			LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
+			RequestDigest: requestDigest, Now: now,
+		})
+	}
 	if err != nil {
 		writeAgentConnectionTestStoreError(w, err)
 		return
@@ -3870,7 +4039,7 @@ func (s *Server) resolveAuthenticatedConnectionTestSecret(w http.ResponseWriter,
 	}
 	plaintext, decryptErr := s.decryptor.Decrypt(credential.Envelope{
 		FormatVersion: credential.FormatVersion, KeyID: encrypted.KeyID,
-		Reference: credential.Reference{CredentialID: encrypted.CredentialID, Revision: encrypted.Revision, SecretType: credential.DatabasePassword, DataSourceID: encrypted.DataSourceID},
+		Reference: credential.Reference{CredentialID: encrypted.CredentialID, Revision: encrypted.Revision, SecretType: connectionTestSecretType(request.Payload.Slot), DataSourceID: encrypted.DataSourceID},
 		Nonce:     encrypted.Nonce, Ciphertext: encrypted.Ciphertext,
 	})
 	if decryptErr != nil {
@@ -3888,10 +4057,18 @@ func (s *Server) resolveAuthenticatedConnectionTestSecret(w http.ResponseWriter,
 	}
 	writeAgentConnectionTestResponse(w, "DATA_SOURCE_CONNECTION_TEST_SECRET_SLOTS_RESOLVED", map[string]any{
 		"agentRequestId": request.RequestID, "connectionTestId": connectionTestID, "leaseId": request.Payload.LeaseID,
-		"leaseEpoch": request.Payload.LeaseEpoch, "bindingDigest": request.Payload.BindingDigest, "slot": "DATABASE_CONNECTION",
+		"leaseEpoch": request.Payload.LeaseEpoch, "bindingDigest": request.Payload.BindingDigest, "slot": request.Payload.Slot,
 		"connection":           map[string]any{"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext},
 		"realExecutionEnabled": false,
 	})
+}
+
+// connectionTestSecretType 按槽位类型返回对应的加密信封秘密类型（sys 凭据与数据库密码互不通用）。
+func connectionTestSecretType(slot string) string {
+	if slot == "SYS_CONNECTION" {
+		return credential.SysPassword
+	}
+	return credential.DatabasePassword
 }
 
 // completeAuthenticatedConnectionTest 保存基础连接测试的三种固定结果。
@@ -3924,11 +4101,13 @@ func (s *Server) completeAuthenticatedConnectionTest(w http.ResponseWriter, r *h
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
+	// 可选的 sys 凭据验证结果受 store 枚举校验（与数据库结果相互独立）。
 	result, err := s.agentConnectionTests.CompleteAgentDataSourceConnectionTest(r.Context(), store.AgentDataSourceConnectionTestCompletion{
 		AgentID: machine.AgentID, ConnectionTestID: connectionTestID, LeaseID: request.Payload.LeaseID,
 		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
 		RequestDigest: agentConnectionTestRequestDigest("COMPLETE", request.agentConnectionTestEnvelope, connectionTestID, request.Payload),
-		Status:        request.Payload.Status, EvidenceCode: request.Payload.EvidenceCode, VerificationSource: run.VerificationSource, Now: time.Now().UTC(),
+		Status:        request.Payload.Status, EvidenceCode: request.Payload.EvidenceCode, VerificationSource: run.VerificationSource,
+		SysVerificationStatus: request.Payload.SysVerificationStatus, SysResultCode: request.Payload.SysEvidenceCode, Now: time.Now().UTC(),
 	})
 	if err != nil {
 		writeAgentConnectionTestStoreError(w, err)
@@ -3936,6 +4115,7 @@ func (s *Server) completeAuthenticatedConnectionTest(w http.ResponseWriter, r *h
 	}
 	writeAgentConnectionTestResponse(w, "DATA_SOURCE_CONNECTION_TEST_COMPLETED", map[string]any{
 		"status": result.Status, "evidenceCode": result.EvidenceCode, "verificationSource": result.VerificationSource,
+		"sysVerificationStatus": result.SysVerificationStatus, "sysEvidenceCode": result.SysResultCode,
 		"realExecutionEnabled": false,
 	})
 }
@@ -5349,23 +5529,29 @@ type dataSourceResponse struct {
 	State              string `json:"state"`
 	Revision           int64  `json:"revision"`
 	CredentialRevision int64  `json:"credentialRevision"`
+	// SysCredentialState 只表达 sys 凭据是否可用（AVAILABLE/UNAVAILABLE），不下发账号或任何秘密。
+	SysCredentialState string `json:"sysCredentialState"`
 	LastTestStatus     string `json:"lastTestStatus,omitempty"`
 	LastTestedAt       string `json:"lastTestedAt,omitempty"`
 }
 
 // dataSourceConnectionTestResponse 是浏览器轮询连接测试的节点特定安全投影。
 // 它不返回 JDBC 元信息、异常文本、连接身份、秘密或安全摘要原文。
+// Sys 字段只表达可选的 sys 凭据验证事实（参考 ODC 的 sys 账号验证），与数据库结果相互独立。
 type dataSourceConnectionTestResponse struct {
-	ID                     string `json:"id"`
-	DataSourceID           string `json:"dataSourceId"`
-	NodeID                 string `json:"nodeId"`
-	NodeFactsRevision      int64  `json:"nodeFactsRevision"`
-	Status                 string `json:"status"`
-	Code                   string `json:"code,omitempty"`
-	VerificationSource     string `json:"verificationSource"`
-	RealConnectionVerified bool   `json:"realConnectionVerified"`
-	CreatedAt              string `json:"createdAt"`
-	CompletedAt            string `json:"completedAt,omitempty"`
+	ID                      string `json:"id"`
+	DataSourceID            string `json:"dataSourceId"`
+	NodeID                  string `json:"nodeId"`
+	NodeFactsRevision       int64  `json:"nodeFactsRevision"`
+	Status                  string `json:"status"`
+	Code                    string `json:"code,omitempty"`
+	VerificationSource      string `json:"verificationSource"`
+	RealConnectionVerified  bool   `json:"realConnectionVerified"`
+	SysCredentialConfigured bool   `json:"sysCredentialConfigured"`
+	SysVerificationStatus   string `json:"sysVerificationStatus,omitempty"`
+	SysResultCode           string `json:"sysResultCode,omitempty"`
+	CreatedAt               string `json:"createdAt"`
+	CompletedAt             string `json:"completedAt,omitempty"`
 }
 
 // executionNodeCandidateResponse 只向草稿页面返回节点定位和路径校验所需字段。
@@ -5561,6 +5747,12 @@ func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
 		DefaultDatabase: summary.DefaultDatabase, State: summary.State, Revision: summary.Revision,
 		CredentialRevision: summary.CredentialRevision, LastTestStatus: summary.LastTestStatus,
 	}
+	// sys 凭据状态派生（参考 ODC 数据源高级设置）：已配置修订视为可用，否则不可用；账号本身不下发。
+	if summary.SysCredentialRevision > 0 {
+		response.SysCredentialState = "AVAILABLE"
+	} else {
+		response.SysCredentialState = "UNAVAILABLE"
+	}
 	if summary.LastTestedAt != nil {
 		response.LastTestedAt = summary.LastTestedAt.UTC().Format(time.RFC3339Nano)
 	}
@@ -5574,7 +5766,9 @@ func newDataSourceConnectionTestResponse(run store.DataSourceConnectionTestRun) 
 		ID: run.ConnectionTestID, DataSourceID: run.DataSourceID, NodeID: run.NodeID,
 		NodeFactsRevision: run.NodeFactsRevision, Status: run.Status, Code: run.ResultCode,
 		VerificationSource: run.VerificationSource, CreatedAt: run.CreatedAt.UTC().Format(time.RFC3339Nano),
-		RealConnectionVerified: run.VerificationSource == "AGENT_JDBC" && run.Status == "SUCCEEDED",
+		RealConnectionVerified:  run.VerificationSource == "AGENT_JDBC" && run.Status == "SUCCEEDED",
+		SysCredentialConfigured: run.SysCredentialRevision > 0,
+		SysVerificationStatus:   run.SysVerificationStatus, SysResultCode: run.SysResultCode,
 	}
 	if !run.CompletedAt.IsZero() {
 		response.CompletedAt = run.CompletedAt.UTC().Format(time.RFC3339Nano)

@@ -688,7 +688,7 @@ func TestOpenAPIDataSourceConnectionTestContracts(t *testing.T) {
 	if run["additionalProperties"] != false {
 		t.Fatal("connection test run projection must reject unknown fields")
 	}
-	assertRequiredProperties(t, run, "id", "dataSourceId", "nodeId", "nodeFactsRevision", "status", "verificationSource", "realConnectionVerified", "createdAt")
+	assertRequiredProperties(t, run, "id", "dataSourceId", "nodeId", "nodeFactsRevision", "status", "verificationSource", "realConnectionVerified", "sysCredentialConfigured", "createdAt")
 	runProperties := object(t, run, "properties")
 	for _, idProperty := range []string{"id", "dataSourceId", "nodeId"} {
 		if fmt.Sprint(object(t, runProperties, idProperty)["$ref"]) != "#/components/schemas/OpaqueId" {
@@ -697,6 +697,7 @@ func TestOpenAPIDataSourceConnectionTestContracts(t *testing.T) {
 	}
 	assertExactStringEnum(t, object(t, runProperties, "status"), []string{"PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"})
 	assertExactStringEnum(t, object(t, runProperties, "verificationSource"), []string{"G2_SYNTHETIC", "AGENT_JDBC"})
+	assertExactStringEnum(t, object(t, runProperties, "sysVerificationStatus"), []string{"NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"})
 	for _, forbidden := range []string{"host", "port", "username", "password", "jdbcUrl", "databaseVersion", "exception", "metadata"} {
 		if _, exists := runProperties[forbidden]; exists {
 			t.Fatalf("connection test browser projection must not expose %s", forbidden)
@@ -796,16 +797,15 @@ func TestOpenAPIDataSourceConnectionTestContracts(t *testing.T) {
 		}
 	}
 	secretPayload := object(t, schemas, "AgentDataSourceConnectionTestSecretSlotPayload")
-	if object(t, object(t, secretPayload, "properties"), "slot")["const"] != "DATABASE_CONNECTION" {
-		t.Fatal("connection test secret resolution must only request DATABASE_CONNECTION")
-	}
+	assertExactStringEnum(t, object(t, object(t, secretPayload, "properties"), "slot"), []string{"DATABASE_CONNECTION", "SYS_CONNECTION"})
 	completionPayload := object(t, schemas, "AgentDataSourceConnectionTestCompletionPayload")
-	assertRequiredProperties(t, completionPayload, "status", "evidenceCode")
+	assertRequiredProperties(t, completionPayload, "status", "evidenceCode", "sysVerificationStatus", "sysEvidenceCode")
 	if _, exists := object(t, completionPayload, "properties")["succeeded"]; exists {
 		t.Fatal("connection test completion must not accept an unconstrained success flag")
 	}
 	assertExactStringEnum(t, object(t, object(t, completionPayload, "properties"), "status"), []string{"SUCCEEDED", "FAILED", "UNKNOWN"})
 	assertExactStringEnum(t, object(t, object(t, completionPayload, "properties"), "evidenceCode"), []string{"SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"})
+	assertExactStringEnum(t, object(t, object(t, completionPayload, "properties"), "sysVerificationStatus"), []string{"NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"})
 
 	binding := object(t, schemas, "AgentDataSourceConnectionTestBinding")
 	if binding["additionalProperties"] != false {
@@ -851,9 +851,7 @@ func TestOpenAPIDataSourceConnectionTestContracts(t *testing.T) {
 	}
 	assertRequiredProperties(t, secretResponsePayload, "agentRequestId", "connectionTestId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled")
 	secretResponseProperties := object(t, secretResponsePayload, "properties")
-	if object(t, secretResponseProperties, "slot")["const"] != "DATABASE_CONNECTION" {
-		t.Fatal("connection test secret response must only return DATABASE_CONNECTION")
-	}
+	assertExactStringEnum(t, object(t, secretResponseProperties, "slot"), []string{"DATABASE_CONNECTION", "SYS_CONNECTION"})
 	if fmt.Sprint(object(t, secretResponseProperties, "bindingDigest")["$ref"]) != "#/components/schemas/SHA256Digest" {
 		t.Fatal("connection test secret response must carry the binding digest")
 	}
@@ -883,11 +881,12 @@ func TestOpenAPIDataSourceConnectionTestContracts(t *testing.T) {
 	if completedPayload["additionalProperties"] != false {
 		t.Fatal("connection test complete response payload must reject unknown fields")
 	}
-	assertRequiredProperties(t, completedPayload, "status", "evidenceCode", "verificationSource", "realExecutionEnabled")
+	assertRequiredProperties(t, completedPayload, "status", "evidenceCode", "verificationSource", "sysVerificationStatus", "sysEvidenceCode", "realExecutionEnabled")
 	completedProperties := object(t, completedPayload, "properties")
 	assertExactStringEnum(t, object(t, completedProperties, "status"), []string{"SUCCEEDED", "FAILED", "UNKNOWN"})
 	assertExactStringEnum(t, object(t, completedProperties, "evidenceCode"), []string{"SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"})
 	assertExactStringEnum(t, object(t, completedProperties, "verificationSource"), []string{"G2_SYNTHETIC", "AGENT_JDBC"})
+	assertExactStringEnum(t, object(t, completedProperties, "sysVerificationStatus"), []string{"NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"})
 	if object(t, completedProperties, "realExecutionEnabled")["const"] != false {
 		t.Fatal("connection test complete response must keep real execution disabled")
 	}

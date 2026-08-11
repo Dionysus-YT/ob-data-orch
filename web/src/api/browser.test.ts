@@ -865,6 +865,7 @@ describe('浏览器 API 客户端', () => {
         completedAt: '2026-07-27T03:00:00Z',
         verificationSource: 'AGENT_JDBC',
         realConnectionVerified: true,
+        sysCredentialConfigured: false,
         password: 'must-not-be-read',
         connectionString: 'must-not-be-read',
       },
@@ -881,6 +882,7 @@ describe('浏览器 API 客户端', () => {
       completedAt: '2026-07-27T03:00:00Z',
       verificationSource: 'AGENT_JDBC',
       realConnectionVerified: true,
+      sysCredentialConfigured: false,
     })
 
     expect(calls[0]?.path).toBe('/api/v1/data-source-connection-tests/connection-test%2F1')
@@ -896,6 +898,7 @@ describe('浏览器 API 客户端', () => {
         id: 'connection-test-1', status: 'FAILED', nodeId: 'node-1', resultCode: 'DATABASE_CONNECTION_FAILED',
         completedAt: '2026-07-27T03:00:00Z', verificationSource: 'UNTRUSTED_SOURCE',
         realConnectionVerified: false,
+        sysCredentialConfigured: false,
       },
     })).api
 
@@ -908,6 +911,7 @@ describe('浏览器 API 客户端', () => {
       item: {
         id: 'connection-test-1', status: 'SUCCEEDED', nodeId: 'node-1', resultCode: 'SYNTHETIC_OK',
         completedAt: '2026-07-27T03:00:00Z', verificationSource: 'G2_SYNTHETIC', realConnectionVerified: true,
+        sysCredentialConfigured: false,
       },
     })).api
 

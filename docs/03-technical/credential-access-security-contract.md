@@ -454,3 +454,15 @@ Windows 验证还发现：官方 `.bat` 没有主动设置 `security.configurati
 | CS-R16 | 审计失败 | 高敏变更原子审计；秘密解析先记意图，无法审计时失败关闭 | 已确认 |
 | CS-R17 | 根密钥轮换 | 版本化、小批重加密、验证完成前保留旧 key | 已确认 |
 | CS-R18 | 诚实边界 | 不宣称抵抗管理员/root、内存控制或工具固有命令行暴露 | 已确认 |
+
+### 9.2 数据源可选 sys 凭据（2026-08-10 实现）
+
+参考 ODC 数据源高级设置，数据源可成对配置可选的 sys 账号/密码（--sys-user/--sys-password，拥有 sys 租户视图查看权限的账号如 root，账号勿填 @sys#集群 后缀）：
+
+- 存储：sys 密码使用与数据库密码相同的 AES-GCM 信封（AAD 绑定 credentialId/revision/secretType=SYS_PASSWORD/dataSourceId），存独立表 `sys_credential_revisions`（迁移事务内无法关闭 foreign_keys，重建 credential_revisions 会触发外键失败，故不改历史表约束）；`data_sources` 只保存 `sys_user`、`sys_credential_id`、`sys_credential_revision` 元数据；
+- 创建/更新：账号与密码必须成对提供（一侧为空即 422）；轮换递增 sys 修订并把旧 ACTIVE 修订标记 SUPERSEDED；账号与密码同时置空表示清除（ACTIVE 修订标记 REVOKED）；物理删除数据源时随事务清理 sys 修订；
+- 投影：浏览器只收到派生状态 AVAILABLE/UNAVAILABLE，不下发 sys 账号或任何秘密；`sys_credential_id` 仅供受控写路径识别版本，绝不进入浏览器响应；
+- 解析：sys 凭据的短时解析与任务秘密槽位同机制（本契约第 9 节）；`--add-extra-message` 等依赖 sys 凭据的能力只在数据源 sysCredentialState=AVAILABLE 时考虑启用，当前仍保持关闭（待实测）；
+- 幂等摘要：`createRequestDigest` 只以 sys 存在性参与，不落入密码内容或摘要。
+
+- 连接测试（2026-08-10 扩展）：数据源配置了 sys 凭据时，基础连接测试在数据库验证成功后额外用 sys 身份（sysUser@sys#cluster，平台组装）经固定 JDBC 探针验证 sys 租户认证；sys 结果独立记录（sys_verification_status/sys_result_code，枚举 SYS_CONNECTED/SYS_* 错误码），不阻断数据库启用门禁；未配置 sys 凭据的数据源请求 SYS_CONNECTION 槽位失败关闭；绑定摘要包含 sys 引用，Agent 领取/确认/槽位/完成全程复验。

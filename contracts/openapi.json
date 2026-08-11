@@ -327,9 +327,11 @@
           "tenantName": { "type": "string", "minLength": 1, "maxLength": 255 },
           "username": { "type": "string", "minLength": 1, "maxLength": 512 },
           "defaultDatabase": { "type": ["string", "null"], "maxLength": 512 },
-          "password": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true }
+          "password": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true },
+          "sysUser": { "type": "string", "maxLength": 256, "description": "可选的 sys 凭据账号（--sys-user，参考 ODC 数据源高级设置）：拥有 sys 租户视图查看权限的账号，如 root；账号勿填 @sys#集群 后缀。与 sysPassword 必须同时提供或同时留空。" },
+          "sysPassword": { "type": "string", "maxLength": 4096, "writeOnly": true, "description": "可选的 sys 凭据密码（--sys-password）：与 sysUser 成对提供；只走加密信封，绝不进入日志、审计、响应或快照。" }
         },
-        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、集群、租户、用户名和密码。创建固定为 DISABLED；启用和禁用只能通过专用状态动作完成。Patch 使用字段存在语义，省略密码表示保持不变。"
+        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、集群、租户、用户名和密码。创建固定为 DISABLED；启用和禁用只能通过专用状态动作完成。Patch 使用字段存在语义，省略密码表示保持不变；sys 凭据为可选项（参考 ODC 数据源高级设置）。"
       },
       "DataSourceConnectionTestRequest": {
         "type": "object",
@@ -343,7 +345,7 @@
       "DataSourceConnectionTestRun": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "dataSourceId", "nodeId", "nodeFactsRevision", "status", "verificationSource", "realConnectionVerified", "createdAt"],
+        "required": ["id", "dataSourceId", "nodeId", "nodeFactsRevision", "status", "verificationSource", "realConnectionVerified", "sysCredentialConfigured", "createdAt"],
         "properties": {
           "id": { "$ref": "#/components/schemas/OpaqueId" },
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
@@ -353,6 +355,9 @@
           "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
           "verificationSource": { "enum": ["G2_SYNTHETIC", "AGENT_JDBC"] },
           "realConnectionVerified": { "type": "boolean", "description": "仅当 AGENT_JDBC 已在本节点成功完成时为 true；它不代表其他节点、对象权限、性能或导出可行性。" },
+          "sysCredentialConfigured": { "type": "boolean", "description": "当前测试绑定是否冻结了可选 sys 凭据；仅表达本次绑定事实，不暴露账号或凭据引用。" },
+          "sysVerificationStatus": { "enum": ["NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"] },
+          "sysResultCode": { "enum": ["SYS_CONNECTED", "SYS_HOST_UNRESOLVABLE", "SYS_TCP_REFUSED", "SYS_TCP_TIMEOUT", "SYS_TCP_UNREACHABLE", "SYS_CONNECTION_FAILED", "SYS_CONNECTION_UNAVAILABLE"] },
           "createdAt": { "type": "string", "format": "date-time" },
           "completedAt": { "type": "string", "format": "date-time" }
         }
@@ -610,19 +615,21 @@
           "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
           "leaseEpoch": { "type": "integer", "minimum": 1 },
           "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
-          "slot": { "const": "DATABASE_CONNECTION" }
+          "slot": { "enum": ["DATABASE_CONNECTION", "SYS_CONNECTION"] }
         }
       },
       "AgentDataSourceConnectionTestCompletionPayload": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["leaseId", "leaseEpoch", "bindingDigest", "status", "evidenceCode"],
+        "required": ["leaseId", "leaseEpoch", "bindingDigest", "status", "evidenceCode", "sysVerificationStatus", "sysEvidenceCode"],
         "properties": {
           "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
           "leaseEpoch": { "type": "integer", "minimum": 1 },
           "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
           "status": { "enum": ["SUCCEEDED", "FAILED", "UNKNOWN"] },
-          "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] }
+          "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] },
+          "sysVerificationStatus": { "enum": ["NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"] },
+          "sysEvidenceCode": { "enum": ["", "SYS_CONNECTED", "SYS_HOST_UNRESOLVABLE", "SYS_TCP_REFUSED", "SYS_TCP_TIMEOUT", "SYS_TCP_UNREACHABLE", "SYS_CONNECTION_FAILED", "SYS_CONNECTION_UNAVAILABLE"] }
         },
         "description": "控制面会依据被冻结的 verificationSource 再次核验状态与证据码组合。"
       },
@@ -636,7 +643,9 @@
           "connectionConfigDigest": { "$ref": "#/components/schemas/SHA256Digest" },
           "credentialRevision": { "type": "integer", "minimum": 1 },
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
-          "nodeFactsRevision": { "type": "integer", "minimum": 1 }
+          "nodeFactsRevision": { "type": "integer", "minimum": 1 },
+          "sysCredentialId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sysCredentialRevision": { "type": "integer", "minimum": 1 }
         }
       },
       "AgentPrecheckClaimNext": {
@@ -1274,7 +1283,7 @@
               "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
               "leaseEpoch": { "type": "integer", "minimum": 1 },
               "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
-              "slot": { "const": "DATABASE_CONNECTION" },
+              "slot": { "enum": ["DATABASE_CONNECTION", "SYS_CONNECTION"] },
               "connection": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestDatabaseConnectionSlot" },
               "realExecutionEnabled": { "const": false }
             }
@@ -1303,11 +1312,13 @@
           "payload": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["status", "evidenceCode", "verificationSource", "realExecutionEnabled"],
+            "required": ["status", "evidenceCode", "verificationSource", "sysVerificationStatus", "sysEvidenceCode", "realExecutionEnabled"],
             "properties": {
               "status": { "enum": ["SUCCEEDED", "FAILED", "UNKNOWN"] },
               "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] },
               "verificationSource": { "enum": ["G2_SYNTHETIC", "AGENT_JDBC"] },
+              "sysVerificationStatus": { "enum": ["NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"] },
+              "sysEvidenceCode": { "enum": ["", "SYS_CONNECTED", "SYS_HOST_UNRESOLVABLE", "SYS_TCP_REFUSED", "SYS_TCP_TIMEOUT", "SYS_TCP_UNREACHABLE", "SYS_CONNECTION_FAILED", "SYS_CONNECTION_UNAVAILABLE"] },
               "realExecutionEnabled": { "const": false }
             }
           }

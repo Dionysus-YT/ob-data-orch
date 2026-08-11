@@ -90,7 +90,8 @@ func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummar
                compatibility_mode, host, port, cluster_name, tenant_name, username,
                COALESCE(default_database, ''), state, revision,
                current_credential_revision, COALESCE(last_test_status, ''),
-		       last_tested_at, COALESCE(last_test_safe_summary_json, ''), COALESCE(last_test_source, ''), updated_at
+               last_tested_at, COALESCE(last_test_safe_summary_json, ''), COALESCE(last_test_source, ''), updated_at,
+               COALESCE(sys_user, ''), COALESCE(sys_credential_id, ''), COALESCE(sys_credential_revision, 0)
         FROM data_sources
         WHERE state != 'ARCHIVED'
         ORDER BY normalized_name ASC
@@ -109,6 +110,7 @@ func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummar
 			&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.ClusterName, &summary.TenantName, &summary.Username,
 			&summary.DefaultDatabase, &summary.State, &summary.Revision, &summary.CredentialRevision,
 			&summary.LastTestStatus, &lastTestedAt, &summary.LastTestSafeSummaryJSON, &summary.LastTestSource, &updatedAt,
+			&summary.SysUser, &summary.SysCredentialID, &summary.SysCredentialRevision,
 		); err != nil {
 			return nil, fmt.Errorf("scan data source summary: %w", err)
 		}
@@ -149,7 +151,8 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
                compatibility_mode, host, port, cluster_name, tenant_name, username,
                COALESCE(default_database, ''), state, revision,
                current_credential_revision, COALESCE(last_test_status, ''),
-		       last_tested_at, COALESCE(last_test_safe_summary_json, ''), COALESCE(last_test_source, ''), updated_at
+               last_tested_at, COALESCE(last_test_safe_summary_json, ''), COALESCE(last_test_source, ''), updated_at,
+               COALESCE(sys_user, ''), COALESCE(sys_credential_id, ''), COALESCE(sys_credential_revision, 0)
         FROM data_sources
         WHERE data_source_id = ? AND state != 'ARCHIVED'
     `, dataSourceID).Scan(
@@ -157,6 +160,7 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
 		&summary.CompatibilityMode, &summary.Host, &summary.Port, &summary.ClusterName, &summary.TenantName, &summary.Username,
 		&summary.DefaultDatabase, &summary.State, &summary.Revision, &summary.CredentialRevision,
 		&summary.LastTestStatus, &lastTestedAt, &summary.LastTestSafeSummaryJSON, &summary.LastTestSource, &updatedAt,
+		&summary.SysUser, &summary.SysCredentialID, &summary.SysCredentialRevision,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DataSourceSummary{}, ErrDataSourceNotFound
@@ -1268,17 +1272,25 @@ func (s *Store) CreateDataSource(ctx context.Context, input DataSourceCreate) (D
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read data source idempotency: %w", err)
 		}
+		var sysCredentialIDValue string
+		var sysCredentialRevisionValue sql.NullInt64
+		if input.SysPassword != nil {
+			sysCredentialIDValue = input.SysPassword.CredentialID
+			sysCredentialRevisionValue = sql.NullInt64{Int64: input.SysPassword.Revision, Valid: true}
+		}
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO data_sources(
                 data_source_id, display_name, normalized_name, environment, connection_kind,
                 compatibility_mode, host, port, cluster_name, tenant_name, username, default_database, credential_id,
                 current_credential_revision, state, revision, last_test_status, last_tested_at,
-                last_test_safe_summary_json, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'DISABLED', 1, NULL, NULL, NULL, ?, ?, ?)
+                last_test_safe_summary_json, created_by, created_at, updated_at,
+                sys_user, sys_credential_id, sys_credential_revision
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'DISABLED', 1, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
 		`, input.DataSourceID, input.DisplayName, input.NormalizedName, input.Environment,
 			input.ConnectionKind, input.CompatibilityMode, input.Host, input.Port, input.ClusterName, input.TenantName, input.Username,
 			nullableString(input.DefaultDatabase), input.CredentialID, input.CreatorSubjectID,
-			utcText(input.CreatedAt), utcText(input.CreatedAt)); err != nil {
+			utcText(input.CreatedAt), utcText(input.CreatedAt),
+			nullableString(input.SysUser), nullableString(sysCredentialIDValue), sysCredentialRevisionValue); err != nil {
 			if isDataSourceNameConstraint(err) {
 				return ErrDataSourceNameUnavailable
 			}
@@ -1291,6 +1303,17 @@ func (s *Store) CreateDataSource(ctx context.Context, input DataSourceCreate) (D
             ) VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
         `, input.CredentialID, input.DataSourceID, input.KeyID, input.Nonce, input.Ciphertext, utcText(input.CreatedAt)); err != nil {
 			return fmt.Errorf("insert encrypted credential revision: %w", err)
+		}
+		// 可选的 sys 凭据（参考 ODC 数据源高级设置）：与数据库密码共用同一加密信封机制，存独立表避免改动历史表约束。
+		if input.SysPassword != nil {
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO sys_credential_revisions(
+                    credential_id, revision, data_source_id, key_id, nonce,
+                    ciphertext, aad_json, status, created_at, retired_at
+                ) VALUES (?, 1, ?, ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
+            `, input.SysPassword.CredentialID, input.DataSourceID, input.SysPassword.KeyID, input.SysPassword.Nonce, input.SysPassword.Ciphertext, utcText(input.CreatedAt)); err != nil {
+				return fmt.Errorf("insert encrypted sys credential revision: %w", err)
+			}
 		}
 		if err := insertAudit(ctx, tx, "SUBJECT", input.CreatorSubjectID, "DATA_SOURCE_CREATED", "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
 			return err
@@ -1470,6 +1493,10 @@ func (s *Store) DeleteOrArchiveDataSource(ctx context.Context, input DataSourceD
 		if _, err := tx.ExecContext(ctx, `DELETE FROM credential_revisions WHERE data_source_id = ?`, input.DataSourceID); err != nil {
 			return fmt.Errorf("delete data source credentials: %w", err)
 		}
+		// 可选的 sys 凭据修订随数据源物理删除一并清理。
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sys_credential_revisions WHERE data_source_id = ?`, input.DataSourceID); err != nil {
+			return fmt.Errorf("delete data source sys credentials: %w", err)
+		}
 		deleted, err := tx.ExecContext(ctx, `DELETE FROM data_sources WHERE data_source_id = ? AND revision = ?`, input.DataSourceID, currentRevision)
 		if err != nil {
 			return fmt.Errorf("delete data source: %w", err)
@@ -1521,16 +1548,19 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
 	result := DataSourceUpdateResult{}
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var credentialID, currentConnectionKind, currentCompatibilityMode, currentHost, currentClusterName, currentTenantName, currentUsername, currentDefaultDatabase string
-		var credentialRevision int64
+		var credentialRevision, currentSysCredentialRevision int64
+		var currentSysUser, currentSysCredentialID string
 		var currentPort int
 		err := tx.QueryRowContext(ctx, `
             SELECT credential_id, current_credential_revision, connection_kind, compatibility_mode,
-                   host, port, cluster_name, tenant_name, username, COALESCE(default_database, '')
+                   host, port, cluster_name, tenant_name, username, COALESCE(default_database, ''),
+                   COALESCE(sys_user, ''), COALESCE(sys_credential_id, ''), COALESCE(sys_credential_revision, 0)
             FROM data_sources
             WHERE data_source_id = ? AND state != 'ARCHIVED' AND revision = ?
 		`, input.DataSourceID, input.ExpectedRevision).Scan(
 			&credentialID, &credentialRevision, &currentConnectionKind, &currentCompatibilityMode,
 			&currentHost, &currentPort, &currentClusterName, &currentTenantName, &currentUsername, &currentDefaultDatabase,
+			&currentSysUser, &currentSysCredentialID, &currentSysCredentialRevision,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
 			var exists int
@@ -1544,7 +1574,10 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
 		if err != nil {
 			return fmt.Errorf("read data source update target: %w", err)
 		}
-		connectionTestInvalidated := input.Password != nil || input.ConnectionKind != currentConnectionKind || input.CompatibilityMode != currentCompatibilityMode || input.Host != currentHost || input.Port != currentPort || input.ClusterName != currentClusterName || input.TenantName != currentTenantName || input.Username != currentUsername
+		if input.SysPassword == nil && !input.ClearSysCredential && input.SysUser != currentSysUser {
+			return errors.New("data source sys user cannot change without credential rotation")
+		}
+		connectionTestInvalidated := input.Password != nil || input.SysPassword != nil || input.ClearSysCredential || input.SysUser != currentSysUser || input.ConnectionKind != currentConnectionKind || input.CompatibilityMode != currentCompatibilityMode || input.Host != currentHost || input.Port != currentPort || input.ClusterName != currentClusterName || input.TenantName != currentTenantName || input.Username != currentUsername
 		newCredentialRevision := credentialRevision
 		if input.Password != nil {
 			if input.Password.CredentialID != credentialID || input.Password.Revision != credentialRevision+1 {
@@ -1576,11 +1609,49 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
 			}
 			newCredentialRevision = input.Password.Revision
 		}
+		// 可选的 sys 凭据（参考 ODC 数据源高级设置）：轮换/设置时写入 SYS_PASSWORD 修订，清除时标记 REVOKED。
+		newSysCredentialID, newSysCredentialRevision := currentSysCredentialID, currentSysCredentialRevision
+		if input.SysPassword != nil {
+			expectedSysRevision := currentSysCredentialRevision + 1
+			if input.SysPassword.CredentialID == "" || input.SysPassword.Revision != expectedSysRevision {
+				return errors.New("data source sys credential revision does not match current credential")
+			}
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO sys_credential_revisions(
+                    credential_id, revision, data_source_id, key_id, nonce,
+                    ciphertext, aad_json, status, created_at, retired_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
+            `, input.SysPassword.CredentialID, input.SysPassword.Revision, input.DataSourceID,
+				input.SysPassword.KeyID, input.SysPassword.Nonce, input.SysPassword.Ciphertext, utcText(input.UpdatedAt)); err != nil {
+				return fmt.Errorf("insert rotated encrypted sys credential: %w", err)
+			}
+			if currentSysCredentialRevision > 0 {
+				if _, err := tx.ExecContext(ctx, `
+                UPDATE sys_credential_revisions
+                SET status = 'SUPERSEDED', retired_at = ?
+                WHERE credential_id = ? AND data_source_id = ? AND revision = ? AND status = 'ACTIVE'
+                `, utcText(input.UpdatedAt), currentSysCredentialID, input.DataSourceID, currentSysCredentialRevision); err != nil {
+					return fmt.Errorf("retire prior sys credential revision: %w", err)
+				}
+			}
+			newSysCredentialID, newSysCredentialRevision = input.SysPassword.CredentialID, input.SysPassword.Revision
+		}
+		if input.ClearSysCredential {
+			if _, err := tx.ExecContext(ctx, `
+                UPDATE sys_credential_revisions
+                SET status = 'REVOKED', retired_at = ?
+                WHERE data_source_id = ? AND status = 'ACTIVE'
+            `, utcText(input.UpdatedAt), input.DataSourceID); err != nil {
+				return fmt.Errorf("revoke sys credential revision: %w", err)
+			}
+			newSysCredentialID, newSysCredentialRevision = "", 0
+		}
 		if _, err := tx.ExecContext(ctx, `
             UPDATE data_sources
             SET display_name = ?, normalized_name = ?, environment = ?, connection_kind = ?,
                 compatibility_mode = ?, host = ?, port = ?, cluster_name = ?, tenant_name = ?, username = ?, default_database = ?,
                 current_credential_revision = ?,
+                sys_user = ?, sys_credential_id = ?, sys_credential_revision = ?,
                 state = CASE WHEN ? THEN 'DISABLED' ELSE state END,
                 revision = revision + 1,
 				last_test_status = CASE WHEN ? THEN NULL ELSE last_test_status END,
@@ -1591,7 +1662,9 @@ func (s *Store) UpdateDataSource(ctx context.Context, input DataSourceUpdate) (D
             WHERE data_source_id = ? AND revision = ?
 		`, input.DisplayName, input.NormalizedName, input.Environment, input.ConnectionKind,
 			input.CompatibilityMode, input.Host, input.Port, input.ClusterName, input.TenantName, input.Username, nullableString(input.DefaultDatabase),
-			newCredentialRevision, connectionTestInvalidated, connectionTestInvalidated, connectionTestInvalidated, connectionTestInvalidated, connectionTestInvalidated,
+			newCredentialRevision,
+			nullableString(input.SysUser), nullableString(newSysCredentialID), sysCredentialRevisionValue(newSysCredentialRevision),
+			connectionTestInvalidated, connectionTestInvalidated, connectionTestInvalidated, connectionTestInvalidated, connectionTestInvalidated,
 			utcText(input.UpdatedAt), input.DataSourceID, input.ExpectedRevision); err != nil {
 			if isDataSourceNameConstraint(err) {
 				return ErrDataSourceNameUnavailable
@@ -4858,6 +4931,16 @@ func validateDataSourceCreate(input DataSourceCreate) error {
 	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE") || (input.CompatibilityMode == "ORACLE" && input.DefaultDatabase != "") {
 		return errors.New("data source create enum is invalid")
 	}
+	// 可选的 sys 凭据必须成对：账号与密码信封要么同时提供，要么同时为空（参考 ODC 数据源高级设置）。
+	if (input.SysUser == "") != (input.SysPassword == nil) {
+		return errors.New("data source create sys credential must be provided as a pair")
+	}
+	if input.SysUser != "" && !validPrivateODPIdentityPart(input.SysUser) {
+		return errors.New("data source create sys user is invalid")
+	}
+	if input.SysPassword != nil && (input.SysPassword.CredentialID == "" || input.SysPassword.Revision < 1 || input.SysPassword.KeyID == "" || len(input.SysPassword.Nonce) == 0 || len(input.SysPassword.Ciphertext) == 0) {
+		return errors.New("data source create sys credential material is invalid")
+	}
 	return nil
 }
 
@@ -5111,6 +5194,22 @@ func validateDataSourceUpdate(input DataSourceUpdate) error {
 	if input.Password != nil && (input.Password.CredentialID == "" || input.Password.Revision < 2 || input.Password.KeyID == "" || len(input.Password.Nonce) == 0 || len(input.Password.Ciphertext) == 0) {
 		return errors.New("data source rotated credential is invalid")
 	}
+	// sys 凭据更新语义：清除时不得同时携带轮换信封；轮换时信封材料必须完整。
+	if input.ClearSysCredential && input.SysPassword != nil {
+		return errors.New("data source sys credential cannot be cleared and rotated at once")
+	}
+	if input.ClearSysCredential && input.SysUser != "" {
+		return errors.New("data source sys user must be empty when clearing credential")
+	}
+	if input.SysUser != "" && !validPrivateODPIdentityPart(input.SysUser) {
+		return errors.New("data source sys user is invalid")
+	}
+	if input.SysPassword != nil && input.SysUser == "" {
+		return errors.New("data source sys credential must include a user")
+	}
+	if input.SysPassword != nil && (input.SysPassword.CredentialID == "" || input.SysPassword.Revision < 1 || input.SysPassword.KeyID == "" || len(input.SysPassword.Nonce) == 0 || len(input.SysPassword.Ciphertext) == 0) {
+		return errors.New("data source sys credential material is invalid")
+	}
 	return nil
 }
 
@@ -5280,6 +5379,14 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+// sysCredentialRevisionValue 把 sys 凭据修订映射为可空整数（0 表示未配置）。
+func sysCredentialRevisionValue(revision int64) sql.NullInt64 {
+	if revision < 1 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: revision, Valid: true}
 }
 
 func validateTaskSubmission(input TaskSubmission) error {

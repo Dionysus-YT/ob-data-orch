@@ -21,6 +21,8 @@ type DataSourceConnectionTestClaimNext struct {
 
 // DataSourceConnectionTestBinding 是控制面签发的基础连接测试不可变安全绑定。
 // 它只包含校验租约所需的非敏感摘要与版本，不能表达 JDBC URL、用户名、密码或自由文本结果。
+// SysCredentialID/SysCredentialRevision 是可选的 sys 凭据引用（--sys-user/--sys-password），
+// 大于 0 表示本次测试需要额外验证 sys 租户连接。
 type DataSourceConnectionTestBinding struct {
 	ConnectionTestID       string
 	DataSourceID           string
@@ -28,6 +30,8 @@ type DataSourceConnectionTestBinding struct {
 	CredentialRevision     int64
 	NodeID                 string
 	NodeFactsRevision      int64
+	SysCredentialID        string
+	SysCredentialRevision  int64
 }
 
 // DataSourceConnectionTestVerificationSource 区分 G2 合成闭环与节点本地 JDBC 探针。
@@ -40,6 +44,16 @@ const (
 	// DataSourceConnectionTestAgentJDBC 表示固定 JDBC 探针产生的节点本地连接结果。
 	DataSourceConnectionTestAgentJDBC DataSourceConnectionTestVerificationSource = "AGENT_JDBC"
 )
+
+// DataSourceConnectionTestSecretSlot 是控制面允许 Agent 解析的基础连接测试秘密槽位类型。
+// SYS_CONNECTION 只在数据源配置了可选 sys 凭据（--sys-user/--sys-password）且绑定冻结了 sys 引用时可用。
+const (
+	DataSourceConnectionTestDatabaseSlot DataSourceConnectionTestSecretSlot = "DATABASE_CONNECTION"
+	DataSourceConnectionTestSysSlot      DataSourceConnectionTestSecretSlot = "SYS_CONNECTION"
+)
+
+// DataSourceConnectionTestSecretSlot 标识基础连接测试可解析的短时秘密槽位。
+type DataSourceConnectionTestSecretSlot string
 
 // DataSourceConnectionTestGrant 是控制面签发给当前已认证 Agent 的短租约。
 // BindingDigest、租约 epoch 和 VerificationSource 必须在确认、槽位解析与完成时保持一致。
@@ -110,17 +124,32 @@ const (
 
 // DataSourceConnectionTestCompletion 是 Agent 回写当前租约的固定无秘密结果。
 // EvidenceCode 与 VerificationSource 受枚举约束，禁止上传 JDBC 异常、URL、用户名或其他自由文本。
+// SysVerificationStatus/SysEvidenceCode 只表达可选的 sys 凭据验证事实，与数据库结果相互独立。
 type DataSourceConnectionTestCompletion struct {
-	BootID             string
-	ConnectionTestID   string
-	LeaseID            string
-	LeaseEpoch         int64
-	BindingDigest      string
-	Status             DataSourceConnectionTestStatus
-	EvidenceCode       string
-	VerificationSource DataSourceConnectionTestVerificationSource
-	SentAt             time.Time
+	BootID                string
+	ConnectionTestID      string
+	LeaseID               string
+	LeaseEpoch            int64
+	BindingDigest         string
+	Status                DataSourceConnectionTestStatus
+	EvidenceCode          string
+	VerificationSource    DataSourceConnectionTestVerificationSource
+	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus
+	SysEvidenceCode       string
+	SentAt                time.Time
 }
+
+// DataSourceConnectionTestSysVerificationStatus 是可选 sys 凭据验证的受控终态。
+// NOT_CONFIGURED 表示数据源未配置 sys 凭据；SUCCEEDED 表示 sys 租户认证成功；
+// FAILED 表示已确认无法连接；UNKNOWN 表示事实不可用，不能被解释为成功或失败。
+type DataSourceConnectionTestSysVerificationStatus string
+
+const (
+	DataSourceConnectionTestSysNotConfigured DataSourceConnectionTestSysVerificationStatus = "NOT_CONFIGURED"
+	DataSourceConnectionTestSysSucceeded     DataSourceConnectionTestSysVerificationStatus = "SUCCEEDED"
+	DataSourceConnectionTestSysFailed        DataSourceConnectionTestSysVerificationStatus = "FAILED"
+	DataSourceConnectionTestSysUnknown       DataSourceConnectionTestSysVerificationStatus = "UNKNOWN"
+)
 
 type dataSourceConnectionTestEnvelope struct {
 	ProtocolVersion string `json:"protocolVersion"`
@@ -170,11 +199,13 @@ type dataSourceConnectionTestCompletionRequest struct {
 }
 
 type dataSourceConnectionTestCompletionPayload struct {
-	LeaseID       string                         `json:"leaseId"`
-	LeaseEpoch    int64                          `json:"leaseEpoch"`
-	BindingDigest string                         `json:"bindingDigest"`
-	Status        DataSourceConnectionTestStatus `json:"status"`
-	EvidenceCode  string                         `json:"evidenceCode"`
+	LeaseID               string                                        `json:"leaseId"`
+	LeaseEpoch            int64                                         `json:"leaseEpoch"`
+	BindingDigest         string                                        `json:"bindingDigest"`
+	Status                DataSourceConnectionTestStatus                `json:"status"`
+	EvidenceCode          string                                        `json:"evidenceCode"`
+	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus `json:"sysVerificationStatus"`
+	SysEvidenceCode       string                                        `json:"sysEvidenceCode"`
 }
 
 type dataSourceConnectionTestBindingPayload struct {
@@ -184,6 +215,8 @@ type dataSourceConnectionTestBindingPayload struct {
 	CredentialRevision     int64  `json:"credentialRevision"`
 	NodeID                 string `json:"nodeId"`
 	NodeFactsRevision      int64  `json:"nodeFactsRevision"`
+	SysCredentialID        string `json:"sysCredentialId,omitempty"`
+	SysCredentialRevision  int64  `json:"sysCredentialRevision,omitempty"`
 }
 
 type dataSourceConnectionTestClaimResponsePayload struct {
@@ -218,10 +251,12 @@ type dataSourceConnectionTestSecretSlotResponsePayload struct {
 }
 
 type dataSourceConnectionTestCompletionResponsePayload struct {
-	Status               DataSourceConnectionTestStatus             `json:"status"`
-	EvidenceCode         string                                     `json:"evidenceCode"`
-	VerificationSource   DataSourceConnectionTestVerificationSource `json:"verificationSource"`
-	RealExecutionEnabled *bool                                      `json:"realExecutionEnabled"`
+	Status                DataSourceConnectionTestStatus                `json:"status"`
+	EvidenceCode          string                                        `json:"evidenceCode"`
+	VerificationSource    DataSourceConnectionTestVerificationSource    `json:"verificationSource"`
+	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus `json:"sysVerificationStatus"`
+	SysEvidenceCode       string                                        `json:"sysEvidenceCode"`
+	RealExecutionEnabled  *bool                                         `json:"realExecutionEnabled"`
 }
 
 // ClaimNextDataSourceConnectionTest 以已关联的受保护机器身份原子领取下一条基础连接测试。
@@ -306,6 +341,35 @@ func (s *StateStore) ResolveDataSourceConnectionTestDatabaseConnection(ctx conte
 		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrIdentityUnavailable
 	}
 	return client.resolveDataSourceConnectionTestDatabaseConnection(ctx, &state, requestID, input)
+}
+
+// ResolveDataSourceConnectionTestSysConnection 在已确认的当前租约中解析可选的 sys 凭据槽位。
+// 响应中的用户名和密码只留在调用方内存；StateStore 不缓存、不持久化也不记录它们。
+// 数据源未配置 sys 凭据时返回 ErrProtocolRejected（Agent 不得在绑定未冻结 sys 引用时请求）。
+func (s *StateStore) ResolveDataSourceConnectionTestSysConnection(ctx context.Context, input DataSourceConnectionTestSecretSlotRequest) (DataSourceConnectionTestDatabaseConnectionSlot, error) {
+	state, found, err := s.loadState()
+	if err != nil {
+		return DataSourceConnectionTestDatabaseConnectionSlot{}, err
+	}
+	if !found {
+		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrIdentityUnavailable
+	}
+	defer state.destroy()
+	if state.pendingEnrollment() {
+		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrEnrollmentPending
+	}
+	if !validDataSourceConnectionTestSecretSlotRequest(input) {
+		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrProtocolRejected
+	}
+	client, err := newHTTPSClient(state.ControlPlaneURL, state.CAFile)
+	if err != nil {
+		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrIdentityUnavailable
+	}
+	requestID, err := newOpaqueID()
+	if err != nil {
+		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrIdentityUnavailable
+	}
+	return client.resolveDataSourceConnectionTestSecretSlot(ctx, &state, requestID, input, DataSourceConnectionTestSysSlot)
 }
 
 // CompleteDataSourceConnectionTest 回写当前基础连接测试租约的固定无秘密终态。
@@ -422,6 +486,10 @@ func (c *httpsClient) acknowledgeDataSourceConnectionTestLease(ctx context.Conte
 }
 
 func (c *httpsClient) resolveDataSourceConnectionTestDatabaseConnection(ctx context.Context, state *identityState, requestID string, input DataSourceConnectionTestSecretSlotRequest) (DataSourceConnectionTestDatabaseConnectionSlot, error) {
+	return c.resolveDataSourceConnectionTestSecretSlot(ctx, state, requestID, input, DataSourceConnectionTestDatabaseSlot)
+}
+
+func (c *httpsClient) resolveDataSourceConnectionTestSecretSlot(ctx context.Context, state *identityState, requestID string, input DataSourceConnectionTestSecretSlotRequest, slot DataSourceConnectionTestSecretSlot) (DataSourceConnectionTestDatabaseConnectionSlot, error) {
 	request := dataSourceConnectionTestSecretSlotRequest{
 		dataSourceConnectionTestEnvelope: dataSourceConnectionTestEnvelope{
 			ProtocolVersion: state.ProtocolVersion, AgentID: state.AgentID, NodeID: state.NodeID,
@@ -429,7 +497,7 @@ func (c *httpsClient) resolveDataSourceConnectionTestDatabaseConnection(ctx cont
 			PayloadType: "DATA_SOURCE_CONNECTION_TEST_RESOLVE_SECRET_SLOTS",
 		},
 		Payload: dataSourceConnectionTestSecretSlotPayload{
-			LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch, BindingDigest: input.BindingDigest, Slot: "DATABASE_CONNECTION",
+			LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch, BindingDigest: input.BindingDigest, Slot: string(slot),
 		},
 	}
 	requestBody, err := json.Marshal(request)
@@ -453,20 +521,20 @@ func (c *httpsClient) resolveDataSourceConnectionTestDatabaseConnection(ctx cont
 	var payload dataSourceConnectionTestSecretSlotResponsePayload
 	if err := decodeStrictJSON(envelope.Payload, &payload); err != nil || payload.AgentRequestID != requestID ||
 		payload.ConnectionTestID != input.ConnectionTestID || payload.LeaseID != input.LeaseID || payload.LeaseEpoch != input.LeaseEpoch ||
-		payload.BindingDigest != input.BindingDigest || payload.Slot != "DATABASE_CONNECTION" || payload.RealExecutionEnabled == nil || *payload.RealExecutionEnabled {
+		payload.BindingDigest != input.BindingDigest || payload.Slot != string(slot) || payload.RealExecutionEnabled == nil || *payload.RealExecutionEnabled {
 		payload.destroy()
 		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrProtocolRejected
 	}
-	slot := DataSourceConnectionTestDatabaseConnectionSlot{
+	connection := DataSourceConnectionTestDatabaseConnectionSlot{
 		Host: payload.Connection.Host, Port: payload.Connection.Port, Username: payload.Connection.Username, Password: payload.Connection.Password,
 	}
 	payload.Connection.Username = nil
 	payload.Connection.Password = nil
-	if !validDataSourceConnectionTestDatabaseConnectionSlot(slot) {
-		slot.Destroy()
+	if !validDataSourceConnectionTestDatabaseConnectionSlot(connection) {
+		connection.Destroy()
 		return DataSourceConnectionTestDatabaseConnectionSlot{}, ErrProtocolRejected
 	}
-	return slot, nil
+	return connection, nil
 }
 
 func (c *httpsClient) completeDataSourceConnectionTest(ctx context.Context, state *identityState, requestID string, input DataSourceConnectionTestCompletion) (DataSourceConnectionTestStatus, error) {
@@ -479,6 +547,7 @@ func (c *httpsClient) completeDataSourceConnectionTest(ctx context.Context, stat
 		Payload: dataSourceConnectionTestCompletionPayload{
 			LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch, BindingDigest: input.BindingDigest,
 			Status: input.Status, EvidenceCode: input.EvidenceCode,
+			SysVerificationStatus: input.SysVerificationStatus, SysEvidenceCode: input.SysEvidenceCode,
 		},
 	}
 	requestBody, err := json.Marshal(request)
@@ -502,6 +571,7 @@ func (c *httpsClient) completeDataSourceConnectionTest(ctx context.Context, stat
 	var payload dataSourceConnectionTestCompletionResponsePayload
 	if err := decodeStrictJSON(envelope.Payload, &payload); err != nil || payload.RealExecutionEnabled == nil || *payload.RealExecutionEnabled ||
 		payload.Status != input.Status || payload.EvidenceCode != input.EvidenceCode || payload.VerificationSource != input.VerificationSource ||
+		payload.SysVerificationStatus != input.SysVerificationStatus || payload.SysEvidenceCode != input.SysEvidenceCode ||
 		!validDataSourceConnectionTestOutcome(payload.VerificationSource, payload.Status, payload.EvidenceCode) {
 		return "", ErrProtocolRejected
 	}
@@ -512,6 +582,7 @@ func (p dataSourceConnectionTestBindingPayload) toBinding() DataSourceConnection
 	return DataSourceConnectionTestBinding{
 		ConnectionTestID: p.ConnectionTestID, DataSourceID: p.DataSourceID, ConnectionConfigDigest: p.ConnectionConfigDigest,
 		CredentialRevision: p.CredentialRevision, NodeID: p.NodeID, NodeFactsRevision: p.NodeFactsRevision,
+		SysCredentialID: p.SysCredentialID, SysCredentialRevision: p.SysCredentialRevision,
 	}
 }
 
@@ -542,7 +613,31 @@ func validDataSourceConnectionTestSecretSlotRequest(input DataSourceConnectionTe
 func validDataSourceConnectionTestCompletion(input DataSourceConnectionTestCompletion) bool {
 	return validOpaqueValue(input.BootID, 256) && validDataSourceConnectionTestPathID(input.ConnectionTestID) &&
 		validOpaqueValue(input.LeaseID, 256) && input.LeaseEpoch > 0 && validDataSourceConnectionTestDigest(input.BindingDigest) &&
-		!input.SentAt.IsZero() && validDataSourceConnectionTestOutcome(input.VerificationSource, input.Status, input.EvidenceCode)
+		!input.SentAt.IsZero() && validDataSourceConnectionTestOutcome(input.VerificationSource, input.Status, input.EvidenceCode) &&
+		validDataSourceConnectionTestSysOutcomeWithSource(input.VerificationSource, input.SysVerificationStatus, input.SysEvidenceCode)
+}
+
+// validDataSourceConnectionTestSysOutcomeWithSource 在来源维度上校验 sys 验证结果（G2 必须 NOT_CONFIGURED）。
+func validDataSourceConnectionTestSysOutcomeWithSource(source DataSourceConnectionTestVerificationSource, status DataSourceConnectionTestSysVerificationStatus, evidenceCode string) bool {
+	if source == DataSourceConnectionTestG2Synthetic {
+		return status == DataSourceConnectionTestSysNotConfigured && evidenceCode == ""
+	}
+	if source != DataSourceConnectionTestAgentJDBC {
+		return false
+	}
+	return ValidDataSourceConnectionTestSysOutcome(status, evidenceCode)
+}
+
+// ValidDataSourceConnectionTestSysOutcome 校验可选的 sys 凭据验证结果只使用受控枚举与证据码。
+func ValidDataSourceConnectionTestSysOutcome(status DataSourceConnectionTestSysVerificationStatus, evidenceCode string) bool {
+	return (status == DataSourceConnectionTestSysNotConfigured && evidenceCode == "") ||
+		(status == DataSourceConnectionTestSysSucceeded && evidenceCode == "SYS_CONNECTED") ||
+		(status == DataSourceConnectionTestSysFailed && evidenceCode == "SYS_HOST_UNRESOLVABLE") ||
+		(status == DataSourceConnectionTestSysFailed && evidenceCode == "SYS_TCP_REFUSED") ||
+		(status == DataSourceConnectionTestSysFailed && evidenceCode == "SYS_TCP_TIMEOUT") ||
+		(status == DataSourceConnectionTestSysFailed && evidenceCode == "SYS_TCP_UNREACHABLE") ||
+		(status == DataSourceConnectionTestSysFailed && evidenceCode == "SYS_CONNECTION_FAILED") ||
+		(status == DataSourceConnectionTestSysUnknown && evidenceCode == "SYS_CONNECTION_UNAVAILABLE")
 }
 
 func validDataSourceConnectionTestGrant(grant DataSourceConnectionTestGrant, nodeID string) bool {

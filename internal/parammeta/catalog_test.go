@@ -114,9 +114,9 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 		t.Fatalf("unexpected generalized catalog identity: %s / %s / %s", catalog.MetadataVersion(), catalog.BaseVersion(), catalog.CapabilityVersion())
 	}
 	definitions := catalog.Definitions()
-	// EX-I4 POS 定版新增 --pos/--ctl-path/--column-splitter（43→46）；EX-I5 新增 --par/--orc/--avro（46→49）；EX-I6 新增 --tmp-path（49→50）。
-	if len(definitions) != 50 {
-		t.Fatalf("generalized definition count = %d, want 50", len(definitions))
+	// EX-I4 POS 定版新增 --pos/--ctl-path/--column-splitter（43→46）；EX-I5 新增 --par/--orc/--avro（46→49）；EX-I6 新增 --tmp-path（49→50）；EX-I7 新增 --drop-object/--retain-schema（50→52）、--block-size（52→53）与 --compression-level（53→54）。
+	if len(definitions) != 54 {
+		t.Fatalf("generalized definition count = %d, want 54", len(definitions))
 	}
 	if got := catalog.CategoryOrder(); len(got) != 9 || got[7] != "PERFORMANCE" || got[8] != "COMPRESSION" {
 		t.Fatalf("unexpected generalized category order: %#v", got)
@@ -213,9 +213,9 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 	if query, ok := catalog.Definition("--query-sql"); !ok || query.RiskLevel != "HIGH" || len(query.ConflictsWith) != 2 {
 		t.Fatalf("query sql metadata: %#v", query)
 	}
-	// 日期时间与压缩等级保持 gated：v6 已取证子集不得包含它们。
-	if _, ok := catalog.Definition("--compression-level"); ok {
-		t.Fatalf("compression level must stay gated")
+	// EX-I7 压缩等级（2026-08-10）：--compression-level 已接入（官方按算法分范围），依赖压缩与算法；日期时间值格式保持 gated。
+	if level, ok := catalog.Definition("--compression-level"); !ok || level.SupportState != "ENABLED" || len(level.DependsOn) != 2 || level.DependsOn[0] != "--compress" || level.DependsOn[1] != "--compression-algo" {
+		t.Fatalf("compression level metadata: %#v", level)
 	}
 	if _, ok := catalog.Definition("--date-value-format"); ok {
 		t.Fatalf("date value format must stay gated")

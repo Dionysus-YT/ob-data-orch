@@ -43,7 +43,7 @@
 | EX-F003 | 默认数据库 / Schema | `--database` | 始终显示、必填 | 数据源默认值可回填，任务可覆盖 | 对象、权限和命令检查失效 | ENABLED |
 | EX-F004 | 兼容模式 | 数据源属性 | 只读 | 自动识别或"待校验" | 重新判定 Oracle/MySQL 专属字段 | ENABLED |
 | EX-F005 | 连接环境 | `--public-cloud`、`--no-sys`、`--logical-database` | 仅适用环境只读显示 | 数据源类型与安全配置派生 | 对象、sys 权限和风险检查失效 | ENABLED |
-| EX-F006 | sys 凭据状态 | `--sys-user`、`--sys-password` | 只显示可用/不可用/不需要 | 安全配置派生 | DDL 与元数据预检查失效 | ENABLED |
+| EX-F006 | sys 凭据状态 | `--sys-user`、`--sys-password` | 只显示可用/不可用/不需要 | 安全配置派生 | DDL 与元数据预检查失效 | ENABLED（2026-08-10 数据源可选字段已实现：sys 账号/密码成对可选，密码走加密信封，摘要只下发 AVAILABLE/UNAVAILABLE） |
 | EX-F007 | 连接字符集 | `--character-set` | 专家配置 | 未设置继承会话配置 | 编码检查和命令失效 | VALIDATION_GATED |
 | EX-F008 | 会话配置 | `--session-config` | 节点配置只读摘要 | 执行节点派生 | 更换节点后重新派生 | ENABLED |
 

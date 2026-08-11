@@ -138,7 +138,8 @@ func Test基础连接测试确认和完成使用固定载荷(t *testing.T) {
 			completions = append(completions, completion)
 			mutex.Unlock()
 			writeProtocolResponse(t, writer, "DATA_SOURCE_CONNECTION_TEST_COMPLETED", map[string]any{
-				"status": "SUCCEEDED", "evidenceCode": "SYNTHETIC_OK", "verificationSource": "G2_SYNTHETIC", "realExecutionEnabled": false,
+				"status": "SUCCEEDED", "evidenceCode": "SYNTHETIC_OK", "verificationSource": "G2_SYNTHETIC",
+				"sysVerificationStatus": "NOT_CONFIGURED", "sysEvidenceCode": "", "realExecutionEnabled": false,
 			})
 		default:
 			t.Fatalf("意外 Agent 请求路径: %s", request.URL.Path)
@@ -159,7 +160,8 @@ func Test基础连接测试确认和完成使用固定载荷(t *testing.T) {
 	}
 	state, err := store.CompleteDataSourceConnectionTest(context.Background(), DataSourceConnectionTestCompletion{
 		BootID: "boot-1", ConnectionTestID: "connection-test-1", LeaseID: "lease-1", LeaseEpoch: 1, BindingDigest: connectionTestBindingDigest,
-		Status: DataSourceConnectionTestSucceeded, EvidenceCode: "SYNTHETIC_OK", VerificationSource: DataSourceConnectionTestG2Synthetic, SentAt: now,
+		Status: DataSourceConnectionTestSucceeded, EvidenceCode: "SYNTHETIC_OK", VerificationSource: DataSourceConnectionTestG2Synthetic,
+		SysVerificationStatus: DataSourceConnectionTestSysNotConfigured, SentAt: now,
 	})
 	if err != nil || state != DataSourceConnectionTestSucceeded {
 		t.Fatalf("CompleteDataSourceConnectionTest() = %q, %v", state, err)

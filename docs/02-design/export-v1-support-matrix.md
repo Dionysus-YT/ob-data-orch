@@ -110,7 +110,7 @@
 |---|---|---|---|---|---|
 | `--compress` | NORMAL | LOW | VERIFIED | ENABLED | 启用压缩 |
 | `--compression-algo` | NORMAL | LOW | VERIFIED | ENABLED | 压缩算法（zstd/zlib/gzip/snappy） |
-| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 压缩等级，随算法变化 |
+| `--compression-level` | NORMAL | LOW | OFFICIAL_ONLY | ENABLED（2026-08-10 接入） | 压缩等级，随算法分范围（zstd 1~22、zlib -1~9；gzip/snappy 不支持） |
 
 ### 2.9 基础选项 · 功能选项 · 数据库对象类型（16 个）
 
@@ -202,7 +202,7 @@
 | `--page-size` | NORMAL | LOW | VERIFIED | ENABLED | 分页大小 |
 | `--parallel-macro` | NORMAL | LOW | VERIFIED | ENABLED | 每线程宏块数 |
 | `--mem` | NORMAL | MEDIUM | VERIFIED | ENABLED | JVM 内存（节点资源风险） |
-| `--block-size` | NORMAL | LOW | CONFLICT_PENDING（默认值残余；显式传值已实测 MB/ROW 生效） | VALIDATION_GATED（待产品接入） | 默认值官网冲突（0 vs 1024MB）保留 |
+| `--block-size` | NORMAL | LOW | CONFLICT_PENDING（默认值残余；显式传值已实测 MB/ROW 生效） | ENABLED（2026-08-10 接入） | 默认值官网冲突保留；结构化格式不适用 |
 
 ### 2.16 高级选项 · 其他选项（2 个）
 
@@ -215,8 +215,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 60 | 55.0% |
-| VALIDATION_GATED | 35 | 32.1% |
+| ENABLED | 62 | 56.9% |
+| VALIDATION_GATED | 33 | 30.3% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |
@@ -234,7 +234,7 @@
 | EX-F003 | 默认数据库/Schema | ENABLED | 当前已实现 |
 | EX-F004 | 兼容模式 | ENABLED | 数据源属性只读派生 |
 | EX-F005 | 连接环境 | ENABLED | 数据源类型派生只读 |
-| EX-F006 | sys 凭据状态 | ENABLED | 安全配置派生，显示可用/不可用/不需要 |
+| EX-F006 | sys 凭据状态 | ENABLED | 数据源可选字段（2026-08-10 实现）：账号/密码成对可选，密码加密信封存储，摘要派生可用/不可用 |
 | EX-F007 | 连接字符集 | VALIDATION_GATED | 专家配置，字符集影响待验证 |
 | EX-F008 | 会话配置 | ENABLED | 节点只读派生 |
 
@@ -274,7 +274,7 @@
 | EX-F028 | 扁平目录 | ENABLED | --no-nested-dir |
 | EX-F029 | 控制文件目录 | ENABLED（待产品接入） | 仅 POS 显示；用户提供 / 自动生成双来源（2026-08-07 确认） |
 | EX-F030 | 对象存储临时目录 | VALIDATION_GATED | 空间预检查待验证 |
-| EX-F031 | 文件拆分 | VALIDATION_GATED（待产品接入） | --block-size 显式传值已实测 MB/ROW 生效；默认值冲突保留 |
+| EX-F031 | 文件拆分 | ENABLED（2026-08-10 接入） | --block-size 显式传值已实测 MB/ROW 生效；默认值冲突保留；结构化格式不适用 |
 | EX-F032 | 导出总量上限 | ENABLED | --max-file-size |
 | EX-F033 | 空结果文件 | ENABLED | --retain-empty-files |
 | EX-F034 | 跳过目录空性检查 | ENABLED | --skip-check-dir |
@@ -285,7 +285,7 @@
 | EX-F039 | JVM 内存 | ENABLED | --mem，展示节点资源风险 |
 | EX-F040 | 启用压缩 | ENABLED | --compress |
 | EX-F041 | 压缩算法 | ENABLED | --compression-algo |
-| EX-F042 | 压缩等级 | VALIDATION_GATED | --compression-level，随算法变化 |
+| EX-F042 | 压缩等级 | ENABLED（2026-08-10 接入） | --compression-level，按算法分范围；gzip/snappy 不支持 |
 
 ### 3.5 格式序列化（EX-F043~F054；基础选项 · 功能选项 · 文件格式）
 
@@ -323,9 +323,9 @@
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
-| EX-F065 | 前置 DROP | ENABLED | 高风险+二次确认 |
-| EX-F066 | 附加对象信息 | ENABLED | 依赖 sys 权限 |
-| EX-F067 | 保留 Schema | ENABLED | --retain-schema |
+| EX-F065 | 前置 DROP | ENABLED | 已接入（2026-08-10），高风险提示；仅 DDL 内容时随 ddl/ddl-csv 能力发射 |
+| EX-F066 | 附加对象信息 | ENABLED | 依赖 sys 凭据可用性，待接入 |
+| EX-F067 | 保留 Schema | ENABLED | 已接入（2026-08-10），--retain-schema；仅 DDL 内容时发射 |
 | EX-F068 | 紧凑 Schema | VALIDATION_GATED | 4.3.5 约束不完整 |
 | EX-F069 | 序列策略 | VALIDATION_GATED | 4.3.5 约束待确认 |
 

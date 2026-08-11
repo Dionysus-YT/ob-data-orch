@@ -11,6 +11,8 @@ const dataSourceFormFields = [
   'username',
   'defaultDatabase',
   'password',
+  'sysUser',
+  'sysPassword',
 ] as const
 
 export type DataSourceFormField = typeof dataSourceFormFields[number]
@@ -26,6 +28,10 @@ export function validateDataSourceForm(input: DataSourceFormInput, isNew: boolea
   if (!input.tenantName.trim()) errors.tenantName = '请输入租户名称。'
   if (isNew && !input.username.trim()) errors.username = '新增数据源时必须填写用户名。'
   if (isNew && !input.password) errors.password = '新增数据源时必须填写密码。'
+  // 可选的 sys 凭据必须成对提供（参考 ODC 数据源高级设置）：账号与密码要么同时填写，要么同时留空。
+  if ((input.sysUser?.trim() ? true : false) !== Boolean(input.sysPassword)) {
+    errors.sysPassword = 'sys 账号与密码必须同时填写或同时留空。'
+  }
   return errors
 }
 

@@ -125,6 +125,44 @@ func TestJDBCConnectionTestRunnerTCP失败时不启动JDBC(t *testing.T) {
 	}
 }
 
+func TestJDBCConnectionTestRunner绑定sys时早退报告未知(t *testing.T) {
+	grant := jdbcConnectionTestGrant()
+	grant.Binding.SysCredentialID = "sys-credential-1"
+	grant.Binding.SysCredentialRevision = 1
+	runner := jdbcConnectionTestRunner{resolver: &jdbcConnectionResolverStub{err: errors.New("synthetic resolution failure")}, bootID: "boot-1"}
+	outcome := runner.RunConnectionTest(context.Background(), grant)
+	if outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysUnknown || outcome.SysEvidenceCode != "SYS_CONNECTION_UNAVAILABLE" {
+		t.Fatalf("绑定 sys 的早退结果 = %#v", outcome)
+	}
+}
+
+func TestJDBCConnectionTestRunner主库与sys复用已准备探针(t *testing.T) {
+	mainUsername, mainPassword := []byte("main-user"), []byte("main-password")
+	sysUsername, sysPassword := []byte("sys-user"), []byte("sys-password")
+	resolver := &jdbcConnectionResolverStub{
+		slot:    agentwire.DataSourceConnectionTestDatabaseConnectionSlot{Host: "synthetic.example", Port: 2881, Username: mainUsername, Password: mainPassword},
+		sysSlot: agentwire.DataSourceConnectionTestDatabaseConnectionSlot{Host: "synthetic.example", Port: 2881, Username: sysUsername, Password: sysPassword},
+	}
+	probeCalls := 0
+	runner := jdbcConnectionTestRunner{
+		resolver: resolver, workspaceRoot: t.TempDir(), bootID: "boot-1", dial: (&jdbcConnectionDialStub{}).dial,
+		probe: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, _ jdbcprobe.Request) (jdbcprobe.Result, error) {
+			probeCalls++
+			return jdbcprobe.Result{}, nil
+		},
+	}
+	grant := jdbcConnectionTestGrant()
+	grant.Binding.SysCredentialID = "sys-credential-1"
+	grant.Binding.SysCredentialRevision = 1
+	outcome := runner.RunConnectionTest(context.Background(), grant)
+	if probeCalls != 2 || outcome.Status != agentwire.DataSourceConnectionTestSucceeded || outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysSucceeded {
+		t.Fatalf("主库与 sys 探针结果 calls=%d outcome=%#v", probeCalls, outcome)
+	}
+	if !allZeroBytes(mainUsername) || !allZeroBytes(mainPassword) || !allZeroBytes(sysUsername) || !allZeroBytes(sysPassword) {
+		t.Fatal("主库或 sys 短时槽位秘密未在返回前清零")
+	}
+}
+
 type syntheticTimeoutError struct{}
 
 func (syntheticTimeoutError) Error() string   { return "synthetic TCP timeout" }
@@ -133,6 +171,7 @@ func (syntheticTimeoutError) Temporary() bool { return true }
 
 type jdbcConnectionResolverStub struct {
 	slot    agentwire.DataSourceConnectionTestDatabaseConnectionSlot
+	sysSlot agentwire.DataSourceConnectionTestDatabaseConnectionSlot
 	err     error
 	request agentwire.DataSourceConnectionTestSecretSlotRequest
 }
@@ -143,6 +182,14 @@ func (s *jdbcConnectionResolverStub) ResolveDataSourceConnectionTestDatabaseConn
 		return agentwire.DataSourceConnectionTestDatabaseConnectionSlot{}, s.err
 	}
 	return s.slot, nil
+}
+
+func (s *jdbcConnectionResolverStub) ResolveDataSourceConnectionTestSysConnection(_ context.Context, request agentwire.DataSourceConnectionTestSecretSlotRequest) (agentwire.DataSourceConnectionTestDatabaseConnectionSlot, error) {
+	s.request = request
+	if s.err != nil {
+		return agentwire.DataSourceConnectionTestDatabaseConnectionSlot{}, s.err
+	}
+	return s.sysSlot, nil
 }
 
 func jdbcConnectionTestGrant() agentwire.DataSourceConnectionTestGrant {

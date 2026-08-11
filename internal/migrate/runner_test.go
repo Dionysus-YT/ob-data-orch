@@ -35,16 +35,16 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	if tableCount != 27 || strictCount != 27 {
-		t.Fatalf("schema tables = %d, strict tables = %d; want 27 and 27", tableCount, strictCount)
+	if tableCount != 28 || strictCount != 28 {
+		t.Fatalf("schema tables = %d, strict tables = %d; want 28 and 28", tableCount, strictCount)
 	}
 
 	var migrationCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 14 {
-		t.Fatalf("migration count = %d, want 14", migrationCount)
+	if migrationCount != 16 {
+		t.Fatalf("migration count = %d, want 16", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -387,6 +387,14 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fourteenth migration: %v", err)
 	}
+	fifteenthMigration, err := migrations.Files.ReadFile("0015_add_data_source_sys_credential.sql")
+	if err != nil {
+		t.Fatalf("read fifteenth migration: %v", err)
+	}
+	sixteenthMigration, err := migrations.Files.ReadFile("0016_add_connection_test_sys_verification.sql")
+	if err != nil {
+		t.Fatalf("read sixteenth migration: %v", err)
+	}
 	tampered := fstest.MapFS{
 		"0001_initial.sql":                                    &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
 		"0002_add_data_source_odc_identity.sql":               &fstest.MapFile{Data: secondMigration},
@@ -402,6 +410,8 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0012_add_execution_secret_resolution_receipts.sql":   &fstest.MapFile{Data: twelfthMigration},
 		"0013_add_log_batch_projection_fields.sql":            &fstest.MapFile{Data: thirteenthMigration},
 		"0014_export_generalization.sql":                      &fstest.MapFile{Data: fourteenthMigration},
+		"0015_add_data_source_sys_credential.sql":             &fstest.MapFile{Data: fifteenthMigration},
+		"0016_add_connection_test_sys_verification.sql":       &fstest.MapFile{Data: sixteenthMigration},
 	}
 	if err := ApplyFS(ctx, db, tampered); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("Apply() error = %v, want checksum mismatch", err)
@@ -445,7 +455,12 @@ func insertSyntheticTaskFixture(t *testing.T, db *sql.DB) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-1", "external-1", "Synthetic User", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant', NULL)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO data_sources(
+                data_source_id, display_name, normalized_name, environment, connection_kind,
+                compatibility_mode, host, port, cluster_name, tenant_name, username, default_database,
+                credential_id, current_credential_revision, state, revision, last_test_status,
+                last_tested_at, last_test_safe_summary_json, last_test_source, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, 'synthetic-cluster', 'synthetic-tenant', ?, ?, ?, 1, 'ENABLED', 1, NULL, NULL, NULL, NULL, ?, ?, ?)`, []any{"source-1", "Synthetic Source", "synthetic source", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-1", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-1", "source-1", "key-1", []byte{1, 2, 3}, []byte{4, 5, 6}, "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-1", "Synthetic Node", "synthetic node", "subject-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{}', ?, '[]', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", fingerprint, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
@@ -473,7 +488,12 @@ func insertLegacyPrecheckFixture(t *testing.T, db *sql.DB) {
 		args  []any
 	}{
 		{`INSERT INTO auth_subjects VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-legacy", "external-legacy", "Synthetic User", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
-		{`INSERT INTO data_sources VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', ?, ?, ?, 'synthetic-cluster', 'synthetic-tenant')`, []any{"source-legacy", "Synthetic Source", "synthetic source legacy", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-legacy", "2026-01-01T00:00:00Z", "subject-legacy", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
+		{`INSERT INTO data_sources(
+                data_source_id, display_name, normalized_name, environment, connection_kind,
+                compatibility_mode, host, port, cluster_name, tenant_name, username, default_database,
+                credential_id, current_credential_revision, state, revision, last_test_status,
+                last_tested_at, last_test_safe_summary_json, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, 'TEST', 'ODP', 'MYSQL', ?, 2881, 'synthetic-cluster', 'synthetic-tenant', ?, ?, ?, 1, 'ENABLED', 1, 'SUCCEEDED', ?, '{}', ?, ?, ?)`, []any{"source-legacy", "Synthetic Source", "synthetic source legacy", "127.0.0.1", "synthetic_user", "synthetic_db", "credential-legacy", "2026-01-01T00:00:00Z", "subject-legacy", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO credential_revisions VALUES (?, 1, ?, 'DATABASE_PASSWORD', ?, ?, ?, '{}', 'ACTIVE', ?, NULL)`, []any{"credential-legacy", "source-legacy", "key-legacy", []byte{1, 2, 3}, []byte{4, 5, 6}, "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'ENABLED', '[]', NULL, 1, ?, ?, ?)`, []any{"node-legacy", "Synthetic Node", "synthetic node legacy", "subject-legacy", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"}},
 		{`INSERT INTO agents(

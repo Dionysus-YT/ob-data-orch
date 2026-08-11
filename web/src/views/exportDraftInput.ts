@@ -1,5 +1,5 @@
 import { isStructuredFormat } from '@/api/browser'
-import type { CompressionAlgo, CsvOptions, CsvQuoteMode, CutOptions, ExportContentKind, ExportDataFormatKind, ExportDraftInput, ExportObjectType, ExportOutputKind, ExportScopeKind, FilterOptions, GeneralizedExportConfig, PerformanceOptions } from '@/api/browser'
+import type { CompressionAlgo, CsvOptions, CsvQuoteMode, CutOptions, DDLBehaviorOptions, ExportContentKind, ExportDataFormatKind, ExportDraftInput, ExportObjectType, ExportOutputKind, ExportScopeKind, FilterOptions, GeneralizedExportConfig, PerformanceOptions } from '@/api/browser'
 
 // ExportDraftFormValues 是导出向导对象、内容、格式与输出步骤的页面状态。
 // 校验通过后构造 v6 泛化草稿请求；服务端仍会按能力矩阵再次失败关闭。
@@ -46,6 +46,8 @@ export interface ExportDraftFormValues {
   readonly retainEmptyFiles: boolean
   readonly compress: boolean
   readonly compressionAlgo: CompressionAlgo | ''
+  // EX-I7 压缩等级（2026-08-10）：--compression-level，按所选算法分范围。
+  readonly compressionLevel: string
   readonly querySql: string
   readonly includeColumnNames: string
   readonly excludeColumnNames: string
@@ -57,6 +59,11 @@ export interface ExportDraftFormValues {
   readonly parallelMacro: string
   readonly fetchSize: string
   readonly jvmMemory: string
+  // EX-I7 文件拆分（2026-08-10）：--block-size，正整数（MB）或正整数+MB/ROW 后缀。
+  readonly blockSize: string
+  // EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时生效。
+  readonly dropObject: boolean
+  readonly retainSchema: boolean
 }
 
 export type ExportDraftInputValidation =
@@ -67,6 +74,8 @@ const MAX_OBJECT_EXPRESSIONS = 100
 const CSV_QUOTE_MODES: readonly CsvQuoteMode[] = ['all', 'all_not_null', 'minimal', 'non_numeric', 'none']
 const COMPRESSION_ALGOS: readonly CompressionAlgo[] = ['zstd', 'zlib', 'gzip', 'snappy']
 const MEMORY_PATTERN = /^[1-9][0-9]*[KMGTP]?$/
+// EX-I7 文件拆分（2026-08-10）：--block-size 官方表达（正整数 MB 或正整数+MB/ROW）。
+const BLOCK_SIZE_PATTERN = /^[1-9][0-9]*(MB|ROW)?$/
 
 export function validateExportDraftInput(values: ExportDraftFormValues): ExportDraftInputValidation {
   const dataSourceId = values.dataSourceId.trim()
@@ -123,14 +132,25 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     // 文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均参与校验。
     if (values.formatKind === 'CSV' && values.columnQuoteMode !== '' && !CSV_QUOTE_MODES.includes(values.columnQuoteMode)) return { valid: false, message: 'CSV 包围模式不是受支持的枚举值。' }
     if ((values.formatKind === 'CSV' || values.formatKind === 'CUT') && values.escapeCharacter.length > 1) return { valid: false, message: '转义字符官方仅支持单字符。' }
+    // EX-I7 DDL 行为：仅 DDL 内容（DDL_ONLY/DDL_AND_DATA）时生效，仅数据内容携带即阻断。
+    if (values.contentKind === 'DATA_ONLY' && (values.dropObject || values.retainSchema)) return { valid: false, message: 'DDL 行为参数仅在导出 DDL 内容时生效。' }
     for (const option of serializationOptionValues(values)) {
       if (option.length > 256) return { valid: false, message: '文本序列化选项值不能超过 256 个字符。' }
     }
     if (values.compress && values.compressionAlgo === '') return { valid: false, message: '启用压缩后请选择压缩算法。' }
     if (!values.compress && values.compressionAlgo !== '') return { valid: false, message: '压缩算法需要先启用压缩。' }
     if (values.compressionAlgo !== '' && !COMPRESSION_ALGOS.includes(values.compressionAlgo)) return { valid: false, message: '压缩算法不是受支持的枚举值。' }
+    // EX-I7 压缩等级：官方按算法分范围——zstd 1~22、zlib -1~9；gzip/snappy 不支持指定等级。
+    const compressionLevel = values.compressionLevel.trim()
+    if (compressionLevel) {
+      if (!values.compress || values.compressionAlgo === '') return { valid: false, message: '压缩等级需要先启用压缩并选择算法。' }
+      const level = Number(compressionLevel)
+      if (values.compressionAlgo === 'zstd' && (!Number.isInteger(level) || level < 1 || level > 22)) return { valid: false, message: 'zstd 压缩等级必须为 1~22 的整数。' }
+      if (values.compressionAlgo === 'zlib' && (!Number.isInteger(level) || level < -1 || level > 9)) return { valid: false, message: 'zlib 压缩等级必须为 -1~9 的整数。' }
+      if (values.compressionAlgo === 'gzip' || values.compressionAlgo === 'snappy') return { valid: false, message: 'gzip/snappy 不支持指定压缩等级。' }
+    }
     // EX-I5：结构化格式不支持压缩（官方只支持 CSV/CUT/POS/SQL 可读格式）。
-    if (isStructuredFormat(values.formatKind) && (values.compress || values.compressionAlgo)) return { valid: false, message: '结构化格式不支持压缩，请关闭压缩选项。' }
+    if (isStructuredFormat(values.formatKind) && (values.compress || values.compressionAlgo || values.compressionLevel.trim())) return { valid: false, message: '结构化格式不支持压缩，请关闭压缩选项。' }
     if (values.maxFileSize && !isPositiveInteger(values.maxFileSize)) return { valid: false, message: '导出总量上限必须是正整数（单位 Byte）。' }
     if (values.querySql.trim() && (values.flashbackScn.trim() || values.flashbackTimestamp.trim())) return { valid: false, message: '自定义查询与闪回参数互斥，只能选择其一。' }
     if (values.includeColumnNames.trim() && values.excludeColumnNames.trim()) return { valid: false, message: '包含列与排除列互斥，只能选择其一。' }
@@ -141,6 +161,9 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     }
     if (values.flashbackScn.trim() && !isPositiveInteger(values.flashbackScn)) return { valid: false, message: '闪回 SCN 必须是正整数。' }
     if (values.jvmMemory && !MEMORY_PATTERN.test(values.jvmMemory.trim())) return { valid: false, message: 'JVM 内存必须为数字加可选 K/M/G/T 后缀，例如 4G。' }
+    // EX-I7 文件拆分：--block-size 只接受正整数或正整数+MB/ROW 后缀（官方不支持 1GB/1M 等格式）。
+    if (isStructuredFormat(values.formatKind) && values.blockSize.trim()) return { valid: false, message: '结构化格式不支持文件拆分参数，请清空该选项。' }
+    if (values.blockSize.trim() && !BLOCK_SIZE_PATTERN.test(values.blockSize.trim())) return { valid: false, message: '文件拆分必须为正整数（MB）或正整数+MB/ROW 后缀，例如 1024 或 256ROW。' }
     for (const [label, value] of [['线程数', values.thread], ['分页大小', values.pageSize], ['每线程宏块数', values.parallelMacro], ['游标抓取行数', values.fetchSize]] as const) {
       if (value.trim() && !isPositiveInteger(value)) return { valid: false, message: `${label}必须是正整数。` }
     }
@@ -189,6 +212,8 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
       retainEmptyFiles: outputOptions ? (values.retainEmptyFiles || undefined) : undefined,
       compress: outputOptions ? (values.compress || undefined) : undefined,
       compressionAlgo: (values.compressionAlgo || undefined) as CompressionAlgo | undefined,
+      // EX-I7 压缩等级：显式设置时随压缩发送（校验已按算法分范围）。
+      compressionLevel: values.compressionLevel.trim() ? Number(values.compressionLevel.trim()) : undefined,
       // EX-I4 POS 定版：控制文件目录仅包含数据的 POS 格式发送；仅 DDL 与其余格式不携带（服务端对非 POS 携带失败关闭）。
       controlFilePath: dataOptions && formatKind === 'POS' ? (values.controlFilePath.trim() || undefined) : undefined,
       // EX-I6 对象存储：Multipart 本地临时分块目录。
@@ -196,8 +221,20 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
     },
     filterConfig: filterOptions,
     performanceConfig: performanceOptions,
+    // EX-I7 DDL 行为（2026-08-10）：仅 DDL 内容时发送；仅数据内容不携带（buildDDLBehavior 内部失败关闭）。
+    ddlBehavior: buildDDLBehavior(values),
   }
   return { configVersion: 'v6', dataSourceId, nodeId, config }
+}
+
+// buildDDLBehavior 按内容类型构造 DDL 行为：DDL_ONLY 与 DDL_AND_DATA 发送前置 DROP 与保留 Schema。
+function buildDDLBehavior(values: ExportDraftFormValues): DDLBehaviorOptions | undefined {
+  if (values.contentKind === 'DATA_ONLY') return undefined
+  if (!values.dropObject && !values.retainSchema) return undefined
+  return {
+    dropObject: values.dropObject || undefined,
+    retainSchema: values.retainSchema || undefined,
+  }
 }
 
 // buildOutputFilePath 按输出类型构建最终 filePath：本地输出原样使用；
@@ -276,10 +313,11 @@ function buildPerformanceOptions(values: ExportDraftFormValues): PerformanceOpti
   const parallelMacro = values.parallelMacro.trim() ? Number(values.parallelMacro) : undefined
   const fetchSize = values.fetchSize.trim() ? Number(values.fetchSize) : undefined
   const jvmMemory = values.jvmMemory.trim() || undefined
-  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined) {
+  const blockSize = values.blockSize.trim() || undefined
+  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined && blockSize === undefined) {
     return undefined
   }
-  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory }
+  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize }
 }
 
 function splitNameList(value: string): readonly string[] | undefined {

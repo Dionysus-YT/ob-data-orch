@@ -42,6 +42,20 @@ describe('数据源表单字段错误', () => {
     expect(validateDataSourceForm({ ...validInput, username: '', password: '' }, false)).toEqual({})
   })
 
+  it('sys 凭据必须成对填写（参考 ODC 数据源高级设置）', () => {
+    // 成对填写通过。
+    expect(validateDataSourceForm({ ...validInput, sysUser: 'root', sysPassword: 'synthetic-sys-password' }, true)).toEqual({})
+    // 只填账号或只填密码均拒绝。
+    expect(validateDataSourceForm({ ...validInput, sysUser: 'root', sysPassword: '' }, true)).toEqual({
+      sysPassword: 'sys 账号与密码必须同时填写或同时留空。',
+    })
+    expect(validateDataSourceForm({ ...validInput, sysUser: '', sysPassword: 'synthetic-sys-password' }, true)).toEqual({
+      sysPassword: 'sys 账号与密码必须同时填写或同时留空。',
+    })
+    // 同时留空通过（可选项）。
+    expect(validateDataSourceForm({ ...validInput, sysUser: '', sysPassword: '' }, true)).toEqual({})
+  })
+
   it('采用服务端字段错误，并为已知安全错误码回退到对应字段', () => {
     expect(dataSourceFieldErrorsFromApi({
       fieldErrors: [{ field: 'host', code: 'HOST_INVALID', message: '地址格式不正确。' }],

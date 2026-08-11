@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { browserApi, dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceConnectionTestRequest, type DataSourceSummary, type DataSourceUpdate, type DataSourceWrite, type ExecutionNodeCandidate } from '@/api/browser'
 import { parseDataSourceConnectionString } from './dataSourceConnectionString'
-import { dataSourceConnectionTestNotice } from './dataSourceConnectionTestNotice'
+import { dataSourceConnectionTestNotice, sysCredentialVerificationNotice } from './dataSourceConnectionTestNotice'
 import { dataSourceFieldErrorsFromApi, type DataSourceFormErrors, type DataSourceFormField, validateDataSourceForm } from './dataSourceFormErrors'
 
 const api = browserApi()
@@ -31,7 +31,8 @@ const nodeCandidates = ref<ExecutionNodeCandidate[]>([])
 const nodeCandidatesLoading = ref(false)
 const nodeCandidatesFailure = ref('')
 const selectedNodeID = ref('')
-const form = reactive<DataSourceForm>({ displayName: '', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '', port: 2883, clusterName: '', tenantName: '', username: '', defaultDatabase: '', password: '' })
+const clearSysCredential = ref(false)
+const form = reactive<DataSourceForm>({ displayName: '', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '', port: 2883, clusterName: '', tenantName: '', username: '', defaultDatabase: '', password: '', sysUser: '', sysPassword: '' })
 const formErrors = reactive<DataSourceFormErrors>({})
 let connectionTestPollTimer: ReturnType<typeof setTimeout> | undefined
 let connectionTestPollResolve: (() => void) | undefined
@@ -94,6 +95,9 @@ function fillFromSource(value: DataSourceSummary) {
   form.username = ''
   form.defaultDatabase = value.defaultDatabase ?? ''
   form.password = ''
+  form.sysUser = ''
+  form.sysPassword = ''
+  clearSysCredential.value = false
 }
 
 function applyConnectionString() {
@@ -120,8 +124,9 @@ async function save() {
   saveBusy.value = true; failure.value = ''; notice.value = ''
   try {
     if (isNew.value) {
-      await api.createDataSource({ ...form, displayName: form.displayName.trim(), host: form.host.trim(), clusterName: form.clusterName.trim(), tenantName: form.tenantName.trim(), username: form.username.trim(), defaultDatabase: form.compatibilityMode === 'MYSQL' ? form.defaultDatabase || undefined : undefined })
+      await api.createDataSource({ ...form, displayName: form.displayName.trim(), host: form.host.trim(), clusterName: form.clusterName.trim(), tenantName: form.tenantName.trim(), username: form.username.trim(), defaultDatabase: form.compatibilityMode === 'MYSQL' ? form.defaultDatabase || undefined : undefined, sysUser: (form.sysUser ?? '').trim() || undefined, sysPassword: form.sysPassword || undefined })
       form.password = ''
+      form.sysPassword = ''
       await router.replace('/data-sources')
       return
     }
@@ -160,11 +165,34 @@ function buildUpdate(current: DataSourceSummary): DataSourceUpdate {
   if (defaultDatabase !== (current.defaultDatabase ?? '')) update.defaultDatabase = defaultDatabase
   if (form.username.trim()) update.username = form.username.trim()
   if (form.password) update.password = form.password
+  // 可选的 sys 凭据（参考 ODC 数据源高级设置）：显式清除发送空字段，否则成对填写才设置或轮换。
+  if (clearSysCredential.value) {
+    update.sysUser = ''
+    update.sysPassword = ''
+    return update
+  }
+  const sysUser = (form.sysUser ?? '').trim()
+  if (sysUser || form.sysPassword) {
+    if (!sysUser || !form.sysPassword) {
+      // 校验层已拦截，这里只是防御性短路。
+      return update
+    }
+    update.sysUser = sysUser
+    update.sysPassword = form.sysPassword
+  }
   return update
 }
 
 function changesConnectionInput(update: DataSourceUpdate) {
-  return update.connectionKind !== undefined || update.compatibilityMode !== undefined || update.host !== undefined || update.port !== undefined || update.clusterName !== undefined || update.tenantName !== undefined || update.username !== undefined || update.password !== undefined
+  return update.connectionKind !== undefined || update.compatibilityMode !== undefined || update.host !== undefined || update.port !== undefined || update.clusterName !== undefined || update.tenantName !== undefined || update.username !== undefined || update.password !== undefined || update.sysUser !== undefined || update.sysPassword !== undefined
+}
+
+function toggleClearSysCredential() {
+  if (!clearSysCredential.value) return
+  form.sysUser = ''
+  form.sysPassword = ''
+  clearFieldError('sysUser')
+  clearFieldError('sysPassword')
 }
 
 async function testConnection() {
@@ -210,6 +238,9 @@ async function pollConnectionTest(connectionTestID: string) {
     connectionTest.value = result
     if (isTerminalConnectionTestStatus(result.status)) {
       notice.value = dataSourceConnectionTestNotice(result)
+      // 可选的 sys 凭据验证结果（参考 ODC 的 sys 账号验证）：与数据库结果相互独立地展示。
+      const sysNotice = sysCredentialVerificationNotice(result)
+      if (sysNotice) notice.value += ` ${sysNotice}`
       if (source.value && Object.keys(buildUpdate(source.value)).length === 0) {
         await refreshSourceAfterConnectionTest(source.value.id, pollVersion)
       }
@@ -393,6 +424,26 @@ function fieldErrorID(field: DataSourceFormField) {
           <input v-model="form.password" type="password" maxlength="4096" autocomplete="new-password" :placeholder="isNew ? '新增时必填；页面不会回显或保存密码' : '输入新密码才会轮换凭据'" :aria-describedby="fieldErrorID('password')" :aria-invalid="formErrors.password ? 'true' : undefined" @input="clearFieldError('password')" />
           <span v-if="formErrors.password" :id="fieldErrorID('password')" class="field-error" role="alert">{{ formErrors.password }}</span>
         </label>
+        <details class="field-span sys-credential-panel">
+          <summary>高级设置：sys 凭据（可选）</summary>
+          <p>拥有 sys 租户视图查看权限的账号（如 root）与密码，用于查询租户视图以提升导出能力；不配置时相关能力自动降级（参考 ODC 数据源高级设置）。</p>
+          <div class="sys-credential-row">
+            <label class="field-label">
+              sys 账号
+              <input v-model.trim="form.sysUser" maxlength="256" autocomplete="off" placeholder="例如 root（勿填 @sys#集群 后缀）" :disabled="clearSysCredential" :aria-describedby="fieldErrorID('sysUser')" :aria-invalid="formErrors.sysUser ? 'true' : undefined" @input="clearFieldError('sysUser')" />
+            </label>
+            <label class="field-label">
+              sys 密码
+              <input v-model="form.sysPassword" type="password" maxlength="4096" autocomplete="new-password" placeholder="输入新密码才会设置或轮换 sys 凭据" :disabled="clearSysCredential" :aria-describedby="fieldErrorID('sysPassword')" :aria-invalid="formErrors.sysPassword ? 'true' : undefined" @input="clearFieldError('sysPassword')" />
+              <span v-if="formErrors.sysPassword" :id="fieldErrorID('sysPassword')" class="field-error" role="alert">{{ formErrors.sysPassword }}</span>
+            </label>
+          </div>
+          <p v-if="!isNew && source" class="section-hint">当前 sys 凭据状态：{{ source.sysCredentialState === 'AVAILABLE' ? '已配置' : '未配置' }}。编辑时留空表示保持现状。</p>
+          <label v-if="!isNew && source?.sysCredentialState === 'AVAILABLE'" class="checkbox-row">
+            <input v-model="clearSysCredential" type="checkbox" @change="toggleClearSysCredential" />
+            清除当前 sys 凭据
+          </label>
+        </details>
       </div>
       <section class="connection-test-section" aria-labelledby="data-source-connection-test-heading">
         <h2 id="data-source-connection-test-heading">3. 节点侧基础连接测试</h2>

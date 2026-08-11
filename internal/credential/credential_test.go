@@ -237,3 +237,38 @@ func cloneEnvelope(input Envelope) Envelope {
 	result.Ciphertext = append([]byte(nil), input.Ciphertext...)
 	return result
 }
+
+// TestSysPasswordEnvelope 验证可选 sys 凭据走同一加密信封：AAD 绑定 secretType，
+// 与数据库密码互不通用，未知 secretType 拒绝创建。
+func TestSysPasswordEnvelope(t *testing.T) {
+	key := randomBytes(t, 32)
+	keyring, err := NewKeyring(map[string][]byte{"key-v1": key})
+	if err != nil {
+		t.Fatalf("NewKeyring(): %v", err)
+	}
+	secret := randomSecret(t)
+	defer Zero(secret)
+	reference := Reference{CredentialID: "sys-credential-1", Revision: 1, SecretType: SysPassword, DataSourceID: "source-1"}
+	envelope, err := keyring.Encrypt("key-v1", reference, secret)
+	if err != nil {
+		t.Fatalf("Encrypt(sys): %v", err)
+	}
+	plaintext, err := keyring.Decrypt(envelope)
+	if err != nil {
+		t.Fatalf("Decrypt(sys): %v", err)
+	}
+	defer Zero(plaintext)
+	if !bytes.Equal(plaintext, secret) {
+		t.Fatal("decrypted sys secret does not match")
+	}
+	// 篡改 secretType 必须解密失败（AAD 绑定类型）。
+	tampered := cloneEnvelope(envelope)
+	tampered.Reference.SecretType = DatabasePassword
+	if _, err := keyring.Decrypt(tampered); err == nil {
+		t.Fatal("sys envelope with swapped secret type must be rejected")
+	}
+	// 未知 secretType 拒绝创建。
+	if _, err := keyring.Encrypt("key-v1", Reference{CredentialID: "x", Revision: 1, SecretType: "OTHER", DataSourceID: "source-1"}, secret); err == nil {
+		t.Fatal("unknown secret type must be rejected")
+	}
+}

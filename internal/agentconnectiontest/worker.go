@@ -44,11 +44,14 @@ type JDBCRunner interface {
 
 // Outcome 是控制面已确认的基础连接测试终态安全投影。
 // 只有 AGENT_JDBC 的 DATABASE_CONNECTED 才表示固定节点已建立 JDBC 连接；它仍不代表导出可执行。
+// Sys 字段只表达可选的 sys 凭据验证事实（参考 ODC 的 sys 账号验证），与数据库结果相互独立。
 type Outcome struct {
-	ConnectionTestID   string
-	Status             agentwire.DataSourceConnectionTestStatus
-	EvidenceCode       string
-	VerificationSource agentwire.DataSourceConnectionTestVerificationSource
+	ConnectionTestID      string
+	Status                agentwire.DataSourceConnectionTestStatus
+	EvidenceCode          string
+	VerificationSource    agentwire.DataSourceConnectionTestVerificationSource
+	SysVerificationStatus agentwire.DataSourceConnectionTestSysVerificationStatus
+	SysEvidenceCode       string
 }
 
 // Worker 串行处理一条由当前已认证 Agent 领取的基础连接测试租约。
@@ -142,7 +145,9 @@ func (w *Worker) validGrant(identity agentwire.AgentIdentity, grant agentwire.Da
 	validBinding := validPathID(grant.ConnectionTestID) && validOpaque(grant.LeaseID, 256) && grant.LeaseEpoch > 0 && !grant.ExpiresAt.IsZero() &&
 		validSHA256Digest(grant.BindingDigest) && validPathID(binding.ConnectionTestID) && binding.ConnectionTestID == grant.ConnectionTestID &&
 		validOpaque(binding.DataSourceID, 256) && validSHA256Digest(binding.ConnectionConfigDigest) && binding.CredentialRevision > 0 &&
-		validOpaque(binding.NodeID, 256) && binding.NodeID == identity.NodeID && binding.NodeFactsRevision > 0
+		validOpaque(binding.NodeID, 256) && binding.NodeID == identity.NodeID && binding.NodeFactsRevision > 0 &&
+		((binding.SysCredentialID == "" && binding.SysCredentialRevision == 0) ||
+			(validOpaque(binding.SysCredentialID, 256) && binding.SysCredentialRevision > 0))
 	if !validBinding {
 		return false
 	}
@@ -160,7 +165,11 @@ func (w *Worker) validGrant(identity agentwire.AgentIdentity, grant agentwire.Da
 func (w *Worker) testOutcome(ctx context.Context, grant agentwire.DataSourceConnectionTestGrant) (Outcome, bool) {
 	switch grant.VerificationSource {
 	case agentwire.DataSourceConnectionTestG2Synthetic:
-		return Outcome{ConnectionTestID: grant.ConnectionTestID, Status: agentwire.DataSourceConnectionTestSucceeded, EvidenceCode: "SYNTHETIC_OK", VerificationSource: agentwire.DataSourceConnectionTestG2Synthetic}, true
+		return Outcome{
+			ConnectionTestID: grant.ConnectionTestID, Status: agentwire.DataSourceConnectionTestSucceeded,
+			EvidenceCode: "SYNTHETIC_OK", VerificationSource: agentwire.DataSourceConnectionTestG2Synthetic,
+			SysVerificationStatus: agentwire.DataSourceConnectionTestSysNotConfigured,
+		}, true
 	case agentwire.DataSourceConnectionTestAgentJDBC:
 		outcome := w.JDBCRunner.RunConnectionTest(ctx, grant)
 		return outcome, validJDBCOutcome(grant, outcome)
@@ -188,12 +197,20 @@ func completion(bootID string, grant agentwire.DataSourceConnectionTestGrant, ou
 	return agentwire.DataSourceConnectionTestCompletion{
 		BootID: bootID, ConnectionTestID: grant.ConnectionTestID, LeaseID: grant.LeaseID,
 		LeaseEpoch: grant.LeaseEpoch, BindingDigest: grant.BindingDigest, Status: outcome.Status,
-		EvidenceCode: outcome.EvidenceCode, VerificationSource: outcome.VerificationSource, SentAt: sentAt,
+		EvidenceCode: outcome.EvidenceCode, VerificationSource: outcome.VerificationSource,
+		SysVerificationStatus: outcome.SysVerificationStatus, SysEvidenceCode: outcome.SysEvidenceCode, SentAt: sentAt,
 	}
 }
 
 func validJDBCOutcome(grant agentwire.DataSourceConnectionTestGrant, outcome Outcome) bool {
 	if outcome.ConnectionTestID != grant.ConnectionTestID || outcome.VerificationSource != agentwire.DataSourceConnectionTestAgentJDBC {
+		return false
+	}
+	// 可选的 sys 凭据验证结果必须匹配绑定冻结状态：配置了 sys 引用时必须给出受控终态，否则必须为 NOT_CONFIGURED。
+	hasSys := grant.Binding.SysCredentialRevision > 0
+	sysOutcomeValid := hasSys == (outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured) &&
+		outcome.SysVerificationStatus != "" && agentwire.ValidDataSourceConnectionTestSysOutcome(outcome.SysVerificationStatus, outcome.SysEvidenceCode)
+	if !sysOutcomeValid {
 		return false
 	}
 	return (outcome.Status == agentwire.DataSourceConnectionTestSucceeded && outcome.EvidenceCode == "DATABASE_CONNECTED") ||
