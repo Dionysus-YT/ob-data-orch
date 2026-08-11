@@ -141,7 +141,7 @@
 | EX-F065 | 前置 DROP | `--drop-object` | 包含 DDL | 默认未设置；风险提示 | ENABLED |
 | EX-F066 | 附加对象信息 | `--add-extra-message` | 包含 DDL | 依赖 sys 权限 | ENABLED |
 | EX-F067 | 保留 Schema | `--retain-schema` | 包含 DDL | 默认未设置 | ENABLED |
-| EX-F068 | 紧凑 Schema | `--compact-schema` | 包含表 DDL | 可能缺信息；待 4.3.5 实测 | VALIDATION_GATED |
+| EX-F068 | 紧凑 Schema | `--compact-schema` | 包含表 DDL | show create table 检索文本；2026-08-11 实测无差异 | ENABLED |
 | EX-F069 | 序列策略 | `--sequence-policy` | 包含序列 | 默认值只作提示；条件待实测 | VALIDATION_GATED |
 
 ### 8.3 筛选与一致性（高级选项 · 功能选项 · 黑白名单筛选 / 错误处理）
@@ -149,7 +149,7 @@
 | ID | 字段 | 参数 | 显示条件 | 互斥/依赖 | supportState |
 |---|---|---|---|---|---|
 | EX-F070 | 自定义查询 | `--query-sql` | 包含数据 + 专家 | 与 where/partition 互斥；不提供 SQL 编辑器 | ENABLED |
-| EX-F071 | 条件筛选 | `--where` | 包含数据 | 与 query SQL 互斥 | VALIDATION_GATED |
+| EX-F071 | 条件筛选 | `--where` | 包含数据 | 与 query SQL 互斥；2026-08-11 实测行数生效 | ENABLED |
 | EX-F072 | 分区筛选 | `--partition` | 包含表数据 | 与 query SQL 互斥；校验二级分区 | VALIDATION_GATED |
 | EX-F073 | 包含列 | `--include-column-names` | 包含表数据 | 校验实际列名 | ENABLED |
 | EX-F074 | 排除列 | `--exclude-column-names` | 包含表数据 | 与控制文件互斥 | ENABLED |
@@ -158,8 +158,8 @@
 | EX-F077 | 使用隐藏主键 | `--enable-hidden-pk` | 无主键表且版本/权限满足 | 由预检查决定可用性 | VALIDATION_GATED |
 | EX-F078 | 闪回 SCN | `--flashback-scn` | 包含数据 | 与 query SQL 互斥 | ENABLED |
 | EX-F079 | 闪回时间点 | `--flashback-timestamp` | 数据 + Oracle | 与 query SQL 互斥 | ENABLED |
-| EX-F080 | 一致性快照 | `--snapshot` | 包含数据 | 与其他一致性参数组合待确认 | VALIDATION_GATED |
-| EX-F081 | 备副本弱读 | `--weak-read` | 环境支持 | 预检查副本和权限 | VALIDATION_GATED |
+| EX-F080 | 一致性快照 | `--snapshot` | 包含数据 | 2026-08-11 实测成功；与其他一致性参数组合待确认 | ENABLED |
+| EX-F081 | 备副本弱读 | `--weak-read` | 环境支持 | 从备库读，2026-08-11 实测成功；预检查副本和权限 | ENABLED |
 
 ## 9. 步骤 6：确认页
 
@@ -248,3 +248,4 @@ EX-FR01～EX-FR10 已于 2026-07-17 全部确认。确认的是默认继承、�
 7. 影响执行事实的变化会使相关预检查失效。
 8. POS、block-size 等冲突项在实测前不写成确定能力。
 9. 每个字段具有 supportState 标注，VALIDATION_GATED 字段在受控实测完成前不参与最终命令生成。
+

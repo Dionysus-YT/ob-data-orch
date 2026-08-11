@@ -42,19 +42,24 @@ const completeValues: ExportDraftFormValues = {
   compressionAlgo: '',
   compressionLevel: '',
   querySql: '',
+  where: '',
   includeColumnNames: '',
   excludeColumnNames: '',
   excludeVirtualColumns: false,
   flashbackScn: '',
   flashbackTimestamp: '',
+  snapshot: false,
+  weakRead: false,
   thread: '',
   pageSize: '',
   parallelMacro: '',
   fetchSize: '',
   jvmMemory: '',
   blockSize: '',
+  retry: false,
   dropObject: false,
   retainSchema: false,
+  compactSchema: false,
 }
 
 describe('泛化导出草稿输入', () => {
@@ -405,5 +410,33 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'zlib', compressionLevel: '10' })).toMatchObject({ valid: false, message: expect.stringContaining('-1~9') })
     expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: 'gzip', compressionLevel: '5' })).toMatchObject({ valid: false, message: expect.stringContaining('不支持指定压缩等级') })
     expect(validateExportDraftInput({ ...completeValues, compress: false, compressionAlgo: '', compressionLevel: '5' })).toMatchObject({ valid: false, message: expect.stringContaining('先启用压缩') })
+  })
+
+  it('EX-I7 剩余参数第一批：--where/--snapshot/--weak-read/--retry/--compact-schema 随配置发送（2026-08-11 实测定版）', () => {
+    const data = validateExportDraftInput({
+      ...completeValues,
+      where: 'id > 100',
+      snapshot: true,
+      weakRead: true,
+      retry: true,
+    })
+    expect(data).toMatchObject({ valid: true })
+    if (data.valid) {
+      expect(data.input.config.filterConfig).toMatchObject({ where: 'id > 100', snapshot: true, weakRead: true })
+      expect(data.input.config.performanceConfig).toMatchObject({ retry: true })
+    }
+    const ddl = validateExportDraftInput({
+      ...completeValues,
+      contentKind: 'DDL_ONLY' as const,
+      formatKind: 'CSV' as const,
+      compactSchema: true,
+    })
+    expect(ddl).toMatchObject({ valid: true })
+    if (ddl.valid) {
+      expect(ddl.input.config.ddlBehavior).toMatchObject({ compactSchema: true })
+    }
+    // 互斥与越界：querySql 与 where 互斥；仅数据内容携带紧凑 Schema 拒绝。
+    expect(validateExportDraftInput({ ...completeValues, querySql: 'select 1', where: 'id > 0' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
+    expect(validateExportDraftInput({ ...completeValues, compactSchema: true })).toMatchObject({ valid: false, message: expect.stringContaining('DDL 内容') })
   })
 })

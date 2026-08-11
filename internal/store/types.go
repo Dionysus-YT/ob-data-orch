@@ -834,8 +834,9 @@ type FilterConfig struct {
 	EnableHiddenPk        *bool    `json:"enableHiddenPk,omitempty"`
 	FlashbackScn          *int64   `json:"flashbackScn,omitempty"`
 	FlashbackTimestamp    string   `json:"flashbackTimestamp,omitempty"`
-	Snapshot              string   `json:"snapshot,omitempty"`
-	WeakRead              *bool    `json:"weakRead,omitempty"`
+	// Snapshot 是 EX-I7 一致性快照（2026-08-11 实测为无值 flag：--snapshot 导出最近一次合并版本快照数据）。
+	Snapshot *bool `json:"snapshot,omitempty"`
+	WeakRead *bool `json:"weakRead,omitempty"`
 }
 
 // DDLBehavior 表达 DDL 行为参数。

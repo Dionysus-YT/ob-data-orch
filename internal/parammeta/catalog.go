@@ -284,11 +284,12 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 		// EX-I6 对象存储（2026-08-07）新增 --tmp-path，additions 由 31 增至 32；
 		// EX-I7 DDL 行为（2026-08-10）新增 --drop-object/--retain-schema，additions 由 32 增至 34；
 		// EX-I7 文件拆分（2026-08-10）新增 --block-size，additions 由 34 增至 35；
-		// EX-I7 压缩等级（2026-08-10）新增 --compression-level，additions 由 35 增至 36。
+		// EX-I7 压缩等级（2026-08-10）新增 --compression-level，additions 由 35 增至 36；
+		// EX-I7 剩余参数第一批（2026-08-11）新增 --compact-schema/--where/--snapshot/--weak-read/--retry，additions 由 36 增至 41。
 		if manifest.Inherits != "obdumper-4.3.5-slice-v5.json" || manifest.CapabilityVersion != "" {
 			return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 		}
-		if len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 10 || len(manifest.Additions) != 36 {
+		if len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 10 || len(manifest.Additions) != 41 {
 			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
 		}
 	default:
@@ -376,9 +377,10 @@ func validateResource(raw resource) error {
 		// EX-I6 对象存储（2026-08-07）新增 --tmp-path，定义数由 49 增至 50；
 		// EX-I7 DDL 行为（2026-08-10）新增 --drop-object/--retain-schema，定义数由 50 增至 52；
 		// EX-I7 文件拆分（2026-08-10）新增 --block-size，定义数由 52 增至 53；
-		// EX-I7 压缩等级（2026-08-10）新增 --compression-level，定义数由 53 增至 54。
-		if len(raw.Definitions) != 54 {
-			return fmt.Errorf("parameter metadata has %d definitions, want 54", len(raw.Definitions))
+		// EX-I7 压缩等级（2026-08-10）新增 --compression-level，定义数由 53 增至 54；
+		// EX-I7 剩余参数第一批（2026-08-11）新增 --compact-schema/--where/--snapshot/--weak-read/--retry，定义数由 54 增至 59。
+		if len(raw.Definitions) != 59 {
+			return fmt.Errorf("parameter metadata has %d definitions, want 59", len(raw.Definitions))
 		}
 	default:
 		return errors.New("parameter metadata identity does not match the confirmed slice")
@@ -493,14 +495,15 @@ func validateResource(raw resource) error {
 		// + EX-I6 对象存储（2026-08-07）的 --tmp-path
 		// + EX-I7 DDL 行为（2026-08-10）的 --drop-object/--retain-schema
 		// + EX-I7 文件拆分（2026-08-10）的 --block-size（可读格式与全量 CSV 能力，MB/ROW 已实测）
-		// + EX-I7 压缩等级（2026-08-10）的 --compression-level（官方分算法范围）。
+		// + EX-I7 压缩等级（2026-08-10）的 --compression-level（官方分算法范围）
+		// + EX-I7 剩余参数第一批（2026-08-11）的 --compact-schema（DDL 能力）/--where/--snapshot/--weak-read/--retry（受控实测）。
 		if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
 			"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--cut", "--sql", "--pos", "--par", "--orc", "--avro", "--file-path", "--log-path", "--skip-check-dir",
 			"--all", "--view", "--ddl", "--exclude-table",
 			"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode", "--escape-character", "--line-separator", "--null-string", "--file-encoding",
 			"--with-trim", "--trail-delimiter", "--remove-newline", "--column-splitter", "--compress", "--compression-algo", "--compression-level", "--no-nested-dir", "--max-file-size", "--retain-empty-files",
-			"--ctl-path", "--tmp-path", "--drop-object", "--retain-schema",
-			"--query-sql", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
+			"--ctl-path", "--tmp-path", "--drop-object", "--retain-schema", "--compact-schema",
+			"--query-sql", "--where", "--snapshot", "--weak-read", "--retry", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
 		}); err != nil {
 			return err

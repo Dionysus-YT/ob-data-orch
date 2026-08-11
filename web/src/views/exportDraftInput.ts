@@ -49,11 +49,16 @@ export interface ExportDraftFormValues {
   // EX-I7 压缩等级（2026-08-10）：--compression-level，按所选算法分范围。
   readonly compressionLevel: string
   readonly querySql: string
+  // EX-I7 条件筛选（2026-08-11 实测定版）：--where，与 querySql 互斥。
+  readonly where: string
   readonly includeColumnNames: string
   readonly excludeColumnNames: string
   readonly excludeVirtualColumns: boolean
   readonly flashbackScn: string
   readonly flashbackTimestamp: string
+  // EX-I7 一致性（2026-08-11 实测定版）：--snapshot 一致性快照、--weak-read 备库弱读。
+  readonly snapshot: boolean
+  readonly weakRead: boolean
   readonly thread: string
   readonly pageSize: string
   readonly parallelMacro: string
@@ -61,9 +66,12 @@ export interface ExportDraftFormValues {
   readonly jvmMemory: string
   // EX-I7 文件拆分（2026-08-10）：--block-size，正整数（MB）或正整数+MB/ROW 后缀。
   readonly blockSize: string
-  // EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时生效。
+  // EX-I7 保存点续跑（2026-08-11 实测定版）：--retry，无保存点时工具失败关闭。
+  readonly retry: boolean
+  // EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时生效；紧凑 Schema 同（2026-08-11 定版）。
   readonly dropObject: boolean
   readonly retainSchema: boolean
+  readonly compactSchema: boolean
 }
 
 export type ExportDraftInputValidation =
@@ -132,8 +140,8 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     // 文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均参与校验。
     if (values.formatKind === 'CSV' && values.columnQuoteMode !== '' && !CSV_QUOTE_MODES.includes(values.columnQuoteMode)) return { valid: false, message: 'CSV 包围模式不是受支持的枚举值。' }
     if ((values.formatKind === 'CSV' || values.formatKind === 'CUT') && values.escapeCharacter.length > 1) return { valid: false, message: '转义字符官方仅支持单字符。' }
-    // EX-I7 DDL 行为：仅 DDL 内容（DDL_ONLY/DDL_AND_DATA）时生效，仅数据内容携带即阻断。
-    if (values.contentKind === 'DATA_ONLY' && (values.dropObject || values.retainSchema)) return { valid: false, message: 'DDL 行为参数仅在导出 DDL 内容时生效。' }
+    // EX-I7 DDL 行为：仅 DDL 内容（DDL_ONLY/DDL_AND_DATA）时生效，仅数据内容携带即阻断；紧凑 Schema 同（2026-08-11 定版）。
+    if (values.contentKind === 'DATA_ONLY' && (values.dropObject || values.retainSchema || values.compactSchema)) return { valid: false, message: 'DDL 行为参数仅在导出 DDL 内容时生效。' }
     for (const option of serializationOptionValues(values)) {
       if (option.length > 256) return { valid: false, message: '文本序列化选项值不能超过 256 个字符。' }
     }
@@ -153,6 +161,8 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     if (isStructuredFormat(values.formatKind) && (values.compress || values.compressionAlgo || values.compressionLevel.trim())) return { valid: false, message: '结构化格式不支持压缩，请关闭压缩选项。' }
     if (values.maxFileSize && !isPositiveInteger(values.maxFileSize)) return { valid: false, message: '导出总量上限必须是正整数（单位 Byte）。' }
     if (values.querySql.trim() && (values.flashbackScn.trim() || values.flashbackTimestamp.trim())) return { valid: false, message: '自定义查询与闪回参数互斥，只能选择其一。' }
+    // EX-I7 条件筛选（2026-08-11 实测定版）：--where 与自定义查询互斥（官方约束）。
+    if (values.querySql.trim() && values.where.trim()) return { valid: false, message: '自定义查询与条件筛选互斥，只能选择其一。' }
     if (values.includeColumnNames.trim() && values.excludeColumnNames.trim()) return { valid: false, message: '包含列与排除列互斥，只能选择其一。' }
     for (const list of [values.includeColumnNames, values.excludeColumnNames]) {
       for (const name of list.split(',').map((item) => item.trim()).filter((item) => item.length > 0)) {
@@ -227,13 +237,14 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
   return { configVersion: 'v6', dataSourceId, nodeId, config }
 }
 
-// buildDDLBehavior 按内容类型构造 DDL 行为：DDL_ONLY 与 DDL_AND_DATA 发送前置 DROP 与保留 Schema。
+// buildDDLBehavior 按内容类型构造 DDL 行为：DDL_ONLY 与 DDL_AND_DATA 发送前置 DROP、保留 Schema 与紧凑 Schema。
 function buildDDLBehavior(values: ExportDraftFormValues): DDLBehaviorOptions | undefined {
   if (values.contentKind === 'DATA_ONLY') return undefined
-  if (!values.dropObject && !values.retainSchema) return undefined
+  if (!values.dropObject && !values.retainSchema && !values.compactSchema) return undefined
   return {
     dropObject: values.dropObject || undefined,
     retainSchema: values.retainSchema || undefined,
+    compactSchema: values.compactSchema || undefined,
   }
 }
 
@@ -290,20 +301,28 @@ function buildSerializationOptions(values: ExportDraftFormValues, formatKind: Ex
 
 function buildFilterOptions(values: ExportDraftFormValues): FilterOptions | undefined {
   const querySql = values.querySql.trim()
+  const where = values.where.trim()
   const includeColumnNames = splitNameList(values.includeColumnNames)
   const excludeColumnNames = splitNameList(values.excludeColumnNames)
   const flashbackScn = values.flashbackScn.trim() ? Number(values.flashbackScn) : undefined
   const flashbackTimestamp = values.flashbackTimestamp.trim() || undefined
-  if (!querySql && includeColumnNames === undefined && excludeColumnNames === undefined && !values.excludeVirtualColumns && flashbackScn === undefined && flashbackTimestamp === undefined) {
+  const snapshot = values.snapshot || undefined
+  const weakRead = values.weakRead || undefined
+  if (!querySql && !where && includeColumnNames === undefined && excludeColumnNames === undefined && !values.excludeVirtualColumns && flashbackScn === undefined && flashbackTimestamp === undefined && snapshot === undefined && weakRead === undefined) {
     return undefined
   }
   return {
     querySql: querySql || undefined,
+    // EX-I7 条件筛选（2026-08-11 实测定版）：--where 随数据筛选发送。
+    where: where || undefined,
     includeColumnNames,
     excludeColumnNames,
     excludeVirtualColumns: values.excludeVirtualColumns || undefined,
     flashbackScn,
     flashbackTimestamp,
+    // EX-I7 一致性（2026-08-11 实测定版）：--snapshot/--weak-read 无值开关。
+    snapshot,
+    weakRead,
   }
 }
 
@@ -314,10 +333,12 @@ function buildPerformanceOptions(values: ExportDraftFormValues): PerformanceOpti
   const fetchSize = values.fetchSize.trim() ? Number(values.fetchSize) : undefined
   const jvmMemory = values.jvmMemory.trim() || undefined
   const blockSize = values.blockSize.trim() || undefined
-  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined && blockSize === undefined) {
+  const retry = values.retry || undefined
+  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined && blockSize === undefined && retry === undefined) {
     return undefined
   }
-  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize }
+  // EX-I7 保存点续跑（2026-08-11 实测定版）：--retry 无值开关，无保存点时工具失败关闭。
+  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, retry }
 }
 
 function splitNameList(value: string): readonly string[] | undefined {

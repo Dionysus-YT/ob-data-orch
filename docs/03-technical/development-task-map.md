@@ -366,3 +366,11 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 - 已完成：实测发现 OBDUMPER 4.3.5（Hadoop 3.3.6）在 Windows 上拒绝盘符绝对路径（file://nullE:/ Wrong FS），`-f`/`--log-path` 必须相对路径——控制面/Agent 正式任务路径传递需在平台适配层核对（遗留核对项）。
 - 待第二批：时间戳值格式（--date-value-format 等 10 个）、--partition（t_hash_prune_test 可测）、--exclude-data-types/--enable-hidden-pk、对象类型 13 个；--add-extra-message 依赖 sys 凭据真实有效性验证。
 - 接入状态：定版参数的产品接入（v6 元数据/控制面/向导）待推进。
+
+### EX-I7 剩余参数第一批产品接入（2026-08-11 交付）
+
+- 已完成：v6 元数据新增 5 个定义（--compact-schema EX-F068 / --where EX-F071 / --snapshot EX-F080 / --weak-read EX-F081 / --retry EX-F088），additions 36→41、定义 54→59；--compact-schema 绑定 ddl/ddl-csv 能力（仅 DDL 内容发射），其余 4 个绑定全部 9 个能力。
+- 已完成：控制面归一化与发射（--where 与 --query-sql 互斥失败关闭；--compact-schema 仅 DDL 内容，仅数据内容携带 422；--retry/--snapshot/--weak-read 无值开关发射）；store FilterConfig.Snapshot 修正为 *bool（实测为无值 flag）；hasZeroOptions/冻结路径同步。
+- 已完成：向导接入（步骤 4 文件格式节点紧凑 Schema 复选框；步骤 5 黑白名单筛选节点条件筛选输入与一致性复选框、性能节点保存点续跑复选框；DDL 内容切换清理）；前端校验（querySql 与 where 互斥、仅数据内容携带 DDL 行为阻断）。
+- 已完成：测试（控制面 5 参数正例 + 互斥/越界负例；前端构建与校验用例）与文档同步（字段规则 EX-F068/F071/F080/F081 ENABLED、低保真节点、支持矩阵/映射 67 ENABLED）。
+- 待第二批：时间戳值格式、--partition/--exclude-data-types/--enable-hidden-pk、对象类型 13 个、--add-extra-message（依赖 sys 凭据真实有效性）。

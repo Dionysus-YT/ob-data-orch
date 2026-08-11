@@ -282,11 +282,16 @@ export interface CutOptions {
 
 export interface FilterOptions {
   readonly querySql?: string
+  // EX-I7 条件筛选（2026-08-11 实测定版）：--where，与 querySql 互斥。
+  readonly where?: string
   readonly includeColumnNames?: readonly string[]
   readonly excludeColumnNames?: readonly string[]
   readonly excludeVirtualColumns?: boolean
   readonly flashbackScn?: number
   readonly flashbackTimestamp?: string
+  // EX-I7 一致性（2026-08-11 实测定版）：--snapshot 一致性快照、--weak-read 备库弱读。
+  readonly snapshot?: boolean
+  readonly weakRead?: boolean
 }
 
 export interface PerformanceOptions {
@@ -297,16 +302,19 @@ export interface PerformanceOptions {
   readonly jvmMemory?: string
   // EX-I7 文件拆分（2026-08-10）：--block-size（数字 MB 或数字+MB/ROW 后缀），显式传值已受控实测。
   readonly blockSize?: string
+  // EX-I7 保存点续跑（2026-08-11 实测定版）：--retry，无保存点时工具失败关闭。
+  readonly retry?: boolean
 }
 
 // EX-I6 对象存储（2026-08-07）：输出目标类型；对象存储要求受控 URI（凭据走执行槽位，不进 URI）。
 export type ExportOutputKind = 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS'
 
 // EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时携带；
-// 其余 DDL 行为（附加对象信息/紧凑 Schema/序列策略）尚未取证或依赖 sys 凭据，保持关闭。
+// 紧凑 Schema（2026-08-11 实测定版）同样仅 DDL 内容；其余 DDL 行为（附加对象信息/序列策略）尚未取证或依赖 sys 凭据，保持关闭。
 export interface DDLBehaviorOptions {
   readonly dropObject?: boolean
   readonly retainSchema?: boolean
+  readonly compactSchema?: boolean
 }
 
 export interface GeneralizedExportConfig {

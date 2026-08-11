@@ -114,9 +114,9 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 		t.Fatalf("unexpected generalized catalog identity: %s / %s / %s", catalog.MetadataVersion(), catalog.BaseVersion(), catalog.CapabilityVersion())
 	}
 	definitions := catalog.Definitions()
-	// EX-I4 POS 定版新增 --pos/--ctl-path/--column-splitter（43→46）；EX-I5 新增 --par/--orc/--avro（46→49）；EX-I6 新增 --tmp-path（49→50）；EX-I7 新增 --drop-object/--retain-schema（50→52）、--block-size（52→53）与 --compression-level（53→54）。
-	if len(definitions) != 54 {
-		t.Fatalf("generalized definition count = %d, want 54", len(definitions))
+	// EX-I4 POS 定版新增 --pos/--ctl-path/--column-splitter（43→46）；EX-I5 新增 --par/--orc/--avro（46→49）；EX-I6 新增 --tmp-path（49→50）；EX-I7 新增 --drop-object/--retain-schema（50→52）、--block-size（52→53）、--compression-level（53→54）与剩余参数第一批 --compact-schema/--where/--snapshot/--weak-read/--retry（54→59）。
+	if len(definitions) != 59 {
+		t.Fatalf("generalized definition count = %d, want 59", len(definitions))
 	}
 	if got := catalog.CategoryOrder(); len(got) != 9 || got[7] != "PERFORMANCE" || got[8] != "COMPRESSION" {
 		t.Fatalf("unexpected generalized category order: %#v", got)

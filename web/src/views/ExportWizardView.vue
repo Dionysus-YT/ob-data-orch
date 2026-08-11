@@ -78,11 +78,16 @@ const compressionAlgo = ref<CompressionAlgo | ''>('')
 // EX-I7 压缩等级（2026-08-10）：--compression-level，按所选算法分范围。
 const compressionLevel = ref('')
 const querySql = ref('')
+// EX-I7 条件筛选（2026-08-11 实测定版）：--where，与 querySql 互斥。
+const where = ref('')
 const includeColumnNames = ref('')
 const excludeColumnNames = ref('')
 const excludeVirtualColumns = ref(false)
 const flashbackScn = ref('')
 const flashbackTimestamp = ref('')
+// EX-I7 一致性（2026-08-11 实测定版）：--snapshot 一致性快照、--weak-read 备库弱读。
+const snapshot = ref(false)
+const weakRead = ref(false)
 const thread = ref('')
 const pageSize = ref('')
 const parallelMacro = ref('')
@@ -90,12 +95,15 @@ const fetchSize = ref('')
 const jvmMemory = ref('')
 // EX-I7 文件拆分（2026-08-10）：--block-size（正整数 MB 或正整数+MB/ROW 后缀）。
 const blockSize = ref('')
-// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时生效。
+// EX-I7 保存点续跑（2026-08-11 实测定版）：--retry，无保存点时工具失败关闭。
+const retry = ref(false)
+// EX-I7 DDL 行为（2026-08-10）：前置 DROP、保留 Schema 与紧凑 Schema（2026-08-11 定版），仅 DDL 内容时生效。
 const dropObject = ref(false)
 const retainSchema = ref(false)
+const compactSchema = ref(false)
 const dataOptionsActive = computed(() => contentKind.value !== 'DDL_ONLY')
 // EX-I4：序列化面板按数据格式适用；文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均有效。
-const hasFilterOptions = computed(() => Boolean(querySql.value.trim() || includeColumnNames.value.trim() || excludeColumnNames.value.trim() || excludeVirtualColumns.value || flashbackScn.value.trim() || flashbackTimestamp.value.trim()))
+const hasFilterOptions = computed(() => Boolean(querySql.value.trim() || where.value.trim() || includeColumnNames.value.trim() || excludeColumnNames.value.trim() || excludeVirtualColumns.value || flashbackScn.value.trim() || flashbackTimestamp.value.trim() || snapshot.value || weakRead.value))
 const hasPerformanceOptions = computed(() => Boolean(thread.value.trim() || pageSize.value.trim() || parallelMacro.value.trim() || fetchSize.value.trim() || jvmMemory.value.trim() || blockSize.value.trim()))
 const hasCsvOptions = computed(() => formatKind.value === 'CSV' && Boolean(skipHeader.value || withTrim.value || columnSeparator.value || columnQuote.value || columnQuoteMode.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
 const hasCutOptions = computed(() => formatKind.value === 'CUT' && Boolean(trailDelimiter.value || removeNewline.value || withTrim.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
@@ -215,19 +223,24 @@ const draftValidation = computed(() => validateExportDraftInput({
   compressionAlgo: compressionAlgo.value,
   compressionLevel: compressionLevel.value,
   querySql: querySql.value,
+  where: where.value,
   includeColumnNames: includeColumnNames.value,
   excludeColumnNames: excludeColumnNames.value,
   excludeVirtualColumns: excludeVirtualColumns.value,
   flashbackScn: flashbackScn.value,
   flashbackTimestamp: flashbackTimestamp.value,
+  snapshot: snapshot.value,
+  weakRead: weakRead.value,
   thread: thread.value,
   pageSize: pageSize.value,
   parallelMacro: parallelMacro.value,
   fetchSize: fetchSize.value,
   jvmMemory: jvmMemory.value,
   blockSize: blockSize.value,
+  retry: retry.value,
   dropObject: dropObject.value,
   retainSchema: retainSchema.value,
+  compactSchema: compactSchema.value,
 }))
 const draftInput = computed(() => draftValidation.value.valid ? draftValidation.value.input : undefined)
 const draftValidationMessage = computed(() => draftValidation.value.valid ? '' : draftValidation.value.message)
@@ -266,7 +279,7 @@ watch(selectedSource, (source, previousSource) => {
   clearDraftState()
 })
 
-watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema], () => {
+watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, weakRead, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, retry, dropObject, retainSchema, compactSchema], () => {
   // 任一配置变化都会作废已创建草稿并清除服务端错误提示。
   clearDraftState()
 }, { deep: true })
@@ -331,10 +344,11 @@ watch(contentKind, (kind) => {
   // DDL + 数据只支持 CSV 数据格式：切换到该内容类型时重置非 CSV 格式，
   // 其余格式专属残留由 formatKind 监听器在离开对应格式时清理。
   if (kind === 'DDL_AND_DATA' && formatKind.value !== 'CSV') formatKind.value = 'CSV'
-  // EX-I7 DDL 行为：仅数据内容不携带前置 DROP 与保留 Schema，切换时清除残留。
+  // EX-I7 DDL 行为：仅数据内容不携带前置 DROP/保留 Schema/紧凑 Schema，切换时清除残留。
   if (kind === 'DATA_ONLY') {
     dropObject.value = false
     retainSchema.value = false
+    compactSchema.value = false
   }
 })
 
@@ -729,10 +743,9 @@ function lastTestLabel(source: DataSourceSummary) {
                 <label class="checkbox-label"><input v-model="dropObject" type="checkbox" />--drop-object（高风险：在对象创建语句前追加 DROP）</label>
               </div>
               <p v-if="dropObject" class="section-hint">--drop-object 会在导入侧重建对象前删除同名对象，可能造成数据丢失，请确认已了解影响。</p>
-              <div class="tree-row pending">
+              <div class="tree-row">
                 <span class="tree-label">紧凑 Schema</span>
-                <input type="checkbox" disabled />
-                <span class="tree-note">--compact-schema，待验证</span>
+                <label class="checkbox-label"><input v-model="compactSchema" type="checkbox" />--compact-schema（使用 show create table 检索文本，2026-08-11 受控实测）</label>
               </div>
             </div>
           </details>
@@ -1029,6 +1042,15 @@ function lastTestLabel(source: DataSourceSummary) {
             </div>
             <p v-if="querySql" class="section-hint">自定义查询为受限专家能力：不提供 SQL 编辑器，服务端只把已确认文本作为 --query-sql 生成；结果不能直接导入。</p>
             <div class="tree-row">
+              <span class="tree-label">条件筛选 <span class="muted">（--where）</span></span>
+              <input v-model.trim="where" class="tree-input" :disabled="Boolean(querySql)" placeholder="例如 id > 100 AND status = 'active'（仅配合 --table）" />
+            </div>
+            <div class="tree-row">
+              <span class="tree-label">一致性 <span class="muted">（2026-08-11 实测）</span></span>
+              <label class="checkbox-label"><input v-model="snapshot" type="checkbox" />--snapshot（导出最近一次合并版本快照）</label>
+              <label class="checkbox-label"><input v-model="weakRead" type="checkbox" />--weak-read（从备库读取）</label>
+            </div>
+            <div class="tree-row">
               <span class="tree-label">保留空结果文件</span>
               <label class="checkbox-label"><input v-model="retainEmptyFiles" type="checkbox" />--retain-empty-files</label>
             </div>
@@ -1063,6 +1085,10 @@ function lastTestLabel(source: DataSourceSummary) {
               <input v-model.trim="blockSize" class="tree-input" placeholder="例如 1024（MB）或 256ROW" />
             </div>
             <p v-if="['PARQUET', 'ORC', 'AVRO'].includes(formatKind)" class="section-hint">文件拆分（--block-size）对 Parquet/ORC 官方不生效，Avro 未取证，结构化格式不适用。</p>
+            <div class="tree-row">
+              <span class="tree-label">保存点续跑</span>
+              <label class="checkbox-label"><input v-model="retry" type="checkbox" />--retry（从最近保存点继续；无保存点时工具失败关闭，2026-08-11 受控实测）</label>
+            </div>
           </div>
         </details>
         <p v-if="optionPanelsMessage" class="feedback feedback-error" role="alert">{{ optionPanelsMessage }}</p>

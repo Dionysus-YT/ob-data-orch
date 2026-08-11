@@ -741,9 +741,15 @@ type normalizedExportDraft struct {
 	TmpPath string
 	// EX-I6 对象存储（2026-08-07）：输出目标类型（LOCAL/OSS/S3/COS/OBS），传递给生成器做路径分流校验。
 	OutputKind string
-	// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅在 DDL 内容时活动。
-	DropObject   bool
-	RetainSchema bool
+	// EX-I7 DDL 行为（2026-08-10）：前置 DROP、保留 Schema 与紧凑 Schema，仅在 DDL 内容时活动。
+	DropObject    bool
+	RetainSchema  bool
+	CompactSchema bool
+	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：条件筛选、一致性快照、备库弱读与保存点续跑。
+	Where    string
+	Snapshot bool
+	WeakRead bool
+	Retry    bool
 }
 
 // maxExportObjectExpressions 限制单个草稿的对象表达式与排除表数量，
@@ -764,7 +770,8 @@ func (n normalizedExportDraft) hasZeroOptions() bool {
 		!n.NoNestedDir && n.MaxFileSize == nil && !n.RetainEmptyFiles &&
 		n.QuerySql == "" && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
-		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == ""
+		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
+		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot && !n.WeakRead && !n.Retry
 }
 
 // draftCapability 按归一结果推导泛化能力版本。
@@ -1028,9 +1035,8 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	}
 
 	performance := config.PerformanceConfig
-	if performance.Retry {
-		return normalizedExportDraft{}, errors.New("v6 retry option is not enabled")
-	}
+	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--retry 从保存点续跑，无保存点时由工具失败关闭。
+	normalized.Retry = performance.Retry
 	normalized.Thread, normalized.PageSize, normalized.ParallelMacro, normalized.FetchSize = performance.Thread, performance.PageSize, performance.ParallelMacro, performance.FetchSize
 	for _, value := range []*int{normalized.Thread, normalized.PageSize, normalized.ParallelMacro, normalized.FetchSize} {
 		if value != nil && *value < 1 {
@@ -1049,9 +1055,14 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	normalized.BlockSize = performance.BlockSize
 
 	filter := config.FilterConfig
-	if filter.Where != "" || filter.Partition != "" || len(filter.ExcludeDataTypes) != 0 || filter.EnableHiddenPk != nil || filter.Snapshot != "" || filter.WeakRead != nil {
+	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--where 条件筛选、--snapshot 一致性快照、--weak-read 备库弱读已启用；
+	// --partition/--exclude-data-types/--enable-hidden-pk 仍为 VALIDATION_GATED，携带即失败关闭。
+	if filter.Partition != "" || len(filter.ExcludeDataTypes) != 0 || filter.EnableHiddenPk != nil {
 		return normalizedExportDraft{}, errors.New("v6 filter options are not enabled")
 	}
+	normalized.Where = filter.Where
+	normalized.Snapshot = filter.Snapshot != nil && *filter.Snapshot
+	normalized.WeakRead = filter.WeakRead != nil && *filter.WeakRead
 	normalized.QuerySql = filter.QuerySql
 	normalized.ExcludeVirtualColumns = filter.ExcludeVirtualColumns != nil && *filter.ExcludeVirtualColumns
 	normalized.FlashbackScn, normalized.FlashbackTimestamp = filter.FlashbackScn, filter.FlashbackTimestamp
@@ -1062,6 +1073,13 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		if normalized.FlashbackScn != nil || normalized.FlashbackTimestamp != "" {
 			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with flashback options")
 		}
+		// 官方约束：--query-sql 与 --where 不能搭配（--where 只能配合 --table）。
+		if normalized.Where != "" {
+			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with where option")
+		}
+	}
+	if normalized.Where != "" && validateOptionText(normalized.Where, 64<<10) != nil {
+		return normalizedExportDraft{}, errors.New("v6 where option is invalid")
 	}
 	if normalized.FlashbackScn != nil && *normalized.FlashbackScn < 1 {
 		return normalizedExportDraft{}, errors.New("v6 flashback scn must be positive")
@@ -1081,16 +1099,18 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	}
 	ddl := config.DDLBehavior
 	// EX-I7 DDL 行为（2026-08-10）：--drop-object/--retain-schema 仅在 DDL 内容时活动并随 DDL 能力发射；
-	// --add-extra-message 依赖 sys 凭据可用性（未取证）、--compact-schema/--sequence-policy 仍为 VALIDATION_GATED，携带即失败关闭。
-	if ddl.AddExtraMessage != nil || ddl.CompactSchema != nil || ddl.SequencePolicy != "" {
+	// --compact-schema（2026-08-11 受控实测定版：show create table 检索文本）同样仅限 DDL 内容；
+	// --add-extra-message 依赖 sys 凭据可用性（未取证）、--sequence-policy 仍为 VALIDATION_GATED，携带即失败关闭。
+	if ddl.AddExtraMessage != nil || ddl.SequencePolicy != "" {
 		return normalizedExportDraft{}, errors.New("v6 ddl behavior is not enabled")
 	}
-	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) {
+	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) || (ddl.CompactSchema != nil && *ddl.CompactSchema) {
 		if normalized.ContentKind == "DATA_ONLY" {
 			return normalizedExportDraft{}, errors.New("v6 ddl behavior requires ddl content")
 		}
 		normalized.DropObject = ddl.DropObject != nil && *ddl.DropObject
 		normalized.RetainSchema = ddl.RetainSchema != nil && *ddl.RetainSchema
+		normalized.CompactSchema = ddl.CompactSchema != nil && *ddl.CompactSchema
 	}
 	// EX-I4：序列化选项按格式适用性校验；跨格式文本选项随 FORMAT_IN 激活，
 	// CSV/CUT 专属字段越界即失败关闭，防止命令生成器收到不可能的参数组合。
@@ -2180,6 +2200,10 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.RetainSchema {
 		fields = append(fields, commandgen.FieldInput{Name: "--retain-schema", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
 	}
+	// EX-I7 紧凑 Schema（2026-08-11 受控实测定版）：仅随 DDL 内容发射（归一化已保证非 DDL 内容携带即失败关闭）。
+	if input.CompactSchema {
+		fields = append(fields, commandgen.FieldInput{Name: "--compact-schema", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
+	}
 	fields = append(fields, commandgen.FieldInput{Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.FilePath}})
 	if input.LogPath != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.LogPath}})
@@ -2287,6 +2311,17 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.QuerySql != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--query-sql", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.QuerySql}})
 	}
+	// EX-I7 条件筛选（2026-08-11 受控实测定版）：--where 显式传值时发射（与 --query-sql 互斥已校验）。
+	if input.Where != "" {
+		fields = append(fields, commandgen.FieldInput{Name: "--where", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Where}})
+	}
+	// EX-I7 一致性（2026-08-11 受控实测定版）：--snapshot 一致性快照、--weak-read 备库弱读均为无值开关。
+	if input.Snapshot {
+		fields = append(fields, commandgen.FieldInput{Name: "--snapshot", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
+	}
+	if input.WeakRead {
+		fields = append(fields, commandgen.FieldInput{Name: "--weak-read", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
+	}
 	if len(input.IncludeColumns) != 0 {
 		fields = append(fields, commandgen.FieldInput{Name: "--include-column-names", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.IncludeColumns, ",")}})
 	}
@@ -2321,6 +2356,10 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	// EX-I7 文件拆分（2026-08-10）：--block-size 显式传值时发射（归一化已按可读格式能力校验）。
 	if input.BlockSize != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--block-size", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.BlockSize}})
+	}
+	// EX-I7 保存点续跑（2026-08-11 受控实测定版）：--retry 无值开关；无保存点时由工具失败关闭。
+	if input.Retry {
+		fields = append(fields, commandgen.FieldInput{Name: "--retry", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
 	}
 	requestBase.MetadataVersion = "obdumper-4.3.5-slice-v6"
 	requestBase.CapabilityVersion = draftCapability(input)
