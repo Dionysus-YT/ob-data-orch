@@ -333,6 +333,48 @@ func TestExecutionNodeManagementFiltersUnauthorizedAndUsesRevision(t *testing.T)
 	}
 }
 
+// TestExecutionNodeEnvironmentCheckFailureCarriesDiagnosableCode 验证环境检查 FAILED 时
+// 列表/详情响应透传具体失败码（TOOL_RUNTIME_INVALID），而不是只有泛化的"环境检查发现异常"。
+func TestExecutionNodeEnvironmentCheckFailureCarriesDiagnosableCode(t *testing.T) {
+	t.Parallel()
+	now := nodeFixtureTime
+	completedAt := now.Add(5 * time.Minute)
+	node := store.ExecutionNode{
+		NodeID: "node-failed-env", DisplayName: "Failed Env Node", Platform: "WINDOWS_AMD64",
+		ManagementState: "DISABLED", AllowedRoots: []string{`E:\ob-data\exports`},
+		ToolHome: `E:\tools\ob-loader-dumper-4.3.5`, JavaPath: `C:\Java\bin\java.exe`,
+		EnvironmentCheck: store.ExecutionNodeEnvironmentCheck{
+			CheckID: "check-1", Status: "FAILED", Code: "TOOL_RUNTIME_INVALID", FactsRevision: 3, CompletedAt: &completedAt,
+		},
+		Revision: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	node.Agent = &store.ExecutionNodeAgent{
+		AgentID: "agent-1", ProtocolVersion: "obdo-r1", BootID: "boot-1",
+		LastHeartbeatAt: &now, FactsRevision: 3,
+		EnvironmentFacts: store.AgentEnvironmentFacts{
+			OperatingSystem: "WINDOWS", Architecture: "AMD64",
+			// 运行时配置摘要与登记配置一致，才能进入环境检查结果分支（而非配置漂移分支）。
+			RuntimeConfigurationDigest: store.ExecutionNodeRuntimeConfigurationDigest(node),
+		},
+	}
+	manager := &recordingNodeManagementStore{nodes: map[string]store.ExecutionNode{"node-failed-env": node}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: nodeManageAuthorizer{allowedID: "node-failed-env"},
+		NodeManagement: manager, CSRF: allowedCSRF{},
+	})
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/execution-nodes", nil))
+	if list.Code != http.StatusOK || !bytes.Contains(list.Body.Bytes(), []byte(`"TOOL_RUNTIME_INVALID"`)) {
+		t.Fatalf("failed env-check list response=%d body=%s", list.Code, list.Body.String())
+	}
+	detail := httptest.NewRecorder()
+	handler.ServeHTTP(detail, httptest.NewRequest(http.MethodGet, "/api/v1/execution-nodes/node-failed-env", nil))
+	if detail.Code != http.StatusOK || !bytes.Contains(detail.Body.Bytes(), []byte(`"TOOL_RUNTIME_INVALID"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"environmentStatus":"ABNORMAL"`)) {
+		t.Fatalf("failed env-check detail response=%d body=%s", detail.Code, detail.Body.String())
+	}
+}
+
 func TestGetDataSourceHidesUnauthorizedAndMissingObjects(t *testing.T) {
 	t.Parallel()
 	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{

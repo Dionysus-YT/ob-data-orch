@@ -160,6 +160,9 @@ function unavailableReasonLabel(reason: string) {
     ENVIRONMENT_CHECK_REQUIRED: '尚未取得环境检查事实',
     ENVIRONMENT_CHECK_IN_PROGRESS: '环境检查正在等待 Agent 回传',
     ENVIRONMENT_CHECK_ABNORMAL: '环境检查发现异常',
+    // 环境检查失败码透传（2026-08-11）：区分工具目录缺失与运行时不可用，便于判断故障原因。
+    TOOL_RUNTIME_INVALID: '工具运行时无效：登记的 OBDUMPER 工具目录或 Java 在节点上不可用，请检查节点上的工具安装',
+    TOOL_RUNTIME_UNAVAILABLE: '工具运行时不可用：节点暂无法核验工具环境，请稍后在节点详情页重新触发环境检查',
     ENVIRONMENT_CHECK_EXPIRED: '环境检查事实已过期',
     RUNTIME_CONFIGURATION_MISMATCH: '登记配置已变更，请在本机重新运行 Agent 注册',
     CAPACITY_UNKNOWN: '任务容量尚未取得',

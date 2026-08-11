@@ -5725,7 +5725,13 @@ func (s *Server) newExecutionNodeListResponse(node store.ExecutionNode) executio
 			}
 		case "FAILED":
 			response.EnvironmentStatus = "ABNORMAL"
-			reasons = append(reasons, "ENVIRONMENT_CHECK_ABNORMAL")
+			// 透传具体失败码（TOOL_RUNTIME_INVALID/TOOL_RUNTIME_UNAVAILABLE），
+			// 让浏览器能区分工具目录缺失、运行时不可用等可诊断原因，而不是只看到泛化的"环境检查发现异常"。
+			if node.EnvironmentCheck.Code != "" {
+				reasons = append(reasons, node.EnvironmentCheck.Code)
+			} else {
+				reasons = append(reasons, "ENVIRONMENT_CHECK_ABNORMAL")
+			}
 		case "PENDING":
 			reasons = append(reasons, "ENVIRONMENT_CHECK_IN_PROGRESS")
 		default:
