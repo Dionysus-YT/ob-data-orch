@@ -354,3 +354,15 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 - 边界：sys 凭据的短时解析与任务秘密槽位同机制（凭据安全契约 9.2 节）；`--add-extra-message` 等依赖 sys 凭据的能力保持关闭（待实测）；连接测试事实不受 sys 凭据变更影响。
 
 - 连接测试（2026-08-10 扩展）：配置 sys 凭据的数据源在基础连接测试中额外验证 sys 租户认证（迁移 0016：data_source_connection_test_runs 增加 sys_credential_id/sys_credential_revision/sys_verification_status/sys_result_code）；Agent 在数据库验证后解析 SYS_CONNECTION 槽位（复用秘密槽位机制，sys 密码短时解密、零化）；浏览器测试结果投影 sysCredentialConfigured/sysVerificationStatus/sysResultCode；sys 结果与数据库结果相互独立，失败不阻断数据源启用；测试覆盖冻结/解析/回写全链路与未配置负例。
+
+### EX-I7 剩余参数第一批受控实测（2026-08-11 交付）
+
+- 已完成：授权 `test` 数据源对 `ob_test` 库只读导出实测，5 项参数定版 ENABLED（证据：[EX-I7 剩余参数第一批受控实测与定版](evidence/exi7-remaining-parameters-2026-08-11.md)）：
+  - `--compact-schema`：4.3.5 官方语义 = show create table 检索文本；DDL 对比运行成功（当前库对象与基线逐字节一致，差异场景残余说明）。
+  - `--snapshot`：一致性快照导出，实测成功。
+  - `--weak-read`：从备库读（follower server），实测成功。
+  - `--where`：条件筛选实测生效（109 数据行 vs 全表 1,000 行）。
+  - `--retry`：无保存点失败关闭（.dump.ckpt missing）；续跑行为并入 EX-I8 dump.ckpt 继续功能验证（ob_test 数据量太小无法稳定制造保存点）。
+- 已完成：实测发现 OBDUMPER 4.3.5（Hadoop 3.3.6）在 Windows 上拒绝盘符绝对路径（file://nullE:/ Wrong FS），`-f`/`--log-path` 必须相对路径——控制面/Agent 正式任务路径传递需在平台适配层核对（遗留核对项）。
+- 待第二批：时间戳值格式（--date-value-format 等 10 个）、--partition（t_hash_prune_test 可测）、--exclude-data-types/--enable-hidden-pk、对象类型 13 个；--add-extra-message 依赖 sys 凭据真实有效性验证。
+- 接入状态：定版参数的产品接入（v6 元数据/控制面/向导）待推进。

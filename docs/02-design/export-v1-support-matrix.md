@@ -101,7 +101,7 @@
 | `--column-splitter` | NORMAL | LOW | VERIFIED（CUT 专属；POS 已实测定版为独立 `--pos`） | ENABLED（待产品接入） | CUT 分隔字符串 |
 | `--trail-delimiter` | NORMAL | LOW | VERIFIED | ENABLED | 行尾分隔符 |
 | `--drop-object` | NORMAL | HIGH | VERIFIED | ENABLED | 前置 DROP（高风险+二次确认） |
-| `--compact-schema` | NORMAL | MEDIUM | CONFLICT_PENDING | VALIDATION_GATED | 紧凑 Schema，4.3.5 约束不完整 |
+| `--compact-schema` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | show create table 检索文本；当前库无差异，残余说明见证据文档 |
 | `--flashback-scn` | NORMAL | MEDIUM | VERIFIED | ENABLED | 闪回 SCN，官方归类为文件格式伴生参数 |
 
 ### 2.8 基础选项 · 功能选项 · 压缩导出（3 个）
@@ -171,7 +171,7 @@
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
 | `--query-sql` | NORMAL | HIGH | VERIFIED | ENABLED | 受限专家能力：CAP_SENSITIVE_COMMAND + 二次确认；纯文本输入（不提供 SQL 编辑器）；file:// 不开放；与 where/partition 互斥 |
-| `--where` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 条件筛选，表达式验证待实测 |
+| `--where` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 条件筛选，行数生效（109 vs 1,000） |
 | `--partition` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 分区筛选，二级分区规则待确认 |
 | `--include-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED | 列筛选 |
 | `--exclude-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED | 列排除，与控制文件互斥 |
@@ -190,9 +190,9 @@
 | `--skip-check-dir` | NORMAL | MEDIUM | VERIFIED | ENABLED | 跳过导出目录空性检查；仍检查路径、允许根目录、可写性和空间 |
 | `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED | 导出总量上限 |
 | `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED | 删除换行（仅 CUT，高风险+二次确认） |
-| `--retry` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 检查点继续，兼容条件待验证 |
-| `--snapshot` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 一致性快照，组合条件待确认 |
-| `--weak-read` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 备副本弱读，环境条件待确认 |
+| `--retry` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 从保存点继续；无保存点失败关闭，续跑并入 EX-I8 |
+| `--snapshot` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 一致性快照导出 |
+| `--weak-read` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 从备库读（follower server） |
 
 ### 2.15 高级选项 · 性能选项（5 个）
 
@@ -215,8 +215,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 62 | 56.9% |
-| VALIDATION_GATED | 33 | 30.3% |
+| ENABLED | 67 | 61.5% |
+| VALIDATION_GATED | 28 | 25.7% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |

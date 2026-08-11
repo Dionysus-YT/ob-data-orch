@@ -307,7 +307,7 @@
 | `--column-splitter` | NORMAL | LOW | VERIFIED（CUT 专属；POS 已实测定版为独立 `--pos`） | ENABLED（待产品接入） |
 | `--trail-delimiter` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--drop-object` | NORMAL | HIGH | VERIFIED | ENABLED |
-| `--compact-schema` | NORMAL | MEDIUM | CONFLICT_PENDING | VALIDATION_GATED |
+| `--compact-schema` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：show create table 检索文本，当前库无差异） | ENABLED |
 | `--flashback-scn` | NORMAL | MEDIUM | VERIFIED | ENABLED |
 
 ### 9.8 基础选项 · 功能选项 · 压缩导出（3 个）
@@ -377,7 +377,7 @@
 | 参数 | sensitivity | riskLevel | evidenceState | v1State |
 |---|---|---|---|---|
 | `--query-sql` | NORMAL | HIGH | VERIFIED | ENABLED |
-| `--where` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--where` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：行数筛选生效） | ENABLED |
 | `--partition` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
 | `--include-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED |
 | `--exclude-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED |
@@ -396,9 +396,9 @@
 | `--skip-check-dir` | NORMAL | MEDIUM | VERIFIED | ENABLED |
 | `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED |
-| `--retry` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
-| `--snapshot` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
-| `--weak-read` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--retry` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：无保存点失败关闭；续跑并入 EX-I8） | ENABLED |
+| `--snapshot` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED |
+| `--weak-read` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：从备库读） | ENABLED |
 
 ### 9.15 高级选项 · 性能选项（5 个）
 
@@ -421,8 +421,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 62 | 56.9% |
-| VALIDATION_GATED | 33 | 30.3% |
+| ENABLED | 67 | 61.5% |
+| VALIDATION_GATED | 28 | 25.7% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |
