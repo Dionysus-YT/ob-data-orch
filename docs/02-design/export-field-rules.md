@@ -149,7 +149,7 @@
 | ID | 字段 | 参数 | 显示条件 | 互斥/依赖 | supportState |
 |---|---|---|---|---|---|
 | EX-F070 | 自定义查询 | `--query-sql` | 包含数据 + 专家 | 与 where/partition 互斥；不提供 SQL 编辑器 | ENABLED |
-| EX-F071 | 条件筛选 | `--where` | 包含数据 | 与 query SQL 互斥；2026-08-11 实测行数生效 | ENABLED |
+| EX-F071 | 条件筛选 | `--where` | 包含明确表数据 | 仅配合 `--table`；与 query SQL 互斥；2026-08-11 实测行数生效 | ENABLED |
 | EX-F072 | 分区筛选 | `--partition` | 包含表数据 | 与 query SQL 互斥；校验二级分区 | VALIDATION_GATED |
 | EX-F073 | 包含列 | `--include-column-names` | 包含表数据 | 校验实际列名 | ENABLED |
 | EX-F074 | 排除列 | `--exclude-column-names` | 包含表数据 | 与控制文件互斥 | ENABLED |
@@ -158,8 +158,8 @@
 | EX-F077 | 使用隐藏主键 | `--enable-hidden-pk` | 无主键表且版本/权限满足 | 由预检查决定可用性 | VALIDATION_GATED |
 | EX-F078 | 闪回 SCN | `--flashback-scn` | 包含数据 | 与 query SQL 互斥 | ENABLED |
 | EX-F079 | 闪回时间点 | `--flashback-timestamp` | 数据 + Oracle | 与 query SQL 互斥 | ENABLED |
-| EX-F080 | 一致性快照 | `--snapshot` | 包含数据 | 2026-08-11 实测成功；与其他一致性参数组合待确认 | ENABLED |
-| EX-F081 | 备副本弱读 | `--weak-read` | 环境支持 | 从备库读，2026-08-11 实测成功；预检查副本和权限 | ENABLED |
+| EX-F080 | 一致性快照 | `--snapshot` | 包含数据 | 2026-08-11 单独实测成功；与闪回等一致性参数组合在确认前阻断 | ENABLED |
+| EX-F081 | 备副本弱读 | `--weak-read` | 环境支持 | 工具行为已实测；副本和权限预检查未实现前不参与命令生成 | VALIDATION_GATED |
 
 ## 9. 步骤 6：确认页
 
@@ -176,8 +176,8 @@
 
 | supportState | 字段数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 53 | 60.9% |
-| VALIDATION_GATED | 33 | 37.9% |
+| ENABLED | 58 | 66.7% |
+| VALIDATION_GATED | 28 | 32.2% |
 | HIDDEN | 1 | 1.1% |
 | BLOCKED | 0 | 0% |
 | **合计** | **87** | **100%** |

@@ -496,14 +496,15 @@ func validateResource(raw resource) error {
 		// + EX-I7 DDL 行为（2026-08-10）的 --drop-object/--retain-schema
 		// + EX-I7 文件拆分（2026-08-10）的 --block-size（可读格式与全量 CSV 能力，MB/ROW 已实测）
 		// + EX-I7 压缩等级（2026-08-10）的 --compression-level（官方分算法范围）
-		// + EX-I7 剩余参数第一批（2026-08-11）的 --compact-schema（DDL 能力）/--where/--snapshot/--weak-read/--retry（受控实测）。
+		// + EX-I7 剩余参数第一批（2026-08-11）的 --compact-schema（表 DDL）/--where（明确表范围）/--snapshot；
+		// --weak-read 缺少副本与权限预检查，--retry 缺少 EX-I8 保存点恢复链路，继续保持 VALIDATION_GATED。
 		if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
 			"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--cut", "--sql", "--pos", "--par", "--orc", "--avro", "--file-path", "--log-path", "--skip-check-dir",
 			"--all", "--view", "--ddl", "--exclude-table",
 			"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode", "--escape-character", "--line-separator", "--null-string", "--file-encoding",
 			"--with-trim", "--trail-delimiter", "--remove-newline", "--column-splitter", "--compress", "--compression-algo", "--compression-level", "--no-nested-dir", "--max-file-size", "--retain-empty-files",
 			"--ctl-path", "--tmp-path", "--drop-object", "--retain-schema", "--compact-schema",
-			"--query-sql", "--where", "--snapshot", "--weak-read", "--retry", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
+			"--query-sql", "--where", "--snapshot", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
 		}); err != nil {
 			return err
@@ -591,7 +592,7 @@ func validateRule(parameter string, rule Rule, allowed ...string) error {
 // v5 保留 CSV 序列化八项为 gated；v6 已取证子集在 EX-I3 中全部提升为 ENABLED。
 func gatedNamesByVersion(metadataVersion string) []string {
 	if metadataVersion == generalizedMetadataVersion {
-		return nil
+		return []string{"--retry", "--weak-read"}
 	}
 	return []string{
 		"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode",

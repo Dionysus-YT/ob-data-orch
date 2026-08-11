@@ -396,9 +396,9 @@
 | `--skip-check-dir` | NORMAL | MEDIUM | VERIFIED | ENABLED |
 | `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED |
-| `--retry` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：无保存点失败关闭；续跑并入 EX-I8） | ENABLED |
+| `--retry` | NORMAL | MEDIUM | CONFLICT_PENDING（仅无保存点失败关闭；有效续跑并入 EX-I8） | VALIDATION_GATED |
 | `--snapshot` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED |
-| `--weak-read` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：从备库读） | ENABLED |
+| `--weak-read` | NORMAL | MEDIUM | VERIFIED（2026-08-11 工具实测：从备库读；产品预检查待实现） | VALIDATION_GATED |
 
 ### 9.15 高级选项 · 性能选项（5 个）
 
@@ -421,8 +421,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 67 | 61.5% |
-| VALIDATION_GATED | 28 | 25.7% |
+| ENABLED | 65 | 59.6% |
+| VALIDATION_GATED | 30 | 27.5% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |

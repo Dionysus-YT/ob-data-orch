@@ -190,9 +190,9 @@
 | `--skip-check-dir` | NORMAL | MEDIUM | VERIFIED | ENABLED | 跳过导出目录空性检查；仍检查路径、允许根目录、可写性和空间 |
 | `--max-file-size` | NORMAL | LOW | VERIFIED | ENABLED | 导出总量上限 |
 | `--remove-newline` | NORMAL | HIGH | VERIFIED | ENABLED | 删除换行（仅 CUT，高风险+二次确认） |
-| `--retry` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 从保存点继续；无保存点失败关闭，续跑并入 EX-I8 |
+| `--retry` | NORMAL | MEDIUM | CONFLICT_PENDING（仅无保存点失败关闭） | VALIDATION_GATED | 只允许失败任务恢复流程使用；有效保存点、原快照与版本绑定并入 EX-I8 |
 | `--snapshot` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 一致性快照导出 |
-| `--weak-read` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 从备库读（follower server） |
+| `--weak-read` | NORMAL | MEDIUM | VERIFIED（2026-08-11 工具实测） | VALIDATION_GATED | 从备库读；副本与权限预检查完成前不生成 |
 
 ### 2.15 高级选项 · 性能选项（5 个）
 
@@ -215,8 +215,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 67 | 61.5% |
-| VALIDATION_GATED | 28 | 25.7% |
+| ENABLED | 65 | 59.6% |
+| VALIDATION_GATED | 30 | 27.5% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |
@@ -326,7 +326,7 @@
 | EX-F065 | 前置 DROP | ENABLED | 已接入（2026-08-10），高风险提示；仅 DDL 内容时随 ddl/ddl-csv 能力发射 |
 | EX-F066 | 附加对象信息 | ENABLED | 依赖 sys 凭据可用性，待接入 |
 | EX-F067 | 保留 Schema | ENABLED | 已接入（2026-08-10），--retain-schema；仅 DDL 内容时发射 |
-| EX-F068 | 紧凑 Schema | VALIDATION_GATED | 4.3.5 约束不完整 |
+| EX-F068 | 紧凑 Schema | ENABLED | 仅包含表 DDL 时活动；纯视图范围阻断 |
 | EX-F069 | 序列策略 | VALIDATION_GATED | 4.3.5 约束待确认 |
 
 ### 3.8 筛选与一致性（EX-F070~F081；高级选项 · 功能选项 · 黑白名单筛选 / 时间戳格式 / 错误处理）
@@ -334,7 +334,7 @@
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
 | EX-F070 | 自定义查询 | ENABLED | 受限专家能力：CAP_SENSITIVE_COMMAND + 二次确认；纯文本（不提供 SQL 编辑器）；file:// 不开放；与 where/partition 互斥 |
-| EX-F071 | 条件筛选 | VALIDATION_GATED | 表达式验证待实测 |
+| EX-F071 | 条件筛选 | ENABLED | 仅明确 `--table` 范围；与 query SQL 互斥 |
 | EX-F072 | 分区筛选 | VALIDATION_GATED | 二级分区规则待确认 |
 | EX-F073 | 包含列 | ENABLED | --include-column-names |
 | EX-F074 | 排除列 | ENABLED | --exclude-column-names |
@@ -343,8 +343,8 @@
 | EX-F077 | 使用隐藏主键 | VALIDATION_GATED | 版本/权限条件待确认 |
 | EX-F078 | 闪回 SCN | ENABLED | --flashback-scn |
 | EX-F079 | 闪回时间点 | ENABLED | --flashback-timestamp，仅 Oracle |
-| EX-F080 | 一致性快照 | VALIDATION_GATED | 组合条件待确认 |
-| EX-F081 | 备副本弱读 | VALIDATION_GATED | 环境条件待确认 |
+| EX-F080 | 一致性快照 | ENABLED | 单独使用已实测；与闪回参数组合在确认前阻断 |
+| EX-F081 | 备副本弱读 | VALIDATION_GATED | 工具行为已实测；副本与权限预检查待实现 |
 
 ### 3.9 步骤 6：确认页（EX-F082~F087）
 
@@ -361,8 +361,8 @@
 
 | supportState | 字段数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 55 | 63.2% |
-| VALIDATION_GATED | 31 | 35.6% |
+| ENABLED | 58 | 66.7% |
+| VALIDATION_GATED | 28 | 32.2% |
 | HIDDEN | 1 | 1.1% |
 | BLOCKED | 0 | 0% |
 | **合计** | **87** | **100%** |

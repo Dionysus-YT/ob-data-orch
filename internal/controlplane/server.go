@@ -745,11 +745,10 @@ type normalizedExportDraft struct {
 	DropObject    bool
 	RetainSchema  bool
 	CompactSchema bool
-	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：条件筛选、一致性快照、备库弱读与保存点续跑。
+	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：条件筛选与一致性快照。
+	// 备库弱读缺少副本/权限预检查，保存点续跑缺少 EX-I8 恢复链路，继续失败关闭。
 	Where    string
 	Snapshot bool
-	WeakRead bool
-	Retry    bool
 }
 
 // maxExportObjectExpressions 限制单个草稿的对象表达式与排除表数量，
@@ -771,7 +770,7 @@ func (n normalizedExportDraft) hasZeroOptions() bool {
 		n.QuerySql == "" && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
 		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
-		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot && !n.WeakRead && !n.Retry
+		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot
 }
 
 // draftCapability 按归一结果推导泛化能力版本。
@@ -1035,8 +1034,11 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	}
 
 	performance := config.PerformanceConfig
-	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--retry 从保存点续跑，无保存点时由工具失败关闭。
-	normalized.Retry = performance.Retry
+	// --retry 只能由 EX-I8 的失败任务恢复流程在验证 dump.ckpt 与原快照后派生；
+	// 新建草稿携带该开关必须失败关闭，不能把已知的工具失败推迟到执行阶段。
+	if performance.Retry {
+		return normalizedExportDraft{}, errors.New("v6 retry option requires the checkpoint recovery flow")
+	}
 	normalized.Thread, normalized.PageSize, normalized.ParallelMacro, normalized.FetchSize = performance.Thread, performance.PageSize, performance.ParallelMacro, performance.FetchSize
 	for _, value := range []*int{normalized.Thread, normalized.PageSize, normalized.ParallelMacro, normalized.FetchSize} {
 		if value != nil && *value < 1 {
@@ -1055,14 +1057,13 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	normalized.BlockSize = performance.BlockSize
 
 	filter := config.FilterConfig
-	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--where 条件筛选、--snapshot 一致性快照、--weak-read 备库弱读已启用；
-	// --partition/--exclude-data-types/--enable-hidden-pk 仍为 VALIDATION_GATED，携带即失败关闭。
-	if filter.Partition != "" || len(filter.ExcludeDataTypes) != 0 || filter.EnableHiddenPk != nil {
+	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--where 条件筛选与 --snapshot 一致性快照已启用；
+	// --weak-read 缺少副本与权限预检查，其余列出的筛选项也仍为 VALIDATION_GATED，携带即失败关闭。
+	if filter.Partition != "" || len(filter.ExcludeDataTypes) != 0 || filter.EnableHiddenPk != nil || filter.WeakRead != nil {
 		return normalizedExportDraft{}, errors.New("v6 filter options are not enabled")
 	}
 	normalized.Where = filter.Where
 	normalized.Snapshot = filter.Snapshot != nil && *filter.Snapshot
-	normalized.WeakRead = filter.WeakRead != nil && *filter.WeakRead
 	normalized.QuerySql = filter.QuerySql
 	normalized.ExcludeVirtualColumns = filter.ExcludeVirtualColumns != nil && *filter.ExcludeVirtualColumns
 	normalized.FlashbackScn, normalized.FlashbackTimestamp = filter.FlashbackScn, filter.FlashbackTimestamp
@@ -1081,8 +1082,17 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	if normalized.Where != "" && validateOptionText(normalized.Where, 64<<10) != nil {
 		return normalizedExportDraft{}, errors.New("v6 where option is invalid")
 	}
+	// OBDUMPER 4.3.5 的 --where 只允许与明确的 --table 范围搭配；
+	// --all 或视图范围携带时必须在生成命令前失败关闭。
+	if normalized.Where != "" && (normalized.ScopeKind != "SPECIFIED" || normalized.ObjectType != "TABLE") {
+		return normalizedExportDraft{}, errors.New("v6 where option requires specified table scope")
+	}
 	if normalized.FlashbackScn != nil && *normalized.FlashbackScn < 1 {
 		return normalizedExportDraft{}, errors.New("v6 flashback scn must be positive")
+	}
+	// --snapshot 与闪回参数的组合尚未完成受控实测；在确认前保持互斥，避免生成语义不明的一致性命令。
+	if normalized.Snapshot && (normalized.FlashbackScn != nil || normalized.FlashbackTimestamp != "") {
+		return normalizedExportDraft{}, errors.New("v6 snapshot conflicts with flashback options")
 	}
 	if normalized.FlashbackTimestamp != "" && validateOptionText(normalized.FlashbackTimestamp, 256) != nil {
 		return normalizedExportDraft{}, errors.New("v6 flashback timestamp is invalid")
@@ -1107,6 +1117,9 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) || (ddl.CompactSchema != nil && *ddl.CompactSchema) {
 		if normalized.ContentKind == "DATA_ONLY" {
 			return normalizedExportDraft{}, errors.New("v6 ddl behavior requires ddl content")
+		}
+		if ddl.CompactSchema != nil && *ddl.CompactSchema && normalized.ScopeKind == "SPECIFIED" && normalized.ObjectType != "TABLE" {
+			return normalizedExportDraft{}, errors.New("v6 compact schema requires table ddl scope")
 		}
 		normalized.DropObject = ddl.DropObject != nil && *ddl.DropObject
 		normalized.RetainSchema = ddl.RetainSchema != nil && *ddl.RetainSchema
@@ -2315,12 +2328,9 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.Where != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--where", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Where}})
 	}
-	// EX-I7 一致性（2026-08-11 受控实测定版）：--snapshot 一致性快照、--weak-read 备库弱读均为无值开关。
+	// EX-I7 一致性（2026-08-11 受控实测定版）：--snapshot 一致性快照为无值开关。
 	if input.Snapshot {
 		fields = append(fields, commandgen.FieldInput{Name: "--snapshot", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	if input.WeakRead {
-		fields = append(fields, commandgen.FieldInput{Name: "--weak-read", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
 	}
 	if len(input.IncludeColumns) != 0 {
 		fields = append(fields, commandgen.FieldInput{Name: "--include-column-names", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.IncludeColumns, ",")}})
@@ -2356,10 +2366,6 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	// EX-I7 文件拆分（2026-08-10）：--block-size 显式传值时发射（归一化已按可读格式能力校验）。
 	if input.BlockSize != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--block-size", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.BlockSize}})
-	}
-	// EX-I7 保存点续跑（2026-08-11 受控实测定版）：--retry 无值开关；无保存点时由工具失败关闭。
-	if input.Retry {
-		fields = append(fields, commandgen.FieldInput{Name: "--retry", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
 	}
 	requestBase.MetadataVersion = "obdumper-4.3.5-slice-v6"
 	requestBase.CapabilityVersion = draftCapability(input)

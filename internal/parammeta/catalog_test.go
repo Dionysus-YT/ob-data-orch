@@ -118,6 +118,12 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 	if len(definitions) != 59 {
 		t.Fatalf("generalized definition count = %d, want 59", len(definitions))
 	}
+	for _, name := range []string{"--weak-read", "--retry"} {
+		definition, ok := catalog.Definition(name)
+		if !ok || definition.SupportState != "VALIDATION_GATED" {
+			t.Fatalf("generalized definition %s = %#v, want VALIDATION_GATED", name, definition)
+		}
+	}
 	if got := catalog.CategoryOrder(); len(got) != 9 || got[7] != "PERFORMANCE" || got[8] != "COMPRESSION" {
 		t.Fatalf("unexpected generalized category order: %#v", got)
 	}

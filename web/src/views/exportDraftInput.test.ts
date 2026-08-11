@@ -49,14 +49,12 @@ const completeValues: ExportDraftFormValues = {
   flashbackScn: '',
   flashbackTimestamp: '',
   snapshot: false,
-  weakRead: false,
   thread: '',
   pageSize: '',
   parallelMacro: '',
   fetchSize: '',
   jvmMemory: '',
   blockSize: '',
-  retry: false,
   dropObject: false,
   retainSchema: false,
   compactSchema: false,
@@ -412,31 +410,55 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, compress: false, compressionAlgo: '', compressionLevel: '5' })).toMatchObject({ valid: false, message: expect.stringContaining('先启用压缩') })
   })
 
-  it('EX-I7 剩余参数第一批：--where/--snapshot/--weak-read/--retry/--compact-schema 随配置发送（2026-08-11 实测定版）', () => {
-    const data = validateExportDraftInput({
+  it('仅为指定表发送条件筛选，并拒绝全部对象或视图残留', () => {
+    const table = validateExportDraftInput({ ...completeValues, where: 'id > 100' })
+    expect(table).toMatchObject({ valid: true })
+    if (table.valid) {
+      expect(table.input.config.filterConfig).toMatchObject({ where: 'id > 100' })
+    }
+    expect(validateExportDraftInput({ ...completeValues, scopeKind: 'ALL', objectNames: [], where: 'id > 100' })).toMatchObject({ valid: false, message: expect.stringContaining('指定表') })
+    expect(validateExportDraftInput({ ...completeValues, objectType: 'VIEW', contentKind: 'DDL_ONLY', where: 'id > 100' })).toMatchObject({ valid: false, message: expect.stringContaining('指定表') })
+    expect(validateExportDraftInput({ ...completeValues, querySql: 'select 1', where: 'id > 0' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
+  })
+
+  it('仅为包含表 DDL 的范围发送紧凑 Schema，并拒绝纯视图残留', () => {
+    const specifiedTable = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', compactSchema: true })
+    expect(specifiedTable).toMatchObject({ valid: true })
+    if (specifiedTable.valid) {
+      expect(specifiedTable.input.config.ddlBehavior).toMatchObject({ compactSchema: true })
+    }
+    const allObjects = validateExportDraftInput({ ...completeValues, scopeKind: 'ALL', objectNames: [], contentKind: 'DDL_ONLY', compactSchema: true })
+    expect(allObjects).toMatchObject({ valid: true })
+    if (allObjects.valid) {
+      expect(allObjects.input.config.ddlBehavior).toMatchObject({ compactSchema: true })
+    }
+    expect(validateExportDraftInput({ ...completeValues, objectType: 'VIEW', contentKind: 'DDL_ONLY', compactSchema: true })).toMatchObject({ valid: false, message: expect.stringContaining('紧凑 Schema') })
+    expect(validateExportDraftInput({ ...completeValues, compactSchema: true })).toMatchObject({ valid: false, message: expect.stringContaining('紧凑 Schema') })
+  })
+
+  it('快照与闪回参数互斥，并忽略旧表单残留的 weakRead 与 retry', () => {
+    const snapshot = validateExportDraftInput({ ...completeValues, snapshot: true })
+    expect(snapshot).toMatchObject({ valid: true })
+    if (snapshot.valid) {
+      expect(snapshot.input.config.filterConfig).toMatchObject({ snapshot: true })
+    }
+    expect(validateExportDraftInput({ ...completeValues, snapshot: true, flashbackScn: '100' })).toMatchObject({ valid: false, message: expect.stringContaining('一致性快照') })
+    expect(validateExportDraftInput({ ...completeValues, snapshot: true, flashbackTimestamp: '2026-08-06 00:00:00' })).toMatchObject({ valid: false, message: expect.stringContaining('一致性快照') })
+
+    // 运行时旧页面残留也不能绕过构造器重新发送已关闭的参数。
+    const legacyResidue = validateExportDraftInput({
       ...completeValues,
-      where: 'id > 100',
       snapshot: true,
+      thread: '4',
       weakRead: true,
       retry: true,
-    })
-    expect(data).toMatchObject({ valid: true })
-    if (data.valid) {
-      expect(data.input.config.filterConfig).toMatchObject({ where: 'id > 100', snapshot: true, weakRead: true })
-      expect(data.input.config.performanceConfig).toMatchObject({ retry: true })
+    } as unknown as ExportDraftFormValues)
+    expect(legacyResidue).toMatchObject({ valid: true })
+    if (legacyResidue.valid) {
+      expect(legacyResidue.input.config.filterConfig).toMatchObject({ snapshot: true })
+      expect(legacyResidue.input.config.filterConfig).not.toHaveProperty('weakRead')
+      expect(legacyResidue.input.config.performanceConfig).toMatchObject({ thread: 4 })
+      expect(legacyResidue.input.config.performanceConfig).not.toHaveProperty('retry')
     }
-    const ddl = validateExportDraftInput({
-      ...completeValues,
-      contentKind: 'DDL_ONLY' as const,
-      formatKind: 'CSV' as const,
-      compactSchema: true,
-    })
-    expect(ddl).toMatchObject({ valid: true })
-    if (ddl.valid) {
-      expect(ddl.input.config.ddlBehavior).toMatchObject({ compactSchema: true })
-    }
-    // 互斥与越界：querySql 与 where 互斥；仅数据内容携带紧凑 Schema 拒绝。
-    expect(validateExportDraftInput({ ...completeValues, querySql: 'select 1', where: 'id > 0' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
-    expect(validateExportDraftInput({ ...completeValues, compactSchema: true })).toMatchObject({ valid: false, message: expect.stringContaining('DDL 内容') })
   })
 })

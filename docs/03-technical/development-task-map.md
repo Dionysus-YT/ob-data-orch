@@ -357,20 +357,20 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 
 ### EX-I7 剩余参数第一批受控实测（2026-08-11 交付）
 
-- 已完成：授权 `test` 数据源对 `ob_test` 库只读导出实测，5 项参数定版 ENABLED（证据：[EX-I7 剩余参数第一批受控实测与定版](evidence/exi7-remaining-parameters-2026-08-11.md)）：
+- 已完成：在已授权测试数据源与只读测试 Schema 上完成 5 项参数工具行为实测；文档仅保留合成别名（证据：[EX-I7 剩余参数第一批受控实测与定版](evidence/exi7-remaining-parameters-2026-08-11.md)）：
   - `--compact-schema`：4.3.5 官方语义 = show create table 检索文本；DDL 对比运行成功（当前库对象与基线逐字节一致，差异场景残余说明）。
   - `--snapshot`：一致性快照导出，实测成功。
-  - `--weak-read`：从备库读（follower server），实测成功。
+  - `--weak-read`：从备库读（follower server），工具实测成功；副本与权限预检查完成前保持 VALIDATION_GATED。
   - `--where`：条件筛选实测生效（109 数据行 vs 全表 1,000 行）。
-  - `--retry`：无保存点失败关闭（.dump.ckpt missing）；续跑行为并入 EX-I8 dump.ckpt 继续功能验证（ob_test 数据量太小无法稳定制造保存点）。
-- 已完成：实测发现 OBDUMPER 4.3.5（Hadoop 3.3.6）在 Windows 上拒绝盘符绝对路径（file://nullE:/ Wrong FS），`-f`/`--log-path` 必须相对路径——控制面/Agent 正式任务路径传递需在平台适配层核对（遗留核对项）。
-- 待第二批：时间戳值格式（--date-value-format 等 10 个）、--partition（t_hash_prune_test 可测）、--exclude-data-types/--enable-hidden-pk、对象类型 13 个；--add-extra-message 依赖 sys 凭据真实有效性验证。
+  - `--retry`：无保存点失败关闭（.dump.ckpt missing）；有效保存点续跑与原快照绑定并入 EX-I8，完成前保持 VALIDATION_GATED。
+- 已完成：实测发现 OBDUMPER 4.3.5（Hadoop 3.3.6）在 Windows 上会把盘符绝对路径解析为错误的本地文件 URI（Wrong FS），`-f`/`--log-path` 必须相对路径——控制面/Agent 正式任务路径传递需在平台适配层核对（遗留核对项）。
+- 待第二批：时间戳值格式（--date-value-format 等 10 个）、--partition（使用合成分区表验证）、--exclude-data-types/--enable-hidden-pk、对象类型 13 个；--add-extra-message 依赖 sys 凭据真实有效性验证。
 - 接入状态：定版参数的产品接入（v6 元数据/控制面/向导）待推进。
 
 ### EX-I7 剩余参数第一批产品接入（2026-08-11 交付）
 
-- 已完成：v6 元数据新增 5 个定义（--compact-schema EX-F068 / --where EX-F071 / --snapshot EX-F080 / --weak-read EX-F081 / --retry EX-F088），additions 36→41、定义 54→59；--compact-schema 绑定 ddl/ddl-csv 能力（仅 DDL 内容发射），其余 4 个绑定全部 9 个能力。
-- 已完成：控制面归一化与发射（--where 与 --query-sql 互斥失败关闭；--compact-schema 仅 DDL 内容，仅数据内容携带 422；--retry/--snapshot/--weak-read 无值开关发射）；store FilterConfig.Snapshot 修正为 *bool（实测为无值 flag）；hasZeroOptions/冻结路径同步。
-- 已完成：向导接入（步骤 4 文件格式节点紧凑 Schema 复选框；步骤 5 黑白名单筛选节点条件筛选输入与一致性复选框、性能节点保存点续跑复选框；DDL 内容切换清理）；前端校验（querySql 与 where 互斥、仅数据内容携带 DDL 行为阻断）。
-- 已完成：测试（控制面 5 参数正例 + 互斥/越界负例；前端构建与校验用例）与文档同步（字段规则 EX-F068/F071/F080/F081 ENABLED、低保真节点、支持矩阵/映射 67 ENABLED）。
+- 已完成：v6 元数据登记 5 个定义（--compact-schema EX-F068 / --where EX-F071 / --snapshot EX-F080 / --weak-read EX-F081 / --retry EX-F088），additions 36→41、定义 54→59；前三项 ENABLED，--weak-read/--retry 保持 VALIDATION_GATED。
+- 已完成：控制面归一化与发射 --compact-schema/--where/--snapshot，并对 where 非明确表范围、snapshot 与闪回组合、纯视图 compact-schema 失败关闭；--weak-read/--retry 在专用预检查与恢复链路完成前返回 422。
+- 已完成：向导只接入当前可提交的紧凑 Schema、条件筛选和一致性快照；条件筛选仅明确表范围活动，纯视图不显示紧凑 Schema，未开放备库弱读和新建任务保存点续跑。
+- 已完成：控制面与前端正负例、元数据状态和文档同步；当前第一批产品接入为 3 项 ENABLED、2 项 VALIDATION_GATED。
 - 待第二批：时间戳值格式、--partition/--exclude-data-types/--enable-hidden-pk、对象类型 13 个、--add-extra-message（依赖 sys 凭据真实有效性）。

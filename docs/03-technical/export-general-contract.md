@@ -116,7 +116,7 @@ PerformanceConfig {
   parallelMacro:  int?
   fetchSize:      int?
   jvmMemory:      string?        // K/M/G/T
-  retry:          bool           // 检查点继续
+  retry:          bool           // 仅供 EX-I8 失败任务恢复派生；新建草稿携带时阻断
 }
 ```
 
@@ -134,8 +134,8 @@ FilterConfig {
   enableHiddenPk:      bool?
   flashbackScn:        int64?
   flashbackTimestamp:   string?
-  snapshot:            string?
-  weakRead:            bool?
+  snapshot:            bool?     // 无值开关；与闪回参数组合在确认前阻断
+  weakRead:            bool?     // 副本与权限预检查完成前 VALIDATION_GATED
 }
 ```
 
@@ -476,7 +476,7 @@ type PerformanceConfig struct {
     ParallelMacro *int   `json:"parallelMacro,omitempty"`
     FetchSize     *int   `json:"fetchSize,omitempty"`
     JvmMemory     string `json:"jvmMemory,omitempty"`
-    Retry         bool   `json:"retry"`
+    Retry         bool   `json:"retry"` // 仅保留契约兼容；新建草稿不得启用
 }
 
 type FilterConfig struct {
@@ -490,8 +490,8 @@ type FilterConfig struct {
     EnableHiddenPk     *bool    `json:"enableHiddenPk,omitempty"`
     FlashbackScn       *int64   `json:"flashbackScn,omitempty"`
     FlashbackTimestamp string   `json:"flashbackTimestamp,omitempty"`
-    Snapshot           string   `json:"snapshot,omitempty"`
-    WeakRead           *bool    `json:"weakRead,omitempty"`
+    Snapshot           *bool    `json:"snapshot,omitempty"`
+    WeakRead           *bool    `json:"weakRead,omitempty"` // 预检查完成前携带即阻断
 }
 
 type DDLBehavior struct {
