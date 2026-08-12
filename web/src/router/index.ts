@@ -21,7 +21,7 @@ export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', name: 'home', component: HomeView, meta: { title: '首页' } },
-    { path: '/data-sources', name: 'data-sources', component: DataSourceListView, meta: { title: '数据源管理' } },
+    { path: '/data-sources', name: 'data-sources', component: DataSourceListView, meta: { title: '数据源管理', contentWidth: 'wide' } },
     { path: '/data-sources/:id', name: 'data-source-form', component: DataSourceFormView, meta: { title: '数据源管理' } },
     { path: '/exports/new', name: 'new-export', component: ExportWizardView, meta: { title: '导出任务' } },
     { path: '/imports/normal/new', name: 'new-normal-import', component: NormalImportWizardView, meta: { title: '普通导入' } },

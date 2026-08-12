@@ -12,6 +12,7 @@ const navGroups = [
 ]
 
 const pageTitle = computed(() => typeof route.meta.title === 'string' ? route.meta.title : 'OB Data Orch')
+const wideContent = computed(() => route.meta.contentWidth === 'wide')
 </script>
 
 <template>
@@ -36,7 +37,7 @@ const pageTitle = computed(() => typeof route.meta.title === 'string' ? route.me
         <div><span class="breadcrumb">OB Data Orch /</span> {{ pageTitle }}</div>
         <div class="topbar-actions"><button type="button" class="text-button">帮助</button><span class="user-avatar">管</span><span>管理员</span></div>
       </header>
-      <main class="page-content"><slot /></main>
+      <main class="page-content" :class="{ 'page-content-wide': wideContent }"><slot /></main>
     </div>
   </div>
 </template>
