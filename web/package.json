@@ -15,6 +15,7 @@
     "typecheck": "vue-tsc -b --noEmit"
   },
   "dependencies": {
+    "@lucide/vue": "1.31.0",
     "vue": "3.5.40",
     "vue-router": "5.2.0"
   },

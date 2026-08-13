@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { AlertTriangle, ChevronDown, Eye, EyeOff } from '@lucide/vue'
 
-import { browserApi, dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceConnectionTestRequest, type DataSourceSummary, type DataSourceUpdate, type DataSourceWrite, type ExecutionNodeCandidate } from '@/api/browser'
+import { browserApi, dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceConnectionTestRequest, type DataSourceDetail, type DataSourceUpdate, type DataSourceWrite, type ExecutionNodeCandidate } from '@/api/browser'
 import { parseDataSourceConnectionString } from './dataSourceConnectionString'
 import { dataSourceConnectionTestNotice, sysCredentialVerificationNotice } from './dataSourceConnectionTestNotice'
+import { dataSourceConnectionTestDiagnostic } from './dataSourceConnectionTestDiagnostic'
 import { dataSourceFieldErrorsFromApi, type DataSourceFormErrors, type DataSourceFormField, validateDataSourceForm } from './dataSourceFormErrors'
 
 // 支持两种承载方式（参考 OMS 数据源设计）：独立路由页面（standalone=true）或列表页右侧抽屉（standalone=false）。
@@ -20,7 +22,7 @@ type MutableDataSourceUpdate = { -readonly [Key in keyof DataSourceUpdate]: Data
 const activeDataSourceID = ref(props.dataSourceId ?? '')
 const dataSourceID = computed(() => activeDataSourceID.value || (typeof route.params.id === 'string' ? route.params.id : ''))
 const isNew = computed(() => dataSourceID.value === '' || dataSourceID.value === 'new')
-const source = ref<DataSourceSummary>()
+const source = ref<DataSourceDetail>()
 const loading = ref(!isNew.value)
 const loadFailed = ref(false)
 const saveBusy = ref(false)
@@ -38,9 +40,12 @@ const nodeCandidates = ref<ExecutionNodeCandidate[]>([])
 const nodeCandidatesLoading = ref(false)
 const nodeCandidatesFailure = ref('')
 const selectedNodeID = ref('')
+const passwordVisible = ref(false)
+const testAfterCreate = ref(false)
 const clearSysCredential = ref(false)
 const savedFormSnapshot = ref('')
 const testSection = ref<HTMLElement>()
+const connectionSection = ref<HTMLElement>()
 const testNodeSelect = ref<HTMLSelectElement>()
 const form = reactive<DataSourceForm>({ displayName: '', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '', port: 2883, clusterName: '', tenantName: '', username: '', defaultDatabase: '', password: '', sysUser: '', sysPassword: '' })
 const formErrors = reactive<DataSourceFormErrors>({})
@@ -52,6 +57,7 @@ onMounted(initializePage)
 onBeforeUnmount(stopConnectionTestPolling)
 
 async function initializePage() {
+  if (isNew.value) await loadConnectionTestNodeCandidates()
   await loadPage()
   markSavedSnapshot()
   if (props.focusTest && !isNew.value) {
@@ -85,7 +91,6 @@ async function loadSource() {
 }
 
 async function loadConnectionTestNodeCandidates() {
-  if (isNew.value) return
   nodeCandidatesLoading.value = true
   nodeCandidatesFailure.value = ''
   try {
@@ -103,7 +108,7 @@ async function loadConnectionTestNodeCandidates() {
   }
 }
 
-function fillFromSource(value: DataSourceSummary) {
+function fillFromSource(value: DataSourceDetail) {
   clearFormErrors()
   form.displayName = value.displayName
   form.environment = value.environment as DataSourceWrite['environment']
@@ -113,9 +118,10 @@ function fillFromSource(value: DataSourceSummary) {
   form.port = value.port
   form.clusterName = value.clusterName
   form.tenantName = value.tenantName
-  form.username = ''
+  form.username = value.username ?? ''
   form.defaultDatabase = value.defaultDatabase ?? ''
   form.password = ''
+  passwordVisible.value = false
   form.sysUser = ''
   form.sysPassword = ''
   clearSysCredential.value = false
@@ -163,7 +169,7 @@ function applyConnectionString() {
   notice.value = '连接串已解析并回填结构化字段。原始连接串仅保留在当前浏览器页面，便于调整；保存和测试请求不会提交它。'
 }
 
-async function save() {
+async function save(runTestAfterCreate = false) {
   const validationErrors = validateDataSourceForm(form, isNew.value)
   if (Object.keys(validationErrors).length > 0) {
     setFormErrors(validationErrors)
@@ -174,6 +180,7 @@ async function save() {
   saveBusy.value = true; failure.value = ''; notice.value = ''
   try {
     if (isNew.value) {
+      const selectedNodeBeforeCreate = selectedNodeID.value
       const createdID = await api.createDataSource({ ...form, displayName: form.displayName.trim(), host: form.host.trim(), clusterName: form.clusterName.trim(), tenantName: form.tenantName.trim(), username: form.username.trim(), defaultDatabase: form.compatibilityMode === 'MYSQL' ? form.defaultDatabase || undefined : undefined, sysUser: (form.sysUser ?? '').trim() || undefined, sysPassword: form.sysPassword || undefined })
       activeDataSourceID.value = createdID
       form.password = ''
@@ -193,8 +200,13 @@ async function save() {
       notice.value = '数据源已保存。现在可以选择执行节点进行真实连接测试。'
       markSavedSnapshot()
       await loadConnectionTestNodeCandidates()
+      selectedNodeID.value = nodeCandidates.value.some((candidate) => candidate.id === selectedNodeBeforeCreate) ? selectedNodeBeforeCreate : ''
       // 抽屉承载时保持当前上下文并切换为编辑态。
       if (props.standalone) await router.replace(`/data-sources/${createdID}`)
+      if (runTestAfterCreate && selectedNodeID.value) {
+        testAfterCreate.value = false
+        await testConnection()
+      }
       return
     }
     if (!source.value) return
@@ -227,7 +239,7 @@ async function save() {
   } finally { saveBusy.value = false }
 }
 
-function buildUpdate(current: DataSourceSummary): DataSourceUpdate {
+function buildUpdate(current: DataSourceDetail): DataSourceUpdate {
   const update: MutableDataSourceUpdate = {}
   if (form.displayName.trim() !== current.displayName) update.displayName = form.displayName.trim()
   if (form.environment !== current.environment) update.environment = form.environment
@@ -238,7 +250,7 @@ function buildUpdate(current: DataSourceSummary): DataSourceUpdate {
   if (form.tenantName.trim() !== current.tenantName) update.tenantName = form.tenantName.trim()
   const defaultDatabase = form.compatibilityMode === 'MYSQL' ? form.defaultDatabase : ''
   if (defaultDatabase !== (current.defaultDatabase ?? '')) update.defaultDatabase = defaultDatabase
-  if (form.username.trim()) update.username = form.username.trim()
+  if (form.username.trim() !== current.username) update.username = form.username.trim()
   if (form.password) update.password = form.password
   // 可选的 sys 凭据（参考 ODC 数据源高级设置）：显式清除发送空字段，否则成对填写才设置或轮换。
   if (clearSysCredential.value) {
@@ -285,6 +297,16 @@ const connectionTestResultDetail = computed(() => {
   return dataSourceConnectionTestNotice(result)
 })
 const connectionTestSysNotice = computed(() => (connectionTest.value ? sysCredentialVerificationNotice(connectionTest.value) : ''))
+const connectionTestDiagnostic = computed(() => (connectionTest.value ? dataSourceConnectionTestDiagnostic(connectionTest.value) : undefined))
+
+async function focusConnectionTestDiagnostic() {
+  const diagnostic = connectionTestDiagnostic.value
+  if (!diagnostic) return
+  const target = diagnostic.target === 'execution-node' ? testSection.value : connectionSection.value
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (diagnostic.target === 'execution-node') testNodeSelect.value?.focus({ preventScroll: true })
+  else document.querySelector<HTMLElement>('[data-connection-diagnostic-focus]')?.focus({ preventScroll: true })
+}
 
 async function testConnection() {
   if (isNew.value || !source.value) {
@@ -398,6 +420,19 @@ function verificationSourceLabel(source: DataSourceConnectionTest['verificationS
   return source === 'G2_SYNTHETIC' ? 'G2 合成验证' : 'Agent 固定 JDBC 探针'
 }
 
+async function saveAndTest() {
+  if (!selectedNodeID.value) {
+    testFailure.value = '请选择一个可测试执行节点。'
+    return
+  }
+  testAfterCreate.value = true
+  try {
+    await save(true)
+  } finally {
+    testAfterCreate.value = false
+  }
+}
+
 function clearFormErrors() {
   for (const field of Object.keys(formErrors) as DataSourceFormField[]) delete formErrors[field]
 }
@@ -441,17 +476,17 @@ function fieldErrorID(field: DataSourceFormField) {
       </section>
       <!-- 独立页面保持双列（表单 + 状态侧栏）；抽屉内单列全宽，避免主要内容被压缩折叠 -->
       <div v-else class="form-layout" :class="{ 'drawer-form-layout': !props.standalone }">
-        <form class="form-card data-source-form-card" @submit.prevent="save">
+        <form class="form-card data-source-form-card" @submit.prevent="save()">
           <section class="data-source-form-section">
             <h2>基本信息</h2>
             <div class="form-grid basic-information-grid">
               <label class="field-label">
-                数据源名称 <b>*</b>
+                <span class="field-label-text">数据源名称 <b>*</b></span>
                 <input v-model.trim="form.displayName" maxlength="120" :aria-describedby="fieldErrorID('displayName')" :aria-invalid="formErrors.displayName ? 'true' : undefined" @input="clearFieldError('displayName')" />
                 <span v-if="formErrors.displayName" :id="fieldErrorID('displayName')" class="field-error" role="alert">{{ formErrors.displayName }}</span>
               </label>
               <fieldset class="field-label" :aria-invalid="formErrors.environment ? 'true' : undefined">
-                <legend>环境 <b>*</b></legend>
+                <legend><span class="field-label-text">环境 <b>*</b></span></legend>
                 <div class="radio-row" :aria-describedby="fieldErrorID('environment')">
                   <label><input v-model="form.environment" type="radio" value="DEVELOPMENT" @change="clearFieldError('environment')" />开发</label>
                   <label><input v-model="form.environment" type="radio" value="TEST" @change="clearFieldError('environment')" />测试</label>
@@ -463,14 +498,18 @@ function fieldErrorID(field: DataSourceFormField) {
             </div>
           </section>
 
-          <section class="data-source-form-section">
+          <section ref="connectionSection" class="data-source-form-section" :class="connectionTestDiagnostic?.target === 'connection' ? 'has-connection-diagnostic' : undefined">
             <h2>连接信息</h2>
+            <div v-if="connectionTestDiagnostic?.target === 'connection'" class="module-diagnostic" role="alert">
+              <AlertTriangle :size="17" aria-hidden="true" />
+              <div><strong>{{ connectionTestDiagnostic.title }}</strong><span>故障定位：{{ connectionTestDiagnostic.moduleLabel }}</span></div>
+            </div>
             <p class="fixed-field">连接方式：<strong>私有 ODP</strong><span>当前版本固定，不提供切换。</span></p>
             <details class="connection-parser" :open="isNew">
-              <summary>使用连接串解析</summary>
+              <summary><ChevronDown class="disclosure-icon" :size="15" aria-hidden="true" />使用连接串解析</summary>
               <div class="connection-parser-body">
                 <label class="field-label field-span">
-                  智能解析连接串
+                  <span class="field-label-text">智能解析连接串</span>
                   <input v-model="connectionString" type="text" autocomplete="off" placeholder="mysql 或 obclient 开头的 ODP 连接串" :aria-describedby="connectionStringError ? 'data-source-connection-string-error' : undefined" :aria-invalid="connectionStringError ? 'true' : undefined" @input="connectionStringError = ''" />
                   <span v-if="connectionStringError" id="data-source-connection-string-error" class="field-error" role="alert">{{ connectionStringError }}</span>
                 </label>
@@ -481,7 +520,7 @@ function fieldErrorID(field: DataSourceFormField) {
 
             <div class="form-grid">
               <label class="field-label">
-                租户模式 <b>*</b>
+                <span class="field-label-text">租户模式 <b>*</b></span>
                 <select v-model="form.compatibilityMode" :aria-describedby="fieldErrorID('compatibilityMode')" :aria-invalid="formErrors.compatibilityMode ? 'true' : undefined" @change="clearCompatibilityModeErrors">
                   <option value="MYSQL">OceanBase MySQL</option>
                   <option value="ORACLE">OceanBase Oracle</option>
@@ -489,50 +528,56 @@ function fieldErrorID(field: DataSourceFormField) {
                 <span v-if="formErrors.compatibilityMode" :id="fieldErrorID('compatibilityMode')" class="field-error" role="alert">{{ formErrors.compatibilityMode }}</span>
               </label>
               <label class="field-label">
-                ODP 地址 <b>*</b>
+                <span class="field-label-text">ODP 地址 <b>*</b></span>
                 <input v-model.trim="form.host" maxlength="253" placeholder="IP、域名或 VIP" :aria-describedby="fieldErrorID('host')" :aria-invalid="formErrors.host ? 'true' : undefined" @input="clearFieldError('host')" />
                 <span v-if="formErrors.host" :id="fieldErrorID('host')" class="field-error" role="alert">{{ formErrors.host }}</span>
               </label>
               <label class="field-label">
-                SQL 端口 <b>*</b>
+                <span class="field-label-text">SQL 端口 <b>*</b></span>
                 <input v-model.number="form.port" type="number" min="1" max="65535" :aria-describedby="fieldErrorID('port')" :aria-invalid="formErrors.port ? 'true' : undefined" @input="clearFieldError('port')" />
                 <span v-if="formErrors.port" :id="fieldErrorID('port')" class="field-error" role="alert">{{ formErrors.port }}</span>
               </label>
               <label class="field-label">
-                集群名 <b>*</b>
+                <span class="field-label-text">集群名 <b>*</b></span>
                 <input v-model.trim="form.clusterName" maxlength="255" :aria-describedby="fieldErrorID('clusterName')" :aria-invalid="formErrors.clusterName ? 'true' : undefined" @input="clearFieldError('clusterName')" />
                 <span v-if="formErrors.clusterName" :id="fieldErrorID('clusterName')" class="field-error" role="alert">{{ formErrors.clusterName }}</span>
               </label>
               <label class="field-label">
-                租户名 <b>*</b>
+                <span class="field-label-text">租户名 <b>*</b></span>
                 <input v-model.trim="form.tenantName" maxlength="255" :aria-describedby="fieldErrorID('tenantName')" :aria-invalid="formErrors.tenantName ? 'true' : undefined" @input="clearFieldError('tenantName')" />
                 <span v-if="formErrors.tenantName" :id="fieldErrorID('tenantName')" class="field-error" role="alert">{{ formErrors.tenantName }}</span>
               </label>
               <label class="field-label">
-                用户名 <b v-if="isNew">*</b><span v-else class="optional">留空则不修改</span>
-                <input v-model.trim="form.username" maxlength="256" autocomplete="username" :placeholder="isNew ? '' : '为保护现有连接标识，编辑时不回显'" :aria-describedby="fieldErrorID('username')" :aria-invalid="formErrors.username ? 'true' : undefined" @input="clearFieldError('username')" />
+                <span class="field-label-text">用户名 <b>*</b></span>
+                <input v-model.trim="form.username" maxlength="256" autocomplete="username" :aria-describedby="fieldErrorID('username')" :aria-invalid="formErrors.username ? 'true' : undefined" @input="clearFieldError('username')" />
                 <span v-if="formErrors.username" :id="fieldErrorID('username')" class="field-error" role="alert">{{ formErrors.username }}</span>
               </label>
               <label v-if="form.compatibilityMode === 'MYSQL'" class="field-label field-span">
-                默认数据库 <span class="optional">可选</span>
+                <span class="field-label-text">默认数据库 <span class="optional">可选</span></span>
                 <input v-model.trim="form.defaultDatabase" maxlength="512" :aria-describedby="fieldErrorID('defaultDatabase')" :aria-invalid="formErrors.defaultDatabase ? 'true' : undefined" @input="clearFieldError('defaultDatabase')" />
                 <span v-if="formErrors.defaultDatabase" :id="fieldErrorID('defaultDatabase')" class="field-error" role="alert">{{ formErrors.defaultDatabase }}</span>
               </label>
               <label class="field-label field-span">
-                密码 <b v-if="isNew">*</b><span v-else class="optional">留空则不修改</span>
-                <input v-model="form.password" type="password" maxlength="4096" autocomplete="new-password" :placeholder="isNew ? '新增时必填；页面不会回显或保存密码' : '输入新密码才会轮换凭据'" :aria-describedby="fieldErrorID('password')" :aria-invalid="formErrors.password ? 'true' : undefined" @input="clearFieldError('password')" />
+                <span class="field-label-text">密码 <b v-if="isNew">*</b><span v-else class="optional">留空保留现有值</span></span>
+                <span class="password-control">
+                  <input v-model="form.password" :type="passwordVisible ? 'text' : 'password'" maxlength="4096" autocomplete="new-password" :placeholder="isNew ? '新增时必填；页面不会回显或保存密码' : '输入新密码才会轮换凭据'" :aria-describedby="fieldErrorID('password')" :aria-invalid="formErrors.password ? 'true' : undefined" @input="clearFieldError('password')" />
+                  <button type="button" class="password-visibility" :aria-label="passwordVisible ? '隐藏新密码' : '显示新密码'" :aria-pressed="passwordVisible" @click="passwordVisible = !passwordVisible">
+                    <EyeOff v-if="passwordVisible" :size="16" aria-hidden="true" />
+                    <Eye v-else :size="16" aria-hidden="true" />
+                  </button>
+                </span>
                 <span v-if="formErrors.password" :id="fieldErrorID('password')" class="field-error" role="alert">{{ formErrors.password }}</span>
               </label>
               <details class="field-span sys-credential-panel">
-                <summary>高级设置：sys 凭据（可选）</summary>
+                <summary><ChevronDown class="disclosure-icon" :size="15" aria-hidden="true" />高级设置：sys 凭据（可选）</summary>
                 <p>拥有 sys 租户视图查看权限的账号（如 root）与密码，用于查询租户视图以提升导出能力；不配置时相关能力自动降级（参考 ODC 数据源高级设置）。</p>
                 <div class="sys-credential-row">
                   <label class="field-label">
-                    sys 账号
+                    <span class="field-label-text">sys 账号</span>
                     <input v-model.trim="form.sysUser" maxlength="256" autocomplete="off" placeholder="例如 root（勿填 @sys#集群 后缀）" :disabled="clearSysCredential" :aria-describedby="fieldErrorID('sysUser')" :aria-invalid="formErrors.sysUser ? 'true' : undefined" @input="clearFieldError('sysUser')" />
                   </label>
                   <label class="field-label">
-                    sys 密码
+                    <span class="field-label-text">sys 密码</span>
                     <input v-model="form.sysPassword" type="password" maxlength="4096" autocomplete="new-password" placeholder="输入新密码才会设置或轮换 sys 凭据" :disabled="clearSysCredential" :aria-describedby="fieldErrorID('sysPassword')" :aria-invalid="formErrors.sysPassword ? 'true' : undefined" @input="clearFieldError('sysPassword')" />
                     <span v-if="formErrors.sysPassword" :id="fieldErrorID('sysPassword')" class="field-error" role="alert">{{ formErrors.sysPassword }}</span>
                   </label>
@@ -545,49 +590,51 @@ function fieldErrorID(field: DataSourceFormField) {
               </details>
             </div>
           </section>
-          <section ref="testSection" class="data-source-form-section connection-test-section" aria-labelledby="data-source-connection-test-heading">
-            <h2 id="data-source-connection-test-heading">节点侧基础连接测试</h2>
-            <p>选择的执行节点 Agent 只测试网络、认证和基础数据库连接。控制面不会直接连接数据库。</p>
+          <section ref="testSection" class="data-source-form-section connection-test-section" :class="connectionTestDiagnostic?.target === 'execution-node' ? 'has-connection-diagnostic' : undefined" aria-labelledby="data-source-connection-test-heading">
+            <h2 id="data-source-connection-test-heading">通过执行节点测试连接</h2>
+            <p>由所选执行节点发起数据源网络、认证和基础数据库连接测试；控制面不会直接连接数据库。</p>
             <div class="test-node-row">
               <label class="field-label">
-                执行节点 <b>*</b>
-                <select ref="testNodeSelect" v-model="selectedNodeID" :disabled="busy || nodeCandidatesLoading || isNew" aria-describedby="data-source-connection-test-node-help">
+                <span class="field-label-text">执行节点 <b>*</b></span>
+                <select ref="testNodeSelect" v-model="selectedNodeID" :disabled="busy || nodeCandidatesLoading" aria-describedby="data-source-connection-test-node-help">
                   <option value="">{{ nodeCandidatesLoading ? '正在加载可测试节点…' : '请选择执行节点' }}</option>
                   <option v-for="candidate in nodeCandidates" :key="candidate.id" :value="candidate.id">{{ candidate.displayName }}（{{ candidate.platform }}）</option>
                 </select>
               </label>
-              <button type="button" class="button button-secondary" :disabled="busy || isNew || nodeCandidatesLoading || !nodeCandidates.length" @click="loadConnectionTestNodeCandidates">刷新节点</button>
+              <button type="button" class="button button-secondary" :disabled="busy || nodeCandidatesLoading" @click="loadConnectionTestNodeCandidates">刷新节点</button>
               <button type="button" class="button button-secondary" :disabled="busy || isNew || nodeCandidatesLoading || !nodeCandidates.length || !selectedNodeID || hasUnsavedConnectionChanges" @click="testConnection">{{ testBusy ? '测试进行中…' : '测试连接' }}</button>
             </div>
-            <p v-if="isNew" id="data-source-connection-test-node-help" class="section-hint is-locked">保存数据源后，才能选择执行节点并进行真实连接测试。</p>
+            <p v-if="isNew" id="data-source-connection-test-node-help" class="section-hint is-locked">可以预先选择合格节点；执行真实测试时会先保存数据源，再以已保存的配置和凭据版本发起测试。</p>
             <p v-else-if="hasUnsavedConnectionChanges" id="data-source-connection-test-node-help" class="section-hint is-warning">连接配置存在未保存更改。请先保存，保存后才能重新测试。</p>
-            <p v-else id="data-source-connection-test-node-help" class="section-hint">候选节点必须已启用、已关联、在线且空闲。每次测试只针对当前选择的一个节点，不会永久绑定数据源。</p>
+            <p v-else id="data-source-connection-test-node-help" class="section-hint">候选节点必须已关联、在线且空闲；维护中或已归档节点不可用于测试。每次测试只针对当前选择的一个节点，不会永久绑定数据源。</p>
             <p v-if="nodeCandidatesFailure" class="field-error" role="alert">{{ nodeCandidatesFailure }}</p>
-            <p v-else-if="!nodeCandidatesLoading && !isNew && nodeCandidates.length === 0" class="field-error" role="status">当前没有可用于连接测试的执行节点。请确认节点已启用、关联、在线且空闲，并且当前身份拥有节点使用权限。</p>
+            <p v-else-if="!nodeCandidatesLoading && nodeCandidates.length === 0" class="field-error" role="status">当前没有可用于连接测试的执行节点。请确认节点已关联、在线且空闲，并且当前身份拥有节点使用权限。</p>
             <p v-if="testFailure" class="field-error" role="alert">{{ testFailure }}</p>
           </section>
-          <!-- 连接测试结果就近高亮（参考 ODC：失败在对应操作位置醒目提示，错误码与可操作说明一并展示） -->
+          <!-- 连接测试结果按诊断阶段展示，并提供返回相关表单模块的定位入口；页面仍只使用受控证据码。 -->
           <section v-if="connectionTestRequest || connectionTest" class="test-result" :class="hasUnsavedConnectionChanges ? 'connection-test-result-invalidated' : `connection-test-result-${connectionTestResultState}`" aria-live="polite">
             <template v-if="hasUnsavedConnectionChanges">
               <strong>已有测试结果已失效</strong>
               <span>连接配置存在未保存更改。保存后才能基于新的配置重新执行真实连接测试。</span>
             </template>
             <template v-else>
-              <strong>本次受控测试：{{ connectionTest ? connectionTestStatusLabel(connectionTest.status) : '排队中' }}</strong>
-              <span>执行节点：{{ connectionTestNodeLabel() }}</span>
+              <div class="test-result-heading">
+                <span class="test-result-icon" aria-hidden="true"><AlertTriangle v-if="connectionTestResultState === 'error'" :size="18" /></span>
+                <div><strong>{{ connectionTestDiagnostic?.title ?? `连接测试${connectionTest ? connectionTestStatusLabel(connectionTest.status) : '排队中'}` }}</strong><span v-if="connectionTestDiagnostic">失败阶段：{{ connectionTestDiagnostic.stage }}</span></div>
+              </div>
               <template v-if="connectionTest">
-                <span>验证来源：{{ verificationSourceLabel(connectionTest.verificationSource) }}</span>
-                <span v-if="connectionTest.agentId">关联 Agent：{{ connectionTest.agentId }}</span>
-                <span v-if="connectionTest.factsRevision">节点事实版本：{{ connectionTest.factsRevision }}</span>
-                <span v-if="connectionTest.resultCode">代码：{{ connectionTest.resultCode }}</span>
-                <span v-if="connectionTest.completedAt">完成时间：{{ new Date(connectionTest.completedAt).toLocaleString() }}</span>
-                <span v-else>正在等待受控终态。</span>
-                <span v-if="connectionTest.realConnectionVerified">本次已完成所选节点到数据库的实际基础连接验证。</span>
-                <span v-else>本次尚未形成可用于数据源启用的节点侧实际连接验证。</span>
+                <template v-if="connectionTestDiagnostic">
+                  <p class="connection-test-summary">{{ connectionTestDiagnostic.summary }}</p>
+                  <div class="connection-test-location"><span>异常模块</span><strong>{{ connectionTestDiagnostic.moduleLabel }}</strong><button type="button" data-connection-diagnostic-focus class="diagnostic-link" @click="focusConnectionTestDiagnostic">查看相关配置</button></div>
+                  <div class="connection-test-checks"><strong>建议检查</strong><ol><li v-for="check in connectionTestDiagnostic.checks" :key="check">{{ check }}</li></ol></div>
+                </template>
+                <p v-else-if="isTerminalConnectionTestStatus(connectionTest.status)" class="connection-test-detail">{{ connectionTestResultDetail }}</p>
                 <p v-if="connectionTest.verificationSource === 'G2_SYNTHETIC'" class="synthetic-warning">G2 合成结果不代表数据源已连通，不能据此启用数据源或选择导出任务。</p>
-                <!-- 终态详细文案（失败时含可操作原因）与 sys 凭据独立验证结果，在测试操作位置就近高亮。 -->
-                <p v-if="isTerminalConnectionTestStatus(connectionTest.status)" class="connection-test-detail">{{ connectionTestResultDetail }}</p>
                 <p v-if="connectionTestSysNotice" class="connection-test-sys">{{ connectionTestSysNotice }}</p>
+                <details class="connection-test-evidence">
+                  <summary>技术信息</summary>
+                  <dl><div><dt>执行节点</dt><dd>{{ connectionTestNodeLabel() }}</dd></div><div><dt>验证来源</dt><dd>{{ verificationSourceLabel(connectionTest.verificationSource) }}</dd></div><div v-if="connectionTest.agentId"><dt>关联 Agent</dt><dd>{{ connectionTest.agentId }}</dd></div><div v-if="connectionTest.factsRevision"><dt>节点事实版本</dt><dd>{{ connectionTest.factsRevision }}</dd></div><div v-if="connectionTest.resultCode"><dt>错误代码</dt><dd><code>{{ connectionTest.resultCode }}</code></dd></div><div v-if="connectionTest.completedAt"><dt>完成时间</dt><dd>{{ new Date(connectionTest.completedAt).toLocaleString() }}</dd></div></dl>
+                </details>
               </template>
               <span v-else>控制面已接受请求，正在等待所选节点 Agent 领取。</span>
             </template>
@@ -612,14 +659,15 @@ function fieldErrorID(field: DataSourceFormField) {
     <footer v-if="!loading && !loadFailed" class="page-footer data-source-form-footer">
       <button type="button" class="button button-secondary" @click="props.standalone ? router.push('/data-sources') : emit('cancel')">取消</button>
       <span class="footer-grow" />
-      <button type="button" class="button button-primary" :disabled="busy" @click="save">{{ saveBusy ? '保存中…' : isNew ? '保存数据源' : '保存更改' }}</button>
+      <button v-if="isNew && selectedNodeID" type="button" class="button button-secondary" :disabled="busy" @click="save()">仅保存</button>
+      <button type="button" class="button button-primary" :disabled="busy" @click="isNew && selectedNodeID ? saveAndTest() : save()">{{ saveBusy ? (testAfterCreate ? '保存并测试中…' : '保存中…') : isNew && selectedNodeID ? '保存并测试' : isNew ? '保存数据源' : '保存更改' }}</button>
     </footer>
   </div>
 </template>
 
 <style scoped>
 .data-source-form-view {
-  color: #1f2937;
+  color: var(--color-text-primary);
 }
 
 .data-source-form-view.is-drawer {
@@ -636,7 +684,8 @@ function fieldErrorID(field: DataSourceFormField) {
 .is-drawer .data-source-form-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 0 24px;
+  padding: 0 var(--space-6);
+  scrollbar-gutter: stable;
 }
 
 .form-layout.drawer-form-layout {
@@ -655,8 +704,8 @@ function fieldErrorID(field: DataSourceFormField) {
 }
 
 .data-source-form-section {
-  padding: 24px 0;
-  border-bottom: 1px solid #dde3ea;
+  padding: var(--space-6) 0;
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .data-source-form-section:last-of-type {
@@ -664,17 +713,18 @@ function fieldErrorID(field: DataSourceFormField) {
 }
 
 .data-source-form-section h2 {
-  margin: 0 0 16px !important;
+  margin: 0 0 var(--space-4) !important;
   padding: 0 !important;
   border: 0 !important;
-  color: #243247;
-  font-size: 16px;
+  color: #252a31;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 24px;
+  line-height: 22px;
 }
 
 .form-grid {
-  gap: 16px;
+  column-gap: var(--space-4);
+  row-gap: var(--space-4);
 }
 
 .basic-information-grid {
@@ -683,7 +733,7 @@ function fieldErrorID(field: DataSourceFormField) {
 
 .field-label,
 .field-label legend {
-  color: #455468;
+  color: #4a525c;
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
@@ -698,19 +748,42 @@ fieldset.field-label {
 
 .field-label input,
 .field-label select {
-  height: 36px;
-  border-color: #c9d2dd;
-  border-radius: 4px;
-  color: #273548;
-  font: 400 13px/1 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  height: var(--size-control);
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: #2b3037;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
 }
 
 .field-label input:focus,
 .field-label select:focus {
-  border-color: #2563c9;
-  outline: 2px solid rgb(37 99 201 / 14%);
+  border-color: var(--color-primary);
+  outline: 2px solid rgb(37 103 185 / 14%);
   outline-offset: 0;
 }
+
+.password-control { position: relative; display: block; }
+.password-control input { padding-right: 38px; }
+.password-visibility {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+.password-visibility:hover { color: var(--color-text-primary); background: var(--color-bg-subtle); }
+.password-visibility:focus-visible { outline: 2px solid rgb(37 103 185 / 30%); outline-offset: 0; }
 
 .field-label input[aria-invalid='true'],
 .field-label select[aria-invalid='true'] {
@@ -763,24 +836,62 @@ fieldset.field-label {
 
 .connection-parser {
   margin: 0 0 18px;
-  border-left: 3px solid #a6bddb;
-  background: #f6f8fb;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid #e2e7ed;
+  border-radius: 0;
+  background: transparent;
+}
+
+.field-label {
+  align-content: start;
+  gap: var(--space-1);
+}
+
+.field-label-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.field-label-text b {
+  flex: none;
+  color: #c53b32;
+  font-weight: 600;
+}
+
+.field-label-text .optional {
+  margin-left: var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .connection-parser > summary {
-  padding: 10px 12px;
-  color: #40566f;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  color: #414851;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  list-style: none;
 }
+
+.connection-parser > summary::-webkit-details-marker,
+.sys-credential-panel summary::-webkit-details-marker { display: none; }
+.disclosure-icon { flex: none; color: var(--color-text-tertiary); transform: rotate(-90deg); transition: transform 120ms ease; }
+details[open] > summary .disclosure-icon { transform: rotate(0deg); }
 
 .connection-parser-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 9px 12px;
   align-items: end;
-  padding: 2px 12px 12px;
+  padding: 12px 0 0;
 }
 
 .connection-parser-body p {
@@ -801,7 +912,11 @@ fieldset.field-label {
 }
 
 .sys-credential-panel summary {
-  color: #40566f;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: #414851;
+  list-style: none;
 }
 
 .sys-credential-panel > p {
@@ -856,30 +971,30 @@ fieldset.field-label {
 }
 
 .button {
-  height: 36px;
-  border-radius: 4px;
+  height: var(--size-control);
+  border-radius: var(--radius-control);
   font-size: 13px;
   font-weight: 500;
 }
 
 .button.button-primary {
-  background: #2563c9;
+  background: var(--color-primary);
 }
 
 .button.button-primary:hover:not(:disabled) {
-  background: #1f54ad;
+  background: var(--color-primary-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid #2563c9;
+  outline: 2px solid rgb(37 103 185 / 30%);
   outline-offset: 2px;
 }
 
 .test-result {
   display: grid;
-  gap: 5px;
+  gap: var(--space-3);
   margin: 0 0 24px;
-  padding: 13px 15px;
+  padding: var(--space-4);
   border: 1px solid #b9ceeb;
   border-radius: 4px;
   color: #526174;
@@ -939,9 +1054,146 @@ fieldset.field-label {
   position: static;
   z-index: 2;
   margin: 0;
-  padding: 12px 24px;
-  border-top: 1px solid #dde3ea;
+  padding: var(--space-3) var(--space-6);
+  border-top: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
+}
+
+.test-result-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.test-result-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.test-result-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  color: var(--color-danger);
+}
+
+.connection-test-summary {
+  color: #3f4650 !important;
+  font-size: 13px !important;
+  line-height: 20px !important;
+}
+
+.connection-test-location {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px 10px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
   background: #fff;
+}
+
+.connection-test-location > span {
+  color: var(--color-text-tertiary);
+}
+
+.connection-test-location > strong {
+  color: #542925 !important;
+  font-size: 13px;
+}
+
+.diagnostic-link {
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid #d5a39f;
+  border-radius: var(--radius-control);
+  color: #8f2c25;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.diagnostic-link:hover { background: #fff6f5; }
+
+.connection-test-checks > strong {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: #3f4650 !important;
+  font-size: 13px;
+}
+
+.connection-test-checks ol {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: 22px;
+  color: #525a64;
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.connection-test-evidence {
+  padding-top: var(--space-2);
+  border-top: 1px solid rgb(166 44 36 / 14%);
+}
+
+.connection-test-evidence summary {
+  width: fit-content;
+  color: #6a4c49;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.connection-test-evidence dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0 0;
+}
+
+.connection-test-evidence dl div { min-width: 0; }
+.connection-test-evidence dt { color: var(--color-text-tertiary); font-size: 11px; }
+.connection-test-evidence dd { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--color-text-secondary); font-size: 12px; }
+.connection-test-evidence code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+
+.data-source-form-section.has-connection-diagnostic {
+  position: relative;
+}
+
+.data-source-form-section.has-connection-diagnostic::before {
+  position: absolute;
+  inset-block: var(--space-4);
+  left: calc(var(--space-3) * -1);
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-danger);
+  content: "";
+}
+
+.module-diagnostic {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: calc(var(--space-2) * -1) 0 var(--space-4);
+  padding: 9px 10px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-control);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.module-diagnostic > svg { flex: none; margin-top: 1px; }
+.module-diagnostic > div { display: grid; gap: 2px; }
+.module-diagnostic strong { font-size: 13px; }
+.module-diagnostic span { color: #74504d; font-size: 12px; line-height: 18px; }
+
+.is-drawer .data-source-form-card {
+  padding-bottom: var(--space-2);
 }
 
 .is-drawer .feedback {
@@ -973,5 +1225,12 @@ fieldset.field-label {
   .is-drawer .data-source-form-footer {
     padding-inline: 18px;
   }
+
+  .connection-test-location,
+  .connection-test-evidence dl {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostic-link { width: fit-content; }
 }
 </style>

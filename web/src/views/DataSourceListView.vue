@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Archive, ArrowDown, ArrowUp, ChevronsUpDown, Ellipsis as MoreHorizontal, Info, Plus, Power, RefreshCw, Search } from '@lucide/vue'
 
 import { browserApi, dataSourceErrorMessage, type DataSourceSummary } from '@/api/browser'
+import WorkbenchButton from '@/components/WorkbenchButton.vue'
+import WorkbenchStatus from '@/components/WorkbenchStatus.vue'
 import DataSourceConfirmDialog from './DataSourceConfirmDialog.vue'
 import DataSourceEditDrawer from './DataSourceEditDrawer.vue'
 import { dataSourceDeletionNotice } from './dataSourceDeletionNotice'
 import { filterDataSources, type ConnectionStatusFilter } from './dataSourceListFilters'
+import { sortDataSources, type DataSourceSortKey, type SortDirection } from './dataSourceListSort'
 
 type PendingAction = { source: DataSourceSummary; action: 'disable' | 'archive' }
 
@@ -29,6 +33,8 @@ const openActionMenuID = ref('')
 const actionMenuElement = ref<HTMLElement>()
 const actionMenuTrigger = ref<HTMLButtonElement>()
 const actionMenuPosition = ref({ top: 0, left: 0 })
+const sortKey = ref<DataSourceSortKey>('name')
+const sortDirection = ref<SortDirection>('asc')
 
 const filteredSources = computed(() => filterDataSources(sources.value, {
   keyword: keyword.value,
@@ -37,6 +43,7 @@ const filteredSources = computed(() => filterDataSources(sources.value, {
   connectionStatus: connectionStatus.value,
   state: state.value,
 }))
+const visibleSources = computed(() => sortDataSources(filteredSources.value, sortKey.value, sortDirection.value))
 const hasActiveFilters = computed(() => Boolean(keyword.value || environment.value || state.value || compatibilityMode.value || connectionStatus.value))
 const openActionMenuSource = computed(() => sources.value.find((source) => source.id === openActionMenuID.value))
 const confirmTitle = computed(() => pendingAction.value?.action === 'disable' ? '禁用数据源？' : '删除或归档数据源？')
@@ -124,6 +131,20 @@ function compatibilityModeLabel(value: string) {
   return value === 'MYSQL' ? 'MySQL' : value === 'ORACLE' ? 'Oracle' : '待迁移类型'
 }
 
+function toggleSort(key: DataSourceSortKey) {
+  if (sortKey.value === key) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+    return
+  }
+  sortKey.value = key
+  sortDirection.value = 'asc'
+}
+
+function sortAria(key: DataSourceSortKey): 'none' | 'ascending' | 'descending' {
+  if (sortKey.value !== key) return 'none'
+  return sortDirection.value === 'asc' ? 'ascending' : 'descending'
+}
+
 function connectionStatusLabel(source: DataSourceSummary) {
   return {
     SUCCEEDED: '可连接',
@@ -137,11 +158,11 @@ function connectionStatusLabel(source: DataSourceSummary) {
 }
 
 function connectionStatusTone(source: DataSourceSummary) {
-  if (source.lastTestStatus === 'SUCCEEDED') return 'is-success'
-  if (source.lastTestStatus === 'FAILED') return 'is-danger'
-  if (source.lastTestStatus === 'PENDING') return 'is-info'
-  if (source.lastTestStatus === 'EXPIRED' || source.lastTestStatus === 'INVALIDATED') return 'is-warning'
-  return 'is-neutral'
+  if (source.lastTestStatus === 'SUCCEEDED') return 'success'
+  if (source.lastTestStatus === 'FAILED') return 'danger'
+  if (source.lastTestStatus === 'PENDING') return 'info'
+  if (source.lastTestStatus === 'EXPIRED' || source.lastTestStatus === 'INVALIDATED') return 'warning'
+  return 'neutral'
 }
 
 function lastTestTimeLabel(source: DataSourceSummary) {
@@ -253,20 +274,18 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
         <h1>数据源管理</h1>
         <p>管理私有 ODP 数据源、连接可用性和启用状态。</p>
       </div>
-      <button type="button" class="data-source-button is-primary" @click="openCreateDrawer">新增数据源</button>
+      <WorkbenchButton variant="primary" @click="openCreateDrawer"><template #icon><Plus :size="15" aria-hidden="true" /></template>新增数据源</WorkbenchButton>
     </header>
 
-    <p class="data-source-boundary-note">连接状态只表示网络、认证和基础数据库连接，不代表导入导出权限、对象权限、性能或任务一定可执行。</p>
-
     <section class="data-source-filter" aria-label="数据源筛选">
-      <label class="filter-keyword"><span>关键字</span><input v-model.trim="keyword" placeholder="名称或 IP / 域名" /></label>
-      <label><span>环境</span><select v-model="environment"><option value="">全部环境</option><option value="DEVELOPMENT">开发</option><option value="TEST">测试</option><option value="STAGING">预生产</option><option value="PRODUCTION">生产</option></select></label>
-      <label><span>租户模式</span><select v-model="compatibilityMode"><option value="">全部模式</option><option value="MYSQL">MySQL</option><option value="ORACLE">Oracle</option><option value="UNKNOWN">待迁移类型</option></select></label>
-      <label><span>连接状态</span><select v-model="connectionStatus"><option value="">全部状态</option><option value="UNTESTED">未测试</option><option value="SUCCEEDED">可连接</option><option value="FAILED">连接失败</option><option value="UNKNOWN">结果未知</option><option value="EXPIRED">测试已过期</option><option value="INVALIDATED">测试已失效</option><option value="PENDING">测试已请求</option><option value="UNAVAILABLE">测试不可用</option></select></label>
-      <label><span>启用状态</span><select v-model="state"><option value="">全部状态</option><option value="ENABLED">已启用</option><option value="DISABLED">已禁用</option></select></label>
-      <button v-if="hasActiveFilters" type="button" class="data-source-button is-text" @click="resetFilters">重置</button>
+      <label class="filter-keyword"><span class="visually-hidden">关键字</span><Search class="filter-search-icon" :size="15" aria-hidden="true" /><input v-model.trim="keyword" placeholder="名称或 IP / 域名" /></label>
+      <label><span class="visually-hidden">环境</span><select v-model="environment" aria-label="环境"><option value="">全部环境</option><option value="DEVELOPMENT">开发</option><option value="TEST">测试</option><option value="STAGING">预生产</option><option value="PRODUCTION">生产</option></select></label>
+      <label><span class="visually-hidden">租户模式</span><select v-model="compatibilityMode" aria-label="租户模式"><option value="">全部模式</option><option value="MYSQL">MySQL</option><option value="ORACLE">Oracle</option><option value="UNKNOWN">待迁移类型</option></select></label>
+      <label><span class="visually-hidden">连接状态</span><select v-model="connectionStatus" aria-label="连接状态"><option value="">全部连接状态</option><option value="UNTESTED">未测试</option><option value="SUCCEEDED">可连接</option><option value="FAILED">连接失败</option><option value="UNKNOWN">结果未知</option><option value="EXPIRED">测试已过期</option><option value="INVALIDATED">测试已失效</option><option value="PENDING">测试已请求</option><option value="UNAVAILABLE">测试不可用</option></select></label>
+      <label><span class="visually-hidden">启用状态</span><select v-model="state" aria-label="启用状态"><option value="">全部启用状态</option><option value="ENABLED">已启用</option><option value="DISABLED">已禁用</option></select></label>
+      <WorkbenchButton v-if="hasActiveFilters" variant="text" @click="resetFilters">重置</WorkbenchButton>
       <span class="filter-grow" />
-      <button type="button" class="data-source-button is-secondary" :disabled="loading" @click="loadSources">{{ loading ? '刷新中…' : '刷新' }}</button>
+      <WorkbenchButton :disabled="loading" @click="loadSources"><template #icon><RefreshCw :size="14" :class="{ 'is-spinning': loading }" aria-hidden="true" /></template>{{ loading ? '刷新中…' : '刷新' }}</WorkbenchButton>
     </section>
 
     <p v-if="feedback" class="data-source-feedback is-error" role="alert">{{ feedback }}</p>
@@ -275,21 +294,21 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
     <section class="data-source-table-region" aria-labelledby="data-source-table-title">
       <div class="data-source-table-meta">
         <h2 id="data-source-table-title">数据源</h2>
-        <span v-if="!loading && !loadFailure">当前显示 {{ filteredSources.length }} 条</span>
+        <span v-if="!loading && !loadFailure" aria-label="当前数据源数量">{{ filteredSources.length }}</span>
       </div>
 
       <div class="data-source-table-scroll">
         <table>
           <thead>
             <tr>
-              <th class="column-name">数据源</th>
-              <th class="column-environment">环境</th>
-              <th class="column-host">IP/域名</th>
-              <th class="column-port">端口</th>
-              <th class="column-tenant">租户名</th>
-              <th class="column-mode">租户模式</th>
-              <th class="column-connection">连接状态</th>
-              <th class="column-state">启用状态</th>
+              <th class="column-name" :aria-sort="sortAria('name')"><button type="button" class="sort-header" @click="toggleSort('name')"><span>数据源</span><ArrowUp v-if="sortKey === 'name' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'name'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-environment" :aria-sort="sortAria('environment')"><button type="button" class="sort-header" @click="toggleSort('environment')"><span>环境</span><ArrowUp v-if="sortKey === 'environment' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'environment'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-host" :aria-sort="sortAria('host')"><button type="button" class="sort-header" @click="toggleSort('host')"><span>IP/域名</span><ArrowUp v-if="sortKey === 'host' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'host'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-port" :aria-sort="sortAria('port')"><button type="button" class="sort-header" @click="toggleSort('port')"><span>端口</span><ArrowUp v-if="sortKey === 'port' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'port'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-tenant" :aria-sort="sortAria('tenant')"><button type="button" class="sort-header" @click="toggleSort('tenant')"><span>租户名</span><ArrowUp v-if="sortKey === 'tenant' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'tenant'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-mode" :aria-sort="sortAria('mode')"><button type="button" class="sort-header" @click="toggleSort('mode')"><span>租户模式</span><ArrowUp v-if="sortKey === 'mode' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'mode'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-connection" :aria-sort="sortAria('connection')" title="连接状态只表示网络、认证和基础数据库连接，不代表导入导出权限、对象权限、性能或任务一定可执行。"><button type="button" class="sort-header" @click="toggleSort('connection')"><span class="column-heading-with-help">连接状态<Info :size="13" aria-hidden="true" /></span><ArrowUp v-if="sortKey === 'connection' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'connection'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-state" :aria-sort="sortAria('state')"><button type="button" class="sort-header" @click="toggleSort('state')"><span>启用状态</span><ArrowUp v-if="sortKey === 'state' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'state'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
               <th class="column-actions">操作</th>
             </tr>
           </thead>
@@ -297,24 +316,24 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
             <tr><td colspan="9" class="data-source-table-message">正在加载已授权数据源…</td></tr>
           </tbody>
           <tbody v-else-if="loadFailure">
-            <tr><td colspan="9" class="data-source-table-message is-error"><strong>无法加载数据源</strong><span>{{ loadFailure }}</span><button type="button" class="data-source-button is-secondary" @click="loadSources">重试</button></td></tr>
+            <tr><td colspan="9" class="data-source-table-message is-error"><strong>无法加载数据源</strong><span>{{ loadFailure }}</span><WorkbenchButton @click="loadSources">重试</WorkbenchButton></td></tr>
           </tbody>
           <tbody v-else-if="sources.length === 0">
             <tr><td colspan="9" class="data-source-table-message"><strong>暂无数据源</strong><span>新增数据源后，可以在任务配置中选择并使用。</span></td></tr>
           </tbody>
           <tbody v-else-if="filteredSources.length === 0">
-            <tr><td colspan="9" class="data-source-table-message"><strong>没有符合当前筛选条件的数据源</strong><span>请调整筛选条件，或清除当前筛选。</span><button type="button" class="data-source-button is-text" @click="resetFilters">清除筛选</button></td></tr>
+            <tr><td colspan="9" class="data-source-table-message"><strong>没有符合当前筛选条件的数据源</strong><span>请调整筛选条件，或清除当前筛选。</span><WorkbenchButton variant="text" @click="resetFilters">清除筛选</WorkbenchButton></td></tr>
           </tbody>
           <tbody v-else>
-            <tr v-for="source in filteredSources" :key="source.id">
-              <td class="data-source-name"><strong>{{ source.displayName }}</strong><small>{{ source.id }}</small></td>
-              <td><span class="environment-tag" :class="`is-${source.environment.toLowerCase()}`">{{ environmentLabel(source.environment) }}</span></td>
+            <tr v-for="source in visibleSources" :key="source.id">
+              <td class="data-source-name"><div class="cell-stack"><strong>{{ source.displayName }}</strong><small>{{ source.id }}</small></div></td>
+              <td><span class="environment-label" :class="`is-${source.environment.toLowerCase()}`">{{ environmentLabel(source.environment) }}</span></td>
               <td class="data-source-host" :title="source.host">{{ source.host }}</td>
               <td class="data-source-port">{{ source.port }}</td>
               <td class="data-source-tenant" :title="source.tenantName">{{ source.tenantName }}</td>
               <td>{{ compatibilityModeLabel(source.compatibilityMode) }}</td>
-              <td class="data-source-connection"><span class="status-badge" :class="connectionStatusTone(source)">{{ connectionStatusLabel(source) }}</span><small>{{ lastTestTimeLabel(source) }}</small></td>
-              <td><span class="status-badge is-state" :class="source.state === 'ENABLED' ? 'is-enabled' : 'is-disabled'">{{ stateLabel(source) }}</span></td>
+              <td class="data-source-connection"><div class="cell-stack"><WorkbenchStatus :tone="connectionStatusTone(source)">{{ connectionStatusLabel(source) }}</WorkbenchStatus><small>{{ lastTestTimeLabel(source) }}</small></div></td>
+              <td><WorkbenchStatus appearance="tag" :tone="source.state === 'ENABLED' ? 'enabled' : 'neutral'">{{ stateLabel(source) }}</WorkbenchStatus></td>
               <td class="data-source-row-actions">
                 <button type="button" class="row-action" :disabled="actionID === source.id" @click="openEditDrawer(source)">编辑</button>
                 <button type="button" class="row-action" :disabled="actionID === source.id" @click="openEditDrawer(source, true)">测试</button>
@@ -327,7 +346,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
                   :disabled="actionID === source.id"
                   @click.stop="toggleActionMenu(source, $event)"
                 >
-                  更多
+                  <MoreHorizontal :size="18" :stroke-width="2" aria-hidden="true" />
                 </button>
               </td>
             </tr>
@@ -348,9 +367,11 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
       @pointerdown.stop
     >
       <button type="button" role="menuitem" :disabled="actionID === openActionMenuSource.id" @click="requestAction(openActionMenuSource, 'toggle')">
+        <Power :size="14" aria-hidden="true" />
         {{ openActionMenuSource.state === 'ENABLED' ? '禁用' : '启用' }}
       </button>
       <button type="button" role="menuitem" class="is-danger" :disabled="actionID === openActionMenuSource.id" @click="requestAction(openActionMenuSource, 'archive')">
+        <Archive :size="14" aria-hidden="true" />
         删除 / 归档
       </button>
     </div>
@@ -373,140 +394,96 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 <style scoped>
 .data-source-page {
-  --ds-border: #dde3ea;
-  --ds-border-strong: #c9d2dd;
-  --ds-text: #1f2937;
-  --ds-text-secondary: #526174;
-  --ds-text-tertiary: #6b778a;
-  --ds-primary: #2563c9;
-  color: var(--ds-text);
+  color: var(--color-text-primary);
 }
 
 .data-source-page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 20px;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
 }
 
 .data-source-page-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
-  line-height: 32px;
+  letter-spacing: -.01em;
+  line-height: 30px;
 }
 
 .data-source-page-header p {
-  margin: 5px 0 0;
-  color: var(--ds-text-secondary);
-  font-size: 14px;
-  line-height: 22px;
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
-.data-source-button {
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--ds-border-strong);
-  border-radius: 4px;
-  color: #344256;
-  background: #fff;
-  font: 500 13px/1 "Segoe UI", "Microsoft YaHei UI", sans-serif;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.data-source-button:hover:not(:disabled) {
-  border-color: #9aa8ba;
-  background: #f7f9fc;
-}
-
-.data-source-button.is-primary {
-  border-color: var(--ds-primary);
-  color: #fff;
-  background: var(--ds-primary);
-}
-
-.data-source-button.is-primary:hover:not(:disabled) {
-  border-color: #1f54ad;
-  background: #1f54ad;
-}
-
-.data-source-button.is-text {
-  padding-inline: 8px;
-  border-color: transparent;
-  color: #315f9f;
-  background: transparent;
-}
-
-.data-source-button:focus-visible,
 .row-action:focus-visible,
 .row-action-more-button:focus-visible {
-  outline: 2px solid var(--ds-primary);
+  outline: 2px solid rgb(37 103 185 / 30%);
   outline-offset: 2px;
 }
 
-.data-source-button:disabled {
-  color: #8a95a5;
-  border-color: #dce2e9;
-  background: #f1f3f6;
-  cursor: not-allowed;
-}
-
-.data-source-boundary-note {
-  margin: 0 0 20px;
-  padding: 7px 12px;
-  border-left: 3px solid #8fb0dc;
-  color: #526b88;
-  background: #f4f7fb;
-  font-size: 12px;
-  line-height: 20px;
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .data-source-filter {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
-  gap: 10px 12px;
-  padding: 0 0 18px;
-  border-bottom: 1px solid var(--ds-border);
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .data-source-filter label {
-  display: grid;
-  gap: 5px;
+  position: relative;
   min-width: 128px;
 }
 
-.data-source-filter label > span {
-  color: var(--ds-text-tertiary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
+.data-source-filter .filter-keyword {
+  min-width: 240px;
+  flex: 0 1 300px;
+  max-width: 340px;
 }
 
-.data-source-filter .filter-keyword {
-  min-width: 220px;
-  flex: 1 1 220px;
-  max-width: 280px;
+.filter-search-icon {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
 }
 
 .data-source-filter input,
 .data-source-filter select {
   width: 100%;
-  height: 36px;
+  height: var(--size-control);
   padding: 0 10px;
-  border: 1px solid var(--ds-border-strong);
-  border-radius: 4px;
-  color: #273548;
-  background: #fff;
-  font: 400 13px/1 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: #2b3037;
+  background: var(--color-bg-surface);
+  font-size: 13px;
 }
+
+.data-source-filter .filter-keyword input { padding-left: 32px; }
 
 .data-source-filter input:focus,
 .data-source-filter select:focus {
-  border-color: var(--ds-primary);
-  outline: 2px solid rgb(37 99 201 / 14%);
+  border-color: var(--color-primary);
+  outline: 2px solid rgb(37 103 185 / 14%);
   outline-offset: 0;
 }
 
@@ -515,8 +492,8 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 }
 
 .data-source-feedback {
-  margin: 14px 0 0;
-  padding: 8px 11px;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
   border-left: 3px solid #8fb0dc;
   color: #526174;
   background: #f4f7fb;
@@ -531,87 +508,98 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 }
 
 .data-source-table-region {
-  margin-top: 22px;
+  margin-top: var(--space-6);
 }
 
 .data-source-table-meta {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 2px 10px;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-2);
 }
 
 .data-source-table-meta h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 24px;
+  line-height: 22px;
 }
 
 .data-source-table-meta span {
-  color: var(--ds-text-tertiary);
+  display: inline-grid;
+  min-width: 22px;
+  height: 20px;
+  place-items: center;
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .data-source-table-scroll {
   overflow-x: auto;
-  border-top: 1px solid var(--ds-border-strong);
-  border-bottom: 1px solid var(--ds-border);
-  background: #fff;
+  border-top: 1px solid var(--color-border-strong);
+  border-bottom: 1px solid var(--color-border-strong);
+  background: var(--color-bg-surface);
 }
 
 .data-source-table-scroll table {
   width: 100%;
-  min-width: 990px;
+  min-width: 1020px;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
 .data-source-table-scroll th,
 .data-source-table-scroll td {
-  padding: 9px 10px;
-  border-bottom: 1px solid #e5e9ef;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid #e6e9ed;
   text-align: left;
   vertical-align: middle;
 }
 
 .data-source-table-scroll th {
-  height: 40px;
-  color: #566578;
-  background: #f7f9fc;
+  height: var(--size-table-header);
+  color: #59616b;
+  background: #f4f5f6;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .data-source-table-scroll td {
-  height: 56px;
-  color: #344256;
+  height: var(--size-table-row);
+  padding-block: var(--space-1);
+  color: #363c44;
   font-size: 13px;
   line-height: 20px;
 }
 
 .data-source-table-scroll tbody tr:hover td {
-  background: #fafbfd;
+  background: #f7f8f9;
 }
 
 .data-source-table-scroll tbody tr:last-child td {
   border-bottom: 0;
 }
 
-.column-name { width: 150px; }
+.column-name { width: 176px; }
 .column-environment { width: 64px; }
-.column-host { width: 142px; }
+.column-host { width: 156px; }
 .column-port { width: 62px; }
-.column-tenant { width: 106px; }
+.column-tenant { width: 116px; }
 .column-mode { width: 86px; }
 .column-connection { width: 132px; }
 .column-state { width: 84px; }
-.column-actions { width: 160px; }
+.column-actions { width: 132px; }
 
-.data-source-name,
-.data-source-connection {
+.column-heading-with-help { display: inline-flex; align-items: center; gap: var(--space-1); }
+.column-heading-with-help svg { color: var(--color-text-tertiary); }
+
+.cell-stack {
   display: grid;
   align-content: center;
   gap: 1px;
@@ -619,7 +607,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-name strong {
   overflow: hidden;
-  color: #243247;
+  color: #1e2329;
   font-size: 14px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -629,7 +617,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 .data-source-name small,
 .data-source-connection small {
   overflow: hidden;
-  color: var(--ds-text-tertiary);
+  color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: 17px;
   text-overflow: ellipsis;
@@ -647,67 +635,67 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   font-variant-numeric: tabular-nums;
 }
 
-.environment-tag,
-.status-badge {
+.environment-label {
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  min-height: 22px;
-  padding: 1px 7px;
-  border: 1px solid #d4dce6;
-  border-radius: 4px;
-  color: #526174;
-  background: #f4f6f8;
+  min-height: 20px;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 3px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
   font-size: 12px;
+  font-weight: 500;
   line-height: 18px;
   white-space: nowrap;
 }
 
-.environment-tag.is-production {
-  border-color: #e4c39a;
-  color: #86531c;
-  background: #fff8eb;
+.sort-header {
+  display: inline-flex;
+  width: 100%;
+  height: 30px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  margin: -4px -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  color: inherit;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  cursor: pointer;
 }
 
-.environment-tag.is-staging {
-  border-color: #c8d6e8;
-  color: #405f84;
-  background: #f2f6fb;
+.sort-header:hover { color: #2b3037; background: #e9ecef; }
+.sort-header:focus-visible { outline: 2px solid rgb(37 103 185 / 30%); outline-offset: 0; }
+.sort-header > svg { flex: none; color: #7b838d; }
+
+.environment-label.is-production {
+  border-color: #e4cfac;
+  color: #80571e;
+  background: #fff9ee;
 }
 
-.status-badge.is-success {
-  border-color: #b9dec9;
-  color: #19734a;
-  background: #edf8f2;
+.environment-label.is-development {
+  border-color: #d8dde2;
+  color: #59616b;
+  background: #f4f5f6;
 }
 
-.status-badge.is-danger {
-  border-color: #e7b8b3;
-  color: #b42318;
-  background: #fff2f0;
+.environment-label.is-test {
+  border-color: #c8d8e9;
+  color: #37648d;
+  background: #f1f6fb;
 }
 
-.status-badge.is-warning {
-  border-color: #e8d1a2;
-  color: #8a5a12;
-  background: #fff7e6;
-}
-
-.status-badge.is-info {
-  border-color: #b9ceeb;
-  color: #245da8;
-  background: #eef4fc;
-}
-
-.status-badge.is-enabled {
-  border-color: #bfcddd;
-  color: #3a5575;
-  background: #f2f6fa;
-}
-
-.status-badge.is-disabled {
-  color: #687588;
-  background: #f4f5f7;
+.environment-label.is-staging {
+  border-color: #dfd1b5;
+  color: #775b24;
+  background: #faf7ef;
 }
 
 .data-source-row-actions {
@@ -715,25 +703,43 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--space-1);
   white-space: nowrap;
 }
 
 .row-action,
 .row-action-more-button {
   height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: 0 6px;
   border: 0;
   border-radius: 4px;
-  color: #315f9f;
+  color: #245d9e;
   background: transparent;
-  font: 500 12px/30px "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 30px;
   cursor: pointer;
+}
+
+.row-action-more-button {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
 }
 
 .row-action:hover:not(:disabled),
 .row-action-more-button:hover:not(:disabled) {
-  background: #edf3fa;
+  background: var(--color-primary-soft);
+}
+
+.row-action:focus-visible,
+.row-action-more-button:focus-visible {
+  outline: 2px solid rgb(37 103 185 / 28%);
+  outline-offset: 1px;
 }
 
 .row-action:disabled,
@@ -748,21 +754,27 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   display: grid;
   width: 132px;
   padding: 4px;
-  border: 1px solid #dde3ea;
-  border-radius: 4px;
-  background: #fff;
-  box-shadow: 0 8px 20px rgb(15 23 42 / 14%);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-surface);
+  background: var(--color-bg-surface);
+  box-shadow: 0 8px 20px rgb(20 27 35 / 14%);
 }
 
 .data-source-row-action-popover button {
+  display: flex;
   height: 32px;
+  align-items: center;
+  gap: var(--space-2);
   padding: 0 9px;
   border: 0;
   border-radius: 3px;
   color: #344256;
   background: transparent;
   text-align: left;
-  font: 400 13px/1 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -781,7 +793,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-table-message {
   height: 160px !important;
-  color: var(--ds-text-secondary) !important;
+  color: var(--color-text-secondary) !important;
   text-align: center !important;
 }
 
@@ -798,7 +810,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-table-message span {
   margin-bottom: 12px;
-  color: var(--ds-text-tertiary);
+  color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
@@ -815,7 +827,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   .column-mode { width: 9%; }
   .column-connection { width: 14%; }
   .column-state { width: 9%; }
-  .column-actions { width: 11%; }
+  .column-actions { width: 9%; }
 }
 
 @media (max-width: 1180px) {
@@ -824,7 +836,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   }
 
   .data-source-table-scroll table {
-    min-width: 960px;
+    min-width: 1020px;
   }
 }
 
@@ -835,7 +847,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
     gap: 14px;
   }
 
-  .data-source-page-header .data-source-button {
+  .data-source-page-header :deep(.workbench-button) {
     align-self: flex-start;
   }
 
@@ -846,7 +858,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
     flex: 1 1 calc(50% - 6px);
   }
 
-  .data-source-filter > .data-source-button {
+  .data-source-filter > :deep(.workbench-button) {
     flex: 0 0 auto;
   }
 }

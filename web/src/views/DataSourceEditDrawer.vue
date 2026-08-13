@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { X } from '@lucide/vue'
 
+import WorkbenchIconButton from '@/components/WorkbenchIconButton.vue'
 import DataSourceConfirmDialog from './DataSourceConfirmDialog.vue'
 import DataSourceFormView from './DataSourceFormView.vue'
 
@@ -13,7 +15,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [id: st
 const dirty = ref(false)
 const discardConfirmVisible = ref(false)
 const drawerElement = ref<HTMLElement>()
-const closeButton = ref<HTMLButtonElement>()
+const closeButton = ref<{ focus: () => void }>()
 const title = computed(() => (props.dataSourceId ? '编辑数据源' : '新增数据源'))
 let previousBodyOverflow = ''
 let previouslyFocusedElement: HTMLElement | null = null
@@ -116,13 +118,11 @@ function onSaved(id: string) {
             <div class="data-source-drawer-heading">
               <h2 id="data-source-drawer-title">{{ title }}</h2>
               <p v-if="dataSourceId" class="data-source-drawer-id">{{ dataSourceId }}</p>
-              <p v-else>保存后可在当前 Drawer 中继续选择执行节点并进行真实连接测试。</p>
+              <p v-else>可预先选择执行节点；执行真实测试时仍会先保存数据源，再使用已保存配置发起测试。</p>
             </div>
-            <button ref="closeButton" type="button" class="drawer-close" aria-label="关闭" @click="requestClose">
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M5 5l10 10M15 5L5 15" />
-              </svg>
-            </button>
+            <WorkbenchIconButton ref="closeButton" label="关闭" @click="requestClose">
+              <X :size="18" :stroke-width="1.75" aria-hidden="true" />
+            </WorkbenchIconButton>
           </header>
           <div class="data-source-drawer-body">
             <DataSourceFormView
@@ -155,7 +155,7 @@ function onSaved(id: string) {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgb(15 23 42 / 42%);
+  background: rgb(20 26 34 / 40%);
 }
 
 .data-source-drawer {
@@ -165,8 +165,8 @@ function onSaved(id: string) {
   display: flex;
   flex-direction: column;
   width: min(var(--app-drawer-width, 680px), calc(100vw - 72px));
-  background: #fff;
-  box-shadow: -14px 0 36px rgb(15 23 42 / 18%);
+  background: var(--color-bg-surface);
+  box-shadow: -12px 0 32px rgb(20 26 34 / 16%);
 }
 
 .data-source-drawer-header {
@@ -174,10 +174,10 @@ function onSaved(id: string) {
   flex: none;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  min-height: 76px;
-  padding: 16px 24px 14px;
-  border-bottom: 1px solid #dde3ea;
+  gap: var(--space-4);
+  min-height: 72px;
+  padding: var(--space-4) var(--space-6) var(--space-3);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .data-source-drawer-heading {
@@ -186,7 +186,7 @@ function onSaved(id: string) {
 
 .data-source-drawer-header h2 {
   margin: 0;
-  color: #1f2937;
+  color: var(--color-text-primary);
   font-size: 18px;
   font-weight: 600;
   line-height: 26px;
@@ -194,7 +194,7 @@ function onSaved(id: string) {
 
 .data-source-drawer-header p {
   margin: 4px 0 0;
-  color: #66758a;
+  color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 18px;
 }
@@ -206,43 +206,11 @@ function onSaved(id: string) {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-.drawer-close {
-  display: grid;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  color: #657489;
-  background: transparent;
-  cursor: pointer;
-}
-
-.drawer-close svg {
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 1.7;
-}
-
-.drawer-close:hover {
-  color: #263548;
-  background: #f1f4f8;
-}
-
-.drawer-close:focus-visible {
-  outline: 2px solid #2563c9;
-  outline-offset: 2px;
-}
-
 .data-source-drawer-body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  padding-right: var(--space-1);
 }
 
 .drawer-fade-enter-active,

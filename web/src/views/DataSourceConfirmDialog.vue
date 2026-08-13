@@ -113,16 +113,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(15 23 42 / 42%);
+  background: rgb(20 26 34 / 40%);
 }
 
 .data-source-dialog {
   width: min(460px, 100%);
   overflow: hidden;
-  border: 1px solid #d7dee8;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 18px 44px rgb(15 23 42 / 20%);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-surface);
+  background: var(--color-bg-surface);
+  box-shadow: 0 18px 44px rgb(20 26 34 / 20%);
 }
 
 .data-source-dialog header,
@@ -136,7 +136,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .data-source-dialog h2 {
   margin: 0;
-  color: #1f2937;
+  color: var(--color-text-primary);
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
@@ -144,7 +144,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .data-source-dialog-body {
   padding: 18px 20px 20px;
-  color: #526174;
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 22px;
 }
@@ -182,10 +182,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   height: 36px;
   padding: 0 14px;
   border: 1px solid #c9d2dd;
-  border-radius: 4px;
-  color: #344256;
-  background: #fff;
-  font: 500 13px/1 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  border-radius: var(--radius-control);
+  color: #343b44;
+  background: var(--color-bg-surface);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -195,9 +198,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .data-source-dialog-button.is-primary {
-  border-color: #2563c9;
+  border-color: var(--color-primary);
   color: #fff;
-  background: #2563c9;
+  background: var(--color-primary);
 }
 
 .data-source-dialog-button.is-danger {
@@ -207,7 +210,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .data-source-dialog-button:focus-visible {
-  outline: 2px solid #2563c9;
+  outline: 2px solid rgb(37 103 185 / 30%);
   outline-offset: 2px;
 }
 
