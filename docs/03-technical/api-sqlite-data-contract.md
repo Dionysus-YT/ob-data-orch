@@ -4,7 +4,7 @@
 > 适用范围：私有 ODP 单表 CSV 导出首条切片
 > 关联基线：TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18、TL-R01～TL-R18、LG-R01～LG-R20
 > 实现状态：`0001` 的 20 表基线与当前迁移链仍只作为本机 SQLite 事实边界；F3.1 已在不新增表的前提下接入授权任务游标列表，F3.3 增加当前任务已持久化日志的分段索引、固定快照/增量游标和 SSE 断线续读代码及合成测试。该本机代码证据不等于 G3 完成；真实 Agent、真实工具、跨进程故障恢复和各项目标环境验证继续受 G3/G4 门禁约束
-> 更新日期：2026-08-03
+> 更新日期：2026-08-12
 
 ## 1. 目标与范围
 
@@ -114,16 +114,16 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 
 | 方法与路径 | 用途 | 关键规则 |
 |---|---|---|
-| `GET /api/v1/data-sources` | 授权列表 | 游标分页；筛选和数量与对象权限一致 |
+| `GET /api/v1/data-sources` | 授权列表 | 游标分页；筛选和数量与对象权限一致；列表投影不返回业务用户名、sys 账号、组合用户名或任何凭据材料 |
 | `POST /api/v1/data-sources` | 新增 | 需要 `Idempotency-Key`；密码为仅写字段；业务与审计原子提交 |
-| `GET /api/v1/data-sources/{dataSourceId}` | 详情 | 不返回密码、密文、nonce、长度或固定密码占位符 |
-| `PATCH /api/v1/data-sources/{dataSourceId}` | 编辑/轮换密码 | 需要 `If-Match`；密码缺失表示不变，非空表示新 revision |
+| `GET /api/v1/data-sources/{dataSourceId}` | 详情 | 读取范围可获取最小详情；仅同时拥有同一对象数据源管理范围的主体可回显拆分保存的普通业务 `username`；不返回密码、密文、nonce、长度、sys 账号或 `<username>@<tenant>#<cluster>` 组合用户名 |
+| `PATCH /api/v1/data-sources/{dataSourceId}` | 编辑/轮换密码 | 需要 `If-Match`；密码缺失表示不变，非空表示新 revision；成功响应复用已确认管理范围的详情投影，可回显普通业务 `username` |
 | `POST /api/v1/data-sources/{dataSourceId}:test-connection` | 基础连接测试 | 提交明确 `nodeId`、`If-Match` 与幂等键后异步排队；允许符合当前机器事实的 `DISABLED` 或 `ENABLED` 节点，拒绝 `MAINTENANCE`/`ARCHIVED`；控制面不在 DB 事务中进行网络连接，结果标明测试节点与节点事实版本 |
 | `POST /api/v1/data-sources/{dataSourceId}:disable` | 禁用 | 幂等状态操作；阻断新任务，不伪装取消运行任务 |
 | `POST /api/v1/data-sources/{dataSourceId}:enable` | 启用 | 不自动恢复旧连接测试或预检查 |
 | `DELETE /api/v1/data-sources/{dataSourceId}` | 删除或归档 | 无历史引用才物理删除，否则归档；响应明确实际结果 |
 
-数据源响应只提供 `credentialStatus`、当前 revision 和最近更新时间。连接测试只返回固定状态、节点、节点事实版本、完成时间和脱敏代码，不返回导入/导出权限、对象诊断、性能结论、SQL、JDBC URL、用户名、密码或异常原文。
+数据源列表始终使用无用户名投影；即使主体拥有数据源管理范围，列表也不返回 `username`。单个详情仅在服务端同时确认读取与管理范围时，才额外返回拆分保存的普通业务 `username`；成功 `PATCH` 已在同一对象管理范围下执行，因此复用该详情投影。它不是可执行的组合身份，不能据此推导或返回 `username@tenant#cluster`。创建、状态、删除和其他非详情响应也不返回 `username`。任何数据源响应均不返回密码、密文、nonce、密码长度、sys 账号、sys 密码或凭据引用。连接测试只返回固定状态、节点、节点事实版本、完成时间和脱敏代码，不返回导入/导出权限、对象诊断、性能结论、SQL、JDBC URL、用户名、密码或异常原文。
 
 ### 5.3 导出草稿、预检查和提交
 

@@ -56,6 +56,17 @@ describe('浏览器 API 客户端', () => {
     expect('username' in source).toBe(false)
   })
 
+  it('只在数据源详情读取普通业务用户名', async () => {
+    const { api, calls } = apiWith(Response.json({ item: {
+      id: 'source-1', displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL',
+      host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', username: 'synthetic-user',
+      state: 'DISABLED', revision: 1, credentialRevision: 1, password: 'must-not-be-read', sysUser: 'must-not-be-read',
+    } }))
+
+    await expect(api.getDataSource('source/1')).resolves.toMatchObject({ id: 'source-1', username: 'synthetic-user' })
+    expect(calls[0]?.path).toBe('/api/v1/data-sources/source%2F1')
+  })
+
   it('以独立函数调用注入的 fetch，避免原生浏览器 fetch 收到错误 this', async () => {
     const observation: { receiver: unknown } = { receiver: null }
     const fetcher = function (this: unknown): Promise<Response> {
@@ -920,7 +931,7 @@ describe('浏览器 API 客户端', () => {
 
   it('数据源编辑使用版本条件，且空密码不会被发送', async () => {
     const { api, calls } = apiWith(Response.json({
-      item: { id: 'source-1', displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', state: 'ENABLED', revision: 2, credentialRevision: 1 },
+      item: { id: 'source-1', displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', username: 'synthetic-user', state: 'ENABLED', revision: 2, credentialRevision: 1 },
     }))
 
     await api.updateDataSource('source-1', 1, { displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', username: 'synthetic-user' })

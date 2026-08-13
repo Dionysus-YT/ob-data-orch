@@ -291,6 +291,71 @@ func TestOpenAPIReferencesResolveAndSecretInputsAreWriteOnly(t *testing.T) {
 	}
 }
 
+func TestOpenAPI数据源列表与详情用户名投影分离(t *testing.T) {
+	t.Parallel()
+	spec := loadOpenAPI(t)
+	components := object(t, spec, "components")
+	paths := object(t, spec, "paths")
+	responses := object(t, components, "responses")
+	schemas := object(t, components, "schemas")
+
+	list := object(t, object(t, paths, "/api/v1/data-sources"), "get")
+	if responseReference(t, list, "200") != "#/components/responses/DataSourceList" {
+		t.Fatal("data source list must use the username-free list response")
+	}
+	detailPath := object(t, paths, "/api/v1/data-sources/{dataSourceId}")
+	for _, method := range []string{"get", "patch"} {
+		if responseReference(t, object(t, detailPath, method), "200") != "#/components/responses/DataSourceDetail" {
+			t.Fatalf("data source %s must use the authorized detail response", method)
+		}
+	}
+	for _, responseName := range []string{"DataSourceList", "DataSourceDetail"} {
+		assertNoStoreResponse(t, responses, responseName)
+	}
+
+	listItem := object(t, schemas, "DataSourceListItem")
+	detail := object(t, schemas, "DataSourceDetail")
+	for schemaName, schema := range map[string]map[string]any{
+		"DataSourceListItem": listItem,
+		"DataSourceDetail":   detail,
+	} {
+		if schema["additionalProperties"] != false {
+			t.Fatalf("%s must reject unregistered response fields", schemaName)
+		}
+		assertRequiredProperties(t, schema, "id", "displayName", "revision", "credentialRevision", "sysCredentialState")
+	}
+	listProperties := object(t, listItem, "properties")
+	for _, forbidden := range []string{"username", "sysUser", "password", "sysPassword", "combinedUsername", "credentialId", "ciphertext", "nonce"} {
+		if _, exists := listProperties[forbidden]; exists {
+			t.Fatalf("data source list item must not expose %s", forbidden)
+		}
+	}
+	detailProperties := object(t, detail, "properties")
+	if _, exists := detailProperties["username"]; !exists {
+		t.Fatal("data source detail must model the management-authorized business username")
+	}
+	for _, forbidden := range []string{"sysUser", "password", "sysPassword", "combinedUsername", "credentialId", "ciphertext", "nonce"} {
+		if _, exists := detailProperties[forbidden]; exists {
+			t.Fatalf("data source detail must not expose %s", forbidden)
+		}
+	}
+	for _, raw := range detail["required"].([]any) {
+		if raw == "username" {
+			t.Fatal("business username must remain absent when management scope is not confirmed")
+		}
+	}
+
+	listEnvelope := object(t, schemas, "DataSourceListEnvelope")
+	itemsSchema := object(t, object(t, listEnvelope, "properties"), "items")
+	if fmt.Sprint(object(t, itemsSchema, "items")["$ref"]) != "#/components/schemas/DataSourceListItem" {
+		t.Fatal("data source list envelope must use the username-free item schema")
+	}
+	detailEnvelope := object(t, schemas, "DataSourceDetailEnvelope")
+	if fmt.Sprint(object(t, object(t, detailEnvelope, "properties"), "item")["$ref"]) != "#/components/schemas/DataSourceDetail" {
+		t.Fatal("data source detail envelope must use the authorized detail schema")
+	}
+}
+
 func TestOpenAPITaskListUsesDedicatedSafeProjection(t *testing.T) {
 	t.Parallel()
 	spec := loadOpenAPI(t)

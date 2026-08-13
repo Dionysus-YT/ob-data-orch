@@ -1652,7 +1652,8 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		current.LastTestedAt = nil
 		current.LastTestSafeSummaryJSON = ""
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceResponse(current)})
+	// PATCH 已完成同一对象的管理范围校验，因此成功响应复用可回显业务用户名的详情投影。
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceDetailResponse(current, true)})
 }
 
 func (r dataSourceUpdateRequest) hasChanges() bool {
@@ -3120,8 +3121,8 @@ func newOpaqueSecret() []byte {
 	return encoded
 }
 
-// getDataSource authorizes the requested ID before reading it, then maps both
-// absence and an out-of-scope object to the same 404 response.
+// getDataSource 先验证读取范围，再将不存在与超出读取范围统一映射为 404。
+// 业务用户名只有在同一对象的管理范围已确认时才会进入详情投影。
 func (s *Server) getDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
 	if s.dataSource == nil || s.authorizer == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源 API 依赖", false)
@@ -3131,6 +3132,8 @@ func (s *Server) getDataSource(w http.ResponseWriter, r *http.Request, principal
 		notFound(w, r)
 		return
 	}
+	// 读取范围不能推定为管理范围。拒绝或无法确认管理范围时失败关闭为不回显用户名。
+	includeUsername := identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) == nil
 	summary, err := s.dataSource.GetDataSourceSummary(r.Context(), dataSourceID)
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
@@ -3140,7 +3143,7 @@ func (s *Server) getDataSource(w http.ResponseWriter, r *http.Request, principal
 		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_QUERY_UNAVAILABLE", "数据源暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceResponse(summary)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceDetailResponse(summary, includeUsername)})
 }
 
 // agentEnrollmentExchangeRequest 仅承载一次性关联所需的固定字段。
@@ -5558,8 +5561,8 @@ func dataSourceConnectionTestNodeCandidateEligible(node store.ExecutionNode, now
 	return executionNodePlatformMatchesAgentFacts(node.Platform, node.Agent.EnvironmentFacts)
 }
 
-// dataSourceResponse 仅保留浏览器选择数据源所需的脱敏摘要字段。
-// 即使底层模型新增凭据或连接身份字段，也不得经由该投影返回浏览器。
+// dataSourceResponse 只承载数据源列表的最小脱敏字段。
+// 它不能包含业务用户名、sys 账号、组合用户名或任何凭据材料。
 type dataSourceResponse struct {
 	ID                 string `json:"id"`
 	DisplayName        string `json:"displayName"`
@@ -5578,6 +5581,13 @@ type dataSourceResponse struct {
 	SysCredentialState string `json:"sysCredentialState"`
 	LastTestStatus     string `json:"lastTestStatus,omitempty"`
 	LastTestedAt       string `json:"lastTestedAt,omitempty"`
+}
+
+// dataSourceDetailResponse 只用于单个数据源详情。
+// Username 是否出现由详情处理器的同一对象管理范围校验决定，不能由读取范围推定。
+type dataSourceDetailResponse struct {
+	dataSourceResponse
+	Username string `json:"username,omitempty"`
 }
 
 // dataSourceConnectionTestResponse 是浏览器轮询连接测试的节点特定安全投影。
@@ -5806,6 +5816,16 @@ func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
 	}
 	if summary.LastTestedAt != nil {
 		response.LastTestedAt = summary.LastTestedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return response
+}
+
+// newDataSourceDetailResponse 在已完成对象范围校验后构造详情投影。
+// 该函数只复制拆分保存的业务用户名，绝不组装或返回 sys/租户/集群组合身份。
+func newDataSourceDetailResponse(summary store.DataSourceSummary, includeUsername bool) dataSourceDetailResponse {
+	response := dataSourceDetailResponse{dataSourceResponse: newDataSourceResponse(summary)}
+	if includeUsername {
+		response.Username = summary.Username
 	}
 	return response
 }

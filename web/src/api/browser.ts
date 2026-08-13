@@ -76,6 +76,10 @@ export interface DataSourceSummary {
   readonly lastTestedAt?: string
 }
 
+export interface DataSourceDetail extends DataSourceSummary {
+  readonly username?: string
+}
+
 export interface DataSourceWrite {
   readonly displayName: string
   readonly environment: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
@@ -486,9 +490,9 @@ export interface BrowserApi {
   requestExecutionNodeEnvironmentCheck(nodeId: string, revision: number): Promise<ExecutionNodeDetail>
   enableExecutionNode(nodeId: string, revision: number): Promise<ExecutionNodeDetail>
   deleteOrArchiveExecutionNode(nodeId: string, revision: number): Promise<ExecutionNodeDeletionResult>
-  getDataSource(dataSourceId: string): Promise<DataSourceSummary>
+  getDataSource(dataSourceId: string): Promise<DataSourceDetail>
   createDataSource(input: DataSourceWrite): Promise<string>
-  updateDataSource(dataSourceId: string, revision: number, input: DataSourceUpdate): Promise<DataSourceSummary>
+  updateDataSource(dataSourceId: string, revision: number, input: DataSourceUpdate): Promise<DataSourceDetail>
   changeDataSourceState(dataSourceId: string, revision: number, targetState: 'ENABLED' | 'DISABLED'): Promise<DataSourceStateChange>
   deleteOrArchiveDataSource(dataSourceId: string, revision: number): Promise<DataSourceDeletionResult>
   startDataSourceConnectionTest(dataSourceId: string, revision: number, nodeId: string): Promise<DataSourceConnectionTestRequest>
@@ -576,7 +580,7 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     },
     async getDataSource(dataSourceId) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, { method: 'GET' })
-      return parseDataSourceSummary(requiredObject(body, 'item'))
+      return parseDataSourceDetail(requiredObject(body, 'item'))
     },
     async createDataSource(input) {
       const body = await request(options, '/api/v1/data-sources', writeRequest(options, input))
@@ -584,7 +588,7 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     },
     async updateDataSource(dataSourceId, revision, input) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, writeRequest(options, input, revision, 'PATCH', false))
-      return parseDataSourceSummary(requiredObject(body, 'item'))
+      return parseDataSourceDetail(requiredObject(body, 'item'))
     },
     async changeDataSourceState(dataSourceId, revision, targetState) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}:${targetState === 'ENABLED' ? 'enable' : 'disable'}`, writeRequest(options, {}, revision, 'POST', false))
@@ -798,6 +802,11 @@ function parseDataSourceSummary(value: unknown): DataSourceSummary {
     lastTestStatus: optionalString(source, 'lastTestStatus'),
     lastTestedAt: optionalString(source, 'lastTestedAt'),
   }
+}
+
+function parseDataSourceDetail(value: unknown): DataSourceDetail {
+  const source = asRecord(value)
+  return { ...parseDataSourceSummary(source), username: optionalString(source, 'username') }
 }
 
 function parseDataSourceConnectionTestRequest(value: Record<string, unknown>): DataSourceConnectionTestRequest {

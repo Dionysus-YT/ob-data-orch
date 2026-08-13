@@ -118,7 +118,7 @@ func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing
 	t.Parallel()
 	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
 		Identity:    browserOnlyIdentityProvider{},
-		Authorizer:  sourceAuthorizer{allowedID: "source-allowed"},
+		Authorizer:  sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
 		DataSources: staticDataSourceReader{},
 	})
 	response := httptest.NewRecorder()
@@ -400,6 +400,67 @@ func TestGetDataSourceHidesUnauthorizedAndMissingObjects(t *testing.T) {
 	}
 }
 
+func TestGetDataSourceReturnsBusinessUsernameOnlyWithManagementScope(t *testing.T) {
+	t.Parallel()
+	const businessUsername = "business-user"
+	const sysUsername = "sys-user"
+	const combinedUsername = "business-user@synthetic-tenant#synthetic-cluster"
+	sources := staticDataSources{summaries: []store.DataSourceSummary{{
+		DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP",
+		CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster",
+		TenantName: "synthetic-tenant", Username: businessUsername, SysUser: sysUsername, State: "ENABLED",
+		Revision: 1, CredentialRevision: 2,
+	}}}
+	for _, testCase := range []struct {
+		name         string
+		allowWrite   bool
+		wantUsername bool
+	}{
+		{name: "管理范围", allowWrite: true, wantUsername: true},
+		{name: "仅读取范围", allowWrite: false, wantUsername: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+				Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: testCase.allowWrite}, DataSources: sources,
+			})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/data-sources/source-allowed", nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			}
+			var body struct {
+				Item map[string]json.RawMessage `json:"item"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode detail: %v", err)
+			}
+			username, hasUsername := body.Item["username"]
+			if hasUsername != testCase.wantUsername {
+				t.Fatalf("username presence = %t, want %t: %s", hasUsername, testCase.wantUsername, response.Body.String())
+			}
+			if hasUsername && string(username) != `"business-user"` {
+				t.Fatalf("username = %s, want %q", username, businessUsername)
+			}
+			for _, forbidden := range []string{"password", "sysPassword", "sysUser", "combinedUsername"} {
+				if _, exists := body.Item[forbidden]; exists {
+					t.Fatalf("detail unexpectedly returned %s: %s", forbidden, response.Body.String())
+				}
+			}
+			if bytes.Contains(response.Body.Bytes(), []byte(sysUsername)) || bytes.Contains(response.Body.Bytes(), []byte(combinedUsername)) {
+				t.Fatalf("detail returned a forbidden connection identity: %s", response.Body.String())
+			}
+			if !testCase.allowWrite {
+				return
+			}
+			list := httptest.NewRecorder()
+			handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/data-sources", nil))
+			if list.Code != http.StatusOK || bytes.Contains(list.Body.Bytes(), []byte(businessUsername)) || bytes.Contains(list.Body.Bytes(), []byte(sysUsername)) {
+				t.Fatalf("management list response=%d body=%s", list.Code, list.Body.String())
+			}
+		})
+	}
+}
+
 func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
 	t.Parallel()
 	changer := &recordingStateChanger{}
@@ -645,11 +706,11 @@ func TestUpdateDataSourceEncryptsPasswordAndKeepsItOutOfResponses(t *testing.T) 
 	request.Header.Set("If-Match", `"rev-1"`)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || updater.input.DisplayName != "Updated" || updater.input.Password == nil || len(updater.input.Password.Ciphertext) == 0 || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"DISABLED"`)) {
+	if response.Code != http.StatusOK || updater.input.DisplayName != "Updated" || updater.input.Password == nil || len(updater.input.Password.Ciphertext) == 0 || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"DISABLED"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"username":"synthetic-user"`)) {
 		t.Fatalf("update response=%d input=%#v", response.Code, updater.input)
 	}
 	serialized, _ := json.Marshal(updater.input)
-	if bytes.Contains(serialized, []byte("synthetic-rotated-password")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-rotated-password")) {
+	if bytes.Contains(serialized, []byte("synthetic-rotated-password")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-rotated-password")) || bytes.Contains(response.Body.Bytes(), []byte(`"sysUser"`)) {
 		t.Fatal("plaintext password escaped update boundary")
 	}
 }
@@ -671,7 +732,7 @@ func TestUpdateDataSource普通字段更新保留sys账号(t *testing.T) {
 	request.Header.Set("If-Match", `"rev-1"`)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || updater.input.SysUser != "root" || updater.input.SysPassword != nil || updater.input.ClearSysCredential {
+	if response.Code != http.StatusOK || updater.input.SysUser != "root" || updater.input.SysPassword != nil || updater.input.ClearSysCredential || !bytes.Contains(response.Body.Bytes(), []byte(`"username":"synthetic-user"`)) || bytes.Contains(response.Body.Bytes(), []byte("root")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-user@synthetic-tenant#synthetic-cluster")) {
 		t.Fatalf("ordinary update response=%d input=%#v body=%s", response.Code, updater.input, response.Body.String())
 	}
 }
