@@ -55,6 +55,10 @@ $runningCurrentAgent = Get-Process -Name 'agent' -ErrorAction SilentlyContinue |
 if ($null -eq $runningCurrentAgent) {
     Copy-Item -LiteralPath $stagingAgentExecutable, $stagingCAPath, $stagingConfigPath, $stagingRegisterLauncherPath, $stagingStartLauncherPath -Destination $OutputDirectory -Force
 } else {
+    if (-not (Test-Path -LiteralPath $caTarget -PathType Leaf) -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $caTarget).Hash -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $ControlPlaneCAFile).Hash) {
+        throw '当前本机 Agent 正在运行且信任的 CA 与控制面不一致。请先停止该 Agent，再重新运行启动脚本以更新受控 Agent 包；不要删除 agent-security 身份目录。'
+    }
     Write-Warning '当前本机 Agent 正在运行，未覆盖其目录；请停止旧 Agent 后从页面下载并解压最新 ZIP，再启动 Agent。'
 }
 

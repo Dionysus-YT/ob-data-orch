@@ -107,23 +107,37 @@ function Wait-PortClosed {
 }
 
 New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
-# 证书过期时删除旧文件强制重新生成，避免证书到期后页面代理静默 502。
-if (Test-Path -LiteralPath $certificatePath -PathType Leaf) {
-    try {
-        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPemFile($certificatePath)
-        $expired = $certificate.NotAfter -le [DateTime]::UtcNow
-    } catch {
-        $expired = $true
-    }
-    if ($expired) {
-        Remove-Item -LiteralPath $certificatePath, $keyPath, $caPath -Force -ErrorAction SilentlyContinue
-    }
-}
-if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf) -or -not (Test-Path -LiteralPath $keyPath -PathType Leaf) -or -not (Test-Path -LiteralPath $caPath -PathType Leaf)) {
+$tlsFiles = @($certificatePath, $keyPath, $caPath)
+$existingTLSFileCount = @($tlsFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count
+if ($existingTLSFileCount -eq 0) {
     & $certificateScript
+} elseif ($existingTLSFileCount -ne $tlsFiles.Count) {
+    throw '本机 TLS 材料不完整。为保护既有 Agent 信任关系，启动脚本不会自动删除或轮换证书；请先恢复原证书、私钥和 CA。'
 }
 if (-not (Test-Path -LiteralPath $certificatePath -PathType Leaf) -or -not (Test-Path -LiteralPath $keyPath -PathType Leaf) -or -not (Test-Path -LiteralPath $caPath -PathType Leaf)) {
     throw '本机 TLS 证书准备失败。'
+}
+
+$certificate = $null
+try {
+    # 必须同时验证证书可解析且私钥与证书匹配；单参数 CreateFromPemFile 会把证书文件误作私钥文件。
+    $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPemFile($certificatePath, $keyPath)
+    if ($certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow) {
+        throw '本机 TLS 证书已过期。为保护既有 Agent 信任关系，启动脚本不会自动轮换 CA；请执行受控证书轮换并同步更新 Agent。'
+    }
+} catch {
+    if ($_.Exception.Message -like '本机 TLS 证书已过期*') {
+        throw
+    }
+    throw '本机 TLS 证书或私钥无效。为保护既有 Agent 信任关系，启动脚本不会自动删除或轮换证书。'
+} finally {
+    if ($null -ne $certificate) {
+        $certificate.Dispose()
+    }
+}
+
+if ((Get-FileHash -Algorithm SHA256 -LiteralPath $certificatePath).Hash -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $caPath).Hash) {
+    throw '本机控制面证书与 Agent CA 不一致。启动脚本不会自动轮换信任材料。'
 }
 & $agentPackageScript -ControlPlaneCAFile $caPath
 
