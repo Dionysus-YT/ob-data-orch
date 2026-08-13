@@ -15,7 +15,7 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
-  it('只保留数据源脱敏摘要字段', async () => {
+  it('读取数据源列表中的普通业务用户名且忽略敏感字段', async () => {
     const { api } = apiWith(Response.json({
       items: [{
         id: 'source-1',
@@ -27,11 +27,15 @@ describe('浏览器 API 客户端', () => {
         port: 2881,
         clusterName: 'synthetic-cluster',
         tenantName: 'synthetic-tenant',
+        username: 'synthetic-user',
         state: 'ENABLED',
         revision: 1,
         credentialRevision: 1,
         lastTestStatus: 'SUCCEEDED',
         lastTestedAt: '2026-07-24T03:00:00Z',
+        password: 'must-not-be-read',
+        sysUser: 'must-not-be-read',
+        combinedUsername: 'must-not-be-read',
       }],
     }))
 
@@ -47,16 +51,19 @@ describe('浏览器 API 客户端', () => {
       port: 2881,
       clusterName: 'synthetic-cluster',
       tenantName: 'synthetic-tenant',
+      username: 'synthetic-user',
       state: 'ENABLED',
       revision: 1,
       credentialRevision: 1,
       lastTestStatus: 'SUCCEEDED',
       lastTestedAt: '2026-07-24T03:00:00Z',
     })
-    expect('username' in source).toBe(false)
+    expect(source).not.toHaveProperty('password')
+    expect(source).not.toHaveProperty('sysUser')
+    expect(source).not.toHaveProperty('combinedUsername')
   })
 
-  it('只在数据源详情读取普通业务用户名', async () => {
+  it('数据源详情继续按授权投影普通业务用户名', async () => {
     const { api, calls } = apiWith(Response.json({ item: {
       id: 'source-1', displayName: '合成数据源', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL',
       host: '127.0.0.1', port: 2881, clusterName: 'synthetic-cluster', tenantName: 'synthetic-tenant', username: 'synthetic-user',

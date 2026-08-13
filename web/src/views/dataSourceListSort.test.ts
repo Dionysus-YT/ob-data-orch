@@ -4,14 +4,14 @@ import type { DataSourceSummary } from '@/api/browser'
 import { sortDataSources } from './dataSourceListSort'
 
 function source(id: string, input: Partial<DataSourceSummary> = {}): DataSourceSummary {
-  return { id, displayName: id, environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2883, clusterName: 'cluster', tenantName: 'tenant', state: 'DISABLED', revision: 1, credentialRevision: 1, ...input }
+  return { id, displayName: id, environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '127.0.0.1', port: 2883, clusterName: 'cluster', tenantName: 'tenant', username: 'user', state: 'DISABLED', revision: 1, credentialRevision: 1, ...input }
 }
 
 describe('数据源列表排序', () => {
-  it('端口使用数值排序并保持输入数组不变', () => {
-    const input = [source('large', { port: 28830 }), source('small', { port: 2883 })]
-    expect(sortDataSources(input, 'port', 'asc').map((item) => item.id)).toEqual(['small', 'large'])
-    expect(input.map((item) => item.id)).toEqual(['large', 'small'])
+  it('数据源名称排序保持输入数组不变', () => {
+    const input = [source('source-b', { displayName: 'B' }), source('source-a', { displayName: 'A' })]
+    expect(sortDataSources(input, 'name', 'asc').map((item) => item.id)).toEqual(['source-a', 'source-b'])
+    expect(input.map((item) => item.id)).toEqual(['source-b', 'source-a'])
   })
 
   it('环境按开发到生产的风险等级排序', () => {

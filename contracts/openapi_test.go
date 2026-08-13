@@ -301,7 +301,10 @@ func TestOpenAPI数据源列表与详情用户名投影分离(t *testing.T) {
 
 	list := object(t, object(t, paths, "/api/v1/data-sources"), "get")
 	if responseReference(t, list, "200") != "#/components/responses/DataSourceList" {
-		t.Fatal("data source list must use the username-free list response")
+		t.Fatal("data source list must use the authorized list response")
+	}
+	if description := fmt.Sprint(list["description"]); !strings.Contains(description, "读取范围") || !strings.Contains(description, "普通业务用户名") {
+		t.Fatal("data source list must document its read-authorized business username projection")
 	}
 	detailPath := object(t, paths, "/api/v1/data-sources/{dataSourceId}")
 	for _, method := range []string{"get", "patch"} {
@@ -324,8 +327,12 @@ func TestOpenAPI数据源列表与详情用户名投影分离(t *testing.T) {
 		}
 		assertRequiredProperties(t, schema, "id", "displayName", "revision", "credentialRevision", "sysCredentialState")
 	}
+	assertRequiredProperties(t, listItem, "username")
 	listProperties := object(t, listItem, "properties")
-	for _, forbidden := range []string{"username", "sysUser", "password", "sysPassword", "combinedUsername", "credentialId", "ciphertext", "nonce"} {
+	if _, exists := listProperties["username"]; !exists {
+		t.Fatal("data source list item must expose the authorized business username")
+	}
+	for _, forbidden := range []string{"sysUser", "password", "sysPassword", "combinedUsername", "credentialId", "ciphertext", "nonce"} {
 		if _, exists := listProperties[forbidden]; exists {
 			t.Fatalf("data source list item must not expose %s", forbidden)
 		}
@@ -348,7 +355,7 @@ func TestOpenAPI数据源列表与详情用户名投影分离(t *testing.T) {
 	listEnvelope := object(t, schemas, "DataSourceListEnvelope")
 	itemsSchema := object(t, object(t, listEnvelope, "properties"), "items")
 	if fmt.Sprint(object(t, itemsSchema, "items")["$ref"]) != "#/components/schemas/DataSourceListItem" {
-		t.Fatal("data source list envelope must use the username-free item schema")
+		t.Fatal("data source list envelope must use the authorized item schema")
 	}
 	detailEnvelope := object(t, schemas, "DataSourceDetailEnvelope")
 	if fmt.Sprint(object(t, object(t, detailEnvelope, "properties"), "item")["$ref"]) != "#/components/schemas/DataSourceDetail" {

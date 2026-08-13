@@ -55,7 +55,7 @@ export function executionNodeErrorMessage(error: unknown, fallback: string): str
   return apiError.message || fallback
 }
 
-export interface DataSourceSummary {
+interface DataSourceProjection {
   readonly id: string
   readonly displayName: string
   readonly environment: string
@@ -76,7 +76,11 @@ export interface DataSourceSummary {
   readonly lastTestedAt?: string
 }
 
-export interface DataSourceDetail extends DataSourceSummary {
+export interface DataSourceSummary extends DataSourceProjection {
+  readonly username: string
+}
+
+export interface DataSourceDetail extends DataSourceProjection {
   readonly username?: string
 }
 
@@ -782,8 +786,7 @@ async function request(options: BrowserApiOptions, path: string, init: RequestIn
   return asRecord(body)
 }
 
-function parseDataSourceSummary(value: unknown): DataSourceSummary {
-  const source = asRecord(value)
+function parseDataSourceProjection(source: Record<string, unknown>): DataSourceProjection {
   return {
     id: requiredString(source, 'id'),
     displayName: requiredString(source, 'displayName'),
@@ -804,9 +807,14 @@ function parseDataSourceSummary(value: unknown): DataSourceSummary {
   }
 }
 
+function parseDataSourceSummary(value: unknown): DataSourceSummary {
+  const source = asRecord(value)
+  return { ...parseDataSourceProjection(source), username: requiredString(source, 'username') }
+}
+
 function parseDataSourceDetail(value: unknown): DataSourceDetail {
   const source = asRecord(value)
-  return { ...parseDataSourceSummary(source), username: optionalString(source, 'username') }
+  return { ...parseDataSourceProjection(source), username: optionalString(source, 'username') }
 }
 
 function parseDataSourceConnectionTestRequest(value: Record<string, unknown>): DataSourceConnectionTestRequest {

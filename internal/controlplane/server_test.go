@@ -117,9 +117,12 @@ func TestCreateDataSourceReturnsSafeNameUnavailableError(t *testing.T) {
 func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing.T) {
 	t.Parallel()
 	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
-		Identity:    browserOnlyIdentityProvider{},
-		Authorizer:  sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
-		DataSources: staticDataSourceReader{},
+		Identity:   browserOnlyIdentityProvider{},
+		Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: false},
+		DataSources: staticDataSources{summaries: []store.DataSourceSummary{
+			{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2, SysUser: "synthetic-sys-user", SysCredentialID: "synthetic-sys-credential", SysCredentialRevision: 1, LastTestStatus: "SUCCEEDED"},
+			{DataSourceID: "source-denied", DisplayName: "Denied", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.2", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "denied-user", State: "ENABLED", Revision: 1, CredentialRevision: 3},
+		}},
 	})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/data-sources", nil))
@@ -127,8 +130,8 @@ func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	var body struct {
-		RequestID string               `json:"requestId"`
-		Items     []dataSourceResponse `json:"items"`
+		RequestID string                   `json:"requestId"`
+		Items     []dataSourceListResponse `json:"items"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode list: %v", err)
@@ -136,11 +139,13 @@ func TestListDataSourcesFiltersUnauthorizedObjectsAndReturnsSafeShape(t *testing
 	if body.RequestID == "" || len(body.Items) != 1 || body.Items[0].ID != "source-allowed" {
 		t.Fatalf("unexpected data source list: %#v", body)
 	}
-	if body.Items[0].CredentialRevision != 2 {
+	if body.Items[0].CredentialRevision != 2 || body.Items[0].Username != "synthetic-user" {
 		t.Fatalf("unexpected safe projection: %#v", body.Items[0])
 	}
-	if bytes.Contains(response.Body.Bytes(), []byte("synthetic-user")) {
-		t.Fatal("浏览器数据源响应不得包含用户名")
+	for _, forbidden := range []string{"synthetic-sys-user", "synthetic-user@synthetic-tenant#synthetic-cluster", `"sysUser"`, `"password"`, `"sysPassword"`, `"credentialId"`, `"ciphertext"`, `"nonce"`} {
+		if bytes.Contains(response.Body.Bytes(), []byte(forbidden)) {
+			t.Fatalf("数据源列表不得包含敏感身份或凭据字段 %q: %s", forbidden, response.Body.String())
+		}
 	}
 }
 
@@ -449,13 +454,10 @@ func TestGetDataSourceReturnsBusinessUsernameOnlyWithManagementScope(t *testing.
 			if bytes.Contains(response.Body.Bytes(), []byte(sysUsername)) || bytes.Contains(response.Body.Bytes(), []byte(combinedUsername)) {
 				t.Fatalf("detail returned a forbidden connection identity: %s", response.Body.String())
 			}
-			if !testCase.allowWrite {
-				return
-			}
 			list := httptest.NewRecorder()
 			handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/data-sources", nil))
-			if list.Code != http.StatusOK || bytes.Contains(list.Body.Bytes(), []byte(businessUsername)) || bytes.Contains(list.Body.Bytes(), []byte(sysUsername)) {
-				t.Fatalf("management list response=%d body=%s", list.Code, list.Body.String())
+			if list.Code != http.StatusOK || !bytes.Contains(list.Body.Bytes(), []byte(businessUsername)) || bytes.Contains(list.Body.Bytes(), []byte(sysUsername)) || bytes.Contains(list.Body.Bytes(), []byte(combinedUsername)) || bytes.Contains(list.Body.Bytes(), []byte(`"sysUser"`)) {
+				t.Fatalf("list response=%d body=%s", list.Code, list.Body.String())
 			}
 		})
 	}

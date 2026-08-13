@@ -46,4 +46,5 @@ withDefaults(defineProps<{ tone?: 'success' | 'danger' | 'warning' | 'info' | 'n
 
 .is-tag .status-indicator { display: none; }
 .is-tag.is-enabled { border-color: #bedac9; color: #247348; background: #f0f8f3; }
+.is-tag.is-danger { border-color: var(--color-danger-border); color: var(--color-danger); background: var(--color-danger-bg); }
 </style>

@@ -5015,8 +5015,8 @@ func decodeAgentJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	return true
 }
 
-// listDataSources filters each object before it reaches JSON. It never returns
-// a total count, so unauthorized sources are not discoverable through the API.
+// listDataSources 先按对象读取范围过滤，避免通过条目或总数发现无权数据源。
+// 已授权列表只额外返回拆分保存的普通业务用户名，不返回 sys、组合身份或任何凭据材料。
 func (s *Server) listDataSources(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
 	if s.dataSource == nil || s.authorizer == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源 API 依赖", false)
@@ -5027,12 +5027,12 @@ func (s *Server) listDataSources(w http.ResponseWriter, r *http.Request, princip
 		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_QUERY_UNAVAILABLE", "数据源暂时不可用", true)
 		return
 	}
-	items := make([]dataSourceResponse, 0, len(summaries))
+	items := make([]dataSourceListResponse, 0, len(summaries))
 	for _, summary := range summaries {
 		if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, summary.DataSourceID) != nil {
 			continue
 		}
-		items = append(items, newDataSourceResponse(summary))
+		items = append(items, newDataSourceListResponse(summary))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
 }
@@ -5561,8 +5561,8 @@ func dataSourceConnectionTestNodeCandidateEligible(node store.ExecutionNode, now
 	return executionNodePlatformMatchesAgentFacts(node.Platform, node.Agent.EnvironmentFacts)
 }
 
-// dataSourceResponse 只承载数据源列表的最小脱敏字段。
-// 它不能包含业务用户名、sys 账号、组合用户名或任何凭据材料。
+// dataSourceResponse 承载数据源列表与详情共用的最小脱敏字段。
+// 它不包含任何用户名身份字段、sys 账号、组合用户名或凭据材料。
 type dataSourceResponse struct {
 	ID                 string `json:"id"`
 	DisplayName        string `json:"displayName"`
@@ -5581,6 +5581,13 @@ type dataSourceResponse struct {
 	SysCredentialState string `json:"sysCredentialState"`
 	LastTestStatus     string `json:"lastTestStatus,omitempty"`
 	LastTestedAt       string `json:"lastTestedAt,omitempty"`
+}
+
+// dataSourceListResponse 只用于已通过读取范围校验的数据源列表。
+// Username 是拆分保存的普通业务用户名，不是 username@tenant#cluster 组合身份。
+type dataSourceListResponse struct {
+	dataSourceResponse
+	Username string `json:"username"`
 }
 
 // dataSourceDetailResponse 只用于单个数据源详情。
@@ -5818,6 +5825,15 @@ func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
 		response.LastTestedAt = summary.LastTestedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return response
+}
+
+// newDataSourceListResponse 构造已授权列表的普通业务用户名投影。
+// 它绝不拼接租户或集群后缀，也不复制 sys 账号或任何凭据材料。
+func newDataSourceListResponse(summary store.DataSourceSummary) dataSourceListResponse {
+	return dataSourceListResponse{
+		dataSourceResponse: newDataSourceResponse(summary),
+		Username:           summary.Username,
+	}
 }
 
 // newDataSourceDetailResponse 在已完成对象范围校验后构造详情投影。

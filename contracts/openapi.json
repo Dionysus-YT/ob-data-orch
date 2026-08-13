@@ -61,7 +61,7 @@
       "delete": { "operationId": "deleteExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources": {
-      "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "仅返回授权范围内的数据源列表安全投影；即使具备管理范围也不返回业务用户名、sys 账号、组合用户名或凭据材料。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceList" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "仅返回逐项通过读取范围校验的数据源列表安全投影；包含普通业务用户名，不包含 sys 账号、组合用户名或凭据材料。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceList" }, "default": { "$ref": "#/components/responses/Error" } } },
       "post": { "operationId": "createDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources/{dataSourceId}": {
@@ -263,7 +263,7 @@
     },
     "responses": {
       "Ok": { "description": "Authorized, non-cacheable resource response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceEnvelope" } } } },
-      "DataSourceList": { "description": "授权数据源列表的无用户名安全投影。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceListEnvelope" } } } },
+      "DataSourceList": { "description": "授权数据源列表的安全投影，包含普通业务 username，不包含 sys 或组合身份。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceListEnvelope" } } } },
       "DataSourceDetail": { "description": "授权数据源详情；username 只有同一对象管理范围确认后才出现，且不包含 sys 或组合身份。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDetailEnvelope" } } } },
       "DataSourceDeletion": { "description": "Data source was physically deleted or archived to preserve history.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDeletionEnvelope" } } } },
       "ExecutionNodeDeletion": { "description": "Execution node was physically deleted or archived to preserve history; archived nodes may report that current Agent access was revoked.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeDeletionEnvelope" } } } },
@@ -338,7 +338,7 @@
       "DataSourceListItem": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "displayName", "environment", "connectionKind", "compatibilityMode", "host", "port", "clusterName", "tenantName", "state", "revision", "credentialRevision", "sysCredentialState"],
+        "required": ["id", "displayName", "environment", "connectionKind", "compatibilityMode", "host", "port", "clusterName", "tenantName", "username", "state", "revision", "credentialRevision", "sysCredentialState"],
         "properties": {
           "id": { "$ref": "#/components/schemas/OpaqueId" },
           "displayName": { "type": "string" },
@@ -349,6 +349,7 @@
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
           "clusterName": { "type": "string" },
           "tenantName": { "type": "string" },
+          "username": { "type": "string", "description": "读取范围授权的拆分保存普通业务用户名；不含 @tenant#cluster 后缀。" },
           "defaultDatabase": { "type": "string" },
           "state": { "enum": ["ENABLED", "DISABLED"] },
           "revision": { "type": "integer", "minimum": 1 },
@@ -357,7 +358,7 @@
           "lastTestStatus": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] },
           "lastTestedAt": { "type": "string", "format": "date-time" }
         },
-        "description": "数据源列表使用的最小安全投影；绝不含 username、sysUser、组合用户名、密码或凭据材料。"
+        "description": "数据源列表使用的最小安全投影；包含普通业务 username，绝不含 sysUser、组合用户名、密码或凭据材料。"
       },
       "DataSourceDetail": {
         "type": "object",

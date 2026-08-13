@@ -10,6 +10,7 @@ import DataSourceEditDrawer from './DataSourceEditDrawer.vue'
 import { dataSourceDeletionNotice } from './dataSourceDeletionNotice'
 import { filterDataSources, type ConnectionStatusFilter } from './dataSourceListFilters'
 import { sortDataSources, type DataSourceSortKey, type SortDirection } from './dataSourceListSort'
+import { dataSourceUiFixtureForSearch } from './dataSourceUiFixture'
 
 type PendingAction = { source: DataSourceSummary; action: 'disable' | 'archive' }
 
@@ -35,6 +36,7 @@ const actionMenuTrigger = ref<HTMLButtonElement>()
 const actionMenuPosition = ref({ top: 0, left: 0 })
 const sortKey = ref<DataSourceSortKey>('name')
 const sortDirection = ref<SortDirection>('asc')
+const uiFixtureMode = ref(false)
 
 const filteredSources = computed(() => filterDataSources(sources.value, {
   keyword: keyword.value,
@@ -86,6 +88,10 @@ function openCreateDrawer() {
 }
 
 function openEditDrawer(source: DataSourceSummary, focusTest = false) {
+  if (uiFixtureMode.value) {
+    notice.value = 'UI Review Fixture 仅用于列表视觉验证，不会读取或修改真实数据源。'
+    return
+  }
   drawerSourceID.value = source.id
   drawerFocusTest.value = focusTest
   drawerVisible.value = true
@@ -104,6 +110,13 @@ async function loadSources() {
 
 async function refreshSources() {
   loadFailure.value = ''
+  const uiFixture = dataSourceUiFixtureForSearch(window.location.search)
+  if (uiFixture) {
+    uiFixtureMode.value = true
+    sources.value = uiFixture
+    return
+  }
+  uiFixtureMode.value = false
   try {
     sources.value = await api.listDataSources()
   } catch (error) {
@@ -129,6 +142,10 @@ function environmentLabel(value: string) {
 
 function compatibilityModeLabel(value: string) {
   return value === 'MYSQL' ? 'MySQL' : value === 'ORACLE' ? 'Oracle' : '待迁移类型'
+}
+
+function sysTenantLabel(source: DataSourceSummary) {
+  return source.sysCredentialState === 'AVAILABLE' ? '是' : '否'
 }
 
 function toggleSort(key: DataSourceSortKey) {
@@ -173,6 +190,10 @@ function lastTestTimeLabel(source: DataSourceSummary) {
 
 function requestAction(source: DataSourceSummary, action: 'toggle' | 'archive') {
   dismissActionMenu()
+  if (uiFixtureMode.value) {
+    notice.value = 'UI Review Fixture 不执行启用、禁用或删除操作。'
+    return
+  }
   if (action === 'archive') {
     pendingAction.value = { source, action: 'archive' }
     return
@@ -284,7 +305,6 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
       <label><span class="visually-hidden">连接状态</span><select v-model="connectionStatus" aria-label="连接状态"><option value="">全部连接状态</option><option value="UNTESTED">未测试</option><option value="SUCCEEDED">可连接</option><option value="FAILED">连接失败</option><option value="UNKNOWN">结果未知</option><option value="EXPIRED">测试已过期</option><option value="INVALIDATED">测试已失效</option><option value="PENDING">测试已请求</option><option value="UNAVAILABLE">测试不可用</option></select></label>
       <label><span class="visually-hidden">启用状态</span><select v-model="state" aria-label="启用状态"><option value="">全部启用状态</option><option value="ENABLED">已启用</option><option value="DISABLED">已禁用</option></select></label>
       <WorkbenchButton v-if="hasActiveFilters" variant="text" @click="resetFilters">重置</WorkbenchButton>
-      <span class="filter-grow" />
       <WorkbenchButton :disabled="loading" @click="loadSources"><template #icon><RefreshCw :size="14" :class="{ 'is-spinning': loading }" aria-hidden="true" /></template>{{ loading ? '刷新中…' : '刷新' }}</WorkbenchButton>
     </section>
 
@@ -301,39 +321,43 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
         <table>
           <thead>
             <tr>
-              <th class="column-name" :aria-sort="sortAria('name')"><button type="button" class="sort-header" @click="toggleSort('name')"><span>数据源</span><ArrowUp v-if="sortKey === 'name' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'name'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-environment" :aria-sort="sortAria('environment')"><button type="button" class="sort-header" @click="toggleSort('environment')"><span>环境</span><ArrowUp v-if="sortKey === 'environment' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'environment'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-host" :aria-sort="sortAria('host')"><button type="button" class="sort-header" @click="toggleSort('host')"><span>IP/域名</span><ArrowUp v-if="sortKey === 'host' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'host'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-port" :aria-sort="sortAria('port')"><button type="button" class="sort-header" @click="toggleSort('port')"><span>端口</span><ArrowUp v-if="sortKey === 'port' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'port'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-tenant" :aria-sort="sortAria('tenant')"><button type="button" class="sort-header" @click="toggleSort('tenant')"><span>租户名</span><ArrowUp v-if="sortKey === 'tenant' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'tenant'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-mode" :aria-sort="sortAria('mode')"><button type="button" class="sort-header" @click="toggleSort('mode')"><span>租户模式</span><ArrowUp v-if="sortKey === 'mode' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'mode'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-connection" :aria-sort="sortAria('connection')" title="连接状态只表示网络、认证和基础数据库连接，不代表导入导出权限、对象权限、性能或任务一定可执行。"><button type="button" class="sort-header" @click="toggleSort('connection')"><span class="column-heading-with-help">连接状态<Info :size="13" aria-hidden="true" /></span><ArrowUp v-if="sortKey === 'connection' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'connection'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
-              <th class="column-state" :aria-sort="sortAria('state')"><button type="button" class="sort-header" @click="toggleSort('state')"><span>启用状态</span><ArrowUp v-if="sortKey === 'state' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'state'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-name" :aria-sort="sortAria('name')"><button type="button" class="sort-header" :class="{ 'is-active': sortKey === 'name' }" @click="toggleSort('name')"><span>数据源</span><ArrowUp v-if="sortKey === 'name' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'name'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-environment" :aria-sort="sortAria('environment')"><button type="button" class="sort-header" :class="{ 'is-active': sortKey === 'environment' }" @click="toggleSort('environment')"><span>环境</span><ArrowUp v-if="sortKey === 'environment' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'environment'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-host" :aria-sort="sortAria('host')"><button type="button" class="sort-header" :class="{ 'is-active': sortKey === 'host' }" @click="toggleSort('host')"><span>IP/域名</span><ArrowUp v-if="sortKey === 'host' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'host'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-port">端口</th>
+              <th class="column-tenant" :aria-sort="sortAria('tenant')"><button type="button" class="sort-header" :class="{ 'is-active': sortKey === 'tenant' }" @click="toggleSort('tenant')"><span>租户名</span><ArrowUp v-if="sortKey === 'tenant' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'tenant'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-username">数据库用户名</th>
+              <th class="column-sys-tenant">SYS 租户</th>
+              <th class="column-mode">租户模式</th>
+              <th class="column-connection" :aria-sort="sortAria('connection')" title="连接状态只表示网络、认证和基础数据库连接，不代表导入导出权限、对象权限、性能或任务一定可执行。"><button type="button" class="sort-header" :class="{ 'is-active': sortKey === 'connection' }" @click="toggleSort('connection')"><span class="column-heading-with-help">连接状态<Info :size="13" aria-hidden="true" /></span><ArrowUp v-if="sortKey === 'connection' && sortDirection === 'asc'" :size="13" aria-hidden="true" /><ArrowDown v-else-if="sortKey === 'connection'" :size="13" aria-hidden="true" /><ChevronsUpDown v-else :size="13" aria-hidden="true" /></button></th>
+              <th class="column-state">启用状态</th>
               <th class="column-actions">操作</th>
             </tr>
           </thead>
           <tbody v-if="loading">
-            <tr><td colspan="9" class="data-source-table-message">正在加载已授权数据源…</td></tr>
+            <tr><td colspan="11" class="data-source-table-message">正在加载已授权数据源…</td></tr>
           </tbody>
           <tbody v-else-if="loadFailure">
-            <tr><td colspan="9" class="data-source-table-message is-error"><strong>无法加载数据源</strong><span>{{ loadFailure }}</span><WorkbenchButton @click="loadSources">重试</WorkbenchButton></td></tr>
+            <tr><td colspan="11" class="data-source-table-message is-error"><strong>无法加载数据源</strong><span>{{ loadFailure }}</span><WorkbenchButton @click="loadSources">重试</WorkbenchButton></td></tr>
           </tbody>
           <tbody v-else-if="sources.length === 0">
-            <tr><td colspan="9" class="data-source-table-message"><strong>暂无数据源</strong><span>新增数据源后，可以在任务配置中选择并使用。</span></td></tr>
+            <tr><td colspan="11" class="data-source-table-message"><strong>暂无数据源</strong><span>新增数据源后，可以在任务配置中选择并使用。</span></td></tr>
           </tbody>
           <tbody v-else-if="filteredSources.length === 0">
-            <tr><td colspan="9" class="data-source-table-message"><strong>没有符合当前筛选条件的数据源</strong><span>请调整筛选条件，或清除当前筛选。</span><WorkbenchButton variant="text" @click="resetFilters">清除筛选</WorkbenchButton></td></tr>
+            <tr><td colspan="11" class="data-source-table-message"><strong>没有符合当前筛选条件的数据源</strong><span>请调整筛选条件，或清除当前筛选。</span><WorkbenchButton variant="text" @click="resetFilters">清除筛选</WorkbenchButton></td></tr>
           </tbody>
           <tbody v-else>
             <tr v-for="source in visibleSources" :key="source.id">
-              <td class="data-source-name"><div class="cell-stack"><strong>{{ source.displayName }}</strong><small>{{ source.id }}</small></div></td>
+              <td class="data-source-name"><div class="cell-stack"><strong :title="source.displayName">{{ source.displayName }}</strong><small>{{ source.id }}</small></div></td>
               <td><span class="environment-label" :class="`is-${source.environment.toLowerCase()}`">{{ environmentLabel(source.environment) }}</span></td>
               <td class="data-source-host" :title="source.host">{{ source.host }}</td>
               <td class="data-source-port">{{ source.port }}</td>
               <td class="data-source-tenant" :title="source.tenantName">{{ source.tenantName }}</td>
+              <td class="data-source-username" :title="source.username">{{ source.username }}</td>
+              <td class="data-source-sys-tenant" :class="{ 'is-configured': source.sysCredentialState === 'AVAILABLE' }">{{ sysTenantLabel(source) }}</td>
               <td>{{ compatibilityModeLabel(source.compatibilityMode) }}</td>
               <td class="data-source-connection"><div class="cell-stack"><WorkbenchStatus :tone="connectionStatusTone(source)">{{ connectionStatusLabel(source) }}</WorkbenchStatus><small>{{ lastTestTimeLabel(source) }}</small></div></td>
-              <td><WorkbenchStatus appearance="tag" :tone="source.state === 'ENABLED' ? 'enabled' : 'neutral'">{{ stateLabel(source) }}</WorkbenchStatus></td>
+              <td><WorkbenchStatus appearance="tag" :tone="source.state === 'ENABLED' ? 'enabled' : 'danger'">{{ stateLabel(source) }}</WorkbenchStatus></td>
               <td class="data-source-row-actions">
                 <button type="button" class="row-action" :disabled="actionID === source.id" @click="openEditDrawer(source)">编辑</button>
                 <button type="button" class="row-action" :disabled="actionID === source.id" @click="openEditDrawer(source, true)">测试</button>
@@ -407,17 +431,17 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-page-header h1 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: var(--text-page-title-size);
+  font-weight: var(--font-weight-semibold);
   letter-spacing: -.01em;
-  line-height: 30px;
+  line-height: var(--text-page-title-line-height);
 }
 
 .data-source-page-header p {
   margin: var(--space-1) 0 0;
   color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
 }
 
 .row-action:focus-visible,
@@ -487,10 +511,6 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   outline-offset: 0;
 }
 
-.filter-grow {
-  flex: 1 1 0;
-}
-
 .data-source-feedback {
   margin: var(--space-3) 0 0;
   padding: var(--space-2) var(--space-3);
@@ -521,9 +541,9 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-table-meta h2 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 22px;
+  font-size: var(--text-section-title-size);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--text-section-title-line-height);
 }
 
 .data-source-table-meta span {
@@ -535,11 +555,12 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   border-radius: var(--radius-control);
   color: var(--color-text-secondary);
   background: var(--color-bg-subtle);
-  font-size: 12px;
+  font-size: var(--text-metadata-size);
   font-variant-numeric: tabular-nums;
 }
 
 .data-source-table-scroll {
+  width: 100%;
   overflow-x: auto;
   border-top: 1px solid var(--color-border-strong);
   border-bottom: 1px solid var(--color-border-strong);
@@ -548,14 +569,13 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-table-scroll table {
   width: 100%;
-  min-width: 1020px;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
 .data-source-table-scroll th,
 .data-source-table-scroll td {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 10px;
   border-bottom: 1px solid #e6e9ed;
   text-align: left;
   vertical-align: middle;
@@ -565,8 +585,8 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   height: var(--size-table-header);
   color: #59616b;
   background: #f4f5f6;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-metadata-size);
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -574,8 +594,8 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   height: var(--size-table-row);
   padding-block: var(--space-1);
   color: #363c44;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--text-label-table-size);
+  line-height: var(--text-label-table-line-height);
 }
 
 .data-source-table-scroll tbody tr:hover td {
@@ -586,15 +606,20 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   border-bottom: 0;
 }
 
-.column-name { width: 176px; }
-.column-environment { width: 64px; }
-.column-host { width: 156px; }
-.column-port { width: 62px; }
-.column-tenant { width: 116px; }
-.column-mode { width: 86px; }
-.column-connection { width: 132px; }
-.column-state { width: 84px; }
-.column-actions { width: 132px; }
+.column-name { width: 15%; }
+.column-environment { width: 7%; }
+.column-host { width: 10%; }
+.column-port { width: 6%; }
+.column-tenant { width: 7%; }
+.column-username { width: 10%; }
+.column-sys-tenant { width: 8%; }
+.column-mode { width: 8%; }
+.column-connection { width: 12%; }
+.column-state { width: 7%; }
+.column-actions {
+  width: 10%;
+  text-align: right !important;
+}
 
 .column-heading-with-help { display: inline-flex; align-items: center; gap: var(--space-1); }
 .column-heading-with-help svg { color: var(--color-text-tertiary); }
@@ -625,7 +650,8 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 }
 
 .data-source-host,
-.data-source-tenant {
+.data-source-tenant,
+.data-source-username {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -633,6 +659,15 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .data-source-port {
   font-variant-numeric: tabular-nums;
+}
+
+.data-source-sys-tenant {
+  color: var(--color-text-secondary) !important;
+  font-weight: var(--font-weight-medium);
+}
+
+.data-source-sys-tenant.is-configured {
+  color: #216e50 !important;
 }
 
 .environment-label {
@@ -672,7 +707,15 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
 
 .sort-header:hover { color: #2b3037; background: #e9ecef; }
 .sort-header:focus-visible { outline: 2px solid rgb(37 103 185 / 30%); outline-offset: 0; }
-.sort-header > svg { flex: none; color: #7b838d; }
+.sort-header > svg {
+  flex: none;
+  color: #7b838d;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.sort-header:hover > svg,
+.sort-header:focus-visible > svg,
+.sort-header.is-active > svg { opacity: 1; }
 
 .environment-label.is-production {
   border-color: #e4cfac;
@@ -703,7 +746,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-1);
+  gap: 0;
   white-space: nowrap;
 }
 
@@ -713,7 +756,7 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 0 6px;
+  padding: 0 var(--space-1);
   border: 0;
   border-radius: 4px;
   color: #245d9e;
@@ -818,26 +861,10 @@ async function performAction(source: DataSourceSummary, action: 'enable' | 'disa
   color: #a6352c;
 }
 
-@media (min-width: 1800px) {
-  .column-name { width: 16%; }
-  .column-environment { width: 7%; }
-  .column-host { width: 15%; }
-  .column-port { width: 7%; }
-  .column-tenant { width: 12%; }
-  .column-mode { width: 9%; }
-  .column-connection { width: 14%; }
-  .column-state { width: 9%; }
-  .column-actions { width: 9%; }
-}
-
-@media (max-width: 1180px) {
-  .data-source-filter .filter-grow {
-    display: none;
-  }
-
-  .data-source-table-scroll table {
-    min-width: 1020px;
-  }
+@media (max-width: 1439px) {
+  .data-source-table-scroll th,
+  .data-source-table-scroll td { padding-inline: var(--space-2); }
+  .row-action-more-button { width: 26px; }
 }
 
 @media (max-width: 760px) {

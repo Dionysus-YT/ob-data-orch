@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { AlertTriangle, ChevronDown, Eye, EyeOff } from '@lucide/vue'
 
 import { browserApi, dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceConnectionTestRequest, type DataSourceDetail, type DataSourceUpdate, type DataSourceWrite, type ExecutionNodeCandidate } from '@/api/browser'
+import WorkbenchFormField from '@/components/WorkbenchFormField.vue'
 import { parseDataSourceConnectionString } from './dataSourceConnectionString'
 import { dataSourceConnectionTestNotice, sysCredentialVerificationNotice } from './dataSourceConnectionTestNotice'
 import { dataSourceConnectionTestDiagnostic } from './dataSourceConnectionTestDiagnostic'
@@ -480,11 +481,9 @@ function fieldErrorID(field: DataSourceFormField) {
           <section class="data-source-form-section">
             <h2>基本信息</h2>
             <div class="form-grid basic-information-grid">
-              <label class="field-label">
-                <span class="field-label-text">数据源名称 <b>*</b></span>
+              <WorkbenchFormField class="field-label" label="数据源名称" required :error="formErrors.displayName" :error-id="fieldErrorID('displayName')">
                 <input v-model.trim="form.displayName" maxlength="120" :aria-describedby="fieldErrorID('displayName')" :aria-invalid="formErrors.displayName ? 'true' : undefined" @input="clearFieldError('displayName')" />
-                <span v-if="formErrors.displayName" :id="fieldErrorID('displayName')" class="field-error" role="alert">{{ formErrors.displayName }}</span>
-              </label>
+              </WorkbenchFormField>
               <fieldset class="field-label" :aria-invalid="formErrors.environment ? 'true' : undefined">
                 <legend><span class="field-label-text">环境 <b>*</b></span></legend>
                 <div class="radio-row" :aria-describedby="fieldErrorID('environment')">
@@ -508,57 +507,40 @@ function fieldErrorID(field: DataSourceFormField) {
             <details class="connection-parser" :open="isNew">
               <summary><ChevronDown class="disclosure-icon" :size="15" aria-hidden="true" />使用连接串解析</summary>
               <div class="connection-parser-body">
-                <label class="field-label field-span">
-                  <span class="field-label-text">智能解析连接串</span>
+                <WorkbenchFormField class="field-label field-span" label="智能解析连接串" :error="connectionStringError" error-id="data-source-connection-string-error">
                   <input v-model="connectionString" type="text" autocomplete="off" placeholder="mysql 或 obclient 开头的 ODP 连接串" :aria-describedby="connectionStringError ? 'data-source-connection-string-error' : undefined" :aria-invalid="connectionStringError ? 'true' : undefined" @input="connectionStringError = ''" />
-                  <span v-if="connectionStringError" id="data-source-connection-string-error" class="field-error" role="alert">{{ connectionStringError }}</span>
-                </label>
+                </WorkbenchFormField>
                 <button type="button" class="button button-secondary" :disabled="busy" @click="applyConnectionString">解析并填充</button>
-                <p>仅解析并回填结构化字段；原始连接串只保留在当前浏览器页面，不会提交、保存或进入审计。</p>
+                <p>原始连接串仅在当前页面解析，不会提交或保存。</p>
               </div>
             </details>
 
             <div class="form-grid">
-              <label class="field-label">
-                <span class="field-label-text">租户模式 <b>*</b></span>
+              <WorkbenchFormField class="field-label" label="租户模式" required :error="formErrors.compatibilityMode" :error-id="fieldErrorID('compatibilityMode')">
                 <select v-model="form.compatibilityMode" :aria-describedby="fieldErrorID('compatibilityMode')" :aria-invalid="formErrors.compatibilityMode ? 'true' : undefined" @change="clearCompatibilityModeErrors">
                   <option value="MYSQL">OceanBase MySQL</option>
                   <option value="ORACLE">OceanBase Oracle</option>
                 </select>
-                <span v-if="formErrors.compatibilityMode" :id="fieldErrorID('compatibilityMode')" class="field-error" role="alert">{{ formErrors.compatibilityMode }}</span>
-              </label>
-              <label class="field-label">
-                <span class="field-label-text">ODP 地址 <b>*</b></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField class="field-label" label="ODP 地址" required :error="formErrors.host" :error-id="fieldErrorID('host')">
                 <input v-model.trim="form.host" maxlength="253" placeholder="IP、域名或 VIP" :aria-describedby="fieldErrorID('host')" :aria-invalid="formErrors.host ? 'true' : undefined" @input="clearFieldError('host')" />
-                <span v-if="formErrors.host" :id="fieldErrorID('host')" class="field-error" role="alert">{{ formErrors.host }}</span>
-              </label>
-              <label class="field-label">
-                <span class="field-label-text">SQL 端口 <b>*</b></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField class="field-label" label="SQL 端口" required :error="formErrors.port" :error-id="fieldErrorID('port')">
                 <input v-model.number="form.port" type="number" min="1" max="65535" :aria-describedby="fieldErrorID('port')" :aria-invalid="formErrors.port ? 'true' : undefined" @input="clearFieldError('port')" />
-                <span v-if="formErrors.port" :id="fieldErrorID('port')" class="field-error" role="alert">{{ formErrors.port }}</span>
-              </label>
-              <label class="field-label">
-                <span class="field-label-text">集群名 <b>*</b></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField class="field-label" label="集群名" required :error="formErrors.clusterName" :error-id="fieldErrorID('clusterName')">
                 <input v-model.trim="form.clusterName" maxlength="255" :aria-describedby="fieldErrorID('clusterName')" :aria-invalid="formErrors.clusterName ? 'true' : undefined" @input="clearFieldError('clusterName')" />
-                <span v-if="formErrors.clusterName" :id="fieldErrorID('clusterName')" class="field-error" role="alert">{{ formErrors.clusterName }}</span>
-              </label>
-              <label class="field-label">
-                <span class="field-label-text">租户名 <b>*</b></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField class="field-label" label="租户名" required :error="formErrors.tenantName" :error-id="fieldErrorID('tenantName')">
                 <input v-model.trim="form.tenantName" maxlength="255" :aria-describedby="fieldErrorID('tenantName')" :aria-invalid="formErrors.tenantName ? 'true' : undefined" @input="clearFieldError('tenantName')" />
-                <span v-if="formErrors.tenantName" :id="fieldErrorID('tenantName')" class="field-error" role="alert">{{ formErrors.tenantName }}</span>
-              </label>
-              <label class="field-label">
-                <span class="field-label-text">用户名 <b>*</b></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField class="field-label" label="用户名" required :error="formErrors.username" :error-id="fieldErrorID('username')">
                 <input v-model.trim="form.username" maxlength="256" autocomplete="username" :aria-describedby="fieldErrorID('username')" :aria-invalid="formErrors.username ? 'true' : undefined" @input="clearFieldError('username')" />
-                <span v-if="formErrors.username" :id="fieldErrorID('username')" class="field-error" role="alert">{{ formErrors.username }}</span>
-              </label>
-              <label v-if="form.compatibilityMode === 'MYSQL'" class="field-label field-span">
-                <span class="field-label-text">默认数据库 <span class="optional">可选</span></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField v-if="form.compatibilityMode === 'MYSQL'" class="field-label field-span" label="默认数据库" optional="可选" :error="formErrors.defaultDatabase" :error-id="fieldErrorID('defaultDatabase')">
                 <input v-model.trim="form.defaultDatabase" maxlength="512" :aria-describedby="fieldErrorID('defaultDatabase')" :aria-invalid="formErrors.defaultDatabase ? 'true' : undefined" @input="clearFieldError('defaultDatabase')" />
-                <span v-if="formErrors.defaultDatabase" :id="fieldErrorID('defaultDatabase')" class="field-error" role="alert">{{ formErrors.defaultDatabase }}</span>
-              </label>
-              <label class="field-label field-span">
-                <span class="field-label-text">密码 <b v-if="isNew">*</b><span v-else class="optional">留空保留现有值</span></span>
+              </WorkbenchFormField>
+              <WorkbenchFormField class="field-label field-span" label="密码" :required="isNew" :optional="isNew ? '' : '留空保留现有值'" :error="formErrors.password" :error-id="fieldErrorID('password')">
                 <span class="password-control">
                   <input v-model="form.password" :type="passwordVisible ? 'text' : 'password'" maxlength="4096" autocomplete="new-password" :placeholder="isNew ? '新增时必填；页面不会回显或保存密码' : '输入新密码才会轮换凭据'" :aria-describedby="fieldErrorID('password')" :aria-invalid="formErrors.password ? 'true' : undefined" @input="clearFieldError('password')" />
                   <button type="button" class="password-visibility" :aria-label="passwordVisible ? '隐藏新密码' : '显示新密码'" :aria-pressed="passwordVisible" @click="passwordVisible = !passwordVisible">
@@ -566,21 +548,17 @@ function fieldErrorID(field: DataSourceFormField) {
                     <Eye v-else :size="16" aria-hidden="true" />
                   </button>
                 </span>
-                <span v-if="formErrors.password" :id="fieldErrorID('password')" class="field-error" role="alert">{{ formErrors.password }}</span>
-              </label>
+              </WorkbenchFormField>
               <details class="field-span sys-credential-panel">
                 <summary><ChevronDown class="disclosure-icon" :size="15" aria-hidden="true" />高级设置：sys 凭据（可选）</summary>
-                <p>拥有 sys 租户视图查看权限的账号（如 root）与密码，用于查询租户视图以提升导出能力；不配置时相关能力自动降级（参考 ODC 数据源高级设置）。</p>
+                <p>可选。用于读取 sys 租户视图；未配置时相关导出能力自动降级。</p>
                 <div class="sys-credential-row">
-                  <label class="field-label">
-                    <span class="field-label-text">sys 账号</span>
+                  <WorkbenchFormField class="field-label" label="sys 账号">
                     <input v-model.trim="form.sysUser" maxlength="256" autocomplete="off" placeholder="例如 root（勿填 @sys#集群 后缀）" :disabled="clearSysCredential" :aria-describedby="fieldErrorID('sysUser')" :aria-invalid="formErrors.sysUser ? 'true' : undefined" @input="clearFieldError('sysUser')" />
-                  </label>
-                  <label class="field-label">
-                    <span class="field-label-text">sys 密码</span>
+                  </WorkbenchFormField>
+                  <WorkbenchFormField class="field-label" label="sys 密码" :error="formErrors.sysPassword" :error-id="fieldErrorID('sysPassword')">
                     <input v-model="form.sysPassword" type="password" maxlength="4096" autocomplete="new-password" placeholder="输入新密码才会设置或轮换 sys 凭据" :disabled="clearSysCredential" :aria-describedby="fieldErrorID('sysPassword')" :aria-invalid="formErrors.sysPassword ? 'true' : undefined" @input="clearFieldError('sysPassword')" />
-                    <span v-if="formErrors.sysPassword" :id="fieldErrorID('sysPassword')" class="field-error" role="alert">{{ formErrors.sysPassword }}</span>
-                  </label>
+                  </WorkbenchFormField>
                 </div>
                 <p v-if="!isNew && source" class="section-hint">当前 sys 凭据状态：{{ source.sysCredentialState === 'AVAILABLE' ? '已配置' : '未配置' }}。编辑时留空表示保持现状。</p>
                 <label v-if="!isNew && source?.sysCredentialState === 'AVAILABLE'" class="checkbox-row">
@@ -592,7 +570,7 @@ function fieldErrorID(field: DataSourceFormField) {
           </section>
           <section ref="testSection" class="data-source-form-section connection-test-section" :class="connectionTestDiagnostic?.target === 'execution-node' ? 'has-connection-diagnostic' : undefined" aria-labelledby="data-source-connection-test-heading">
             <h2 id="data-source-connection-test-heading">通过执行节点测试连接</h2>
-            <p>由所选执行节点发起数据源网络、认证和基础数据库连接测试；控制面不会直接连接数据库。</p>
+            <p>由所选执行节点验证网络、认证和基础数据库连接。</p>
             <div class="test-node-row">
               <label class="field-label">
                 <span class="field-label-text">执行节点 <b>*</b></span>
@@ -604,9 +582,9 @@ function fieldErrorID(field: DataSourceFormField) {
               <button type="button" class="button button-secondary" :disabled="busy || nodeCandidatesLoading" @click="loadConnectionTestNodeCandidates">刷新节点</button>
               <button type="button" class="button button-secondary" :disabled="busy || isNew || nodeCandidatesLoading || !nodeCandidates.length || !selectedNodeID || hasUnsavedConnectionChanges" @click="testConnection">{{ testBusy ? '测试进行中…' : '测试连接' }}</button>
             </div>
-            <p v-if="isNew" id="data-source-connection-test-node-help" class="section-hint is-locked">可以预先选择合格节点；执行真实测试时会先保存数据源，再以已保存的配置和凭据版本发起测试。</p>
+            <p v-if="isNew" id="data-source-connection-test-node-help" class="section-hint is-locked">可预选节点；真实测试前会先保存数据源。</p>
             <p v-else-if="hasUnsavedConnectionChanges" id="data-source-connection-test-node-help" class="section-hint is-warning">连接配置存在未保存更改。请先保存，保存后才能重新测试。</p>
-            <p v-else id="data-source-connection-test-node-help" class="section-hint">候选节点必须已关联、在线且空闲；维护中或已归档节点不可用于测试。每次测试只针对当前选择的一个节点，不会永久绑定数据源。</p>
+            <p v-else id="data-source-connection-test-node-help" class="section-hint">仅列出已关联、在线且空闲的节点；测试不会永久绑定数据源。</p>
             <p v-if="nodeCandidatesFailure" class="field-error" role="alert">{{ nodeCandidatesFailure }}</p>
             <p v-else-if="!nodeCandidatesLoading && nodeCandidates.length === 0" class="field-error" role="status">当前没有可用于连接测试的执行节点。请确认节点已关联、在线且空闲，并且当前身份拥有节点使用权限。</p>
             <p v-if="testFailure" class="field-error" role="alert">{{ testFailure }}</p>
@@ -717,9 +695,9 @@ function fieldErrorID(field: DataSourceFormField) {
   padding: 0 !important;
   border: 0 !important;
   color: #252a31;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 22px;
+  font-size: var(--text-section-title-size);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--text-section-title-line-height);
 }
 
 .form-grid {
@@ -731,12 +709,11 @@ function fieldErrorID(field: DataSourceFormField) {
   grid-template-columns: 1fr;
 }
 
-.field-label,
 .field-label legend {
   color: #4a525c;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
+  font-size: var(--text-label-table-size);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-label-table-line-height);
 }
 
 fieldset.field-label {
@@ -843,7 +820,7 @@ fieldset.field-label {
   background: transparent;
 }
 
-.field-label {
+.field-label:not(.workbench-form-field) {
   align-content: start;
   gap: var(--space-1);
 }
@@ -941,8 +918,8 @@ details[open] > summary .disclosure-icon { transform: rotate(0deg); }
 .connection-test-section > p {
   margin: -7px 0 14px;
   color: #66758a;
-  font-size: 12px;
-  line-height: 19px;
+  font-size: var(--text-metadata-size);
+  line-height: var(--text-metadata-line-height);
 }
 
 .test-node-row {

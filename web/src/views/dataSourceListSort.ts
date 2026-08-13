@@ -1,6 +1,6 @@
 import type { DataSourceSummary } from '@/api/browser'
 
-export type DataSourceSortKey = 'name' | 'environment' | 'host' | 'port' | 'tenant' | 'mode' | 'connection' | 'state'
+export type DataSourceSortKey = 'name' | 'environment' | 'host' | 'tenant' | 'connection'
 export type SortDirection = 'asc' | 'desc'
 
 const environmentRank: Record<string, number> = { DEVELOPMENT: 0, TEST: 1, STAGING: 2, PRODUCTION: 3 }
@@ -21,11 +21,8 @@ function compareDataSource(left: DataSourceSummary, right: DataSourceSummary, ke
     case 'name': return collator.compare(left.displayName, right.displayName)
     case 'environment': return compareNumber(environmentRank[left.environment] ?? 99, environmentRank[right.environment] ?? 99)
     case 'host': return collator.compare(left.host, right.host)
-    case 'port': return compareNumber(left.port, right.port)
     case 'tenant': return collator.compare(left.tenantName, right.tenantName)
-    case 'mode': return collator.compare(left.compatibilityMode, right.compatibilityMode)
     case 'connection': return compareNumber(connectionRank[left.lastTestStatus ?? 'UNTESTED'] ?? 99, connectionRank[right.lastTestStatus ?? 'UNTESTED'] ?? 99)
-    case 'state': return compareNumber(left.state === 'ENABLED' ? 0 : 1, right.state === 'ENABLED' ? 0 : 1)
   }
 }
 
