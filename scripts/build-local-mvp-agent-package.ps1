@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$ControlPlaneCAFile,
-    [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'var\local-mvp-agent')
+    # 默认输出与 Agent 实际部署目录保持一致，避免 var 下并存多份 agent mvp 副本。
+    [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'var\ob-data-orch-agent-windows-amd64')
 )
 
 $ErrorActionPreference = 'Stop'

@@ -16,6 +16,9 @@ export default defineConfig({
   // Local MVP 下载包只存在于 Git 忽略的运行时目录，不能把 Agent 二进制提交进前端源码。
   publicDir: fileURLToPath(new URL('../var/local-mvp-web-assets', import.meta.url)),
   server: {
+    // agent-package-staging 是打包脚本的中间产物（构建时会被删除重建），
+    // 若被 Vite watch 会在重建瞬间因文件占用触发 EBUSY 崩溃；静态分发只依赖最终的 zip。
+    watch: { ignored: ['**/var/local-mvp-web-assets/agent-package-staging/**'] },
     proxy: {
       // 本机 MVP 代理仍验证控制面证书；通过 NODE_EXTRA_CA_CERTS 显式信任测试 CA，绝不跳过 TLS 校验。
       '/api': { target: localMvpControlPlaneUrl, changeOrigin: true, secure: true, agent: localMvpProxyAgent },
