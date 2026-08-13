@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-项目已完成总体需求讨论稿整理、十一个模块的产品/字段规则确认、产品设计语义基线收口，以及数据源、导出公共链路、普通导入、旁路导入、任务中心全状态、模板复用、高风险权限操作、执行节点、日志中心、系统设置和首页静态低保真评审。首条切片架构、技术路线和最小实现契约已经确认，DR-R01～DR-R18 进一步确认 G1 工程骨架与 G2 隔离组件准入。开发顺序、阶段、门禁、页面功能接入与真实验证状态统一以[开发任务地图](03-technical/development-task-map.md)为准。任何 G2 结果均不得描述为真实导出或产品可用。
+项目已完成总体需求讨论稿整理、十一个模块的产品/字段规则确认、产品设计语义基线收口，以及数据源、导出公共链路、普通导入、旁路导入、任务中心全状态、模板复用、高风险权限操作、执行节点、日志中心、系统设置和首页静态低保真评审。数据源管理的真实实现现已冻结为第一版 UI Reference Page，并形成最小 [Design System v0.1](02-design/design-system-v0.1.md) 与长期 DEV-only UI Regression Fixture；该冻结只代表已验证的前端视觉与交互基线，不外推其他业务页面已经迁移。首条切片架构、技术路线和最小实现契约已经确认，DR-R01～DR-R18 进一步确认 G1 工程骨架与 G2 隔离组件准入。开发顺序、阶段、门禁、页面功能接入与真实验证状态统一以[开发任务地图](03-technical/development-task-map.md)为准。任何 G2 结果均不得描述为真实导出或产品可用。
 
 ## 文档导航
 
@@ -19,6 +19,9 @@
 - [信息架构](02-design/information-architecture.md)：导航、页面职责、模块关系和跳转关系。
 - [用户流程](02-design/user-flow.md)：导出、普通导入、旁路导入三条创建流程及共用任务追踪/失败处理流程。
 - [全局交互规范](02-design/interaction-spec.md)：向导、校验、命令预览、任务与日志的通用交互规则。
+- [Design System v0.1](02-design/design-system-v0.1.md)：数据源真实页面验证后的 Foundations、公共组件、桌面模式、边界和版本规则。
+- [数据源管理 UI Reference Page](02-design/ui-reference-page-data-source.md)：参考页路由、11 列业务边界、冻结范围及 1280/1440/1920 验收基线。
+- [数据源 UI Regression Fixture](02-design/ui-regression-fixture-data-source.md)：16 行 DEV-only 合成输入、显式启用、无真实业务副作用和长期维护规则。
 - [产品设计基线收口评审](02-design/product-design-baseline-closure.md)：汇总已确认基线、官方验证门禁、低保真范围、技术设计输入和开发准入条件。
 - [核心流程低保真基线](02-design/core-flow-low-fidelity.md)：已确认的数据源、导出、命令确认、任务详情与日志首条核心链路，以及 LF-R01～LF-R07。
 - [首页模块评审稿](02-design/home-module.md)：授权范围内的运行摘要、四项指标、单一趋势图、节点健康、我的任务和最近异常，HM-R01～HM-R20 已确认。
@@ -89,6 +92,9 @@
 | 产品范围 | V1.0 范围基线已收口 | 从 PRD 和 44 项已确认决策提炼，官方行为仍以受控验证结果为准 |
 | 关键决策 | 已确认并持续维护 | 收录 PRD 与模块专项评审中经明确确认的结论 |
 | 全局产品设计基础文档 | 产品设计语义基线已收口 | 信息架构、用户流程、全局交互及已规划静态低保真范围均已形成基线 |
+| Design System v0.1 | 已冻结 | 只纳管数据源真实页面验证过的 Foundations、公共组件和桌面交互模式，不等同于完整 UI Framework |
+| 数据源管理 UI Reference Page | 已冻结 | `/data-sources` 是第一版参考页；11 列为数据源业务规则，视觉密度和交互模式供后续页面复用 |
+| 数据源 UI Regression Fixture | 长期保留 | 16 行 DEV-only、显式参数启用的合成输入；不写业务数据，不是自动 Screenshot Diff |
 | 产品设计基线收口评审 | 收口结论已确认 | CL-01～CL-08 已确认；累计 44 项决策、205 条产品规则、820 个字段/操作、137 条条件规则和 83 个 P0 用例 |
 | 核心流程低保真基线 | 首条核心链路已确认 | 数据源、导出步骤 5～6、任务详情与日志已形成静态低保真；LF-R01～LF-R07 已确认 |
 | 首页模块评审稿 | 产品、字段与低保真规则已确认 | HM-R01～HM-R20、HM-FR01～HM-FR15、HM-LF-R01～HM-LF-R18 已确认；刷新、聚合和响应式实现仍待技术设计 |
@@ -140,6 +146,7 @@
 4. [信息架构](02-design/information-architecture.md)
 5. [用户流程](02-design/user-flow.md)
 6. [全局交互规范](02-design/interaction-spec.md)
+   - 开发或评审新前端页面时，继续阅读 [Design System v0.1](02-design/design-system-v0.1.md)、[数据源管理 UI Reference Page](02-design/ui-reference-page-data-source.md)和[数据源 UI Regression Fixture](02-design/ui-regression-fixture-data-source.md)。
 7. [产品设计基线收口评审](02-design/product-design-baseline-closure.md)
 8. [核心流程低保真基线](02-design/core-flow-low-fidelity.md)
 9. [首页模块评审稿](02-design/home-module.md)
@@ -197,4 +204,7 @@
 - 已确认产品结论通过决策记录管理；未确认内容不得写成确定能力。
 - 官方工具能力以 V4.3.5 官方资料及实际工具 `--help` 为准。
 - 模块评审通过后应更新文档状态和版本，避免页面、接口与数据模型反复联动修改。
+- 新页面实现前必须先读取 Design System v0.1，并区分 Direct Reuse、Extension Candidate 和 Business-specific；不得把单页业务字段强行抽象为公共系统。
+- 对已冻结 Token、公共组件或 Reference Page 模式的修改必须说明不足、影响页面、迁移范围和版本判断；普通业务变更不得静默改写全局视觉规则。
+- Design System v0.1 不触发全站迁移；其他页面只能在各自真实业务改造时逐步接入。
 - 技术设计从首条纵向切片的真实门禁出发，不预先创建全部模块的空接口和数据表文档。

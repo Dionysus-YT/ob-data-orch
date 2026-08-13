@@ -25,8 +25,8 @@ withDefaults(defineProps<{
   border-radius: var(--radius-control);
   color: #343b44;
   background: var(--color-bg-surface);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--text-label-table-size);
+  font-weight: var(--font-weight-medium);
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;

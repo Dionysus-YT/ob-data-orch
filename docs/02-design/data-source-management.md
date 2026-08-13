@@ -6,7 +6,10 @@
 > 官方资料核对：OceanBase Loader/Dumper V4.3.5（2026-07-17）  
 > 评审结论：DS-R01～DS-R11 全部确认（2026-07-17）  
 > 关联低保真：[核心流程低保真基线](core-flow-low-fidelity.md)  
-> 更新日期：2026-07-20
+> 实现级视觉基线：[数据源管理 UI Reference Page](ui-reference-page-data-source.md)
+> 更新日期：2026-08-13
+
+> 本文维护数据源产品语义和业务边界；当前 11 列实现、响应式验收和 Design System 冻结范围以 UI Reference Page 为准，两者不得互相覆盖业务或安全契约。
 
 ## 1. 评审目标
 

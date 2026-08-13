@@ -82,6 +82,10 @@ watch(drawerVisible, (visible) => {
 })
 
 function openCreateDrawer() {
+  if (uiFixtureMode.value) {
+    notice.value = 'UI Review Fixture 仅用于列表视觉回归，不会打开数据源表单或执行真实业务操作。'
+    return
+  }
   drawerSourceID.value = null
   drawerFocusTest.value = false
   drawerVisible.value = true

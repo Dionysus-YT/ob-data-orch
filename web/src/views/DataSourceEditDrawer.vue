@@ -187,9 +187,9 @@ function onSaved(id: string) {
 .data-source-drawer-header h2 {
   margin: 0;
   color: var(--color-text-primary);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 26px;
+  font-size: var(--text-drawer-title-size);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--text-drawer-title-line-height);
 }
 
 .data-source-drawer-header p {

@@ -13,9 +13,9 @@ withDefaults(defineProps<{ tone?: 'success' | 'danger' | 'warning' | 'info' | 'n
   min-height: 20px;
   align-items: center;
   color: var(--color-neutral);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
+  font-size: var(--text-metadata-size);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-metadata-line-height);
   white-space: nowrap;
 }
 
