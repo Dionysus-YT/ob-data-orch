@@ -331,7 +331,7 @@ func validGeneralizedRequest(platform Platform, capability string) Request {
 	return Request{
 		Tool:                  "OBDUMPER",
 		ToolVersion:           "4.3.5-RELEASE",
-		MetadataVersion:       "obdumper-4.3.5-slice-v6",
+		MetadataVersion:       "obdumper-4.3.5-slice-v7",
 		CapabilityVersion:     capability,
 		ConnectionKind:        ConnectionODP,
 		DataSourceFactVersion: "ds-rev-1",
@@ -353,6 +353,70 @@ func validGeneralizedRequest(platform Platform, capability string) Request {
 			stringField("--file-path", SourceUser, windowsOrLinuxPath(platform)),
 		},
 	}
+}
+
+// TestGeneralizedReplaysFrozenV6Metadata 验证同一入口按请求冻结版本选择目录：
+// v6 保留历史 -t 发射和指纹，v7 使用修正后的 --table，二者不能静默互换。
+func TestGeneralizedReplaysFrozenV6Metadata(t *testing.T) {
+	generator := mustGeneralizedGenerator(t)
+	fields := []FieldInput{
+		stringField("--table", SourceUser, "synthetic_table"),
+		{Name: "--csv", Source: SourceFormat, Value: Value{Kind: ValueBoolean, Boolean: true}},
+	}
+	v6 := validGeneralizedRequest(PlatformWindowsAMD64, "export-odp-full-csv-v1")
+	v6.MetadataVersion = "obdumper-4.3.5-slice-v6"
+	v6.Fields = append(v6.Fields, fields...)
+	v6Result, err := generator.Generate(v6)
+	if err != nil {
+		t.Fatalf("Generate(v6) error = %v", err)
+	}
+	if v6Result.MetadataVersion != v6.MetadataVersion || !containsToken(v6Result.ArgvTemplate, "-tsynthetic_table") {
+		t.Fatalf("v6 replay changed: %#v", v6Result)
+	}
+
+	v7 := validGeneralizedRequest(PlatformWindowsAMD64, "export-odp-full-csv-v1")
+	v7.Fields = append(v7.Fields, fields...)
+	v7Result, err := generator.Generate(v7)
+	if err != nil {
+		t.Fatalf("Generate(v7) error = %v", err)
+	}
+	if v7Result.MetadataVersion != v7.MetadataVersion || !containsToken(v7Result.ArgvTemplate, "--table") || !containsToken(v7Result.ArgvTemplate, "synthetic_table") {
+		t.Fatalf("v7 current generation changed: %#v", v7Result)
+	}
+	if v6Result.ConfigFingerprint == v7Result.ConfigFingerprint {
+		t.Fatal("v6 and v7 fingerprints must remain version-separated")
+	}
+}
+
+// TestGeneralizedUnverifiedBatch2ParametersStayGated 验证仅被工具接受但缺少行为或权限事实的参数不能进入 argv。
+func TestGeneralizedUnverifiedBatch2ParametersStayGated(t *testing.T) {
+	generator := mustGeneralizedGenerator(t)
+	for _, testCase := range []struct {
+		name  string
+		field FieldInput
+	}{
+		{name: "time format", field: stringField("--time-value-format", SourceUser, "HH:mm:ss")},
+		{name: "oracle nls", field: stringField("--nls-date-format", SourceUser, "YYYY-MM-DD")},
+		{name: "hidden primary key", field: FieldInput{Name: "--enable-hidden-pk", Source: SourceUser, Value: Value{Kind: ValueBoolean, Boolean: true}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := validGeneralizedRequest(PlatformWindowsAMD64, "export-odp-full-csv-v1")
+			request.Fields = append(request.Fields,
+				stringField("--table", SourceUser, "synthetic_table"),
+				FieldInput{Name: "--csv", Source: SourceFormat, Value: Value{Kind: ValueBoolean, Boolean: true}},
+				testCase.field,
+			)
+			assertValidationIssue(t, generator, request, "PARAMETER_VALIDATION_GATED", testCase.field.Name)
+		})
+	}
+
+	extra := validGeneralizedRequest(PlatformWindowsAMD64, "export-odp-ddl-v1")
+	extra.Fields = append(extra.Fields,
+		stringField("--table", SourceUser, "synthetic_table"),
+		FieldInput{Name: "--ddl", Source: SourceFormat, Value: Value{Kind: ValueBoolean, Boolean: true}},
+		FieldInput{Name: "--add-extra-message", Source: SourceUser, Value: Value{Kind: ValueBoolean, Boolean: true}},
+	)
+	assertValidationIssue(t, generator, extra, "PARAMETER_VALIDATION_GATED", "--add-extra-message")
 }
 
 func TestGeneralizedFullCSVAllScope(t *testing.T) {
@@ -392,7 +456,7 @@ func TestGeneralizedFullCSVMultiTableWithExclusions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if !containsToken(result.ArgvTemplate, "-ttable_one,table_two") || !containsToken(result.ArgvTemplate, "--exclude-table") || !containsToken(result.ArgvTemplate, "table_tmp") {
+	if !containsToken(result.ArgvTemplate, "--table") || !containsToken(result.ArgvTemplate, "table_one,table_two") || !containsToken(result.ArgvTemplate, "--exclude-table") || !containsToken(result.ArgvTemplate, "table_tmp") {
 		t.Fatalf("multi-table argv missing: %#v", result.ArgvTemplate)
 	}
 }
@@ -411,7 +475,7 @@ func TestGeneralizedDDLOnlyOmitsDataFormatParameters(t *testing.T) {
 	wantArgv := []string{
 		"-h127.0.0.1", "-P2881", "-usynthetic_user@synthetic_tenant",
 		"--database", "synthetic_db",
-		"-ttable_one", "--ddl",
+		"--table", "table_one", "--ddl",
 		"--file-path", "/E:/workespace/ob-data-orch/tmp/synthetic-output",
 	}
 	if !reflect.DeepEqual(result.ArgvTemplate, wantArgv) {
@@ -434,7 +498,7 @@ func TestGeneralizedDDLAndCSVCombinesContentFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if !containsToken(result.ArgvTemplate, "--ddl") || !containsToken(result.ArgvTemplate, "--csv") || !containsToken(result.ArgvTemplate, "-ttable_one,table_two") {
+	if !containsToken(result.ArgvTemplate, "--ddl") || !containsToken(result.ArgvTemplate, "--csv") || !containsToken(result.ArgvTemplate, "--table") || !containsToken(result.ArgvTemplate, "table_one,table_two") {
 		t.Fatalf("DDL+CSV argv missing: %#v", result.ArgvTemplate)
 	}
 }

@@ -87,7 +87,7 @@
 | EX-F028 | 扁平目录 | `--no-nested-dir` | 高级 | 可选 | 默认未设置 | ENABLED |
 | EX-F029 | 控制文件目录 | `--ctl-path` | 专家 | 仅 POS 格式显示；来源二选一：用户提供节点目录 / 自动生成（预检查阶段按对象元数据生成 `<表名>.ctrl`） | 取消 POS 后非活动 | ENABLED（待产品接入） |
 | EX-F030 | 对象存储临时目录 | `--tmp-path` | 高级 | 对象存储输出时显示；节点绝对路径 | 未设置继承节点临时目录 | ENABLED（2026-08-07） |
-| EX-F031 | 文件拆分 | `--block-size` | 高级 | ORC/Parquet 隐藏；显式传值按 MB/ROW 生效（2026-08-07 实测） | 默认值 0/1024MB 冲突保留为低风险残余；隐藏后不生成 | VALIDATION_GATED（待产品接入） |
+| EX-F031 | 文件拆分 | `--block-size` | 高级 | ORC/Parquet 隐藏；显式传值按 MB/ROW 生效（2026-08-07 实测） | 默认值 0/1024MB 冲突保留为低风险残余；隐藏后不生成 | ENABLED |
 | EX-F032 | 导出总量上限 | `--max-file-size` | 高级 | 包含数据时可选 | 未设置不增加限制 | ENABLED |
 | EX-F033 | 空结果文件 | `--retain-empty-files` | 高级 | where/partition 等场景 | 退出筛选后非活动 | ENABLED |
 | EX-F034 | 跳过导出目录空性检查 | `--skip-check-dir` | 步骤 5 | 可选；勾选时生成 | 只跳过导出目录是否为空，仍检查路径、允许根目录、可写性和空间 | ENABLED |
@@ -98,7 +98,7 @@
 | EX-F039 | JVM 内存 | `--mem` | 高级 | 可选，K/M/G/T | 继承 4G；不自动推荐 | ENABLED |
 | EX-F040 | 启用压缩 | `--compress` | 高级 | CSV/CUT/POS/SQL | 关闭后算法和等级非活动 | ENABLED |
 | EX-F041 | 压缩算法 | `--compression-algo` | 高级 | 启用压缩后 | 继承 zstd | ENABLED |
-| EX-F042 | 压缩等级 | `--compression-level` | 高级 | zstd/zlib；gzip/snappy 隐藏 | 按算法保存草稿值 | VALIDATION_GATED |
+| EX-F042 | 压缩等级 | `--compression-level` | 高级 | zstd/zlib；gzip/snappy 隐藏 | 按算法保存草稿值 | ENABLED |
 
 ## 7. 格式序列化（基础选项 · 功能选项 · 文件格式）
 
@@ -109,7 +109,7 @@
 | EX-F045 | CSV 列包围符 | `--column-quote` | CSV | 英文单引号 | 不提供废弃别名 | ENABLED |
 | EX-F046 | CSV 包围模式 | `--column-quote-mode` | CSV | non_numeric；五种枚举 | 离开 CSV 后非活动 | ENABLED |
 | EX-F047 | 转义字符 | `--escape-character` | CSV/CUT | CSV 默认 null，CUT 默认反斜杠 | 按格式保存 | ENABLED |
-| EX-F048 | CUT 列分隔字符串 | `--column-splitter` | CUT；POS 待实测 | 无统一默认 | 离开 CUT/POS 后非活动 | VALIDATION_GATED |
+| EX-F048 | CUT 列分隔字符串 | `--column-splitter` | CUT | 无统一默认 | 离开 CUT 后非活动 | ENABLED |
 | EX-F049 | 行分隔符 | `--line-separator` | CSV/CUT/POS/SQL | 官方平台换行形式 | 离开适用格式后非活动 | ENABLED |
 | EX-F050 | 行尾分隔符 | `--trail-delimiter` | CUT/POS | 继承官方行为 | 离开后非活动 | ENABLED |
 | EX-F051 | NULL 替换 | `--null-string` | CSV/CUT | `\N` | 离开后非活动 | ENABLED |
@@ -123,23 +123,23 @@
 
 | ID | 字段 | 参数 | 显示条件 | 处理 | supportState |
 |---|---|---|---|---|---|
-| EX-F055 | DATE 值格式 | `--date-value-format` | CSV/CUT | 按兼容模式显示默认 | VALIDATION_GATED |
-| EX-F056 | TIME 值格式 | `--time-value-format` | CSV/CUT + MySQL | 继承官方格式 | VALIDATION_GATED |
-| EX-F057 | DATETIME 值格式 | `--datetime-value-format` | CSV/CUT + MySQL | 继承官方格式 | VALIDATION_GATED |
-| EX-F058 | TIMESTAMP 值格式 | `--timestamp-value-format` | CSV/CUT | 按兼容模式继承 | VALIDATION_GATED |
-| EX-F059 | TIMESTAMP TZ 值格式 | `--timestamp-tz-value-format` | CSV/CUT + Oracle | 继承官方格式 | VALIDATION_GATED |
-| EX-F060 | TIMESTAMP LTZ 值格式 | `--timestamp-ltz-value-format` | CSV/CUT + Oracle | 继承官方格式 | VALIDATION_GATED |
-| EX-F061 | 保留时间零值 | `--preserve-zero-datetime` | MySQL + 适用类型 | 默认未设置 | VALIDATION_GATED |
-| EX-F062 | NLS DATE | `--nls-date-format` | Oracle 专家配置 | 提示它不是文件值格式 | VALIDATION_GATED |
-| EX-F063 | NLS TIMESTAMP | `--nls-timestamp-format` | Oracle 专家配置 | 提示它不是文件值格式 | VALIDATION_GATED |
-| EX-F064 | NLS TIMESTAMP TZ | `--nls-timestamp-tz-format` | Oracle 专家配置 | 提示它不是文件值格式 | VALIDATION_GATED |
+| EX-F055 | DATE 值格式 | `--date-value-format` | CSV/CUT + MySQL | 2026-08-13 MySQL DATE 列实测格式生效 | ENABLED |
+| EX-F056 | TIME 值格式 | `--time-value-format` | CSV/CUT + MySQL | 工具接受，但缺少 TIME 列行为证据 | VALIDATION_GATED |
+| EX-F057 | DATETIME 值格式 | `--datetime-value-format` | CSV/CUT + MySQL | 继承官方格式；2026-08-13 实测格式生效 | ENABLED |
+| EX-F058 | TIMESTAMP 值格式 | `--timestamp-value-format` | CSV/CUT | 工具接受，但缺少对应类型列的行为证据 | VALIDATION_GATED |
+| EX-F059 | TIMESTAMP TZ 值格式 | `--timestamp-tz-value-format` | CSV/CUT + Oracle | 缺少 Oracle 对应类型列行为证据 | VALIDATION_GATED |
+| EX-F060 | TIMESTAMP LTZ 值格式 | `--timestamp-ltz-value-format` | CSV/CUT + Oracle | 缺少 Oracle 对应类型列行为证据 | VALIDATION_GATED |
+| EX-F061 | 保留时间零值 | `--preserve-zero-datetime` | MySQL + 适用类型 | 默认未设置；未实测 | VALIDATION_GATED |
+| EX-F062 | NLS DATE | `--nls-date-format` | Oracle 专家配置 | 提示它不是文件值格式；缺少 Oracle 行为证据 | VALIDATION_GATED |
+| EX-F063 | NLS TIMESTAMP | `--nls-timestamp-format` | Oracle 专家配置 | 提示它不是文件值格式；缺少 Oracle 行为证据 | VALIDATION_GATED |
+| EX-F064 | NLS TIMESTAMP TZ | `--nls-timestamp-tz-format` | Oracle 专家配置 | 提示它不是文件值格式；缺少 Oracle 行为证据 | VALIDATION_GATED |
 
 ### 8.2 DDL 行为（基础选项 · 功能选项 · 文件格式 / 数据库对象类型；高级选项 · 其他选项）
 
 | ID | 字段 | 参数 | 显示条件 | 处理 | supportState |
 |---|---|---|---|---|---|
 | EX-F065 | 前置 DROP | `--drop-object` | 包含 DDL | 默认未设置；风险提示 | ENABLED |
-| EX-F066 | 附加对象信息 | `--add-extra-message` | 包含 DDL | 依赖 sys 权限 | ENABLED |
+| EX-F066 | 附加对象信息 | `--add-extra-message` | 包含 DDL | 工具接受，但 DDL 行为、当前 sys 权限预检查与秘密槽位绑定未完成 | VALIDATION_GATED |
 | EX-F067 | 保留 Schema | `--retain-schema` | 包含 DDL | 默认未设置 | ENABLED |
 | EX-F068 | 紧凑 Schema | `--compact-schema` | 包含表 DDL | show create table 检索文本；2026-08-11 实测无差异 | ENABLED |
 | EX-F069 | 序列策略 | `--sequence-policy` | 包含序列 | 默认值只作提示；条件待实测 | VALIDATION_GATED |
@@ -150,12 +150,12 @@
 |---|---|---|---|---|---|
 | EX-F070 | 自定义查询 | `--query-sql` | 包含数据 + 专家 | 与 where/partition 互斥；不提供 SQL 编辑器 | ENABLED |
 | EX-F071 | 条件筛选 | `--where` | 包含明确表数据 | 仅配合 `--table`；与 query SQL 互斥；2026-08-11 实测行数生效 | ENABLED |
-| EX-F072 | 分区筛选 | `--partition` | 包含表数据 | 与 query SQL 互斥；校验二级分区 | VALIDATION_GATED |
+| EX-F072 | 分区筛选 | `--partition` | 包含表数据 | 与 query SQL 互斥；2026-08-13 实测单/多分区行数生效 | ENABLED |
 | EX-F073 | 包含列 | `--include-column-names` | 包含表数据 | 校验实际列名 | ENABLED |
 | EX-F074 | 排除列 | `--exclude-column-names` | 包含表数据 | 与控制文件互斥 | ENABLED |
-| EX-F075 | 排除数据类型 | `--exclude-data-types` | 包含表数据 | 校验兼容模式和类型 | VALIDATION_GATED |
+| EX-F075 | 排除数据类型 | `--exclude-data-types` | 包含表数据 | 类型名使用受限字符集；2026-08-13 实测 decimal 列排除生效 | ENABLED |
 | EX-F076 | 排除生成列 | `--exclude-virtual-columns` | 包含表数据 | 默认未设置 | ENABLED |
-| EX-F077 | 使用隐藏主键 | `--enable-hidden-pk` | 无主键表且版本/权限满足 | 由预检查决定可用性 | VALIDATION_GATED |
+| EX-F077 | 使用隐藏主键 | `--enable-hidden-pk` | 无主键表且版本/权限满足 | 工具接受，但表结构、版本与权限预检查未完成 | VALIDATION_GATED |
 | EX-F078 | 闪回 SCN | `--flashback-scn` | 包含数据 | 与 query SQL 互斥 | ENABLED |
 | EX-F079 | 闪回时间点 | `--flashback-timestamp` | 数据 + Oracle | 与 query SQL 互斥 | ENABLED |
 | EX-F080 | 一致性快照 | `--snapshot` | 包含数据 | 2026-08-11 单独实测成功；与闪回等一致性参数组合在确认前阻断 | ENABLED |
@@ -176,8 +176,8 @@
 
 | supportState | 字段数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 58 | 66.7% |
-| VALIDATION_GATED | 28 | 32.2% |
+| ENABLED | 67 | 77.0% |
+| VALIDATION_GATED | 19 | 21.8% |
 | HIDDEN | 1 | 1.1% |
 | BLOCKED | 0 | 0% |
 | **合计** | **87** | **100%** |

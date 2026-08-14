@@ -14,17 +14,21 @@ import (
 )
 
 const (
-	defaultRevisionResource     = "resources/obdumper-4.3.5-slice-v5.json"
-	generalizedRevisionResource = "resources/obdumper-4.3.5-slice-v6.json"
-	currentMetadataVersion      = "obdumper-4.3.5-slice-v5"
-	generalizedMetadataVersion  = "obdumper-4.3.5-slice-v6"
+	defaultRevisionResource           = "resources/obdumper-4.3.5-slice-v5.json"
+	legacyGeneralizedRevisionResource = "resources/obdumper-4.3.5-slice-v6.json"
+	// EX-I7 第二批（2026-08-13 受控实测定版）：v7 在 v6 之上登记时间戳值格式、
+	// --partition/--exclude-data-types/--enable-hidden-pk 与 --add-extra-message。
+	generalizedRevisionResource      = "resources/obdumper-4.3.5-slice-v7.json"
+	currentMetadataVersion           = "obdumper-4.3.5-slice-v5"
+	legacyGeneralizedMetadataVersion = "obdumper-4.3.5-slice-v6"
+	generalizedMetadataVersion       = "obdumper-4.3.5-slice-v7"
 	// maxInheritanceDepth 限制清单继承链深度，避免循环或过长的依赖链。
 	maxInheritanceDepth = 4
 )
 
 // resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
-// 尚未完成事实核验或加载器支持的设计稿（如 v6 泛化元数据）放在 drafts/ 目录，
-// 不被嵌入也不得被声明为已支持；接入前必须先通过对应切片的验证门禁。
+// 尚未完成事实核验或加载器支持的设计稿放在 drafts/ 目录，不被嵌入也不得被声明为已支持；
+// 接入前必须先通过对应切片的验证门禁并发布新的不可变版本。
 //
 //go:embed resources/*.json
 var resourceFiles embed.FS
@@ -115,10 +119,16 @@ func LoadDefault() (*Catalog, error) {
 	return loadFromFS(resourceFiles, defaultRevisionResource)
 }
 
-// LoadGeneralized 加载泛化能力目录（v6 链：v1 基线 → v5 → v6 已取证子集）。
+// LoadGeneralized 加载泛化能力目录（v7 链：v1 基线 → v5 → v6 → v7 已取证子集）。
 // 该目录 capabilityVersion 为空，由命令生成器按请求能力筛选参数子集。
 func LoadGeneralized() (*Catalog, error) {
 	return loadFromFS(resourceFiles, generalizedRevisionResource)
+}
+
+// LoadLegacyGeneralized 加载冻结的 v6 泛化目录，只用于重放升级前已经持久化的草稿。
+// 新草稿不得选择该目录，避免旧定义继续扩散；历史草稿也不得被静默提升到 v7。
+func LoadLegacyGeneralized() (*Catalog, error) {
+	return loadFromFS(resourceFiles, legacyGeneralizedRevisionResource)
 }
 
 func loadFromFS(files fs.FS, revisionResource string) (*Catalog, error) {
@@ -277,19 +287,23 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 		if len(manifest.Overrides) != 4 || len(manifest.Additions) != 2 {
 			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
 		}
-	case generalizedMetadataVersion:
-		// v6 是泛化能力的已取证子集：必须继承 v5，不固定单一能力版本。
-		// EX-I4 POS 定版（2026-08-07）新增 --pos/--ctl-path 与 CUT 专属 --column-splitter，additions 由 25 增至 28；
-		// EX-I5 结构化格式（2026-08-07）新增 --par/--orc/--avro，additions 由 28 增至 31；
-		// EX-I6 对象存储（2026-08-07）新增 --tmp-path，additions 由 31 增至 32；
-		// EX-I7 DDL 行为（2026-08-10）新增 --drop-object/--retain-schema，additions 由 32 增至 34；
-		// EX-I7 文件拆分（2026-08-10）新增 --block-size，additions 由 34 增至 35；
-		// EX-I7 压缩等级（2026-08-10）新增 --compression-level，additions 由 35 增至 36；
-		// EX-I7 剩余参数第一批（2026-08-11）新增 --compact-schema/--where/--snapshot/--weak-read/--retry，additions 由 36 增至 41。
+	case legacyGeneralizedMetadataVersion:
+		// v6 是 v7 继承链的中间层（EX-I7 第一批 2026-08-11）：继承 v5，additions 41、overrides 10。
 		if manifest.Inherits != "obdumper-4.3.5-slice-v5.json" || manifest.CapabilityVersion != "" {
 			return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 		}
 		if len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 10 || len(manifest.Additions) != 41 {
+			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
+		}
+	case generalizedMetadataVersion:
+		// v7 是泛化能力的已取证子集：必须继承 v6，不固定单一能力版本。
+		// 第二批（2026-08-13 受控实测）新增时间戳值格式 9 个、--partition/--exclude-data-types/
+		// --enable-hidden-pk 与 --add-extra-message，additions 由 41 增至 54；
+		// 1 项 override 撤销 v6 对 --table 的错误 shortName（-t 是 --tenant 的短选项）。
+		if manifest.Inherits != "obdumper-4.3.5-slice-v6.json" || manifest.CapabilityVersion != "" {
+			return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
+		}
+		if len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 1 || len(manifest.Additions) != 13 {
 			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
 		}
 	default:
@@ -350,7 +364,7 @@ func validateResource(raw resource) error {
 	if len(raw.SourceDocuments) == 0 {
 		return errors.New("parameter metadata has no source documents")
 	}
-	// 版本感知身份校验：v5 保持冻结基线，v6 是泛化能力的已取证子集。
+	// 版本感知身份校验：v5 保持冻结基线，v6/v7 分别用于历史重放与现行泛化能力。
 	switch raw.MetadataVersion {
 	case currentMetadataVersion:
 		if raw.CapabilityVersion != "export-odp-single-table-csv-v1" {
@@ -363,8 +377,8 @@ func validateResource(raw resource) error {
 		if len(raw.Definitions) != 18 {
 			return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
 		}
-	case generalizedMetadataVersion:
-		// v6 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion:
+		// v6/v7 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
 		if raw.CapabilityVersion != "" {
 			return errors.New("parameter metadata capability version is unsupported")
 		}
@@ -372,15 +386,13 @@ func validateResource(raw resource) error {
 		if strings.Join(raw.CategoryOrder, "\x00") != strings.Join(expectedCategoryOrder, "\x00") {
 			return errors.New("parameter metadata category order does not match the confirmed command order")
 		}
-		// EX-I4 POS 定版（2026-08-07）新增 --pos/--ctl-path 与 CUT 专属 --column-splitter，定义数由 43 增至 46；
-		// EX-I5 结构化格式（2026-08-07）新增 --par/--orc/--avro，定义数由 46 增至 49；
-		// EX-I6 对象存储（2026-08-07）新增 --tmp-path，定义数由 49 增至 50；
-		// EX-I7 DDL 行为（2026-08-10）新增 --drop-object/--retain-schema，定义数由 50 增至 52；
-		// EX-I7 文件拆分（2026-08-10）新增 --block-size，定义数由 52 增至 53；
-		// EX-I7 压缩等级（2026-08-10）新增 --compression-level，定义数由 53 增至 54；
-		// EX-I7 剩余参数第一批（2026-08-11）新增 --compact-schema/--where/--snapshot/--weak-read/--retry，定义数由 54 增至 59。
-		if len(raw.Definitions) != 59 {
-			return fmt.Errorf("parameter metadata has %d definitions, want 59", len(raw.Definitions))
+		expectedDefinitions := 59
+		if raw.MetadataVersion == generalizedMetadataVersion {
+			// v7 登记第二批 13 个定义；尚未完成专用验证或预检查的定义仍保持门禁。
+			expectedDefinitions = 72
+		}
+		if len(raw.Definitions) != expectedDefinitions {
+			return fmt.Errorf("parameter metadata has %d definitions, want %d", len(raw.Definitions), expectedDefinitions)
 		}
 	default:
 		return errors.New("parameter metadata identity does not match the confirmed slice")
@@ -487,7 +499,7 @@ func validateResource(raw resource) error {
 		}); err != nil {
 			return err
 		}
-	case generalizedMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion:
 		// v6 已取证子集：EX-I2 六项 + EX-I3 的 CSV 序列化、压缩、文件布局、筛选与资源参数
 		// + EX-I4 的 CUT/SQL 数据格式及其专属序列化参数
 		// + EX-I4 POS 定版（2026-08-07 实测）的 --pos/--ctl-path 与 CUT 专属 --column-splitter
@@ -498,7 +510,7 @@ func validateResource(raw resource) error {
 		// + EX-I7 压缩等级（2026-08-10）的 --compression-level（官方分算法范围）
 		// + EX-I7 剩余参数第一批（2026-08-11）的 --compact-schema（表 DDL）/--where（明确表范围）/--snapshot；
 		// --weak-read 缺少副本与权限预检查，--retry 缺少 EX-I8 保存点恢复链路，继续保持 VALIDATION_GATED。
-		if err := requireNamesByState(raw.Definitions, "ENABLED", []string{
+		enabled := []string{
 			"--host", "--port", "--user", "--password", "--database", "--table", "--csv", "--cut", "--sql", "--pos", "--par", "--orc", "--avro", "--file-path", "--log-path", "--skip-check-dir",
 			"--all", "--view", "--ddl", "--exclude-table",
 			"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode", "--escape-character", "--line-separator", "--null-string", "--file-encoding",
@@ -506,7 +518,12 @@ func validateResource(raw resource) error {
 			"--ctl-path", "--tmp-path", "--drop-object", "--retain-schema", "--compact-schema",
 			"--query-sql", "--where", "--snapshot", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
-		}); err != nil {
+		}
+		if raw.MetadataVersion == generalizedMetadataVersion {
+			// 第二批仅四项已观察到可验收效果：MySQL DATE/DATETIME 格式、分区和类型排除。
+			enabled = append(enabled, "--date-value-format", "--datetime-value-format", "--partition", "--exclude-data-types")
+		}
+		if err := requireNamesByState(raw.Definitions, "ENABLED", enabled); err != nil {
 			return err
 		}
 	}
@@ -589,10 +606,19 @@ func validateRule(parameter string, rule Rule, allowed ...string) error {
 }
 
 // gatedNamesByVersion 返回各版本期望的 VALIDATION_GATED 参数名单。
-// v5 保留 CSV 序列化八项为 gated；v6 已取证子集在 EX-I3 中全部提升为 ENABLED。
+// v5 保留 CSV 序列化八项为 gated；v6 只保留恢复与弱读门禁；
+// v7 对已登记但尚未观察行为或缺少专用预检查的第二批参数继续失败关闭。
 func gatedNamesByVersion(metadataVersion string) []string {
-	if metadataVersion == generalizedMetadataVersion {
+	switch metadataVersion {
+	case legacyGeneralizedMetadataVersion:
 		return []string{"--retry", "--weak-read"}
+	case generalizedMetadataVersion:
+		return []string{
+			"--retry", "--weak-read",
+			"--time-value-format", "--timestamp-value-format", "--timestamp-tz-value-format", "--timestamp-ltz-value-format",
+			"--nls-date-format", "--nls-timestamp-format", "--nls-timestamp-tz-format",
+			"--enable-hidden-pk", "--add-extra-message",
+		}
 	}
 	return []string{
 		"--skip-header", "--column-separator", "--column-quote", "--column-quote-mode",

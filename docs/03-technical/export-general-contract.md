@@ -11,7 +11,7 @@
 本文是 EX-D2 完整技术契约的唯一产出。它将首条切片（单表 CSV）的六个专项契约泛化为覆盖 OBDUMPER 4.3.5 V1.0 全部导出能力的通用技术框架。首条切片契约继续作为已验证基线保留证据价值，本文在其基础上扩展，不替代或回退已确认的安全边界。
 
 本文同时驱动以下代码同步变更：
-- 参数元数据 v6 设计稿（`internal/parammeta/drafts/obdumper-4.3.5-slice-v6.draft.json`，未接入运行时，接入前需完成事实核验与加载器支持）
+- 参数元数据设计稿与受控运行时版本链（`internal/parammeta/drafts/`、`internal/parammeta/resources/obdumper-4.3.5-slice-v5.json` 至 `v7.json`）
 - 迁移脚本（`0014_export_generalization.sql`）
 - Go 类型定义（`internal/store/types.go`）
 - OpenAPI schema（`contracts/openapi.json`）
@@ -262,11 +262,11 @@ DerivedTaskRelation {
 
 ### 2.3 参数元数据兼容
 
-v5 元数据继续作为 `export-odp-single-table-csv-v1` 的冻结基线。v6 扩展为全参数集，同时标记每个参数属于哪些 capabilityVersion 切片。旧任务的命令生成仍使用 v5 元数据版本。
+v5 元数据继续作为 `export-odp-single-table-csv-v1` 的冻结基线；v6 是已发布的泛化历史版本；v7 是当前泛化版本。草稿、预检查与任务均绑定精确 metadataVersion，重算时必须按该版本选择定义集，不能把 v5/v6 静默提升到 v7。
 
 ### 2.4 命令生成兼容
 
-令生成器按 metadataVersion 选择参数定义集，按 capabilityVersion 选择活动参数子集和命令模板。现有 CSV 单表命令生成路径不变。
+命令生成器按 metadataVersion 选择参数定义集，按 capabilityVersion 选择活动参数子集和命令模板。现有 CSV 单表命令生成路径不变。
 
 ---
 
@@ -551,37 +551,37 @@ type ExportConfigTemplate struct {
 
 ## 5. 参数元数据泛化
 
-### 5.1 参数元数据 v6 结构
+### 5.1 参数元数据运行时版本链
 
-> 状态：v6 目前是**设计稿**，位于 `internal/parammeta/drafts/`，不被运行时加载器嵌入或解析。其内容包含尚未完成事实核验的声明（如 `--sys-password` 的官方安全文件属性未取证、部分参数状态与定义数与正文矩阵存在出入）。对应能力切片（EX-I2 及以后）接入前，必须先修正这些出入、补齐加载器支持与测试，并保持失败关闭。
+运行时只嵌入 `internal/parammeta/resources/` 中通过清单身份、继承链、定义数、状态和命令顺序校验的版本。`drafts/` 仅保存历史设计输入，不得由运行时加载。
 
-v6 从 v5 的 18 参数（overrides + additions）扩展为覆盖全部 63 个 ENABLED 参数的完整定义集。v6 继续使用 v1 作为基础版本，通过 override/addition 模式增量更新。
+- v5：18 个定义，冻结单表 CSV 基线。
+- v6：59 个定义，冻结的泛化历史版本，仅用于重放已持久化 v6 草稿和任务。
+- v7：在 v6 上新增 13 个定义，共 72 个定义；当前只新增启用 MySQL DATE/DATETIME 格式、分区筛选和类型排除。其余 9 个第二批定义保持 VALIDATION_GATED。
 
-**v6 新增字段**（每个参数）：
-- `v1State`：ENABLED | VALIDATION_GATED | HIDDEN | BLOCKED
+**运行时定义字段**（每个参数）：
+- `supportState`：ENABLED | VALIDATION_GATED | HIDDEN | BLOCKED
 - `sensitivity`：NORMAL | IDENTIFIER | SECRET
 - `riskLevel`：LOW | MEDIUM | HIGH
-- `evidenceState`：VERIFIED | OFFICIAL_ONLY | CONFLICT_PENDING | HELP_ONLY
+- `officialEvidence`：支撑该定义的契约、官方资料和受控验证引用
 - `capabilityVersions`：该参数适用的能力切片列表
 - `emissionTarget`：ARGV | SECURITY_FILE（从 v5 overrides 提升为定义级字段）
 
-**v6 分类体系**（11 类）：
+**现行分类体系**（9 类）：
 
 > 元数据 `category` 是命令发射顺序的技术标识（与 `order` 配合驱动 plannedArgv 排序），不是产品分类。产品与文档按 OBDUMPER 官方选项分类组织（基础选项：连接/功能/其他；高级选项：功能/性能/其他，见 [参数映射基线](../02-design/export-parameter-mapping.md) 第 3 节）。
 
-| 序号 | 分类标识 | 含义 | ENABLED 参数数 |
-|---|---|---|---|
-| 1 | CONNECTION | 连接与会话 | 12 |
-| 2 | DATABASE_CONNECTION | 数据库连接 | 1 |
-| 3 | OBJECT_SCOPE | 对象范围 | 2 |
-| 4 | CONTENT_FORMAT | 内容与数据格式 | 5 |
-| 5 | FORMAT_SERIALIZATION | 文本/CSV/CUT 序列化 | 11 |
-| 6 | DATE_TIME | 日期时间序列化 | 0（全部 VG） |
-| 7 | OUTPUT_FILE | 输出与文件 | 6 |
-| 8 | DATABASE_OBJECT | 数据库对象 | 1 |
-| 9 | DATA_FILTER | 数据筛选与一致性 | 7 |
-| 10 | DDL_BEHAVIOR | DDL 与对象处理 | 3 |
-| 11 | PERFORMANCE | 性能与资源 + 压缩 | 7 |
+| 序号 | 分类标识 | 含义 |
+|---|---|---|
+| 1 | CONNECTION | 连接与会话 |
+| 2 | DATABASE_CONNECTION | 数据库连接 |
+| 3 | OBJECT_SCOPE | 对象范围 |
+| 4 | CONTENT_FORMAT | 内容与数据格式 |
+| 5 | FORMAT_SERIALIZATION | 文本、CSV/CUT 与已启用时间值格式 |
+| 6 | OUTPUT_FILE | 输出与文件 |
+| 7 | DATA_FILTER | 数据筛选、一致性与相关 DDL 辅助参数 |
+| 8 | PERFORMANCE | 性能与资源 |
+| 9 | COMPRESSION | 压缩参数 |
 
 ### 5.2 capabilityVersion 参数子集
 
@@ -604,7 +604,7 @@ v6 从 v5 的 18 参数（overrides + additions）扩展为覆盖全部 63 个 E
 
 当前 `generateExportDraft` 中的硬编码参数列表改为参数元数据驱动：
 
-1. 加载当前 metadataVersion 对应的参数定义集（v1 基础 + v6 overrides/additions）
+1. 加载草稿或任务绑定的 metadataVersion 对应定义集（v1 基础 + 逐层 overrides/additions）；仅新建泛化草稿选择当前 v7
 2. 按 capabilityVersion 筛选活动参数子集
 3. 按 ExportConfig 映射每个参数的值
 4. 执行 activation 条件判断、requiredWhen 校验和 conflictsWith 互斥检查
@@ -825,7 +825,7 @@ ManifestObject {
 
 EX-I2 交付收敛：按任务地图权威，EX-I2 一次实现 full-csv、ddl、ddl-csv 三个能力，上表 EX-I2~EX-I4 三行测试焦点已在同一切片内覆盖（对象矩阵正反例、仅 DDL 不生成数据格式参数、DDL + CSV 联合激活）；EX-I3/EX-I4 行后续仅保留 DDL 行为参数与权限层的增量工作。多库 schema 前缀（EX-F012）保持 VALIDATION_GATED，控制面对跨库表达式失败关闭。
 
-EX-I3 交付收敛：25 个 ENABLED 参数一次启用（CSV 序列化 9、压缩 2、文件布局 3、筛选 6、资源 5）。任务地图行文中的“日期时间”按字段规则 EX-F055~F064（全部 VALIDATION_GATED）保持关闭；--compression-level（EX-F042）、--where/--partition/--exclude-data-types 等同理。带任一选项的单表 CSV 离开冻结 v5 路径，改走 v6 泛化生成器（capability 仍为 full-csv/ddl-csv）；无选项单表保持字节级不变。
+EX-I3 交付收敛：25 个 ENABLED 参数一次启用（CSV 序列化 9、压缩 2、文件布局 3、筛选 6、资源 5）。该切片交付时日期时间、--compression-level、--where/--partition/--exclude-data-types 均保持门禁；后续切片的状态变化以任务地图和现行支持矩阵为准。带任一活动选项的单表 CSV 离开冻结 v5 路径并使用对应泛化版本；无选项单表保持字节级不变。
 
 EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v1）已启用并实现。CUT 启用 --cut、--trail-delimiter、--remove-newline（高风险）及与 CSV 共享的转义字符/行分隔符/空串/编码/修剪（FORMAT_IN CSV,CUT）；SQL 启用 --sql 及行分隔符/文件编码（FORMAT_IN CSV,CUT,SQL），共享文本之外的 CSV 专属与筛选/资源参数在 CUT/SQL 能力下按 UNKNOWN_PARAMETER 失败关闭。服务端归一化按格式校验 CsvOptions/CutOptions 越界（422），DDL_AND_DATA 固定 CSV、DDL_ONLY 不得声明数据格式、POS 未定版保持 VALIDATION_GATED。前端向导新增格式单选与 CUT 高级配置面板，按格式收敛请求体。契约测试覆盖正例、互斥、边界与 ORACLE 负例；生成器格式单选在元数据误配置时仍失败关闭。
 
@@ -844,7 +844,8 @@ EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v
 | 文件 | 说明 |
 |---|---|
 | `docs/03-technical/export-general-contract.md` | 本文（通用导出技术契约） |
-| `internal/parammeta/drafts/obdumper-4.3.5-slice-v6.draft.json` | 参数元数据 v6 设计稿（未接入运行时） |
+| `internal/parammeta/drafts/obdumper-4.3.5-slice-v6.draft.json` | 历史设计输入，不由运行时加载 |
+| `internal/parammeta/resources/obdumper-4.3.5-slice-v5.json` 至 `v7.json` | 冻结基线、历史泛化重放与当前泛化参数元数据 |
 | `migrations/0014_export_generalization.sql` | 通用导出领域模型迁移 |
 | `internal/store/types.go` | 泛化导出配置类型 |
 | `contracts/openapi.json` | 导出草稿和任务快照 schema |

@@ -77,6 +77,7 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 		"obdumper-4.3.5-slice-v4.json": {},
 		"obdumper-4.3.5-slice-v5.json": {},
 		"obdumper-4.3.5-slice-v6.json": {},
+		"obdumper-4.3.5-slice-v7.json": {},
 	}
 	for _, entry := range entries {
 		if _, ok := known[entry.Name()]; !ok {
@@ -91,7 +92,10 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 		t.Fatalf("embedded v5 revision is not loadable: %v", err)
 	}
 	if _, err := loadFromFS(resourceFiles, generalizedRevisionResource); err != nil {
-		t.Fatalf("embedded v6 revision is not loadable: %v", err)
+		t.Fatalf("embedded v7 revision is not loadable: %v", err)
+	}
+	if _, err := loadFromFS(resourceFiles, legacyGeneralizedRevisionResource); err != nil {
+		t.Fatalf("embedded v6 revision is not loadable for historical replay: %v", err)
 	}
 	base, err := resourceFiles.ReadFile("resources/obdumper-4.3.5-slice-v1.json")
 	if err != nil {
@@ -103,20 +107,21 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 	}
 }
 
-// TestLoadGeneralizedCatalog 验证 v6 链式目录的身份、能力绑定与必填收缩。
+// TestLoadGeneralizedCatalog 验证 v7 链式目录的身份、能力绑定与必填收缩。
 func TestLoadGeneralizedCatalog(t *testing.T) {
 	t.Parallel()
 	catalog, err := LoadGeneralized()
 	if err != nil {
 		t.Fatalf("LoadGeneralized(): %v", err)
 	}
-	if catalog.MetadataVersion() != "obdumper-4.3.5-slice-v6" || catalog.BaseVersion() != "obdumper-4.3.5-slice-v1" || catalog.CapabilityVersion() != "" {
+	if catalog.MetadataVersion() != "obdumper-4.3.5-slice-v7" || catalog.BaseVersion() != "obdumper-4.3.5-slice-v1" || catalog.CapabilityVersion() != "" {
 		t.Fatalf("unexpected generalized catalog identity: %s / %s / %s", catalog.MetadataVersion(), catalog.BaseVersion(), catalog.CapabilityVersion())
 	}
 	definitions := catalog.Definitions()
-	// EX-I4 POS 定版新增 --pos/--ctl-path/--column-splitter（43→46）；EX-I5 新增 --par/--orc/--avro（46→49）；EX-I6 新增 --tmp-path（49→50）；EX-I7 新增 --drop-object/--retain-schema（50→52）、--block-size（52→53）、--compression-level（53→54）与剩余参数第一批 --compact-schema/--where/--snapshot/--weak-read/--retry（54→59）。
-	if len(definitions) != 59 {
-		t.Fatalf("generalized definition count = %d, want 59", len(definitions))
+	// EX-I7 剩余参数第二批（2026-08-13）新增时间戳值格式 9 个、--partition/--exclude-data-types/
+	// --enable-hidden-pk 与 --add-extra-message（59→72）。
+	if len(definitions) != 72 {
+		t.Fatalf("generalized definition count = %d, want 72", len(definitions))
 	}
 	for _, name := range []string{"--weak-read", "--retry"} {
 		definition, ok := catalog.Definition(name)
@@ -124,11 +129,29 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 			t.Fatalf("generalized definition %s = %#v, want VALIDATION_GATED", name, definition)
 		}
 	}
+	// 第二批只有观察到可验收效果的四个参数进入 ENABLED。
+	for _, name := range []string{"--partition", "--exclude-data-types", "--date-value-format", "--datetime-value-format"} {
+		definition, ok := catalog.Definition(name)
+		if !ok || definition.SupportState != "ENABLED" {
+			t.Fatalf("generalized definition %s = %#v, want ENABLED", name, definition)
+		}
+	}
+	for _, name := range []string{"--time-value-format", "--timestamp-value-format", "--timestamp-tz-value-format", "--timestamp-ltz-value-format", "--nls-date-format", "--nls-timestamp-format", "--nls-timestamp-tz-format", "--enable-hidden-pk", "--add-extra-message"} {
+		definition, ok := catalog.Definition(name)
+		if !ok || definition.SupportState != "VALIDATION_GATED" {
+			t.Fatalf("generalized definition %s = %#v, want VALIDATION_GATED", name, definition)
+		}
+	}
+	// --year-value-format 确认不存在（官网文档与 4.3.5 二进制均无该参数，2026-08-13 核实）。
+	if _, ok := catalog.Definition("--year-value-format"); ok {
+		t.Fatal("generalized catalog must not introduce --year-value-format")
+	}
 	if got := catalog.CategoryOrder(); len(got) != 9 || got[7] != "PERFORMANCE" || got[8] != "COMPRESSION" {
 		t.Fatalf("unexpected generalized category order: %#v", got)
 	}
+	// 2026-08-13 4.3.5 --help 核实：-t 是 --tenant 的短选项，--table 无短选项（v7 撤销 v6 错误 override）。
 	table, ok := catalog.Definition("--table")
-	if !ok || table.ShortName != "-t" || table.RequiredWhen.Kind != "NEVER" {
+	if !ok || table.ShortName != "" || table.RequiredWhen.Kind != "NEVER" {
 		t.Fatalf("generalized table metadata: %#v", table)
 	}
 	for name, want := range map[string][]string{
@@ -219,12 +242,42 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 	if query, ok := catalog.Definition("--query-sql"); !ok || query.RiskLevel != "HIGH" || len(query.ConflictsWith) != 2 {
 		t.Fatalf("query sql metadata: %#v", query)
 	}
-	// EX-I7 压缩等级（2026-08-10）：--compression-level 已接入（官方按算法分范围），依赖压缩与算法；日期时间值格式保持 gated。
+	// EX-I7 压缩等级（2026-08-10）：--compression-level 已接入（官方按算法分范围），依赖压缩与算法。
 	if level, ok := catalog.Definition("--compression-level"); !ok || level.SupportState != "ENABLED" || len(level.DependsOn) != 2 || level.DependsOn[0] != "--compress" || level.DependsOn[1] != "--compression-algo" {
 		t.Fatalf("compression level metadata: %#v", level)
 	}
-	if _, ok := catalog.Definition("--date-value-format"); ok {
-		t.Fatalf("date value format must stay gated")
+	// EX-I7 第二批只开放已观察到 MySQL 输出变化的 DATE/DATETIME 格式。
+	for _, name := range []string{"--date-value-format", "--datetime-value-format"} {
+		if definition, ok := catalog.Definition(name); !ok || definition.SupportState != "ENABLED" {
+			t.Fatalf("timestamp value format %s metadata: %#v", name, definition)
+		}
+	}
+	// 第二批筛选项已启用；依赖 sys 权限的 DDL 行为只登记定义并保持门禁。
+	if partition, ok := catalog.Definition("--partition"); !ok || partition.SupportState != "ENABLED" || len(partition.ConflictsWith) != 1 || partition.ConflictsWith[0] != "--query-sql" {
+		t.Fatalf("partition metadata: %#v", partition)
+	}
+	if extra, ok := catalog.Definition("--add-extra-message"); !ok || extra.SupportState != "VALIDATION_GATED" || len(extra.CapabilityVersions) != 2 {
+		t.Fatalf("add extra message metadata: %#v", extra)
+	}
+}
+
+// TestLoadLegacyGeneralizedCatalog 固化 v6 目录的字节级身份与旧 --table 短参数，
+// 确保升级后只重放历史草稿，不把 v7 修订静默混入旧指纹。
+func TestLoadLegacyGeneralizedCatalog(t *testing.T) {
+	t.Parallel()
+	catalog, err := LoadLegacyGeneralized()
+	if err != nil {
+		t.Fatalf("LoadLegacyGeneralized(): %v", err)
+	}
+	if catalog.MetadataVersion() != "obdumper-4.3.5-slice-v6" || len(catalog.Definitions()) != 59 {
+		t.Fatalf("legacy generalized catalog identity: %s / %d", catalog.MetadataVersion(), len(catalog.Definitions()))
+	}
+	table, ok := catalog.Definition("--table")
+	if !ok || table.ShortName != "-t" {
+		t.Fatalf("legacy table definition changed: %#v", table)
+	}
+	if _, ok := catalog.Definition("--partition"); ok {
+		t.Fatal("legacy v6 catalog must not contain v7-only parameters")
 	}
 }
 

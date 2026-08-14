@@ -749,28 +749,36 @@ type normalizedExportDraft struct {
 	// 备库弱读缺少副本/权限预检查，保存点续跑缺少 EX-I8 恢复链路，继续失败关闭。
 	Where    string
 	Snapshot bool
+	// EX-I7 剩余参数第二批（2026-08-13 受控实测定版）：仅分区筛选与类型排除已启用。
+	Partition        string
+	ExcludeDataTypes []string
+	// EX-I7 剩余参数第二批：仅 MySQL 的 DATE/DATETIME 值格式已启用，且只在 CSV/CUT 数据内容活动。
+	TimestampFormats store.TimestampFormatConfig
 }
 
-// maxExportObjectExpressions 限制单个草稿的对象表达式与排除表数量，
-// 防止无限对象进入命令、预检查探测与快照。
+// maxExportObjectExpressions 限制单个草稿的对象、排除表、分区和类型列表数量，
+// 防止无限条目进入命令、预检查探测与快照。
 const maxExportObjectExpressions = 100
 
 // isFrozenSingleTableCSV 判断归一结果是否仍属于首条切片的冻结形状，
 // 是则继续使用 v5 元数据与 export-odp-single-table-csv-v1 生成，保证指纹与 argv 不变。
-// 任一 EX-I3 选项被设置都会离开冻结形状，改走 v6 泛化生成器；
+// 任一已启用泛化选项被设置都会离开冻结形状，新草稿改走现行 v7 泛化生成器；
 // EX-I6 起对象存储输出与 --tmp-path 也不走冻结路径（v5 仅本地输出；空 OutputKind 兼容旧调用按本地处理）。
 func (n normalizedExportDraft) isFrozenSingleTableCSV() bool {
 	return (n.OutputKind == "" || n.OutputKind == "LOCAL") && n.TmpPath == "" && n.ScopeKind == "SPECIFIED" && n.ObjectType == "TABLE" && len(n.Objects) == 1 && len(n.ExcludeTables) == 0 && n.ContentKind == "DATA_ONLY" && n.Format == "CSV" && n.hasZeroOptions()
 }
 
-// hasZeroOptions 判断全部 EX-I3/EX-I4 选项均为零值。
+// hasZeroOptions 判断全部已启用泛化选项均为零值。
 func (n normalizedExportDraft) hasZeroOptions() bool {
 	return n.CsvOptions == (store.CsvOptions{}) && n.CutOptions == (store.CutOptions{}) && !n.Compress && n.CompressionAlgo == "" && n.CompressionLevel == nil &&
 		!n.NoNestedDir && n.MaxFileSize == nil && !n.RetainEmptyFiles &&
 		n.QuerySql == "" && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
 		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
-		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot
+		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot &&
+		// EX-I7 剩余参数第二批（2026-08-13）：携带任一已启用参数即离开冻结形状走 v7 泛化生成器。
+		n.Partition == "" && len(n.ExcludeDataTypes) == 0 &&
+		n.TimestampFormats == (store.TimestampFormatConfig{})
 }
 
 // draftCapability 按归一结果推导泛化能力版本。
@@ -873,10 +881,9 @@ func normalizeExportDraftRequest(request exportDraftWriteRequest) (normalizedExp
 	}, nil
 }
 
-// normalizeExportConfigV6 校验 v6 泛化配置只表达 EX-I2 已验证的能力矩阵：
-// ALL 或 SPECIFIED（仅 TABLE/VIEW 单一类型、1..100 个表达式）、DATA_ONLY/DDL_ONLY/DDL_AND_DATA 内容、
-// CSV 数据格式、LOCAL 输出。多库 schema 前缀、通配符、gated 对象类型与非零的
-// 性能/筛选/DDL 选项均失败关闭。
+// normalizeExportConfigV6 校验 configVersion=v6 的泛化配置只能表达当前能力矩阵；
+// 多库 schema 前缀、通配符、门禁对象类型与任何尚未验证的选项均失败关闭。
+// 参数元数据版本由草稿单独冻结，不能从 configVersion 推断为历史 v6 或当前 v7。
 func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID string) (normalizedExportDraft, error) {
 	scope := config.ObjectScope
 	normalized := normalizedExportDraft{
@@ -1058,15 +1065,22 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 
 	filter := config.FilterConfig
 	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--where 条件筛选与 --snapshot 一致性快照已启用；
-	// --weak-read 缺少副本与权限预检查，其余列出的筛选项也仍为 VALIDATION_GATED，携带即失败关闭。
-	if filter.Partition != "" || len(filter.ExcludeDataTypes) != 0 || filter.EnableHiddenPk != nil || filter.WeakRead != nil {
-		return normalizedExportDraft{}, errors.New("v6 filter options are not enabled")
+	// --weak-read 缺少副本与权限预检查，携带即失败关闭。
+	// EX-I7 第二批仅启用已观察到效果的 --partition/--exclude-data-types；
+	// --enable-hidden-pk 缺少表结构、版本和权限预检查，继续失败关闭。
+	if filter.WeakRead != nil {
+		return normalizedExportDraft{}, errors.New("v6 weak read option requires replica and permission prechecks")
 	}
 	normalized.Where = filter.Where
 	normalized.Snapshot = filter.Snapshot != nil && *filter.Snapshot
 	normalized.QuerySql = filter.QuerySql
 	normalized.ExcludeVirtualColumns = filter.ExcludeVirtualColumns != nil && *filter.ExcludeVirtualColumns
 	normalized.FlashbackScn, normalized.FlashbackTimestamp = filter.FlashbackScn, filter.FlashbackTimestamp
+	normalized.Partition = filter.Partition
+	normalized.ExcludeDataTypes = append([]string(nil), filter.ExcludeDataTypes...)
+	if filter.EnableHiddenPk != nil && *filter.EnableHiddenPk {
+		return normalizedExportDraft{}, errors.New("v6 enable hidden pk requires table structure, version and permission prechecks")
+	}
 	if normalized.QuerySql != "" {
 		if len(normalized.QuerySql) > 64<<10 || strings.ContainsRune(normalized.QuerySql, '\x00') {
 			return normalizedExportDraft{}, errors.New("v6 query sql is invalid")
@@ -1078,6 +1092,10 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		if normalized.Where != "" {
 			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with where option")
 		}
+		// EX-F072：--partition 与 --query-sql 互斥（官方约束）。
+		if normalized.Partition != "" {
+			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with partition option")
+		}
 	}
 	if normalized.Where != "" && validateOptionText(normalized.Where, 64<<10) != nil {
 		return normalizedExportDraft{}, errors.New("v6 where option is invalid")
@@ -1086,6 +1104,28 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	// --all 或视图范围携带时必须在生成命令前失败关闭。
 	if normalized.Where != "" && (normalized.ScopeKind != "SPECIFIED" || normalized.ObjectType != "TABLE") {
 		return normalizedExportDraft{}, errors.New("v6 where option requires specified table scope")
+	}
+	// EX-F072：--partition 分区筛选（2026-08-13 实测：HASH 分区表按分区导出生效）
+	// 只配合明确的表数据范围；分区名仅接受字母数字下划线，逗号分隔多个分区。
+	if normalized.Partition != "" {
+		if normalized.ContentKind == "DDL_ONLY" || normalized.ScopeKind != "SPECIFIED" || normalized.ObjectType != "TABLE" {
+			return normalizedExportDraft{}, errors.New("v6 partition option requires specified table data scope")
+		}
+		if len(normalized.Partition) > 4096 || len(strings.Split(normalized.Partition, ",")) > maxExportObjectExpressions || !partitionPattern.MatchString(normalized.Partition) {
+			return normalizedExportDraft{}, errors.New("v6 partition option is invalid")
+		}
+	}
+	// EX-F075：--exclude-data-types 类型排除（2026-08-13 实测：decimal 列被排除生效），只配合数据内容。
+	if len(normalized.ExcludeDataTypes) > maxExportObjectExpressions {
+		return normalizedExportDraft{}, errors.New("v6 exclude data types exceed the supported limit")
+	}
+	for _, dataType := range normalized.ExcludeDataTypes {
+		if dataType == "" || len(dataType) > 64 || !excludeDataTypePattern.MatchString(dataType) {
+			return normalizedExportDraft{}, errors.New("v6 exclude data type is invalid")
+		}
+	}
+	if len(normalized.ExcludeDataTypes) != 0 && normalized.ContentKind == "DDL_ONLY" {
+		return normalizedExportDraft{}, errors.New("v6 exclude data types require data content")
 	}
 	if normalized.FlashbackScn != nil && *normalized.FlashbackScn < 1 {
 		return normalizedExportDraft{}, errors.New("v6 flashback scn must be positive")
@@ -1110,9 +1150,13 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	ddl := config.DDLBehavior
 	// EX-I7 DDL 行为（2026-08-10）：--drop-object/--retain-schema 仅在 DDL 内容时活动并随 DDL 能力发射；
 	// --compact-schema（2026-08-11 受控实测定版：show create table 检索文本）同样仅限 DDL 内容；
-	// --add-extra-message 依赖 sys 凭据可用性（未取证）、--sequence-policy 仍为 VALIDATION_GATED，携带即失败关闭。
-	if ddl.AddExtraMessage != nil || ddl.SequencePolicy != "" {
+	// --add-extra-message 尚未完成 DDL 行为、sys 权限事实和秘密槽位绑定，继续失败关闭；
+	// --sequence-policy 仍为 VALIDATION_GATED，携带即失败关闭。
+	if ddl.SequencePolicy != "" {
 		return normalizedExportDraft{}, errors.New("v6 ddl behavior is not enabled")
+	}
+	if ddl.AddExtraMessage != nil && *ddl.AddExtraMessage {
+		return normalizedExportDraft{}, errors.New("v6 add extra message requires current sys permission precheck")
 	}
 	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) || (ddl.CompactSchema != nil && *ddl.CompactSchema) {
 		if normalized.ContentKind == "DATA_ONLY" {
@@ -1193,6 +1237,30 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		}
 	}
 	normalized.FilePath, normalized.LogPath, normalized.SkipCheckDir = output.FilePath, output.LogPath, output.SkipCheckDir
+	// EX-I7 时间格式第二批仅开放已观察到 MySQL 输出效果的 DATE/DATETIME；
+	// 其余字段缺少对应类型列或 Oracle 场景证据，继续作为显式门禁字段拒绝。
+	timestampFormats := config.DataFormat.TimestampFormats
+	if timestampFormats.TimeValueFormat != "" || timestampFormats.TimestampValueFormat != "" ||
+		timestampFormats.TimestampTzValueFormat != "" || timestampFormats.TimestampLtzValueFormat != "" ||
+		timestampFormats.NlsDateFormat != "" || timestampFormats.NlsTimestampFormat != "" || timestampFormats.NlsTimestampTzFormat != "" {
+		return normalizedExportDraft{}, errors.New("v6 timestamp format is validation gated")
+	}
+	for _, value := range []string{
+		timestampFormats.DateValueFormat, timestampFormats.DateTimeValueFormat,
+	} {
+		if value == "" {
+			continue
+		}
+		if len(value) > 256 || strings.TrimSpace(value) != value || !timestampFormatPattern.MatchString(value) {
+			return normalizedExportDraft{}, errors.New("v6 timestamp value format is invalid")
+		}
+	}
+	if timestampFormats != (store.TimestampFormatConfig{}) {
+		if normalized.ContentKind == "DDL_ONLY" || (normalized.Format != "CSV" && normalized.Format != "CUT") {
+			return normalizedExportDraft{}, errors.New("v6 timestamp formats require csv or cut data content")
+		}
+		normalized.TimestampFormats = timestampFormats
+	}
 	return normalized, nil
 }
 
@@ -1257,6 +1325,18 @@ var memSizePattern = regexp.MustCompile(`^[1-9][0-9]*[KMGTP]?$`)
 // blockSizePattern 匹配官方 --block-size 表达：正整数（MB）或正整数+MB/ROW 后缀；
 // 不支持 1GB/1M 等格式（2026-08-07 受控实测确认）。
 var blockSizePattern = regexp.MustCompile(`^[1-9][0-9]*(MB|ROW)?$`)
+
+// partitionPattern 匹配 EX-F072 --partition 分区名表达：字母数字下划线的分区名，逗号分隔多个分区
+// （2026-08-13 受控实测：HASH 分区表 p0 与 p0,p2 均生效）。
+var partitionPattern = regexp.MustCompile(`^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$`)
+
+// excludeDataTypePattern 匹配 EX-F075 --exclude-data-types 已取证的类型名形态：仅字母数字下划线
+// （2026-08-13 受控实测：decimal 列被排除生效）。
+var excludeDataTypePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// timestampFormatPattern 只接受可见 ASCII 时间格式字符和普通空格。
+// 制表符与 CR/LF 必须在控制面失败关闭，避免草稿通过后才被 Agent 的 argv 边界拒绝。
+var timestampFormatPattern = regexp.MustCompile(`^[A-Za-z0-9 \-/:.'TZ]+$`)
 
 // validateOptionText 校验选项文本：非空时长度受限且不含控制字符。
 func validateOptionText(value string, maxLength int) error {
@@ -1758,7 +1838,7 @@ func (s *Server) createExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	preview, source, node, err := s.generateExportDraft(r.Context(), normalized)
+	preview, source, node, err := s.generateExportDraft(r.Context(), normalized, "")
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
 		return
@@ -1848,7 +1928,7 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), normalized)
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, draft.MetadataVersion)
 	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
 		return
@@ -1910,7 +1990,7 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), normalized)
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, draft.MetadataVersion)
 	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
 		return
@@ -1956,7 +2036,7 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, node, err := s.generateExportDraft(r.Context(), normalized)
+	preview, _, node, err := s.generateExportDraft(r.Context(), normalized, draft.MetadataVersion)
 	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
 		return
@@ -2100,10 +2180,18 @@ func decodeBrowserJSON(w http.ResponseWriter, r *http.Request, target any) bool 
 	return true
 }
 
+const (
+	exportMetadataV5 = "obdumper-4.3.5-slice-v5"
+	exportMetadataV6 = "obdumper-4.3.5-slice-v6"
+	exportMetadataV7 = "obdumper-4.3.5-slice-v7"
+)
+
 // errGeneralizedGeneratorUnavailable 表示泛化能力请求缺少对应的生成器依赖，必须失败关闭。
 var errGeneralizedGeneratorUnavailable = errors.New("generalized export generator is not configured")
 
-func (s *Server) generateExportDraft(ctx context.Context, input normalizedExportDraft) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
+// generateExportDraft 在 metadataVersion 非空时严格重放草稿冻结版本；空值只用于新建草稿并选择现行版本。
+// 历史版本不能被静默提升，否则预览、预检与提交重算出的指纹会与已持久化草稿不一致。
+func (s *Server) generateExportDraft(ctx context.Context, input normalizedExportDraft, metadataVersion string) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
 	if input.DataSourceID == "" || input.NodeID == "" || input.Database == "" || input.FilePath == "" || (input.ScopeKind == "SPECIFIED" && len(input.Objects) == 0) {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft fields are incomplete")
 	}
@@ -2117,6 +2205,9 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	// 闪回时间点仅适用于 Oracle 兼容模式（EX-F079），MySQL 模式失败关闭。
 	if input.FlashbackTimestamp != "" && source.CompatibilityMode != "ORACLE" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("flashback timestamp requires oracle compatibility mode")
+	}
+	if input.TimestampFormats != (store.TimestampFormatConfig{}) && source.CompatibilityMode != "MYSQL" {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("enabled timestamp formats require mysql compatibility mode")
 	}
 	node, err := s.nodes.GetExecutionNodeFact(ctx, input.NodeID)
 	if err != nil {
@@ -2143,17 +2234,18 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	}
 	requestBase := commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, OutputKind: input.OutputKind}
 	// 冻结单表 CSV 形状继续使用 v5 元数据与已验证能力，保证指纹与 argv 逐字节不变。
-	if input.isFrozenSingleTableCSV() {
+	if input.isFrozenSingleTableCSV() && (metadataVersion == "" || metadataVersion == exportMetadataV5) {
 		fields := append(append([]commandgen.FieldInput(nil), connectionFields...),
 			commandgen.FieldInput{Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Objects[0]}},
 			commandgen.FieldInput{Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}},
 			commandgen.FieldInput{Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.FilePath}},
 		)
+		// 空日志路径保持 OBDUMPER 默认行为；显式路径才进入冻结 argv 与 Agent 预检查。
 		if input.LogPath != "" {
 			fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.LogPath}})
 		}
 		fields = append(fields, commandgen.FieldInput{Name: "--skip-check-dir", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: input.SkipCheckDir}})
-		requestBase.MetadataVersion = "obdumper-4.3.5-slice-v5"
+		requestBase.MetadataVersion = exportMetadataV5
 		requestBase.CapabilityVersion = "export-odp-single-table-csv-v1"
 		requestBase.Fields = fields
 		result, err := s.generator.Generate(requestBase)
@@ -2333,6 +2425,25 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.Snapshot {
 		fields = append(fields, commandgen.FieldInput{Name: "--snapshot", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
 	}
+	// EX-I7 剩余参数第二批（2026-08-13 受控实测定版）：分区筛选按分区导出生效，类型排除按列类型生效。
+	if input.Partition != "" {
+		fields = append(fields, commandgen.FieldInput{Name: "--partition", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Partition}})
+	}
+	if len(input.ExcludeDataTypes) != 0 {
+		fields = append(fields, commandgen.FieldInput{Name: "--exclude-data-types", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.ExcludeDataTypes, ",")}})
+	}
+	// EX-I7 时间值格式第二批：仅发射已观察到 MySQL 输出效果的 DATE/DATETIME 值格式。
+	for _, option := range []struct {
+		name  string
+		value string
+	}{
+		{"--date-value-format", input.TimestampFormats.DateValueFormat},
+		{"--datetime-value-format", input.TimestampFormats.DateTimeValueFormat},
+	} {
+		if option.value != "" {
+			fields = append(fields, commandgen.FieldInput{Name: option.name, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: option.value}})
+		}
+	}
 	if len(input.IncludeColumns) != 0 {
 		fields = append(fields, commandgen.FieldInput{Name: "--include-column-names", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.IncludeColumns, ",")}})
 	}
@@ -2368,7 +2479,14 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.BlockSize != "" {
 		fields = append(fields, commandgen.FieldInput{Name: "--block-size", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.BlockSize}})
 	}
-	requestBase.MetadataVersion = "obdumper-4.3.5-slice-v6"
+	switch metadataVersion {
+	case "", exportMetadataV7:
+		requestBase.MetadataVersion = exportMetadataV7
+	case exportMetadataV6:
+		requestBase.MetadataVersion = exportMetadataV6
+	default:
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft metadata version is unsupported")
+	}
 	requestBase.CapabilityVersion = draftCapability(input)
 	requestBase.Fields = fields
 	result, err := s.generalGenerator.Generate(requestBase)
@@ -2669,7 +2787,7 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), normalized)
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, draft.MetadataVersion)
 	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
 		return

@@ -1168,6 +1168,54 @@ func runV6CapabilityFlow(t *testing.T, handler http.Handler, drafts *recordingDr
 	return previewed.Body.String(), snapshot.Body.String()
 }
 
+// TestHistoricalV6DraftReplaysFrozenMetadata 验证升级到 v7 后，已持久化的 v6 草稿仍按旧目录
+// 重算 argv 与指纹，预检查不会因静默切换元数据版本而失效。
+func TestHistoricalV6DraftReplaysFrozenMetadata(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"where":"id > 0"}}}`
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	create.Header.Set("Idempotency-Key", "synthetic-historical-v6-draft-key")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated || drafts.created.MetadataVersion != exportMetadataV7 {
+		t.Fatalf("create current draft response=%d draft=%#v body=%s", created.Code, drafts.created, created.Body.String())
+	}
+	currentFingerprint := drafts.created.ConfigFingerprint
+	// 模拟升级前已由 v6 目录持久化的同一配置；配置本身不做任何迁移或重写。
+	drafts.created.MetadataVersion = exportMetadataV6
+	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:preview-command", nil)
+	preview.Header.Set("If-Match", `"rev-1"`)
+	previewed := httptest.NewRecorder()
+	handler.ServeHTTP(previewed, preview)
+	var previewBody struct {
+		ArgvTemplate      []string `json:"argvTemplate"`
+		ConfigFingerprint string   `json:"configFingerprint"`
+	}
+	if err := json.Unmarshal(previewed.Body.Bytes(), &previewBody); err != nil || previewBody.ConfigFingerprint == "" {
+		t.Fatalf("decode historical v6 preview: %v body=%s", err, previewed.Body.String())
+	}
+	argv := strings.Join(previewBody.ArgvTemplate, "\x00")
+	if previewed.Code != http.StatusOK || !strings.Contains(argv, "-tsynthetic_table") || strings.Contains(argv, "--table") {
+		t.Fatalf("historical v6 preview response=%d argv=%#v body=%s", previewed.Code, previewBody.ArgvTemplate, previewed.Body.String())
+	}
+	if previewBody.ConfigFingerprint == currentFingerprint {
+		t.Fatal("v6 replay unexpectedly reused the v7 fingerprint")
+	}
+	drafts.created.ConfigFingerprint = previewBody.ConfigFingerprint
+	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
+	precheck.Header.Set("If-Match", `"rev-1"`)
+	precheck.Header.Set("Idempotency-Key", "synthetic-historical-v6-precheck-key")
+	prechecked := httptest.NewRecorder()
+	handler.ServeHTTP(prechecked, precheck)
+	if prechecked.Code != http.StatusAccepted || prechecks.created.ConfigFingerprint != previewBody.ConfigFingerprint {
+		t.Fatalf("historical v6 precheck response=%d binding=%#v body=%s", prechecked.Code, prechecks.created, prechecked.Body.String())
+	}
+}
+
 func TestExportDraftV6FullCSVAllScopeFlow(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
@@ -1176,7 +1224,7 @@ func TestExportDraftV6FullCSVAllScopeFlow(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"ALL"},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "full-all")
-	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
 	for _, token := range []string{`"--all"`, `"--csv"`} {
@@ -1203,7 +1251,7 @@ func TestExportDraftV6FullCSVMultiTableWithExclusionsFlow(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"table_one"},{"name":"table_two"}],"excludeTables":["table_tmp"]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "full-multi")
-	if !strings.Contains(previewBody, `"-ttable_one,table_two"`) || !strings.Contains(previewBody, `"--exclude-table"`) || !strings.Contains(previewBody, `"table_tmp"`) {
+	if !strings.Contains(previewBody, `"--table","table_one,table_two"`) || !strings.Contains(previewBody, `"--exclude-table"`) || !strings.Contains(previewBody, `"table_tmp"`) {
 		t.Fatalf("multi-table preview unexpected: %s", previewBody)
 	}
 	if !strings.Contains(snapshotBody, `"format":"CSV"`) || !strings.Contains(tasks.input.SnapshotJSON, `"table":"table_one,table_two"`) {
@@ -1241,7 +1289,7 @@ func TestExportDraftV6DDLAndCSVFlow(t *testing.T) {
 	if drafts.created.CapabilityVersion != "export-odp-ddl-csv-v1" {
 		t.Fatalf("ddl-csv draft capability=%s", drafts.created.CapabilityVersion)
 	}
-	if !strings.Contains(previewBody, `"--ddl"`) || !strings.Contains(previewBody, `"--csv"`) || !strings.Contains(previewBody, `"-ttable_one"`) {
+	if !strings.Contains(previewBody, `"--ddl"`) || !strings.Contains(previewBody, `"--csv"`) || !strings.Contains(previewBody, `"--table","table_one"`) {
 		t.Fatalf("ddl-csv preview unexpected: %s", previewBody)
 	}
 	if !strings.Contains(snapshotBody, `"format":"DDL_CSV"`) {
@@ -1289,8 +1337,8 @@ func TestExportDraftV6DDLBehaviorDDLAndDataFlow(t *testing.T) {
 }
 
 // TestExportDraftV6DDLBehaviorFailClosed 验证 DDL 行为越界失败关闭：
-// 仅数据内容携带 DDL 行为、附加对象信息/序列策略携带均拒绝；
-// --compact-schema（2026-08-11 实测定版）已启用，仅数据内容携带时同样拒绝。
+// 仅数据内容携带 DDL 行为、序列策略携带均拒绝；--add-extra-message 缺少 sys 权限预检查，
+// 即使作用域为 DDL 内容也必须失败关闭。
 func TestExportDraftV6DDLBehaviorFailClosed(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
@@ -1300,7 +1348,7 @@ func TestExportDraftV6DDLBehaviorFailClosed(t *testing.T) {
 	cases := map[string]string{
 		"仅数据携带 DDL 行为":   `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"dropObject":true}}}`,
 		"仅数据携带紧凑 Schema": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"compactSchema":true}}}`,
-		"携带附加对象信息":       `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"addExtraMessage":true}}}`,
+		"仅数据携带附加对象信息":    `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"addExtraMessage":true}}}`,
 		"携带序列策略":         `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"sequencePolicy":"RESTART"}}}`,
 	}
 	for name, body := range cases {
@@ -1311,6 +1359,79 @@ func TestExportDraftV6DDLBehaviorFailClosed(t *testing.T) {
 		if response.Code != http.StatusUnprocessableEntity || drafts.created.DraftID != "" {
 			t.Fatalf("%s response=%d draft=%#v body=%s", name, response.Code, drafts.created, response.Body.String())
 		}
+	}
+}
+
+// TestExportDraftV6Batch2ParametersFlow 验证 EX-I7 第二批的收缩边界：
+// 只发射已观察到效果的分区、类型排除和 MySQL DATE/DATETIME 格式；其余能力继续失败关闭。
+func TestExportDraftV6Batch2ParametersFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	dataBody := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy/MM/dd","datetimeValueFormat":"yyyy/MM/dd HH:mm:ss"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"},"filterConfig":{"partition":"p0,p2","excludeDataTypes":["BLOB","decimal"]}}}`
+	dataPreview, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, dataBody, "exi7-batch2-data")
+	for _, expected := range []string{`"--partition"`, `"p0,p2"`, `"--exclude-data-types"`, `"BLOB,decimal"`, `"--date-value-format"`, `"yyyy/MM/dd"`, `"--datetime-value-format"`, `"yyyy/MM/dd HH:mm:ss"`} {
+		if !strings.Contains(dataPreview, expected) {
+			t.Fatalf("batch2 data preview missing %s: %s", expected, dataPreview)
+		}
+	}
+	// --partition 与 --query-sql 互斥（官方约束，EX-F072）。
+	conflictBody := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"partition":"p0","querySql":"select 1"}}}`
+	conflict := httptest.NewRecorder()
+	conflictRequest := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(conflictBody))
+	conflictRequest.Header.Set("Idempotency-Key", "synthetic-exi7-batch2-conflict-key-000")
+	handler.ServeHTTP(conflict, conflictRequest)
+	if conflict.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("partition conflicts with query sql response=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+
+	for name, body := range map[string]string{
+		"隐藏主键缺少预检查":     `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"enableHiddenPk":true}}}`,
+		"附加信息缺少 sys 权限": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"addExtraMessage":true}}}`,
+		"未观察 TIME 行为":   `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"timeValueFormat":"HH:mm:ss"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"时间格式包含制表符":     `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\tMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"时间格式包含回车":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\rMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"时间格式包含换行":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\nMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+		request.Header.Set("Idempotency-Key", "synthetic-exi7-gated-"+name+"-key-000")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s response=%d body=%s", name, response.Code, response.Body.String())
+		}
+	}
+}
+
+// TestExportDraftV7TimestampFormatsRequireMySQL 验证当前仅有 MySQL 行为证据的格式参数
+// 不会在 Oracle 兼容模式下被错误发射。
+func TestExportDraftV7TimestampFormatsRequireMySQL(t *testing.T) {
+	t.Parallel()
+	generator, err := commandgen.NewDefault()
+	if err != nil {
+		t.Fatalf("NewDefault() error = %v", err)
+	}
+	generalized, err := commandgen.NewGeneralized()
+	if err != nil {
+		t.Fatalf("NewGeneralized() error = %v", err)
+	}
+	sources := mustStaticDataSourceReader()
+	sources.summaries[0].CompatibilityMode = "ORACLE"
+	drafts := &recordingDraftStore{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: sources,
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts,
+		Generator: generator, GeneralizedGenerator: generalized, CSRF: allowedCSRF{},
+	})
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy/MM/dd"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	request.Header.Set("Idempotency-Key", "synthetic-oracle-timestamp-gate-key")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || drafts.created.DraftID != "" {
+		t.Fatalf("oracle timestamp format response=%d draft=%#v body=%s", response.Code, drafts.created, response.Body.String())
 	}
 }
 
@@ -1527,7 +1648,7 @@ func TestExportDraftV6CUTFlow(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CUT","cutOptions":{"trailDelimiter":true,"removeNewline":true},"csvOptions":{"escapeCharacter":"\\","lineSeparator":"\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"zstd","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true},"filterConfig":{"querySql":"select 1","includeColumnNames":["col_a","col_b"]},"performanceConfig":{"thread":4,"pageSize":1000,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-cut")
-	if drafts.created.CapabilityVersion != "export-odp-cut-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+	if drafts.created.CapabilityVersion != "export-odp-cut-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("cut draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
 	for _, token := range []string{`"--cut"`, `"--trail-delimiter"`, `"--remove-newline"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--query-sql"`, `"select 1"`, `"--include-column-names"`, `"col_a,col_b"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--mem"`, `"4G"`} {
@@ -1554,7 +1675,7 @@ func TestExportDraftV6SQLFlow(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"SQL","csvOptions":{"lineSeparator":"\\n","fileEncoding":"UTF-8"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"gzip","retainEmptyFiles":true},"filterConfig":{"flashbackScn":100,"excludeColumnNames":["col_c"]},"performanceConfig":{"thread":4,"fetchSize":100,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-sql")
-	if drafts.created.CapabilityVersion != "export-odp-sql-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+	if drafts.created.CapabilityVersion != "export-odp-sql-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("sql draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
 	for _, token := range []string{`"--sql"`, `"--line-separator"`, `"--file-encoding"`, `"UTF-8"`, `"--compress"`, `"--compression-algo"`, `"gzip"`, `"--retain-empty-files"`, `"--flashback-scn"`, `"100"`, `"--exclude-column-names"`, `"col_c"`, `"--thread"`, `"4"`, `"--fetch-size"`, `"100"`, `"--mem"`, `"4G"`} {
@@ -1582,7 +1703,7 @@ func TestExportDraftV6POSFlow(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","controlFilePath":"/E:/workespace/ob-data-orch/tmp/synthetic-controls","compress":true,"compressionAlgo":"zstd","noNestedDir":true},"filterConfig":{"querySql":"select 1"},"performanceConfig":{"thread":4,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-pos")
-	if drafts.created.CapabilityVersion != "export-odp-pos-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+	if drafts.created.CapabilityVersion != "export-odp-pos-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("pos draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
 	for _, token := range []string{`"--pos"`, `"--ctl-path"`, `"/E:/workespace/ob-data-orch/tmp/synthetic-controls"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--query-sql"`, `"select 1"`, `"--thread"`, `"4"`, `"--mem"`, `"4G"`} {
@@ -1645,7 +1766,7 @@ func TestExportDraftV6StructuredFlow(t *testing.T) {
 		handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 		body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"` + testCase.formatKind + `","csvOptions":{"fileEncoding":"UTF-8"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","noNestedDir":true},"filterConfig":{"flashbackScn":100},"performanceConfig":{"thread":4,"jvmMemory":"4G"}}}`
 		previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi5-"+testCase.name)
-		if drafts.created.CapabilityVersion != testCase.capability || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+		if drafts.created.CapabilityVersion != testCase.capability || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 			t.Fatalf("%s draft capability=%s metadata=%s", testCase.name, drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 		}
 		for _, token := range []string{testCase.formatArg, `"--file-encoding"`, `"UTF-8"`, `"--no-nested-dir"`, `"--flashback-scn"`, `"100"`, `"--thread"`, `"4"`, `"--mem"`, `"4G"`} {
@@ -1713,7 +1834,7 @@ func TestExportDraftV6ObjectStorageFlow(t *testing.T) {
 	if previewed.Code != http.StatusOK {
 		t.Fatalf("preview response=%d body=%s", previewed.Code, previewed.Body.String())
 	}
-	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("oss draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
 	previewBody := previewed.Body.String()
@@ -1820,7 +1941,7 @@ func TestExportDraftV6SingleTableWithOptionsLeavesFrozenPath(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"skipHeader":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}}}`
 	_, _ = runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi3-route")
-	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v6" {
+	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("options draft route=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
 }
@@ -1883,8 +2004,17 @@ func TestExportDraftVersionRoutingFailsClosed(t *testing.T) {
 		"DDL+数据声明 CUT":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"CUT"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"仅 DDL 内容声明无效格式": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"formatKind":"CUT"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"对象存储输出":         {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"OSS","filePath":"oss://bucket/out?access-key=x&secret-key=y"}}}`, http.StatusUnprocessableEntity},
-		"筛选配置未启用":        {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"partition":"p0"}}}`, http.StatusUnprocessableEntity},
-		"排除数据类型未启用":      {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"excludeDataTypes":["BLOB"]}}}`, http.StatusUnprocessableEntity},
+		// EX-F072 分区筛选（2026-08-13 实测定版）已启用：仅拒绝非表范围、DDL 内容与非法分区名。
+		"分区筛选需表范围": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"ALL"},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"partition":"p0"}}}`, http.StatusUnprocessableEntity},
+		"分区名非法":    {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"partition":"p0; DROP"}}}`, http.StatusUnprocessableEntity},
+		// EX-F075 类型排除（2026-08-13 实测定版）已启用：仅拒绝非法类型名与 DDL 内容。
+		"排除数据类型需数据内容": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"excludeDataTypes":["BLOB"]}}}`, http.StatusUnprocessableEntity},
+		"排除数据类型名非法":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"excludeDataTypes":["DECIMAL(10,2)"]}}}`, http.StatusUnprocessableEntity},
+		// EX-F077 隐藏主键仍缺表结构、版本和权限预检查，任何 true 值均失败关闭。
+		"隐藏主键缺少预检查": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"enableHiddenPk":true}}}`, http.StatusUnprocessableEntity},
+		// 时间格式只启用 MySQL DATE/DATETIME 两项；即使已启用字段也必须满足格式与内容边界。
+		"时间戳格式需 CSV/CUT": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"SQL","timestampFormats":{"dateValueFormat":"yyyy/MM/dd"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
+		"时间戳格式串非法":       {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy;DROP"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		// EX-I2 对象矩阵负例：gated 类型、跨库前缀、通配符、超限、非法组合均失败关闭。
 		"gated 对象类型":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TRIGGER"],"expressions":[{"name":"synthetic_trigger"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"跨库 schema 前缀": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"schema":"other_db","name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
@@ -1941,6 +2071,19 @@ func TestExportDraftV5PersistenceRemainsByteIdentical(t *testing.T) {
 	}
 	if drafts.created.ObjectScopeJSON != "" || drafts.created.DataFormatJSON != "" || drafts.created.DDLBehaviorJSON != "" {
 		t.Fatalf("v5 draft must not carry structured columns: %#v", drafts.created)
+	}
+	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:preview-command", nil)
+	preview.Header.Set("If-Match", `"rev-1"`)
+	previewed := httptest.NewRecorder()
+	handler.ServeHTTP(previewed, preview)
+	if previewed.Code != http.StatusOK || bytes.Contains(previewed.Body.Bytes(), []byte(`"--log-path"`)) {
+		t.Fatalf("blank v5 log path changed argv response=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+	var previewBody struct {
+		ConfigFingerprint string `json:"configFingerprint"`
+	}
+	if err := json.Unmarshal(previewed.Body.Bytes(), &previewBody); err != nil || previewBody.ConfigFingerprint != drafts.created.ConfigFingerprint {
+		t.Fatalf("v5 fingerprint changed after replay: %v preview=%#v draft=%#v", err, previewBody, drafts.created)
 	}
 }
 

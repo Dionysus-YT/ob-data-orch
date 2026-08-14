@@ -72,13 +72,13 @@ EX-D1、EX-D2 完成前，不继续用现场 WI 缺口驱动新增导出功能�
 | 7 | **EX-I4 CUT、POS、SQL** ✅ 部分 | CUT 与 Insert SQL 格式、通用文本/压缩能力；POS 定长格式 | CUT/SQL 已完成：v6 元数据 7 个 ENABLED 参数（--cut/--sql/--trail-delimiter/--remove-newline + 共享文本激活）、能力子集命令生成与格式单选、控制面归一化与快照投影、向导格式单选与 CUT 高级面板、正例/互斥/边界/ORACLE 负例契约测试。2026-08-07 官方复核（V4.3.6 命令行选项页）确认文件布局、筛选与性能参数不限定格式，v6 元数据能力绑定扩展至 CUT/SQL，向导步骤 5 面板对所有数据格式开放，命令生成、控制面与前端构建/校验同步放宽并补齐正负例。**POS 映射已实测定版并完成产品接入**（2026-08-07）：4.3.5 支持独立 `--pos` 且必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)`），全量 6 表真实导出成功、退出码 0、900 行严格定长；`--block-size` 显式传值按 MB/ROW 生效（1MB 与 256ROW 切分实证），默认值冲突保留低风险残余；产品接入包括 v6 元数据解锁 --pos/--ctl-path/--column-splitter（新增 export-odp-pos-v1 能力，additions 25→28、定义 43→46）、命令生成与格式单选、控制面归一化/快照投影/越界失败关闭、OpenAPI 与前端向导（POS 格式卡片 + 控制文件目录输入 + 契约测试）。控制文件“用户提供”来源已接入；**“自动生成”来源（预检查阶段 Agent 按对象元数据生成 .ctrl）为后续补充切片**，见 [Windows POS 受控实测与定版](evidence/windows-pos-format-validation-2026-08-07.md) |
 | 8 | **EX-I5 Parquet、ORC、Avro** ✅ | 三种结构化格式、格式专属限制、资源与结果事实 | 已完成（2026-08-07）：v6 元数据新增 --par/--orc/--avro（export-odp-parquet-v1/export-odp-orc-v1/export-odp-avro-v1，additions 28→31、定义 46→49）；官方 V4.3.6 格式表驱动绑定：文件编码（FORMAT_IN 扩至六格式）与闪回/筛选/性能/文件布局通用参数绑定结构化能力，压缩保持可读格式专属（结构化格式携带压缩 422）、序列化选项不适用；命令生成与格式单选扩展（互斥失败关闭）、控制面归一化/快照投影/越界失败关闭、前端 Parquet/ORC/Avro 格式卡片与结构化配置面板（ORC 内存警告）、契约测试（三格式正例 + 压缩/序列化/缺格式负例）。`--block-size` 不绑定（ORC/Parquet 官方明确不生效，Avro 未取证）。真实格式输出验证归 EX-V1 排期 |
 | 9 | **EX-I6 对象存储** ✅ 部分 | OSS/S3/COS/OBS 受控 URI、凭据槽位、临时目录、网络/权限/空间预检查和脱敏展示 | 第一段已交付（2026-08-07）：jar 字节码取证确认 OBDUMPER 走 Hadoop FileSystem 抽象且 access-key/secret-key 非必填（可走 HADOOP_CONF_DIR/core-site.xml 配置链），**存储凭据可不进 argv**——URI 拒绝任何密钥参数（access-key/secret-key 进 URI 即 422），凭据走执行槽位（Agent 侧 core-site.xml 短生命周期注入，方案见 [EX-I6 决策](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) 与本文）；v6 元数据解锁 --tmp-path（绑定全部 9 个能力）、受控 URI 校验（scheme 白名单/参数白名单 endpoint/region/storage-class/拒绝任意 URI）、输出类型 LOCAL/OSS/S3/COS/OBS 归一化与生成器路径分流校验（STORAGE_URI_INVALID）、前端步骤 5 输出类型单选与对象存储区域（不收集密钥）、契约测试（OSS 全流程 + 8 类越界负例）。后续切片：存储凭据槽位（SQLite 加密存储 + 控制面解析 + Agent core-site.xml 生成）、网络/权限/空间预检查与四类存储真实取证（需授权外网，归 EX-V1 排期） |
-| 10 | **EX-I7 高级与专家能力** ✅ 部分 | DDL 行为、筛选、一致性、性能、资源和高风险确认 | DDL 行为第一切片已交付（2026-08-10）：--drop-object/--retain-schema 接入（v6 元数据 additions 32→34、定义 50→52，绑定 ddl/ddl-csv 能力，仅 DDL 内容发射）、控制面归一化（非 DDL 内容携带 422；--add-extra-message/--compact-schema/--sequence-policy 携带 422 失败关闭）、向导步骤 3 树形节点激活（drop-object 高风险提示）、契约测试（DDL_ONLY/DDL_AND_DATA 两正例 + 四负例）。文件拆分第二切片已交付（2026-08-10）：--block-size 接入（v6 元数据 additions 34→35、定义 52→53，绑定 full-csv/ddl-csv/cut/sql/pos 可读格式能力，MB/ROW 显式传值已受控实测；PARQUET/ORC 官方不生效、AVRO 未取证故不绑定）、值校验（正整数或正整数+MB/ROW，拒绝 1GB/0）、向导性能选项树形节点文件拆分输入（结构化格式隐藏并提示）、契约测试（CSV 正例 + 非法值/结构化携带负例）。压缩等级第三切片已交付（2026-08-10）：--compression-level 接入（v6 元数据 additions 35→36、定义 53→54，绑定可读格式能力；官方按算法分范围 zstd 1~22、zlib -1~9，gzip/snappy 不支持等级）、控制面联动校验（未启用压缩/算法未选择、算法越界、gzip/snappy 携带等级均 422 失败关闭）、向导压缩导出节点压缩等级输入（算法切换/取消压缩时清值）、契约测试（zstd 正例 + 五类负例）。--add-extra-message 待 sys 凭据可用性取证，--compact-schema/--sequence-policy/时间戳值格式等保持 VALIDATION_GATED。高风险能力需要明确权限、二次确认、失效规则和负例；无法证明为受限、可校验语义的 `--query-sql` 不得实现，任意 SQL 编辑器和任意 SQL 传递均不在范围内 |
+| 10 | **EX-I7 高级与专家能力** ✅ 部分 | DDL 行为、筛选、一致性、性能、资源和高风险确认 | DDL 行为第一切片已交付（2026-08-10）：--drop-object/--retain-schema 接入（v6 元数据 additions 32→34、定义 50→52，绑定 ddl/ddl-csv 能力，仅 DDL 内容发射）、控制面归一化（非 DDL 内容携带 422；--add-extra-message/--compact-schema/--sequence-policy 携带 422 失败关闭）、向导步骤 3 树形节点激活（drop-object 高风险提示）、契约测试（DDL_ONLY/DDL_AND_DATA 两正例 + 四负例）。文件拆分第二切片已交付（2026-08-10）：--block-size 接入（v6 元数据 additions 34→35、定义 52→53，绑定 full-csv/ddl-csv/cut/sql/pos 可读格式能力，MB/ROW 显式传值已受控实测；PARQUET/ORC 官方不生效、AVRO 未取证故不绑定）、值校验（正整数或正整数+MB/ROW，拒绝 1GB/0）、向导性能选项树形节点文件拆分输入（结构化格式隐藏并提示）、契约测试（CSV 正例 + 非法值/结构化携带负例）。压缩等级第三切片已交付（2026-08-10）：--compression-level 接入（v6 元数据 additions 35→36、定义 53→54，绑定可读格式能力；官方按算法分范围 zstd 1~22、zlib -1~9，gzip/snappy 不支持等级）、控制面联动校验（未启用压缩/算法未选择、算法越界、gzip/snappy 携带等级均 422 失败关闭）、向导压缩导出节点压缩等级输入（算法切换/取消压缩时清值）、契约测试（zstd 正例 + 五类负例）。后续切片已启用 --compact-schema、MySQL DATE/DATETIME 格式、--partition 与 --exclude-data-types；--add-extra-message、--sequence-policy 及其余时间格式仍保持 VALIDATION_GATED。高风险能力需要明确权限、二次确认、失效规则和负例；无法证明为受限、可校验语义的 `--query-sql` 不得实现，任意 SQL 编辑器和任意 SQL 传递均不在范围内 |
 | 11 | **EX-I8 结果、失败恢复与复用** | 结果清单、失败操作、派生任务关系、`dump.ckpt` 继续、基于原配置新建、从头执行，以及获准范围内的模板复用 | 继续任务保持原快照/路径/工具版本条件且生成新任务 ID；模板不复用凭据、节点、预检查或风险确认 |
 | 12 | **EX-V1 分切片 Windows 验证** | 每个已启用能力的授权真实证据 | G3/WI 只验证已实现切片，不再反向决定产品设计顺序；一个组合通过不得外推其他组合 |
 | 13 | **EX-V2 三目标认证** | Windows AMD64、麒麟 Linux AMD64、麒麟 Linux ARM64 的正式构建与运行证据 | 目标机原生验证通过；交叉编译不能替代运行证据 |
 | 14 | **EX-R 发布评审** | 安全、恢复、备份、升级、兼容、运维和残余风险结论 | 只有已设计、已实现、已验证且有证据的能力进入发布声明 |
 
-当前执行 **EX-I6 后续切片**。EX-D0~EX-D2、EX-I1~EX-I5 已完成，技术契约见 [export-general-contract.md](export-general-contract.md)。**EX-I6 第一段已交付（2026-08-07）**：通过 jar 字节码取证确认 OBDUMPER 对象存储走 Hadoop FileSystem 抽象（fs.s3a/fs.oss/fs.cosn/fs.obs.impl），URI 的 access-key/secret-key 非必填（仅 bucket/endpoint 强制）——**存储凭据可以不进 argv**，由 Agent 在 execution 私有目录生成 core-site.xml 并以 HADOOP_CONF_DIR 注入（与 security.properties 同类的短生命周期官方机制）。第一段交付：--tmp-path 解锁、受控 URI 校验（拒绝密钥参数/任意 URI）、输出类型 LOCAL/OSS/S3/COS/OBS 全链路（归一化/生成器/快照/前端/契约测试）。后续切片：存储凭据槽位（SQLite 加密 + 控制面解析 + Agent core-site.xml 生成）、网络/权限/空间预检查与四类存储真实取证（需真实外网授权，归 EX-V1 排期）。POS 自动生成控制文件来源为后续补充切片。`--block-size` 默认值冲突保留为低风险残余。日期时间等 gated 字段保持关闭。WI-05 的现场进程 argv 取证暂停，后续由 EX-V1 重新排期；没有新的明确授权时，不启动 OBDUMPER、不连接用户数据库，也不新增现场任务。
+当前执行 **EX-I6 后续切片**。EX-D0~EX-D2、EX-I1~EX-I5 已完成，技术契约见 [export-general-contract.md](export-general-contract.md)。**EX-I6 第一段已交付（2026-08-07）**：通过 jar 字节码取证确认 OBDUMPER 对象存储走 Hadoop FileSystem 抽象（fs.s3a/fs.oss/fs.cosn/fs.obs.impl），URI 的 access-key/secret-key 非必填（仅 bucket/endpoint 强制）——**存储凭据可以不进 argv**，由 Agent 在 execution 私有目录生成 core-site.xml 并以 HADOOP_CONF_DIR 注入（与 security.properties 同类的短生命周期官方机制）。第一段交付：--tmp-path 解锁、受控 URI 校验（拒绝密钥参数/任意 URI）、输出类型 LOCAL/OSS/S3/COS/OBS 全链路（归一化/生成器/快照/前端/契约测试）。后续切片：存储凭据槽位（SQLite 加密 + 控制面解析 + Agent core-site.xml 生成）、网络/权限/空间预检查与四类存储真实取证（需真实外网授权，归 EX-V1 排期）。POS 自动生成控制文件来源为后续补充切片。`--block-size` 默认值冲突保留为低风险残余。日期时间字段仅 MySQL DATE/DATETIME 已启用，其余字段继续保持门禁。WI-05 的现场进程 argv 取证暂停，后续由 EX-V1 重新排期；没有新的明确授权时，不启动 OBDUMPER、不连接用户数据库，也不新增现场任务。
 
 **2026-08-07 参数分类重构**：向导面板（步骤 4/5）、[参数映射基线](../02-design/export-parameter-mapping.md)、[支持矩阵](../02-design/export-v1-support-matrix.md)、[字段规则](../02-design/export-field-rules.md)、[低保真](../02-design/export-low-fidelity.md) 与 [导出契约](export-general-contract.md) 已统一按 OBDUMPER 官方选项分类组织（基础选项：连接选项 / 功能选项（文件格式、压缩导出、数据库对象类型、存储路径）/ 其他选项；高级选项：功能选项（时间戳格式、黑白名单筛选、错误处理）/ 性能选项 / 其他选项）。v6 元数据 `category` 仍为命令发射顺序的技术标识，不随产品分类改名。
 
@@ -351,7 +351,7 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 - 已完成：浏览器摘要只派生 `sysCredentialState`（AVAILABLE/UNAVAILABLE），不下发 sys 账号或任何秘密；`sys_credential_id` 仅供受控写路径识别版本。
 - 已完成：OpenAPI `DataSourceWrite` 增加 `sysUser`/`sysPassword`（密码 writeOnly）；createRequestDigest 只以 sys 存在性参与幂等摘要。
 - 测试：credential 信封 secretType 绑定与篡改负例；store sys 生命周期（创建成对/轮换/清除/REVOKED/冲突拒绝）；前端成对校验用例。
-- 边界：sys 凭据的短时解析与任务秘密槽位同机制（凭据安全契约 9.2 节）；`--add-extra-message` 等依赖 sys 凭据的能力保持关闭（待实测）；连接测试事实不受 sys 凭据变更影响。
+- 边界：sys 凭据的短时解析与任务秘密槽位同机制（凭据安全契约 9.2 节）；`--add-extra-message` 在 DDL 行为、当前 sys 权限预检查与任务秘密槽位绑定完成前保持关闭；连接测试事实不受 sys 凭据变更影响。
 
 - 连接测试（2026-08-10 扩展）：配置 sys 凭据的数据源在基础连接测试中额外验证 sys 租户认证（迁移 0016：data_source_connection_test_runs 增加 sys_credential_id/sys_credential_revision/sys_verification_status/sys_result_code）；Agent 在数据库验证后解析 SYS_CONNECTION 槽位（复用秘密槽位机制，sys 密码短时解密、零化）；浏览器测试结果投影 sysCredentialConfigured/sysVerificationStatus/sysResultCode；sys 结果与数据库结果相互独立，失败不阻断数据源启用；测试覆盖冻结/解析/回写全链路与未配置负例。
 
@@ -364,8 +364,6 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
   - `--where`：条件筛选实测生效（109 数据行 vs 全表 1,000 行）。
   - `--retry`：无保存点失败关闭（.dump.ckpt missing）；有效保存点续跑与原快照绑定并入 EX-I8，完成前保持 VALIDATION_GATED。
 - 已完成：实测发现 OBDUMPER 4.3.5（Hadoop 3.3.6）在 Windows 上会把盘符绝对路径解析为错误的本地文件 URI（Wrong FS），`-f`/`--log-path` 必须相对路径——控制面/Agent 正式任务路径传递需在平台适配层核对（遗留核对项）。
-- 待第二批：时间戳值格式（--date-value-format 等 10 个）、--partition（使用合成分区表验证）、--exclude-data-types/--enable-hidden-pk、对象类型 13 个；--add-extra-message 依赖 sys 凭据真实有效性验证。
-- 接入状态：定版参数的产品接入（v6 元数据/控制面/向导）待推进。
 
 ### EX-I7 剩余参数第一批产品接入（2026-08-11 交付）
 
@@ -373,4 +371,12 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 - 已完成：控制面归一化与发射 --compact-schema/--where/--snapshot，并对 where 非明确表范围、snapshot 与闪回组合、纯视图 compact-schema 失败关闭；--weak-read/--retry 在专用预检查与恢复链路完成前返回 422。
 - 已完成：向导只接入当前可提交的紧凑 Schema、条件筛选和一致性快照；条件筛选仅明确表范围活动，纯视图不显示紧凑 Schema，未开放备库弱读和新建任务保存点续跑。
 - 已完成：控制面与前端正负例、元数据状态和文档同步；当前第一批产品接入为 3 项 ENABLED、2 项 VALIDATION_GATED。
-- 待第二批：时间戳值格式、--partition/--exclude-data-types/--enable-hidden-pk、对象类型 13 个、--add-extra-message（依赖 sys 凭据真实有效性）。
+
+### EX-I7 剩余参数第二批产品接入（2026-08-13 交付）
+
+- 已完成：第二批受控实测（[证据](evidence/exi7-remaining-parameters-2026-08-13.md)）观察到 MySQL DATE/DATETIME 格式效果、单/多 HASH 分区筛选效果和 decimal 类型列排除效果；其他时间格式、隐藏主键和附加对象信息仅确认工具接受，未将“退出码为 0”当作行为或权限验收。
+- 已完成：v7 元数据登记 13 个定义（时间格式 9 个 EX-F055~F060/F062~F064 + --partition EX-F072 + --exclude-data-types EX-F075 + --enable-hidden-pk EX-F077 + --add-extra-message EX-F066），additions 41→54、定义 59→72；仅 --date-value-format/--datetime-value-format/--partition/--exclude-data-types 为 ENABLED，其余 9 项保持 VALIDATION_GATED。--preserve-zero-datetime（EX-F061）未实测且不在 v7 定义中。
+- 已完成：store 以类型化结构登记第二批字段；控制面仅发射上述 4 项，并校验 MySQL 兼容模式、CSV/CUT 数据内容、分区与 query SQL 互斥、受限类型名及可见 ASCII 格式串。隐藏主键缺表结构/版本/权限预检查、附加对象信息缺当前 sys 权限预检查与秘密槽位绑定，均返回 422。
+- 已完成：向导仅在 MySQL CSV/CUT 数据内容显示并提交 DATE/DATETIME 两个格式字段，同时接入分区筛选和类型排除；隐藏主键、附加对象信息及其余时间格式不展示、不提交并清理残留值。
+- 已完成：v7 使用修正后的 `--table` 长参数；泛化生成器保留冻结 v6 目录用于历史草稿预览、预检查与提交重放。空日志路径保持 OBDUMPER 默认行为，不由控制面跨平台派生。
+- 待后续：补齐 TIME/TIMESTAMP 类型列和 Oracle 模式行为证据；实现隐藏主键的表结构/版本/权限预检查；确认附加对象信息的 DDL 行为并绑定当前 sys 权限与秘密槽位；验证对象类型 13 项中测试库不存在的对象。

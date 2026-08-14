@@ -44,4 +44,4 @@
 - `--compact-schema` 的差异效果需要包含注释、索引、分区策略复杂对象的目标库才能证伪（当前测试对象为紧凑形态）；语义已由官方 help 确认，接入后不影响无差异场景。
 - `--retry` 的"从保存点续跑"行为：测试数据量较小（全量约 1.5 万行、数秒完成），无法稳定制造保存点；该行为并入 EX-I8 `dump.ckpt` 继续功能，在受控的大数据或慢导出环境验证。
 - 第二批待实测：时间戳值格式（--date-value-format 等 10 个，使用含日期/时间列的合成表）、`--partition`（使用合成分区表）、`--exclude-data-types`/`--enable-hidden-pk`（需对应合成表结构）、对象类型 13 个（需核对测试库对象存在性）。
-- `--add-extra-message`：映射文档标 ENABLED 但 v6 元数据未接入；依赖 sys 凭据可用性（数据源 sysCredentialState=AVAILABLE 信号已就绪），接入时需验证 sys 凭据真实有效。
+- `--add-extra-message`：本次验证时映射文档曾标 ENABLED 但 v6 元数据未接入；后续第二批仅确认工具接受，DDL 行为、当前 sys 权限预检查与任务秘密槽位绑定仍未完成，现行状态保持 VALIDATION_GATED（见 2026-08-13 第二批证据）。

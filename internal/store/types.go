@@ -54,7 +54,7 @@ type DraftUpdate struct {
 	ConfigFingerprint string
 	InvalidationJSON  string
 	UpdatedAt         time.Time
-	// ConfigVersion 标记更新后草稿配置的版本（v5 或 v6）。
+	// ConfigVersion 标记更新后草稿配置的结构版本（v5 或 v6），不等同于参数元数据版本。
 	ConfigVersion string
 	// 结构化子配置 JSON，仅 v6 草稿写入非空值；v5 更新时重置为 '{}'。
 	ObjectScopeJSON       string
@@ -760,10 +760,28 @@ type ContentSelection struct {
 
 // DataFormat 表达数据格式及专属序列化参数。
 // CsvOptions 与 CutOptions 采用类型化结构而非自由 map，避免任意键值进入草稿与快照。
+// TimestampFormats 登记 EX-I7 第二批时间值格式字段；只有已取证的字段会进入命令，
+// 其余字段保留类型化解码并由控制面失败关闭，避免未知键绕过显式门禁。
 type DataFormat struct {
-	FormatKind string     `json:"formatKind"` // CSV | CUT | SQL | POS | PARQUET | ORC | AVRO
-	CsvOptions CsvOptions `json:"csvOptions,omitempty"`
-	CutOptions CutOptions `json:"cutOptions,omitempty"`
+	FormatKind       string                `json:"formatKind"` // CSV | CUT | SQL | POS | PARQUET | ORC | AVRO
+	CsvOptions       CsvOptions            `json:"csvOptions,omitempty"`
+	CutOptions       CutOptions            `json:"cutOptions,omitempty"`
+	TimestampFormats TimestampFormatConfig `json:"timestampFormats,omitempty"`
+}
+
+// TimestampFormatConfig 表达时间值格式（EX-F055~F060、EX-F062~F064）。
+// 仅 MySQL DATE/DATETIME 两项已观察到输出效果；其他字段尚缺行为或 Oracle 场景证据，
+// 继续保持 VALIDATION_GATED。--preserve-zero-datetime（EX-F061）未进入该结构。
+type TimestampFormatConfig struct {
+	DateValueFormat         string `json:"dateValueFormat,omitempty"`
+	TimeValueFormat         string `json:"timeValueFormat,omitempty"`
+	DateTimeValueFormat     string `json:"datetimeValueFormat,omitempty"`
+	TimestampValueFormat    string `json:"timestampValueFormat,omitempty"`
+	TimestampTzValueFormat  string `json:"timestampTzValueFormat,omitempty"`
+	TimestampLtzValueFormat string `json:"timestampLtzValueFormat,omitempty"`
+	NlsDateFormat           string `json:"nlsDateFormat,omitempty"`
+	NlsTimestampFormat      string `json:"nlsTimestampFormat,omitempty"`
+	NlsTimestampTzFormat    string `json:"nlsTimestampTzFormat,omitempty"`
 }
 
 // CsvOptions 是 EX-I3 已启用的 CSV 序列化参数集合；仅数据格式为 CSV 时参与活动，
@@ -831,9 +849,10 @@ type FilterConfig struct {
 	ExcludeColumnNames    []string `json:"excludeColumnNames,omitempty"`
 	ExcludeDataTypes      []string `json:"excludeDataTypes,omitempty"`
 	ExcludeVirtualColumns *bool    `json:"excludeVirtualColumns,omitempty"`
-	EnableHiddenPk        *bool    `json:"enableHiddenPk,omitempty"`
-	FlashbackScn          *int64   `json:"flashbackScn,omitempty"`
-	FlashbackTimestamp    string   `json:"flashbackTimestamp,omitempty"`
+	// EnableHiddenPk 尚缺表结构、版本与权限预检查，当前携带 true 时失败关闭。
+	EnableHiddenPk     *bool  `json:"enableHiddenPk,omitempty"`
+	FlashbackScn       *int64 `json:"flashbackScn,omitempty"`
+	FlashbackTimestamp string `json:"flashbackTimestamp,omitempty"`
 	// Snapshot 是 EX-I7 一致性快照（2026-08-11 实测为无值 flag：--snapshot 导出最近一次合并版本快照数据）。
 	Snapshot *bool `json:"snapshot,omitempty"`
 	WeakRead *bool `json:"weakRead,omitempty"`
@@ -841,7 +860,8 @@ type FilterConfig struct {
 
 // DDLBehavior 表达 DDL 行为参数。
 type DDLBehavior struct {
-	DropObject      *bool  `json:"dropObject,omitempty"`
+	DropObject *bool `json:"dropObject,omitempty"`
+	// AddExtraMessage 尚缺 DDL 行为、sys 权限事实和秘密槽位绑定，当前携带 true 时失败关闭。
 	AddExtraMessage *bool  `json:"addExtraMessage,omitempty"`
 	RetainSchema    *bool  `json:"retainSchema,omitempty"`
 	CompactSchema   *bool  `json:"compactSchema,omitempty"`

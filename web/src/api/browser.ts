@@ -292,6 +292,11 @@ export interface FilterOptions {
   readonly querySql?: string
   // EX-I7 条件筛选（2026-08-11 实测定版）：--where，与 querySql 互斥。
   readonly where?: string
+  // --partition 与 querySql 互斥，--exclude-data-types 为数据内容筛选；
+  // enableHiddenPk 保留用于既有草稿解码，浏览器在专用预检查完成前不得构造或提交。
+  readonly partition?: string
+  readonly excludeDataTypes?: readonly string[]
+  readonly enableHiddenPk?: boolean
   readonly includeColumnNames?: readonly string[]
   readonly excludeColumnNames?: readonly string[]
   readonly excludeVirtualColumns?: boolean
@@ -300,6 +305,20 @@ export interface FilterOptions {
   // EX-I7 一致性（2026-08-11 实测定版）：--snapshot 一致性快照、--weak-read 备库弱读。
   readonly snapshot?: boolean
   readonly weakRead?: boolean
+}
+
+// TimestampFormatsOptions 保留九个 OpenAPI 已解码字段；浏览器当前仅向 MySQL CSV/CUT 数据导出发送
+// dateValueFormat 与 datetimeValueFormat，其余字段在兼容性验证完成前必须保持关闭。
+export interface TimestampFormatsOptions {
+  readonly dateValueFormat?: string
+  readonly timeValueFormat?: string
+  readonly datetimeValueFormat?: string
+  readonly timestampValueFormat?: string
+  readonly timestampTzValueFormat?: string
+  readonly timestampLtzValueFormat?: string
+  readonly nlsDateFormat?: string
+  readonly nlsTimestampFormat?: string
+  readonly nlsTimestampTzFormat?: string
 }
 
 export interface PerformanceOptions {
@@ -317,12 +336,14 @@ export interface PerformanceOptions {
 // EX-I6 对象存储（2026-08-07）：输出目标类型；对象存储要求受控 URI（凭据走执行槽位，不进 URI）。
 export type ExportOutputKind = 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS'
 
-// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema，仅 DDL 内容时携带；
-// 紧凑 Schema（2026-08-11 实测定版）同样仅 DDL 内容；其余 DDL 行为（附加对象信息/序列策略）尚未取证或依赖 sys 凭据，保持关闭。
+// 前置 DROP 与保留 Schema 仅 DDL 内容时携带，紧凑 Schema 同样仅 DDL 内容；
+// addExtraMessage 保留用于既有草稿解码，需完成 sys 权限预检查前浏览器保持关闭。
 export interface DDLBehaviorOptions {
   readonly dropObject?: boolean
   readonly retainSchema?: boolean
   readonly compactSchema?: boolean
+  // 附加对象信息的浏览器提交仍由 sys 权限预检查门禁，当前不构造该字段。
+  readonly addExtraMessage?: boolean
 }
 
 export interface GeneralizedExportConfig {
@@ -332,6 +353,7 @@ export interface GeneralizedExportConfig {
     readonly formatKind: ExportDataFormatKind
     readonly csvOptions?: CsvOptions
     readonly cutOptions?: CutOptions
+    readonly timestampFormats?: TimestampFormatsOptions
   }
   readonly outputConfig: {
     readonly outputKind: ExportOutputKind
@@ -356,7 +378,7 @@ export interface GeneralizedExportConfig {
   readonly ddlBehavior?: DDLBehaviorOptions
 }
 
-// ExportDraftInput 是向导提交的 v6 泛化草稿请求；v5 扁平形态仅由历史兼容路径使用。
+// ExportDraftInput 是向导提交的当前泛化草稿请求；v5 扁平形态仅由历史兼容路径使用。
 export interface ExportDraftInput {
   readonly configVersion: 'v6'
   readonly dataSourceId: string

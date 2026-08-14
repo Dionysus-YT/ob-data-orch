@@ -360,9 +360,9 @@
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State |
 |---|---|---|---|---|
-| `--date-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--date-value-format` | NORMAL | LOW | VERIFIED（2026-08-13 MySQL DATE 列格式生效） | ENABLED |
 | `--time-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
-| `--datetime-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--datetime-value-format` | NORMAL | LOW | VERIFIED（2026-08-13 MySQL DATETIME 列格式生效） | ENABLED |
 | `--timestamp-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
 | `--timestamp-tz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
 | `--timestamp-ltz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
@@ -378,15 +378,15 @@
 |---|---|---|---|---|
 | `--query-sql` | NORMAL | HIGH | VERIFIED | ENABLED |
 | `--where` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测：行数筛选生效） | ENABLED |
-| `--partition` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--partition` | NORMAL | LOW | VERIFIED（2026-08-13 单/多 HASH 分区行数生效） | ENABLED |
 | `--include-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED |
 | `--exclude-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED |
-| `--exclude-data-types` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--exclude-data-types` | NORMAL | LOW | VERIFIED（2026-08-13 decimal 列排除生效） | ENABLED |
 | `--exclude-virtual-columns` | NORMAL | LOW | VERIFIED | ENABLED |
 | `--exclude-table` | IDENTIFIER | LOW | VERIFIED | ENABLED |
-| `--enable-hidden-pk` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED |
+| `--enable-hidden-pk` | NORMAL | MEDIUM | CONFLICT_PENDING（工具接受；隐藏主键行为与前置校验未验证） | VALIDATION_GATED |
 | `--fetch-size` | NORMAL | LOW | VERIFIED | ENABLED |
-| `--add-extra-message` | NORMAL | MEDIUM | VERIFIED | ENABLED |
+| `--add-extra-message` | NORMAL | MEDIUM | CONFLICT_PENDING（工具接受；行为与 sys 权限链未验证） | VALIDATION_GATED |
 | `--retain-empty-files` | NORMAL | LOW | VERIFIED | ENABLED |
 
 ### 9.14 高级选项 · 功能选项 · 错误处理（6 个）
@@ -421,8 +421,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 65 | 59.6% |
-| VALIDATION_GATED | 30 | 27.5% |
+| ENABLED | 68 | 62.4% |
+| VALIDATION_GATED | 27 | 24.8% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |

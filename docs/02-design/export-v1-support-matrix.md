@@ -154,9 +154,9 @@
 
 | 参数 | sensitivity | riskLevel | evidenceState | v1State | 说明 |
 |---|---|---|---|---|---|
-| `--date-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT，兼容模式相关 |
-| `--time-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT + MySQL |
-| `--datetime-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT + MySQL |
+| `--date-value-format` | NORMAL | LOW | VERIFIED（2026-08-13 MySQL DATE 列格式生效） | ENABLED | CSV/CUT + MySQL |
+| `--time-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 工具接受但缺少 TIME 列行为证据 |
+| `--datetime-value-format` | NORMAL | LOW | VERIFIED（2026-08-13 MySQL DATETIME 列格式生效） | ENABLED | CSV/CUT + MySQL |
 | `--timestamp-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT |
 | `--timestamp-tz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT + Oracle |
 | `--timestamp-ltz-value-format` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | CSV/CUT + Oracle |
@@ -172,15 +172,15 @@
 |---|---|---|---|---|---|
 | `--query-sql` | NORMAL | HIGH | VERIFIED | ENABLED | 受限专家能力：CAP_SENSITIVE_COMMAND + 二次确认；纯文本输入（不提供 SQL 编辑器）；file:// 不开放；与 where/partition 互斥 |
 | `--where` | NORMAL | MEDIUM | VERIFIED（2026-08-11 实测） | ENABLED | 条件筛选，行数生效（109 vs 1,000） |
-| `--partition` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 分区筛选，二级分区规则待确认 |
+| `--partition` | NORMAL | LOW | VERIFIED（2026-08-13 单/多 HASH 分区行数生效） | ENABLED | 分区筛选；与 query SQL 互斥 |
 | `--include-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED | 列筛选 |
 | `--exclude-column-names` | IDENTIFIER | LOW | VERIFIED | ENABLED | 列排除，与控制文件互斥 |
-| `--exclude-data-types` | NORMAL | LOW | OFFICIAL_ONLY | VALIDATION_GATED | 数据类型排除，兼容模式条件待确认 |
+| `--exclude-data-types` | NORMAL | LOW | VERIFIED（2026-08-13 decimal 列排除生效） | ENABLED | 数据类型排除；类型名使用受限字符集 |
 | `--exclude-virtual-columns` | NORMAL | LOW | VERIFIED | ENABLED | 排除生成列 |
 | `--exclude-table` | IDENTIFIER | LOW | VERIFIED | ENABLED | 排除表 |
-| `--enable-hidden-pk` | NORMAL | MEDIUM | OFFICIAL_ONLY | VALIDATION_GATED | 隐藏主键，版本/权限条件待确认 |
+| `--enable-hidden-pk` | NORMAL | MEDIUM | CONFLICT_PENDING（工具接受；隐藏主键行为与前置校验未验证） | VALIDATION_GATED | 表结构、版本与权限预检查待完成 |
 | `--fetch-size` | NORMAL | LOW | VERIFIED | ENABLED | 游标抓取行数（官方正文归列黑白名单筛选节） |
-| `--add-extra-message` | NORMAL | MEDIUM | VERIFIED | ENABLED | 附加对象信息，依赖 sys 权限 |
+| `--add-extra-message` | NORMAL | MEDIUM | CONFLICT_PENDING（工具接受；行为与 sys 权限链未验证） | VALIDATION_GATED | 附加对象信息；当前 sys 权限预检查和秘密槽位绑定待完成 |
 | `--retain-empty-files` | NORMAL | LOW | VERIFIED | ENABLED | 空结果文件保留 |
 
 ### 2.14 高级选项 · 功能选项 · 错误处理（6 个）
@@ -215,8 +215,8 @@
 
 | v1State | 参数数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 65 | 59.6% |
-| VALIDATION_GATED | 30 | 27.5% |
+| ENABLED | 68 | 62.4% |
+| VALIDATION_GATED | 27 | 24.8% |
 | HIDDEN | 14 | 12.8% |
 | BLOCKED | 0 | 0% |
 | **合计** | **109** | **100%** |
@@ -273,7 +273,7 @@
 | EX-F027 | 日志路径 | ENABLED | 当前已实现 |
 | EX-F028 | 扁平目录 | ENABLED | --no-nested-dir |
 | EX-F029 | 控制文件目录 | ENABLED（待产品接入） | 仅 POS 显示；用户提供 / 自动生成双来源（2026-08-07 确认） |
-| EX-F030 | 对象存储临时目录 | VALIDATION_GATED | 空间预检查待验证 |
+| EX-F030 | 对象存储临时目录 | ENABLED | `--tmp-path` 已接入；对象存储凭据与真实网络/空间预检查仍按各自门禁处理 |
 | EX-F031 | 文件拆分 | ENABLED（2026-08-10 接入） | --block-size 显式传值已实测 MB/ROW 生效；默认值冲突保留；结构化格式不适用 |
 | EX-F032 | 导出总量上限 | ENABLED | --max-file-size |
 | EX-F033 | 空结果文件 | ENABLED | --retain-empty-files |
@@ -296,7 +296,7 @@
 | EX-F045 | CSV 列包围符 | ENABLED | --column-quote |
 | EX-F046 | CSV 包围模式 | ENABLED | --column-quote-mode |
 | EX-F047 | 转义字符 | ENABLED | --escape-character |
-| EX-F048 | CUT 列分隔字符串 | ENABLED（待产品接入） | --column-splitter，CUT 专属（POS 已定版为独立 --pos） |
+| EX-F048 | CUT 列分隔字符串 | ENABLED | --column-splitter，CUT 专属（POS 为独立 --pos） |
 | EX-F049 | 行分隔符 | ENABLED | --line-separator |
 | EX-F050 | 行尾分隔符 | ENABLED | --trail-delimiter |
 | EX-F051 | NULL 替换 | ENABLED | --null-string |
@@ -308,9 +308,9 @@
 
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
-| EX-F055 | DATE 值格式 | VALIDATION_GATED | 兼容模式相关 |
-| EX-F056 | TIME 值格式 | VALIDATION_GATED | MySQL 专属 |
-| EX-F057 | DATETIME 值格式 | VALIDATION_GATED | MySQL 专属 |
+| EX-F055 | DATE 值格式 | ENABLED | MySQL DATE 列格式效果已实测；仅 CSV/CUT 数据内容活动 |
+| EX-F056 | TIME 值格式 | VALIDATION_GATED | 工具接受但缺少 TIME 列行为证据 |
+| EX-F057 | DATETIME 值格式 | ENABLED | MySQL DATETIME 列格式效果已实测；仅 CSV/CUT 数据内容活动 |
 | EX-F058 | TIMESTAMP 值格式 | VALIDATION_GATED | 兼容模式相关 |
 | EX-F059 | TIMESTAMP TZ 值格式 | VALIDATION_GATED | Oracle 专属 |
 | EX-F060 | TIMESTAMP LTZ 值格式 | VALIDATION_GATED | Oracle 专属 |
@@ -324,7 +324,7 @@
 | ID | 字段 | supportState | 说明 |
 |---|---|---|---|
 | EX-F065 | 前置 DROP | ENABLED | 已接入（2026-08-10），高风险提示；仅 DDL 内容时随 ddl/ddl-csv 能力发射 |
-| EX-F066 | 附加对象信息 | ENABLED | 依赖 sys 凭据可用性，待接入 |
+| EX-F066 | 附加对象信息 | VALIDATION_GATED | DDL 行为、当前 sys 权限预检查与秘密槽位绑定待完成 |
 | EX-F067 | 保留 Schema | ENABLED | 已接入（2026-08-10），--retain-schema；仅 DDL 内容时发射 |
 | EX-F068 | 紧凑 Schema | ENABLED | 仅包含表 DDL 时活动；纯视图范围阻断 |
 | EX-F069 | 序列策略 | VALIDATION_GATED | 4.3.5 约束待确认 |
@@ -335,10 +335,10 @@
 |---|---|---|---|
 | EX-F070 | 自定义查询 | ENABLED | 受限专家能力：CAP_SENSITIVE_COMMAND + 二次确认；纯文本（不提供 SQL 编辑器）；file:// 不开放；与 where/partition 互斥 |
 | EX-F071 | 条件筛选 | ENABLED | 仅明确 `--table` 范围；与 query SQL 互斥 |
-| EX-F072 | 分区筛选 | VALIDATION_GATED | 二级分区规则待确认 |
+| EX-F072 | 分区筛选 | ENABLED | 单/多 HASH 分区实测生效；与 query SQL 互斥 |
 | EX-F073 | 包含列 | ENABLED | --include-column-names |
 | EX-F074 | 排除列 | ENABLED | --exclude-column-names |
-| EX-F075 | 排除数据类型 | VALIDATION_GATED | 兼容模式条件待确认 |
+| EX-F075 | 排除数据类型 | ENABLED | decimal 列排除实测生效；类型名使用受限字符集 |
 | EX-F076 | 排除生成列 | ENABLED | --exclude-virtual-columns |
 | EX-F077 | 使用隐藏主键 | VALIDATION_GATED | 版本/权限条件待确认 |
 | EX-F078 | 闪回 SCN | ENABLED | --flashback-scn |
@@ -361,8 +361,8 @@
 
 | supportState | 字段数量 | 占比 |
 |---|---:|---:|
-| ENABLED | 58 | 66.7% |
-| VALIDATION_GATED | 28 | 32.2% |
+| ENABLED | 67 | 77.0% |
+| VALIDATION_GATED | 19 | 21.8% |
 | HIDDEN | 1 | 1.1% |
 | BLOCKED | 0 | 0% |
 | **合计** | **87** | **100%** |

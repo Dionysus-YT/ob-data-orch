@@ -6,6 +6,7 @@ const completeValues: ExportDraftFormValues = {
   dataSourceId: 'source-1',
   nodeId: 'node-1',
   platform: 'WINDOWS_AMD64',
+  compatibilityMode: 'MYSQL',
   database: 'synthetic_db',
   scopeKind: 'SPECIFIED',
   objectType: 'TABLE',
@@ -58,6 +59,19 @@ const completeValues: ExportDraftFormValues = {
   dropObject: false,
   retainSchema: false,
   compactSchema: false,
+  addExtraMessage: false,
+  partition: '',
+  excludeDataTypes: '',
+  enableHiddenPk: false,
+  dateValueFormat: '',
+  timeValueFormat: '',
+  datetimeValueFormat: '',
+  timestampValueFormat: '',
+  timestampTzValueFormat: '',
+  timestampLtzValueFormat: '',
+  nlsDateFormat: '',
+  nlsTimestampFormat: '',
+  nlsTimestampTzFormat: '',
 }
 
 describe('泛化导出草稿输入', () => {
@@ -459,6 +473,77 @@ describe('泛化导出草稿输入', () => {
       expect(legacyResidue.input.config.filterConfig).not.toHaveProperty('weakRead')
       expect(legacyResidue.input.config.performanceConfig).toMatchObject({ thread: 4 })
       expect(legacyResidue.input.config.performanceConfig).not.toHaveProperty('retry')
+    }
+  })
+
+  // 分区筛选与类型排除已验证；隐藏主键必须在专用预检查完成前保持浏览器门禁。
+  it('为指定表数据发送分区筛选与类型排除，并拒绝越界与隐藏主键残留', () => {
+    const table = validateExportDraftInput({ ...completeValues, partition: 'p0,p2', excludeDataTypes: 'BLOB,decimal' })
+    expect(table).toMatchObject({ valid: true })
+    if (table.valid) {
+      expect(table.input.config.filterConfig).toMatchObject({ partition: 'p0,p2', excludeDataTypes: ['BLOB', 'decimal'] })
+      expect(table.input.config.filterConfig).not.toHaveProperty('enableHiddenPk')
+    }
+    // 分区筛选仅指定表数据：全部对象、视图与仅 DDL 均拒绝。
+    expect(validateExportDraftInput({ ...completeValues, scopeKind: 'ALL', objectNames: [], partition: 'p0' })).toMatchObject({ valid: false, message: expect.stringContaining('分区筛选') })
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', partition: 'p0' })).toMatchObject({ valid: false, message: expect.stringContaining('分区筛选') })
+    // 分区名与自定义查询互斥；非法分区名与类型名拒绝。
+    expect(validateExportDraftInput({ ...completeValues, partition: 'p0', querySql: 'select 1' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
+    expect(validateExportDraftInput({ ...completeValues, partition: 'p0; DROP' })).toMatchObject({ valid: false, message: expect.stringContaining('分区名') })
+    expect(validateExportDraftInput({ ...completeValues, excludeDataTypes: 'BLOB;DROP' })).toMatchObject({ valid: false, message: expect.stringContaining('数据类型名') })
+    expect(validateExportDraftInput({ ...completeValues, enableHiddenPk: true })).toMatchObject({ valid: false, message: expect.stringContaining('隐藏主键') })
+  })
+
+  it('仅为 MySQL CSV/CUT 数据内容发送 DATE/DATETIME 时间格式，并拒绝非 ASCII 空白与未验证字段', () => {
+    const csv = validateExportDraftInput({ ...completeValues, dateValueFormat: 'yyyy/MM/dd', datetimeValueFormat: 'yyyy/MM/dd HH:mm:ss' })
+    expect(csv).toMatchObject({ valid: true })
+    if (csv.valid) {
+      expect(csv.input.config.dataFormat).toMatchObject({ timestampFormats: { dateValueFormat: 'yyyy/MM/dd', datetimeValueFormat: 'yyyy/MM/dd HH:mm:ss' } })
+    }
+    const cut = validateExportDraftInput({ ...completeValues, formatKind: 'CUT', dateValueFormat: 'yyyy/MM/dd' })
+    expect(cut).toMatchObject({ valid: true })
+    // SQL、仅 DDL 与 Oracle 均不能携带时间格式；格式串拒绝注入字符与制表符、回车、换行。
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', dateValueFormat: 'yyyy/MM/dd' })).toMatchObject({ valid: false, message: expect.stringContaining('MySQL') })
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', dateValueFormat: 'yyyy/MM/dd' })).toMatchObject({ valid: false, message: expect.stringContaining('MySQL') })
+    expect(validateExportDraftInput({ ...completeValues, datetimeValueFormat: 'yyyy;DROP' })).toMatchObject({ valid: false, message: expect.stringContaining('不支持的字符') })
+    for (const invalidWhitespace of ['\t', '\r', '\n']) {
+      expect(validateExportDraftInput({ ...completeValues, dateValueFormat: `yyyy${invalidWhitespace}MM` })).toMatchObject({ valid: false, message: expect.stringContaining('ASCII 空格') })
+      expect(validateExportDraftInput({ ...completeValues, dateValueFormat: invalidWhitespace })).toMatchObject({ valid: false, message: expect.stringContaining('ASCII 空格') })
+    }
+    expect(validateExportDraftInput({ ...completeValues, dateValueFormat: ' yyyy/MM/dd' })).toMatchObject({ valid: false, message: expect.stringContaining('首尾') })
+    expect(validateExportDraftInput({ ...completeValues, dateValueFormat: 'yyyy/MM/dd ' })).toMatchObject({ valid: false, message: expect.stringContaining('首尾') })
+    for (const unverifiedTimestampFormat of [
+      { timeValueFormat: 'HH:mm:ss' },
+      { timestampValueFormat: 'yyyy-MM-dd HH:mm:ss' },
+      { timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
+      { timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss' },
+      { nlsDateFormat: 'yyyy-MM-dd' },
+      { nlsTimestampFormat: 'yyyy-MM-dd HH:mm:ss' },
+      { nlsTimestampTzFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
+    ] as const) {
+      expect(validateExportDraftInput({ ...completeValues, ...unverifiedTimestampFormat })).toMatchObject({ valid: false, message: expect.stringContaining('DATE 与 DATETIME') })
+    }
+    for (const oracleTimestampFormat of [
+      { dateValueFormat: 'yyyy/MM/dd' },
+      { timeValueFormat: 'HH:mm:ss' },
+      { datetimeValueFormat: 'yyyy/MM/dd HH:mm:ss' },
+      { timestampValueFormat: 'yyyy-MM-dd HH:mm:ss' },
+      { timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
+      { timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss' },
+      { nlsDateFormat: 'yyyy-MM-dd' },
+      { nlsTimestampFormat: 'yyyy-MM-dd HH:mm:ss' },
+      { nlsTimestampTzFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
+    ] as const) {
+      expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', ...oracleTimestampFormat })).toMatchObject({ valid: false, message: expect.stringContaining('MySQL') })
+    }
+  })
+
+  it('附加对象信息在 sys 权限预检查完成前对所有内容组合失败关闭', () => {
+    for (const contentKind of ['DATA_ONLY', 'DDL_ONLY', 'DDL_AND_DATA'] as const) {
+      expect(validateExportDraftInput({ ...completeValues, contentKind, addExtraMessage: true })).toMatchObject({
+        valid: false,
+        message: expect.stringContaining('sys 权限预检查'),
+      })
     }
   })
 })

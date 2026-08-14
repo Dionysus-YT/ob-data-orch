@@ -95,14 +95,32 @@ const jvmMemory = ref('')
 // EX-I7 文件拆分（2026-08-10）：--block-size（正整数 MB 或正整数+MB/ROW 后缀）。
 const blockSize = ref('')
 // 前置 DROP、保留 Schema 仅在 DDL 内容时生效；紧凑 Schema 还必须包含表 DDL。
+// 附加对象信息仍需 sys 权限预检查，浏览器不提供启用入口。
 const dropObject = ref(false)
 const retainSchema = ref(false)
 const compactSchema = ref(false)
+const addExtraMessage = ref(false)
+// 分区筛选仅指定表数据并与自定义查询互斥，类型排除仅数据内容。
+// 隐藏主键仍需对象、版本与权限预检查，浏览器不提供启用入口。
+const partition = ref('')
+const excludeDataTypes = ref('')
+const enableHiddenPk = ref(false)
+// 时间格式当前只允许 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME；其余字段必须保持清空。
+const dateValueFormat = ref('')
+const timeValueFormat = ref('')
+const datetimeValueFormat = ref('')
+const timestampValueFormat = ref('')
+const timestampTzValueFormat = ref('')
+const timestampLtzValueFormat = ref('')
+const nlsDateFormat = ref('')
+const nlsTimestampFormat = ref('')
+const nlsTimestampTzFormat = ref('')
 const dataOptionsActive = computed(() => contentKind.value !== 'DDL_ONLY')
 const whereSupported = computed(() => scopeKind.value === 'SPECIFIED' && objectType.value === 'TABLE')
+const partitionSupported = computed(() => contentKind.value !== 'DDL_ONLY' && scopeKind.value === 'SPECIFIED' && objectType.value === 'TABLE')
 const compactSchemaSupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || objectType.value === 'TABLE'))
 // EX-I4：序列化面板按数据格式适用；文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均有效。
-const hasFilterOptions = computed(() => Boolean(querySql.value.trim() || where.value.trim() || includeColumnNames.value.trim() || excludeColumnNames.value.trim() || excludeVirtualColumns.value || flashbackScn.value.trim() || flashbackTimestamp.value.trim() || snapshot.value))
+const hasFilterOptions = computed(() => Boolean(querySql.value.trim() || where.value.trim() || partition.value.trim() || excludeDataTypes.value.trim() || includeColumnNames.value.trim() || excludeColumnNames.value.trim() || excludeVirtualColumns.value || flashbackScn.value.trim() || flashbackTimestamp.value.trim() || snapshot.value))
 const hasPerformanceOptions = computed(() => Boolean(thread.value.trim() || pageSize.value.trim() || parallelMacro.value.trim() || fetchSize.value.trim() || jvmMemory.value.trim() || blockSize.value.trim()))
 const hasCsvOptions = computed(() => formatKind.value === 'CSV' && Boolean(skipHeader.value || withTrim.value || columnSeparator.value || columnQuote.value || columnQuoteMode.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
 const hasCutOptions = computed(() => formatKind.value === 'CUT' && Boolean(trailDelimiter.value || removeNewline.value || withTrim.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
@@ -128,6 +146,8 @@ const titles = ['选择数据源', '选择导出对象', '选择导出内容', '
 const eligibleSources = computed(() => sources.value.filter(isExportEligibleDataSource))
 const selectedSource = computed(() => eligibleSources.value.find((source) => source.id === selectedDataSourceID.value))
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeID.value))
+// 仅 MySQL CSV/CUT 数据导出开放两个已验证时间格式；Oracle 的九个字段均保持关闭。
+const timestampFormatsSupported = computed(() => selectedSource.value?.compatibilityMode === 'MYSQL' && contentKind.value !== 'DDL_ONLY' && (formatKind.value === 'CSV' || formatKind.value === 'CUT'))
 const displayedDraftConfig = computed(() => currentDraft.value?.config)
 const draftScopeSummary = computed(() => {
   const config = displayedDraftConfig.value
@@ -187,6 +207,7 @@ const draftValidation = computed(() => validateExportDraftInput({
   dataSourceId: selectedDataSourceID.value,
   nodeId: selectedNodeID.value,
   platform: selectedNode.value?.platform ?? '',
+  compatibilityMode: selectedSource.value?.compatibilityMode ?? '',
   database: database.value,
   scopeKind: scopeKind.value,
   objectType: objectType.value,
@@ -239,6 +260,19 @@ const draftValidation = computed(() => validateExportDraftInput({
   dropObject: dropObject.value,
   retainSchema: retainSchema.value,
   compactSchema: compactSchema.value,
+  addExtraMessage: addExtraMessage.value,
+  partition: partition.value,
+  excludeDataTypes: excludeDataTypes.value,
+  enableHiddenPk: enableHiddenPk.value,
+  dateValueFormat: dateValueFormat.value,
+  timeValueFormat: timeValueFormat.value,
+  datetimeValueFormat: datetimeValueFormat.value,
+  timestampValueFormat: timestampValueFormat.value,
+  timestampTzValueFormat: timestampTzValueFormat.value,
+  timestampLtzValueFormat: timestampLtzValueFormat.value,
+  nlsDateFormat: nlsDateFormat.value,
+  nlsTimestampFormat: nlsTimestampFormat.value,
+  nlsTimestampTzFormat: nlsTimestampTzFormat.value,
 }))
 const draftInput = computed(() => draftValidation.value.valid ? draftValidation.value.input : undefined)
 const draftValidationMessage = computed(() => draftValidation.value.valid ? '' : draftValidation.value.message)
@@ -266,6 +300,36 @@ let precheckPollTimer: ReturnType<typeof setTimeout> | undefined
 let precheckPollResolve: (() => void) | undefined
 let precheckPollVersion = 0
 
+// clearGatedParameters 清除尚未完成专用预检查的开关，避免状态切换后留下可提交残留。
+function clearGatedParameters() {
+  addExtraMessage.value = false
+  enableHiddenPk.value = false
+}
+
+// clearTimestampFormats 清除全部时间格式，Oracle 与未知兼容模式不得保留任何待验证字段。
+function clearTimestampFormats() {
+  dateValueFormat.value = ''
+  timeValueFormat.value = ''
+  datetimeValueFormat.value = ''
+  timestampValueFormat.value = ''
+  timestampTzValueFormat.value = ''
+  timestampLtzValueFormat.value = ''
+  nlsDateFormat.value = ''
+  nlsTimestampFormat.value = ''
+  nlsTimestampTzFormat.value = ''
+}
+
+// clearUnverifiedTimestampFormats 清除 MySQL 已验证 DATE/DATETIME 以外的七个字段。
+function clearUnverifiedTimestampFormats() {
+  timeValueFormat.value = ''
+  timestampValueFormat.value = ''
+  timestampTzValueFormat.value = ''
+  timestampLtzValueFormat.value = ''
+  nlsDateFormat.value = ''
+  nlsTimestampFormat.value = ''
+  nlsTimestampTzFormat.value = ''
+}
+
 watch(selectedSource, (source, previousSource) => {
   if (source?.id === previousSource?.id) return
   database.value = source?.defaultDatabase ?? ''
@@ -274,23 +338,31 @@ watch(selectedSource, (source, previousSource) => {
   objectNames.value = ['']
   excludeTablesText.value = ''
   contentKind.value = 'DATA_ONLY'
+  clearGatedParameters()
+  clearTimestampFormats()
   clearDraftState()
 })
 
-watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema, compactSchema], () => {
+watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema, compactSchema, addExtraMessage, partition, excludeDataTypes, enableHiddenPk, dateValueFormat, timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat, timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat], () => {
   // 任一配置变化都会作废已创建草稿并清除服务端错误提示。
   clearDraftState()
 }, { deep: true })
 
 watch(scopeKind, (kind) => {
   if (kind === 'ALL') excludeTablesText.value = ''
+  clearGatedParameters()
   // 条件筛选只可随指定表发送，切到全部对象或已选视图时清除残留。
-  if (kind !== 'SPECIFIED' || objectType.value !== 'TABLE') where.value = ''
+  if (kind !== 'SPECIFIED' || objectType.value !== 'TABLE') {
+    where.value = ''
+    partition.value = ''
+  }
 })
 
 watch(objectType, (type, previousType) => {
+  clearGatedParameters()
   if (type === 'VIEW') {
     where.value = ''
+    partition.value = ''
     if (contentKind.value !== 'DDL_ONLY') contentKind.value = 'DDL_ONLY'
   }
   // 视图被强制为仅 DDL 后切回表时，对称恢复默认的仅数据内容。
@@ -301,6 +373,18 @@ watch(objectType, (type, previousType) => {
 watch(compactSchemaSupported, (supported) => {
   if (!supported) compactSchema.value = false
 })
+
+// 分区筛选失去指定表数据前提时立即清值；时间格式仅保留 MySQL 的两个已验证字段。
+watch(partitionSupported, (supported) => {
+  if (!supported) partition.value = ''
+})
+watch(timestampFormatsSupported, (supported) => {
+  clearUnverifiedTimestampFormats()
+  if (!supported) {
+    dateValueFormat.value = ''
+    datetimeValueFormat.value = ''
+  }
+}, { immediate: true })
 
 watch(compress, (enabled) => {
   // 取消压缩时清除算法与等级值，避免禁用态控件保留旧值造成校验死锁。
@@ -316,6 +400,7 @@ watch(compressionAlgo, (algo) => {
 })
 
 watch(contentKind, (kind) => {
+  clearGatedParameters()
   if (kind === 'DDL_ONLY') {
     // 仅 DDL 时清除数据专属选项，避免残留值进入下一个草稿。
     skipHeader.value = false
@@ -349,11 +434,15 @@ watch(contentKind, (kind) => {
     parallelMacro.value = ''
     fetchSize.value = ''
     jvmMemory.value = ''
+    // 仅 DDL 时清除数据专属筛选与全部时间格式。
+    partition.value = ''
+    excludeDataTypes.value = ''
+    clearTimestampFormats()
   }
   // DDL + 数据只支持 CSV 数据格式：切换到该内容类型时重置非 CSV 格式，
   // 其余格式专属残留由 formatKind 监听器在离开对应格式时清理。
   if (kind === 'DDL_AND_DATA' && formatKind.value !== 'CSV') formatKind.value = 'CSV'
-  // EX-I7 DDL 行为：仅数据内容不携带前置 DROP/保留 Schema/紧凑 Schema，切换时清除残留。
+  // 仅数据内容不携带前置 DROP、保留 Schema 与紧凑 Schema，切换时清除残留。
   if (kind === 'DATA_ONLY') {
     dropObject.value = false
     retainSchema.value = false
@@ -756,6 +845,11 @@ function lastTestLabel(source: DataSourceSummary) {
                 <span class="tree-label">紧凑 Schema</span>
                 <label class="checkbox-label"><input v-model="compactSchema" type="checkbox" />--compact-schema（使用 show create table 检索文本，2026-08-11 受控实测）</label>
               </div>
+              <!-- 附加对象信息依赖尚未完成的 sys 权限预检查，不能提供可提交的启用入口。 -->
+              <div class="tree-row pending">
+                <span class="tree-label">附加对象信息</span>
+                <span class="tree-note">--add-extra-message 需 sys 权限预检查，当前保持关闭</span>
+              </div>
             </div>
           </details>
           <details class="tree-node">
@@ -778,7 +872,7 @@ function lastTestLabel(source: DataSourceSummary) {
               <div class="tree-row pending">
                 <span class="tree-label">附加对象信息</span>
                 <input type="checkbox" disabled />
-                <span class="tree-note">--add-extra-message，依赖 sys 凭据可用性，待接入</span>
+                <span class="tree-note">--add-extra-message 需当前 sys 权限预检查与秘密槽位绑定，当前保持关闭</span>
               </div>
             </div>
           </details>
@@ -1035,11 +1129,19 @@ function lastTestLabel(source: DataSourceSummary) {
               <span class="tree-label">闪回时间点 <span class="muted">（仅 Oracle）</span></span>
               <input v-model.trim="flashbackTimestamp" class="tree-input" :disabled="Boolean(querySql) || snapshot" placeholder="例如 2026-08-06 00:00:00" />
             </div>
-            <div class="tree-row pending">
-              <span class="tree-label">NLS / 日期时间值格式</span>
-              <span class="tree-note">待验证（--nls-date-format、--date-value-format 等）</span>
-            </div>
-            <p class="section-hint">--flashback-scn 已在步骤 4 文件格式节点配置；与自定义查询互斥。</p>
+            <!-- 仅 MySQL 的 DATE/DATETIME 已完成当前验证；Oracle 的九个字段均不能显示或提交。 -->
+            <template v-if="timestampFormatsSupported">
+              <div class="tree-row">
+                <span class="tree-label">DATETIME 值格式 <span class="muted">（--datetime-value-format）</span></span>
+                <input v-model.trim="datetimeValueFormat" class="tree-input" placeholder="例如 yyyy-MM-dd HH:mm:ss" />
+              </div>
+              <div class="tree-row">
+                <span class="tree-label">DATE 值格式 <span class="muted">（--date-value-format）</span></span>
+                <input v-model.trim="dateValueFormat" class="tree-input" placeholder="例如 yyyy-MM-dd" />
+              </div>
+              <p class="section-hint">仅 MySQL CSV/CUT 数据导出可使用 DATE 与 DATETIME 值格式；格式串只接受时间格式符号和 ASCII 空格。</p>
+            </template>
+            <p v-else class="section-hint">时间格式当前只支持 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME；Oracle 的九个时间格式字段待兼容性验证完成前保持关闭。--flashback-scn 已在步骤 4 文件格式节点配置。</p>
           </div>
         </details>
         <details v-if="dataOptionsActive" class="tree-node">
@@ -1053,6 +1155,20 @@ function lastTestLabel(source: DataSourceSummary) {
             <div v-if="whereSupported" class="tree-row">
               <span class="tree-label">条件筛选 <span class="muted">（--where）</span></span>
               <input v-model.trim="where" class="tree-input" :disabled="Boolean(querySql)" placeholder="例如 id > 100 AND status = 'active'" />
+            </div>
+            <!-- EX-I7 剩余参数第二批（2026-08-13 受控实测定版）：分区筛选仅指定表数据；与自定义查询互斥 -->
+            <div v-if="partitionSupported" class="tree-row">
+              <span class="tree-label">分区筛选 <span class="muted">（--partition）</span></span>
+              <input v-model.trim="partition" class="tree-input" :disabled="Boolean(querySql)" placeholder="例如 p0 或 p0,p2" />
+            </div>
+            <div class="tree-row">
+              <span class="tree-label">排除数据类型 <span class="muted">（--exclude-data-types）</span></span>
+              <input v-model.trim="excludeDataTypes" class="tree-input" placeholder="例如 BLOB,TEXT（逗号分隔）" />
+            </div>
+            <!-- 隐藏主键依赖对象、版本与权限预检查，不能提供可提交的启用入口。 -->
+            <div class="tree-row pending">
+              <span class="tree-label">使用隐藏主键 <span class="muted">（--enable-hidden-pk）</span></span>
+              <span class="tree-note">需对象、版本与权限预检查，当前保持关闭</span>
             </div>
             <div class="tree-row">
               <span class="tree-label">一致性 <span class="muted">（2026-08-11 实测）</span></span>

@@ -39,6 +39,9 @@ type Generator struct {
 	capabilityVersion string
 	definitions       []parammeta.Definition
 	byName            map[string]parammeta.Definition
+	// versions 只存在于泛化生成器入口，用于按草稿冻结的元数据版本重放历史命令。
+	// 子生成器不再持有该映射，避免递归分派或把旧版本当作新建草稿默认值。
+	versions map[string]*Generator
 }
 
 func NewDefault() (*Generator, error) {
@@ -49,14 +52,30 @@ func NewDefault() (*Generator, error) {
 	return newGenerator(catalog)
 }
 
-// NewGeneralized 构建泛化能力生成器（v6 已取证子集）。
-// 该生成器不固定单一能力版本，按请求 capabilityVersion 筛选参数子集。
+// NewGeneralized 构建现行 v7 泛化生成器，并加载只用于历史草稿重放的冻结 v6 目录。
+// 新请求默认由调用方声明 v7；只有携带已冻结 v6 metadataVersion 的请求才会分派到旧目录。
 func NewGeneralized() (*Generator, error) {
 	catalog, err := parammeta.LoadGeneralized()
 	if err != nil {
 		return nil, err
 	}
-	return newGenerator(catalog)
+	current, err := newGenerator(catalog)
+	if err != nil {
+		return nil, err
+	}
+	legacyCatalog, err := parammeta.LoadLegacyGeneralized()
+	if err != nil {
+		return nil, err
+	}
+	legacy, err := newGenerator(legacyCatalog)
+	if err != nil {
+		return nil, err
+	}
+	current.versions = map[string]*Generator{
+		current.metadataVersion: current,
+		legacy.metadataVersion:  legacy,
+	}
+	return current, nil
 }
 
 func newGenerator(catalog metadataCatalog) (*Generator, error) {
@@ -104,6 +123,11 @@ func newGenerator(catalog metadataCatalog) (*Generator, error) {
 }
 
 func (g *Generator) Generate(request Request) (Result, error) {
+	if len(g.versions) != 0 && request.MetadataVersion != g.metadataVersion {
+		if versioned, ok := g.versions[request.MetadataVersion]; ok {
+			return versioned.Generate(request)
+		}
+	}
 	issues := g.validateRequestIdentity(request)
 	provided := make(map[string]FieldInput, len(request.Fields))
 	for _, field := range request.Fields {
