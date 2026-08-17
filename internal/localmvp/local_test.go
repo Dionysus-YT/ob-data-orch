@@ -187,6 +187,36 @@ func TestLocalMVPExportDraftPassesDependencyBoundary(t *testing.T) {
 	}
 }
 
+// TestDependenciesConfigureStorageCredentials 验证本机 MVP 已装配对象存储凭据管理（EX-I6 存储凭据槽位），
+// 避免 EX-V1 存储验证链路因装配遗漏退化为 503 API_DEPENDENCY_NOT_CONFIGURED。
+func TestDependenciesConfigureStorageCredentials(t *testing.T) {
+	database, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "local-mvp.db"))
+	if err != nil {
+		t.Fatalf("打开本机 MVP 数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := PrepareStore(context.Background(), database); err != nil {
+		t.Fatalf("PrepareStore() 失败: %v", err)
+	}
+	keyring, err := credential.NewKeyring(map[string][]byte{"local-mvp-root-v1": bytes.Repeat([]byte{7}, 32)})
+	if err != nil {
+		t.Fatalf("创建测试密钥环失败: %v", err)
+	}
+
+	dependencies := mustDependencies(t, database, keyring)
+	if dependencies.StorageCredentials == nil {
+		t.Fatal("本机 MVP 未装配对象存储凭据管理")
+	}
+	handler := controlplane.NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, dependencies)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/storage-credentials", nil)
+	request.RemoteAddr = "127.0.0.1:12000"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || bytes.Contains(response.Body.Bytes(), []byte("API_DEPENDENCY_NOT_CONFIGURED")) {
+		t.Fatalf("本机 MVP 存储凭据列表响应=%d，响应=%s", response.Code, response.Body.String())
+	}
+}
+
 // mustDependencies 统一将本机 MVP 启动依赖的初始化错误转换为测试失败。
 func mustDependencies(t *testing.T, database *store.Store, keyring *credential.Keyring) controlplane.Dependencies {
 	t.Helper()
