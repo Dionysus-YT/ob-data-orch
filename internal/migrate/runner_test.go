@@ -35,16 +35,16 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	if tableCount != 28 || strictCount != 28 {
-		t.Fatalf("schema tables = %d, strict tables = %d; want 28 and 28", tableCount, strictCount)
+	if tableCount != 30 || strictCount != 30 {
+		t.Fatalf("schema tables = %d, strict tables = %d; want 30 and 30", tableCount, strictCount)
 	}
 
 	var migrationCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 16 {
-		t.Fatalf("migration count = %d, want 16", migrationCount)
+	if migrationCount != 18 {
+		t.Fatalf("migration count = %d, want 18", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -395,6 +395,14 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read sixteenth migration: %v", err)
 	}
+	seventeenthMigration, err := migrations.Files.ReadFile("0017_add_storage_credentials.sql")
+	if err != nil {
+		t.Fatalf("read seventeenth migration: %v", err)
+	}
+	eighteenthMigration, err := migrations.Files.ReadFile("0018_task_derivation.sql")
+	if err != nil {
+		t.Fatalf("read eighteenth migration: %v", err)
+	}
 	tampered := fstest.MapFS{
 		"0001_initial.sql":                                    &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
 		"0002_add_data_source_odc_identity.sql":               &fstest.MapFile{Data: secondMigration},
@@ -412,6 +420,8 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0014_export_generalization.sql":                      &fstest.MapFile{Data: fourteenthMigration},
 		"0015_add_data_source_sys_credential.sql":             &fstest.MapFile{Data: fifteenthMigration},
 		"0016_add_connection_test_sys_verification.sql":       &fstest.MapFile{Data: sixteenthMigration},
+		"0017_add_storage_credentials.sql":                    &fstest.MapFile{Data: seventeenthMigration},
+		"0018_task_derivation.sql":                            &fstest.MapFile{Data: eighteenthMigration},
 	}
 	if err := ApplyFS(ctx, db, tampered); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("Apply() error = %v, want checksum mismatch", err)
