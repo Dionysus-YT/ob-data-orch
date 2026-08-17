@@ -141,27 +141,42 @@ if ((Get-FileHash -Algorithm SHA256 -LiteralPath $certificatePath).Hash -ne (Get
 }
 & $agentPackageScript -ControlPlaneCAFile $caPath
 
+# 本机二进制变更流程（AGENTS.md 6.1）：先停旧服务、删旧二进制，再构建新二进制并重启验证。
+# 运行中的旧进程会锁定二进制文件，且不得继续以旧实现对外服务。
 if (-not $SkipBuild) {
+    if (Test-ListeningPort -Port 8080) {
+        $existingControlPlane = Get-ListeningProcess -Port 8080
+        if (-not (Test-ExpectedControlPlaneProcess -Process $existingControlPlane)) {
+            throw '8080 端口已被非本系统控制面进程占用。'
+        }
+        Stop-Process -Id $existingControlPlane.Id -ErrorAction Stop
+        Wait-PortClosed -Port 8080 -Name '旧控制面'
+    }
+    # 先删除旧二进制（含历史 ~ 副本），再构建新二进制；不残留旧副本冒充可用二进制。
+    foreach ($staleBinary in @($controlPlanePath, "${controlPlanePath}~")) {
+        Remove-Item -LiteralPath $staleBinary -Force -ErrorAction SilentlyContinue
+    }
     Push-Location $repositoryRoot
     try {
         go build -trimpath -o $controlPlanePath ./cmd/control-plane
     } finally {
         Pop-Location
     }
+} else {
+    # -SkipBuild 不触碰二进制；仅当既有进程不是当前构建或不可用时才重启。
+    if (Test-ListeningPort -Port 8080) {
+        $existingControlPlane = Get-ListeningProcess -Port 8080
+        if (-not (Test-ExpectedControlPlaneProcess -Process $existingControlPlane)) {
+            throw '8080 端口已被非本系统控制面进程占用。'
+        }
+        if (-not (Test-ControlPlaneIsCurrent -Process $existingControlPlane) -or -not (Test-LocalMVPControlPlane)) {
+            Stop-Process -Id $existingControlPlane.Id -ErrorAction Stop
+            Wait-PortClosed -Port 8080 -Name '旧控制面'
+        }
+    }
 }
 if (-not (Test-Path -LiteralPath $controlPlanePath -PathType Leaf)) {
     throw '控制面二进制不存在。请不要使用 -SkipBuild，或先完成构建。'
-}
-
-if (Test-ListeningPort -Port 8080) {
-    $existingControlPlane = Get-ListeningProcess -Port 8080
-    if (-not (Test-ExpectedControlPlaneProcess -Process $existingControlPlane)) {
-        throw '8080 端口已被非本系统控制面进程占用。'
-    }
-    if (-not (Test-ControlPlaneIsCurrent -Process $existingControlPlane) -or -not (Test-LocalMVPControlPlane)) {
-        Stop-Process -Id $existingControlPlane.Id -ErrorAction Stop
-        Wait-PortClosed -Port 8080 -Name '旧控制面'
-    }
 }
 
 if (-not (Test-ListeningPort -Port 8080)) {

@@ -266,7 +266,7 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 
 ## 10. 首条切片最小表集
 
-`0001` 基线为 20 张窄表；应用当前 `0007` 后为 21 张窄表，不对应 21 个服务或模块：
+`0001` 基线为 20 张窄表；应用当前 `0007` 后为 21 张窄表，不对应 21 个服务或模块（EX-I6 切片经 `0014` 增加 `export_config_templates`，经 `0017` 增加对象存储凭据两表）：
 
 | 表 | 作用 | 关键约束 |
 |---|---|---|
@@ -291,8 +291,12 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 | `log_streams` | 来源流、epoch、期望序号、采集和完整性状态 | stream+epoch 唯一 |
 | `log_segments` | 分段文件标识、偏移范围、摘要、状态和保留期 | 不保存本地绝对路径或正文；封段不可变 |
 | `log_batches` | 已确认批次序号范围、摘要、段偏移和 Gap 摘要 | 同流同 firstSeq 唯一；冲突拒绝 |
+| `storage_credentials` | EX-I6 主体级对象存储凭据主表：displayName/provider/current_revision/revision（无任何秘密） | provider 只接受 OSS/S3/COS/OBS；创建/轮换受幂等键与 If-Match 乐观锁 |
+| `storage_credential_revisions` | EX-I6 access-key/secret-key 分别加密的独立信封表（AAD 绑定 storageCredentialId/credentialId/revision/secretType） | `(storage_credential_id, revision, secret_type)` 唯一；状态 ACTIVE/SUPERSEDED/REVOKED |
 
 已提交但尚无 `task_executions` 记录的任务派生为“等待调度”；领取成功后状态来自 `task_executions` 投影。任务状态不写回不可变 `tasks`，也不因列表查询临时修改历史快照。
+
+`tasks` 通过 `storage_credential_id/storage_credential_revision` 只引用对象存储凭据标识与修订；密钥绝不进入该表。EX-I6 存储预检查的检查结果与本地六项共用 `precheck_runs.result_json`，按输出类型为本地六项或存储六项两种受控形态之一（2026-08-14）。
 
 数据源连接测试使用单条当前 run、短租约和 Agent 回执保证控制面重启后的幂等与绑定复验；它不是通用任务或历史诊断表。仅已通过 G3 的 Agent JDBC 终态才能更新 `data_sources` 的最近测试摘要；G2 合成终态只用于协议验证，绝不成为启用或导出准入依据。`audit_events` 保存无秘密动作事实。Agent 心跳只更新当前事实，不保存无限心跳历史。显式日志缺口作为版本化 GAP 记录写入脱敏段，并在 `log_streams/log_batches` 保存摘要，不另建缺口表。
 

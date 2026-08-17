@@ -629,8 +629,8 @@ type ExportConfigTemplate struct {
 | 4 | 格式层 | FORMAT_COMPATIBILITY | 控制面参数元数据 | 格式/参数变化 | ENABLED |
 | 5 | 输出层 | OUTPUT_PATH | Agent 本机 | 路径/节点变化 | ENABLED |
 | 6 | 空间层 | OUTPUT_EMPTY | Agent 本机 | 节点变化 | ENABLED |
-| 7 | 存储层 | STORAGE_CONNECTIVITY | Agent 网络探测 | URI/凭据变化 | VALIDATION_GATED |
-| 8 | 存储层 | STORAGE_AUTH | Agent 网络探测 | URI/凭据变化 | VALIDATION_GATED |
+| 7 | 存储层 | STORAGE_CONNECTIVITY | Agent 网络探测 | URI/凭据变化 | 框架已实现；代码默认关闭，本机 MVP/Agent 包启动器持续授权并开启 |
+| 8 | 存储层 | STORAGE_AUTH | Agent 网络探测 | URI/凭据变化 | 框架已实现；真实探测默认关闭（EX-V1 授权） |
 | 9 | 资源层 | AVAILABLE_SPACE | Agent 本机 | 节点变化 | ENABLED |
 | 10 | 资源层 | NODE_RESOURCE | Agent 本机 | 节点变化 | ENABLED |
 | 11 | 风险层 | RISK_CONFIRMATION | 控制面 | 风险参数变化 | ENABLED |
@@ -650,7 +650,14 @@ type ExportConfigTemplate struct {
 - `export-odp-ddl-v1`：层 1/2/3/4/5/6/9/10/11（新增权限层）
 - `export-odp-full-csv-v1`：层 1/2/4/5/6/7/8/9/10/11（新增存储层）
 
-EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 对 SPECIFIED 范围逐对象运行冻结单对象 JDBC 探针（数据可读性是 DDL 可读性的保守超集），对 ALL 范围按数据库级可达性投影，逐对象枚举由工具运行时完成。层 3 SYS_PRIVILEGE 仅在 `--add-extra-message` 等 DDL 行为参数启用后才需要，EX-I2 未激活；层 7/8 存储层属对象存储切片（EX-I6+），输出仅 LOCAL 时不适用。
+EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 对 SPECIFIED 范围逐对象运行冻结单对象 JDBC 探针（数据可读性是 DDL 可读性的保守超集），对 ALL 范围按数据库级可达性投影，逐对象枚举由工具运行时完成。层 3 SYS_PRIVILEGE 仅在 `--add-extra-message` 等 DDL 行为参数启用后才需要，EX-I2 未激活。
+
+**EX-I6 存储层实施（2026-08-14）**：对象存储输出任务的预检查使用“存储形态清单”——`DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → AVAILABLE_SPACE → STORAGE_CONNECTIVITY → STORAGE_AUTH`（裁剪不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY；AVAILABLE_SPACE 转向 `--tmp-path` 卷，未指定时 UNKNOWN）。本地输出保持冻结六项不变。两项存储检查由 Agent 探测：
+
+- STORAGE_CONNECTIVITY：受控 TCP 端点可达性探测，仅在显式运行开关（`OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE=true`）开启时装配；Agent 二进制直接启动时默认 UNKNOWN。本机 MVP/Agent 包启动器固定开启该开关，运行启动器即视为对该 Agent 生命周期内受控 provider endpoint TCP 建连的持续授权，关闭开关或停止进程即撤销；探针不发送凭据或业务数据，该授权不扩展到 STORAGE_AUTH、工具执行或数据库操作。
+- STORAGE_AUTH：凭据有效性探测接口与失败关闭默认实现已就位，真实探测（四类云厂商签名协议）归 EX-V1；默认 UNKNOWN。
+
+任务提交门禁由结果驱动：对象存储输出要求两项存储检查均 PASSED（`STORAGE_PRECHECK_REQUIRED`），未启用探测时保持 UNKNOWN 并失败关闭。旧 `STORAGE_PRECHECK_UNAVAILABLE` 功能门禁已移除；STORAGE_AUTH 真实凭据取证仍须另行授权。
 
 ### 6.4 local-first 策略保持
 
@@ -701,7 +708,7 @@ EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 
 |---|---|---|
 | DATABASE_CONNECTION | 数据库密码 | ENABLED |
 | SYS_DATABASE_CONNECTION | sys 密码（DDL 场景） | ENABLED（DDL 切片） |
-| STORAGE_CREDENTIAL | 对象存储凭据（OSS/S3/COS/OBS） | VALIDATION_GATED |
+| STORAGE_CREDENTIAL | 对象存储凭据（OSS/S3/COS/OBS） | ENABLED（执行槽位，2026-08-14）；预检查凭据探测归 EX-V1 |
 
 每个 SecretSlot 保持当前生命周期：创建时加密 → 短租约解析 → 使用后销毁。
 
@@ -777,9 +784,17 @@ ManifestObject {
 - 不重新执行预检查（检查点内含继续语义）
 - 不满足条件时不提供继续选项
 
+**EX-I8 实施收敛（2026-08-14，合成验证）**：
+
+- Agent 在成功与失败路径都上报 `dump.ckpt` 存在性事实（失败路径作为失败终态后的迟到事实，由同一租约与连续序号接受）；控制面合并为 `result_summary_json`（`result/fileCount/totalBytes/files/checkpointPresent/observedAt`），任务详情投影受限结果摘要。
+- 派生任务模型：迁移 0018 增加 `tasks.derivation_kind`（REBUILD_FROM_CONFIG/RERUN_FROM_SCRATCH/CHECKPOINT_RESUME）与 `export_drafts.source_task_id/source_derivation`；`parent_task_id` 沿用 0014。
+- 基于原配置新建/从头重新执行：`POST /tasks/{id}:rebuild-draft` 从失败任务冻结快照重建可编辑 v6 草稿；从头执行提交时服务端强制 configFingerprint 与来源任务一致（否则 422 RERUN_CONFIGURATION_CHANGED）。
+- 检查点继续：`POST /tasks/{id}:resume-checkpoint` 资格 = 失败终态 + 结果摘要确认 dump.ckpt 存在 + 原预检查 SUCCEEDED/COMPLETE；新任务继承原快照并追加 `--retry`（服务端固定构造，不新增参数元数据版本），领取执行时复验数据源/凭据/节点/Agent 事实版本但豁免预检查 TTL。
+- 真实 `dump.ckpt` 续跑取证与结果清单的行数/校验和解析归 EX-V1；当前文件清单只含相对路径与字节数。
+
 ### 8.4 终态证据
 
-明确不以包装脚本退出码单独判断成功，必须结合：
+明确不以包装脚本退出码单独判断成功。本地输出必须结合：
 
 1. **受控进程退出码**：OBDUMPER 进程本身的退出码
 2. **工具终态日志**：工具输出的终态证据（完成/失败/中断）
@@ -792,6 +807,8 @@ ManifestObject {
 | 工具失败 | 非 0 | FAILED | 不完整 | FAILED |
 | 中断 | 任意 | ABORTED | dump.ckpt 存在 | INTERRUPTED（可继续） |
 | 未知 | 任意 | 缺失 | 不确定 | REQUIRES_RECONCILIATION |
+
+**对象存储便利性例外（2026-08-17）**：在 EX-V1 远端 MANIFEST/对象清单取证尚未接入 Agent 前，对象存储任务没有可枚举的本地输出目录。此阶段允许“受控 OBDUMPER 进程退出码 0 + Agent 上报固定 `TOOL_TERMINAL_OBSERVED=SUCCEEDED`”形成 `RESULT_FACTS_OBSERVED=VERIFIED`；`fileCount=0`、`totalBytes=0`、`files=[]`、`checkpointPresent=false`，不得伪造远端文件或检查点，也不得把该状态解读为远端对象逐项校验已通过。非零退出、进程/终态冲突、事件缺失仍按失败或待核对处理。EX-V1 接入远端 MANIFEST 后应移除此例外并恢复完整文件事实门禁。
 
 ---
 
