@@ -64,6 +64,13 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		},
 		"/agent/v1/data-source-connection-tests/{connectionTestId}:complete": {"post"},
 		"/agent/v1/execution-node-environment-checks/{checkId}:complete":     {"post"},
+		"/api/v1/storage-credentials":                                        {"get", "post"},
+		"/api/v1/storage-credentials/{storageCredentialId}:rotate":           {"post"},
+		"/api/v1/storage-credentials/{storageCredentialId}":                  {"delete"},
+		"/api/v1/tasks/{taskId}:rebuild-draft":                               {"post"},
+		"/api/v1/tasks/{taskId}:resume-checkpoint":                           {"post"},
+		"/api/v1/tasks/{taskId}:save-template":                               {"post"},
+		"/api/v1/export-config-templates/{templateId}:create-draft":          {"post"},
 	}
 	paths := object(t, spec, "paths")
 	if len(paths) != len(expected) {
@@ -87,8 +94,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 58 {
-		t.Fatalf("operation count = %d, want 58", operationCount)
+	if operationCount != 66 {
+		t.Fatalf("operation count = %d, want 66", operationCount)
 	}
 }
 
@@ -146,7 +153,8 @@ func TestOpenAPI任务详情读取使用独立安全投影(t *testing.T) {
 		"TaskOverviewRead":        {"configFingerprint", "command", "executionId"},
 		"TaskSnapshotRead":        {"filePath", "logPath", "credential", "command"},
 		"TaskCommandEvidenceRead": {"argv", "credential", "snapshot", "executionId"},
-		"TaskExecutionRead":       {"command", "snapshot", "processEvidence", "resultSummary"},
+		// EX-I8 起 resultSummary 是受控安全投影（相对路径/大小/检查点存在性），不再是禁止的原始证据。
+		"TaskExecutionRead": {"command", "snapshot", "processEvidence"},
 	}
 	for schemaName, fields := range forbidden {
 		properties := object(t, object(t, schemas, schemaName), "properties")
@@ -161,6 +169,81 @@ func TestOpenAPI任务详情读取使用独立安全投影(t *testing.T) {
 	if object(t, properties, "stageEvidence")["const"] != "UNAVAILABLE" || object(t, properties, "progressEvidence")["const"] != "UNAVAILABLE" {
 		t.Fatal("task execution must explicitly keep unsupported stage and progress evidence unavailable")
 	}
+	// EX-I8：结果摘要必须是受控安全投影——只含相对路径与大小，绝不含内容、校验和或绝对路径。
+	summaryRef := object(t, properties, "resultSummary")
+	if summaryRef["$ref"] != "#/components/schemas/ExecutionResultSummary" {
+		t.Fatalf("resultSummary must use the controlled summary schema: %#v", summaryRef)
+	}
+	summary := object(t, schemas, "ExecutionResultSummary")
+	if summary["additionalProperties"] != false {
+		t.Fatal("execution result summary must reject unknown fields")
+	}
+	assertRequiredProperties(t, summary, "result", "fileCount", "totalBytes", "files", "checkpointPresent", "observedAt")
+	assertExactStringEnum(t, object(t, object(t, summary, "properties"), "result"), []string{"VERIFIED", "FAILED"})
+	summaryProperties := object(t, summary, "properties")
+	for _, forbidden := range []string{"content", "checksum", "rowCount", "absolutePath", "outputPath", "contentType"} {
+		if _, found := summaryProperties[forbidden]; found {
+			t.Fatalf("execution result summary must not expose %s", forbidden)
+		}
+	}
+	file := object(t, schemas, "ExecutionResultFile")
+	if file["additionalProperties"] != false {
+		t.Fatal("execution result file must reject unknown fields")
+	}
+	assertRequiredProperties(t, file, "path", "size")
+	if object(t, object(t, file, "properties"), "path")["maxLength"] != float64(512) {
+		t.Fatal("execution result file path must keep the 512-char bound")
+	}
+}
+
+func TestOpenAPITaskDerivationSurface(t *testing.T) {
+	t.Parallel()
+	spec := loadOpenAPI(t)
+	components := object(t, spec, "components")
+	paths := object(t, spec, "paths")
+	schemas := object(t, components, "schemas")
+	responses := object(t, components, "responses")
+
+	rebuild := object(t, object(t, paths, "/api/v1/tasks/{taskId}:rebuild-draft"), "post")
+	if rebuild["x-idempotency"] != "REQUIRED" || !hasParameterReference(rebuild, "#/components/parameters/CsrfToken") || !hasParameterReference(rebuild, "#/components/parameters/IdempotencyKey") {
+		t.Fatalf("rebuild draft must require CSRF and idempotency: %#v", rebuild)
+	}
+	if responseReference(t, rebuild, "201") != "#/components/responses/TaskDerivedDraftCreated" {
+		t.Fatal("rebuild draft must use the derived-draft response")
+	}
+	resume := object(t, object(t, paths, "/api/v1/tasks/{taskId}:resume-checkpoint"), "post")
+	if resume["x-idempotency"] != "REQUIRED" || !hasParameterReference(resume, "#/components/parameters/CsrfToken") {
+		t.Fatalf("resume checkpoint must require CSRF and idempotency: %#v", resume)
+	}
+	if responseReference(t, resume, "201") != "#/components/responses/TaskCheckpointResumeCreated" {
+		t.Fatal("resume checkpoint must use the derived-task response")
+	}
+	assertNoStoreResponse(t, responses, "TaskDerivedDraftCreated")
+	assertNoStoreResponse(t, responses, "TaskCheckpointResumeCreated")
+
+	derivation := object(t, schemas, "TaskDerivationRequest")
+	if derivation["additionalProperties"] != false {
+		t.Fatal("task derivation request must reject unknown fields")
+	}
+	assertExactStringEnum(t, object(t, object(t, derivation, "properties"), "derivation"), []string{"REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH"})
+	resumeEnvelope := object(t, schemas, "TaskCheckpointResumeEnvelope")
+	if object(t, object(t, resumeEnvelope, "properties"), "derivationKind")["const"] != "CHECKPOINT_RESUME" {
+		t.Fatal("checkpoint resume envelope must fix the derivation kind")
+	}
+	// 派生响应绝不携带凭据、快照原文或命令。
+	for _, schemaName := range []string{"TaskDerivedDraftEnvelope", "TaskCheckpointResumeEnvelope"} {
+		envelope := object(t, schemas, schemaName)
+		properties := object(t, envelope, "properties")
+		for _, forbidden := range []string{"snapshot", "command", "argv", "credential", "config", "password"} {
+			if _, found := properties[forbidden]; found {
+				t.Fatalf("%s must not expose %s", schemaName, forbidden)
+			}
+		}
+	}
+	// 任务概览的派生关系成对出现且枚举受控。
+	overview := object(t, schemas, "TaskOverviewRead")
+	overviewProperties := object(t, overview, "properties")
+	assertExactStringEnum(t, object(t, overviewProperties, "derivationKind"), []string{"REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH", "CHECKPOINT_RESUME"})
 }
 
 func TestOpenAPI任务日志仅遮蔽秘密并保留运行上下文(t *testing.T) {
@@ -360,6 +443,67 @@ func TestOpenAPI数据源列表与详情用户名投影分离(t *testing.T) {
 	detailEnvelope := object(t, schemas, "DataSourceDetailEnvelope")
 	if fmt.Sprint(object(t, object(t, detailEnvelope, "properties"), "item")["$ref"]) != "#/components/schemas/DataSourceDetail" {
 		t.Fatal("data source detail envelope must use the authorized detail schema")
+	}
+}
+
+func TestOpenAPIStorageCredentialSurface(t *testing.T) {
+	t.Parallel()
+	spec := loadOpenAPI(t)
+	components := object(t, spec, "components")
+	paths := object(t, spec, "paths")
+	responses := object(t, components, "responses")
+	schemas := object(t, components, "schemas")
+
+	// 写请求体：provider 白名单 + 密钥 writeOnly，绝不回显。
+	write := object(t, schemas, "StorageCredentialWrite")
+	provider := object(t, object(t, write, "properties"), "provider")
+	assertExactStringEnum(t, provider, []string{"OSS", "S3", "COS", "OBS"})
+	for _, secret := range []string{"accessKey", "secretKey"} {
+		property := object(t, object(t, write, "properties"), secret)
+		if property["writeOnly"] != true {
+			t.Fatalf("storage credential %s must be writeOnly", secret)
+		}
+	}
+	// 安全投影绝不暴露密钥字段或信封材料。
+	item := object(t, schemas, "StorageCredentialListItem")
+	if item["additionalProperties"] != false {
+		t.Fatal("storage credential item must reject unregistered response fields")
+	}
+	assertRequiredProperties(t, item, "id", "displayName", "provider", "currentRevision", "revision", "updatedAt")
+	itemProperties := object(t, item, "properties")
+	for _, forbidden := range []string{"accessKey", "secretKey", "ciphertext", "nonce", "keyId", "credentialId"} {
+		if _, exists := itemProperties[forbidden]; exists {
+			t.Fatalf("storage credential item must not expose %s", forbidden)
+		}
+	}
+	// 创建与轮换必须声明 CSRF；轮换与删除必须声明 If-Match 乐观锁；创建/轮换必须声明幂等键。
+	create := object(t, object(t, paths, "/api/v1/storage-credentials"), "post")
+	if create["x-idempotency"] != "REQUIRED" || !hasParameterReference(create, "#/components/parameters/CsrfToken") || !hasParameterReference(create, "#/components/parameters/IdempotencyKey") {
+		t.Fatalf("create storage credential must require CSRF and idempotency key: %#v", create)
+	}
+	if responseReference(t, create, "201") != "#/components/responses/StorageCredentialItemCreated" {
+		t.Fatal("create storage credential must use the item-created response")
+	}
+	rotate := object(t, object(t, paths, "/api/v1/storage-credentials/{storageCredentialId}:rotate"), "post")
+	if rotate["x-optimistic-lock"] != "REQUIRED" || !hasParameterReference(rotate, "#/components/parameters/IfMatch") || !hasParameterReference(rotate, "#/components/parameters/IdempotencyKey") {
+		t.Fatalf("rotate storage credential must require If-Match and idempotency key: %#v", rotate)
+	}
+	del := object(t, object(t, paths, "/api/v1/storage-credentials/{storageCredentialId}"), "delete")
+	if del["x-optimistic-lock"] != "REQUIRED" || !hasParameterReference(del, "#/components/parameters/IfMatch") || !hasParameterReference(del, "#/components/parameters/CsrfToken") {
+		t.Fatalf("delete storage credential must require CSRF and If-Match: %#v", del)
+	}
+	// 全部响应必须 no-store；列表信封必须引用安全投影。
+	for _, responseName := range []string{"StorageCredentialList", "StorageCredentialItemCreated", "StorageCredentialItem", "StorageCredentialDeletion"} {
+		assertNoStoreResponse(t, responses, responseName)
+	}
+	listEnvelope := object(t, schemas, "StorageCredentialListEnvelope")
+	itemsSchema := object(t, object(t, listEnvelope, "properties"), "items")
+	if fmt.Sprint(object(t, itemsSchema, "items")["$ref"]) != "#/components/schemas/StorageCredentialListItem" {
+		t.Fatal("storage credential list envelope must use the safe item schema")
+	}
+	itemEnvelope := object(t, schemas, "StorageCredentialItemEnvelope")
+	if fmt.Sprint(object(t, object(t, itemEnvelope, "properties"), "item")["$ref"]) != "#/components/schemas/StorageCredentialListItem" {
+		t.Fatal("storage credential item envelope must use the safe item schema")
 	}
 }
 
@@ -583,13 +727,31 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 	}
 
 	checkSet := object(t, schemas, "AgentPrecheckCheckSet")
-	assertFixedPrecheckArray(t, checkSet, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE"})
-	results := object(t, schemas, "AgentPrecheckResults")
-	if results["items"] != false {
-		t.Fatal("precheck results must reject extra checks")
+	checkVariants, ok := checkSet["oneOf"].([]any)
+	if !ok || len(checkVariants) != 2 {
+		t.Fatal("precheck check set must offer exactly the local and storage shapes")
 	}
-	if rawPrefixItems, ok := results["prefixItems"].([]any); !ok || len(rawPrefixItems) != 6 {
-		t.Fatal("precheck results must contain the six fixed checks in order")
+	localCheckVariant, storageCheckVariant := variantObject(t, checkVariants[0]), variantObject(t, checkVariants[1])
+	assertFixedPrecheckArray(t, localCheckVariant, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE"})
+	assertFixedPrecheckArray(t, storageCheckVariant, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH"})
+	results := object(t, schemas, "AgentPrecheckResults")
+	resultVariants, ok := results["oneOf"].([]any)
+	if !ok || len(resultVariants) != 2 {
+		t.Fatal("precheck results must offer exactly the local and storage shapes")
+	}
+	for variantIndex, variant := range resultVariants {
+		variantObject := variantObject(t, variant)
+		if variantObject["items"] != false {
+			t.Fatal("precheck results must reject extra checks")
+		}
+		if rawPrefixItems, ok := variantObject["prefixItems"].([]any); !ok || len(rawPrefixItems) != 6 {
+			t.Fatalf("precheck results variant %d must contain the six fixed checks in order", variantIndex)
+		}
+	}
+	// 存储形态的最后两项必须是受控存储检查结果 schema。
+	storagePrefixItems := variantObject(t, resultVariants[1])["prefixItems"].([]any)
+	if fmt.Sprint(storagePrefixItems[4].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageConnectivityResult" || fmt.Sprint(storagePrefixItems[5].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageAuthResult" {
+		t.Fatal("storage precheck results must reference the storage check result schemas")
 	}
 	for _, resultContract := range []struct {
 		schema   string
@@ -602,6 +764,8 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		{"AgentPrecheckOutputPathResult", "OUTPUT_PATH", []string{"SYNTHETIC_OK", "OUTPUT_PATH_WRITABLE", "OUTPUT_PATH_NOT_WRITABLE", "OUTPUT_PATH_UNAVAILABLE"}},
 		{"AgentPrecheckOutputEmptyResult", "OUTPUT_EMPTY", []string{"SYNTHETIC_OK", "OUTPUT_PATH_EMPTY", "OUTPUT_EMPTY_CHECK_SKIPPED", "OUTPUT_PATH_NOT_EMPTY", "OUTPUT_PATH_UNAVAILABLE"}},
 		{"AgentPrecheckAvailableSpaceResult", "AVAILABLE_SPACE", []string{"SYNTHETIC_OK", "OUTPUT_SPACE_SUFFICIENT", "OUTPUT_SPACE_INSUFFICIENT", "OUTPUT_SPACE_UNAVAILABLE"}},
+		{"AgentPrecheckStorageConnectivityResult", "STORAGE_CONNECTIVITY", []string{"SYNTHETIC_OK", "STORAGE_ENDPOINT_REACHABLE", "STORAGE_ENDPOINT_UNREACHABLE", "STORAGE_CONNECTIVITY_UNAVAILABLE"}},
+		{"AgentPrecheckStorageAuthResult", "STORAGE_AUTH", []string{"SYNTHETIC_OK", "STORAGE_CREDENTIAL_VERIFIED", "STORAGE_CREDENTIAL_REJECTED", "STORAGE_AUTH_UNAVAILABLE"}},
 	} {
 		result := object(t, schemas, resultContract.schema)
 		if result["additionalProperties"] != false {
@@ -1013,6 +1177,16 @@ func loadOpenAPI(t *testing.T) map[string]any {
 		t.Fatalf("unexpected OpenAPI identity: %#v", spec["info"])
 	}
 	return spec
+}
+
+// variantObject 把 oneOf 数组中的元素断言为对象。
+func variantObject(t *testing.T, variant any) map[string]any {
+	t.Helper()
+	value, ok := variant.(map[string]any)
+	if !ok {
+		t.Fatalf("oneOf variant is not an object: %#v", variant)
+	}
+	return value
 }
 
 func object(t *testing.T, parent map[string]any, key string) map[string]any {

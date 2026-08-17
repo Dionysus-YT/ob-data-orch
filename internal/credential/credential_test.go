@@ -272,3 +272,61 @@ func TestSysPasswordEnvelope(t *testing.T) {
 		t.Fatal("unknown secret type must be rejected")
 	}
 }
+
+// TestGenerateStorageConfiguration 验证 core-site.xml 生成的属性名映射与 XML 转义（EX-I6 存储凭据槽位）。
+func TestGenerateStorageConfiguration(t *testing.T) {
+	t.Parallel()
+	content, err := GenerateStorageConfiguration("OSS", []byte("synthetic-access-key"), []byte("synthetic-secret-key"))
+	if err != nil {
+		t.Fatalf("GenerateStorageConfiguration(OSS): %v", err)
+	}
+	text := string(content)
+	for _, expected := range []string{"fs.oss.accessKeyId", "synthetic-access-key", "fs.oss.accessKeySecret", "synthetic-secret-key"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("OSS core-site.xml missing %q: %s", expected, text)
+		}
+	}
+	// 四种 provider 都必须能生成对应官方属性名。
+	providers := map[string][2]string{
+		"OSS": {"fs.oss.accessKeyId", "fs.oss.accessKeySecret"},
+		"S3":  {"fs.s3a.access.key", "fs.s3a.secret.key"},
+		"COS": {"fs.cosn.userinfo.secretId", "fs.cosn.userinfo.secretKey"},
+		"OBS": {"fs.obs.access.key", "fs.obs.secret.key"},
+	}
+	for provider, properties := range providers {
+		content, err := GenerateStorageConfiguration(provider, []byte("access"), []byte("secret"))
+		if err != nil {
+			t.Fatalf("GenerateStorageConfiguration(%s): %v", provider, err)
+		}
+		for _, property := range properties {
+			if !strings.Contains(string(content), property) {
+				t.Fatalf("%s core-site.xml missing %q", provider, property)
+			}
+		}
+	}
+	// XML 保留字符必须转义，防止密钥内容破坏配置结构。
+	escaped, err := GenerateStorageConfiguration("OSS", []byte("a&b<c>d\"e'f"), []byte("secret"))
+	if err != nil {
+		t.Fatalf("GenerateStorageConfiguration(escaped): %v", err)
+	}
+	if !strings.Contains(string(escaped), "a&amp;b&lt;c&gt;d&quot;e&apos;f") {
+		t.Fatalf("escaped core-site.xml unexpected: %s", escaped)
+	}
+	// 未知 provider 与空密钥必须失败关闭。
+	if _, err := GenerateStorageConfiguration("FTP", []byte("access"), []byte("secret")); err == nil {
+		t.Fatal("unknown provider must be rejected")
+	}
+	if _, err := GenerateStorageConfiguration("OSS", nil, []byte("secret")); err == nil {
+		t.Fatal("empty access key must be rejected")
+	}
+	if _, err := GenerateStorageConfiguration("OSS", []byte("access"), nil); err == nil {
+		t.Fatal("empty secret key must be rejected")
+	}
+	if _, err := GenerateStorageConfiguration("OSS", []byte("access\nkey"), []byte("secret")); err == nil {
+		t.Fatal("access key with line break must be rejected")
+	}
+	// NUL 会破坏 XML 值区，同样必须失败关闭。
+	if _, err := GenerateStorageConfiguration("OSS", []byte("access"), []byte{'s', 0, 'e'}); err == nil {
+		t.Fatal("secret key with NUL must be rejected")
+	}
+}

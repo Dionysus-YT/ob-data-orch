@@ -49,6 +49,8 @@ func (r configuredExportPreflightRunner) RunNext(ctx context.Context) (agentwork
 }
 
 // probeFactory 把 JDBC 槽位解析限制在数据库检查内，并保持目录和空间检查只读本机固定配置。
+// EX-I6：存储连通性探测只在显式运行开关开启时装配；本机启动器固定开启并按进程生命周期持续授权；
+// 凭据有效性探测固定失败关闭，不解析真实凭据。
 func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platform) agentworker.ProbeFactory {
 	runtimeConfig, _, runtimeErr := agentRuntimeFromState(r.stateStore, r.lookupEnv, r.operatingSystem, r.architecture)
 	if runtimeErr != nil {
@@ -57,15 +59,23 @@ func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platfo
 				Runtime:               agentlocalpreflight.RuntimeValidatorFunc(func(context.Context) error { return agentlocalpreflight.ErrToolRuntimeUnavailable }),
 				MinimumAvailableBytes: exportPreflightMinimumAvailableBytes,
 				AvailableBytes:        agentlocalpreflight.AvailableBytes,
+				StorageAuth:           agentlocalpreflight.UnavailableStorageAuthProber{},
 			}
 		}
 	}
 	jdbcRuntime, jdbcErr := jdbcprobe.DiscoverRuntime(runtimeConfig.JavaPath, runtimeConfig.ToolHome, runtimeConfig.Environment)
+	storageConnectivityEnabled, _ := r.lookupEnv("OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE")
 	return func(resolver agentworker.SecretResolver) agentpreflight.Probe {
 		probe := agentlocalpreflight.Probe{
 			Runtime:               agentlocalpreflight.ToolRuntimeValidator{JavaPath: runtimeConfig.JavaPath, ToolHome: runtimeConfig.ToolHome, Environment: runtimeConfig.Environment, TargetPlatform: platform},
 			MinimumAvailableBytes: exportPreflightMinimumAvailableBytes,
 			AvailableBytes:        agentlocalpreflight.AvailableBytes,
+			// 凭据有效性探测固定失败关闭：真实探测归 EX-V1，本切片绝不解析或发送真实凭据。
+			StorageAuth: agentlocalpreflight.UnavailableStorageAuthProber{},
+		}
+		if storageConnectivityEnabled == "true" {
+			// 显式开关开启才执行真实 TCP 探测；直接启动默认 UNKNOWN，本机启动器按运行期持续授权。
+			probe.StorageConnectivity = agentlocalpreflight.TCPStorageConnectivityProber{}
 		}
 		if jdbcErr == nil {
 			probe.JDBC = &agentjdbc.PrecheckProbe{WorkspaceRoot: runtimeConfig.WorkspaceRoot, Runtime: jdbcRuntime, Resolver: resolver}

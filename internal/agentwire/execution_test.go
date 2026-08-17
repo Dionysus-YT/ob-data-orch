@@ -1,6 +1,7 @@
 package agentwire
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,42 @@ import (
 	"testing"
 	"time"
 )
+
+// TestValidDatabaseConnectionSlotStorageSegment 验证执行槽位中的对象存储凭据段
+// 在协议解析层即失败关闭：provider 白名单、非空长度上限与禁止字节都必须校验。
+func TestValidDatabaseConnectionSlotStorageSegment(t *testing.T) {
+	t.Parallel()
+	base := DatabaseConnectionSlot{Host: "127.0.0.1", Port: 2881, Username: []byte("user"), Password: []byte("password")}
+	if !validDatabaseConnectionSlot(base) {
+		t.Fatal("本地槽位必须有效")
+	}
+	base.StorageCredential = &StorageCredentialSlot{Provider: "OSS", AccessKey: []byte("access"), SecretKey: []byte("secret")}
+	if !validDatabaseConnectionSlot(base) {
+		t.Fatal("OSS 存储凭据段必须有效")
+	}
+	for _, provider := range []string{"S3", "COS", "OBS"} {
+		withProvider := base
+		withProvider.StorageCredential = &StorageCredentialSlot{Provider: provider, AccessKey: []byte("access"), SecretKey: []byte("secret")}
+		if !validDatabaseConnectionSlot(withProvider) {
+			t.Fatalf("provider %s 存储凭据段必须有效", provider)
+		}
+	}
+	for name, mutate := range map[string]func(*DatabaseConnectionSlot){
+		"未知 provider":      func(c *DatabaseConnectionSlot) { c.StorageCredential.Provider = "FTP" },
+		"空 access-key":     func(c *DatabaseConnectionSlot) { c.StorageCredential.AccessKey = nil },
+		"空 secret-key":     func(c *DatabaseConnectionSlot) { c.StorageCredential.SecretKey = nil },
+		"access-key 超长":    func(c *DatabaseConnectionSlot) { c.StorageCredential.AccessKey = bytes.Repeat([]byte{'a'}, 4097) },
+		"access-key 含换行":   func(c *DatabaseConnectionSlot) { c.StorageCredential.AccessKey = []byte("ac\ncess") },
+		"secret-key 含 NUL": func(c *DatabaseConnectionSlot) { c.StorageCredential.SecretKey = []byte{'s', 0, 'e'} },
+	} {
+		invalid := base
+		invalid.StorageCredential = &StorageCredentialSlot{Provider: base.StorageCredential.Provider, AccessKey: append([]byte(nil), base.StorageCredential.AccessKey...), SecretKey: append([]byte(nil), base.StorageCredential.SecretKey...)}
+		mutate(&invalid)
+		if validDatabaseConnectionSlot(invalid) {
+			t.Fatalf("%s 必须被拒绝", name)
+		}
+	}
+}
 
 func TestClaimNextExecution接受完整冻结信封(t *testing.T) {
 	var enrolled enrollmentExchangeRequest

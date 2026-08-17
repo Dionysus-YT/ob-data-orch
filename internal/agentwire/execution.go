@@ -229,6 +229,12 @@ type executionSecretPayload struct {
 		Username []byte `json:"username"`
 		Password []byte `json:"password"`
 	} `json:"connection"`
+	// StorageCredential 是 EX-I6 对象存储任务的短时凭据段（本地输出任务缺省）。
+	StorageCredential *struct {
+		Provider  string `json:"provider"`
+		AccessKey []byte `json:"accessKey"`
+		SecretKey []byte `json:"secretKey"`
+	} `json:"storageCredential"`
 	RealExecutionEnabled *bool `json:"realExecutionEnabled"`
 }
 
@@ -364,6 +370,11 @@ func (s *StateStore) ResolveExecutionDatabaseConnection(ctx context.Context, inp
 	}
 	connection := DatabaseConnectionSlot{Host: payload.Connection.Host, Port: payload.Connection.Port, Username: payload.Connection.Username, Password: payload.Connection.Password}
 	payload.Connection.Username, payload.Connection.Password = nil, nil
+	// EX-I6：对象存储任务附带短时存储凭据段；本地输出任务缺省跳过。
+	if payload.StorageCredential != nil {
+		connection.StorageCredential = &StorageCredentialSlot{Provider: payload.StorageCredential.Provider, AccessKey: payload.StorageCredential.AccessKey, SecretKey: payload.StorageCredential.SecretKey}
+		payload.StorageCredential.AccessKey, payload.StorageCredential.SecretKey = nil, nil
+	}
 	if !validDatabaseConnectionSlot(connection) {
 		connection.Destroy()
 		return DatabaseConnectionSlot{}, ErrProtocolRejected

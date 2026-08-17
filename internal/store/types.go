@@ -11,6 +11,10 @@ import (
 var (
 	ErrRevisionConflict                      = errors.New("stored revision no longer matches")
 	ErrPrecheckInvalid                       = errors.New("precheck is not valid for task submission")
+	ErrCheckpointResumeUnavailable           = errors.New("task is not eligible for checkpoint resume")
+	ErrStorageCredentialNotFound             = errors.New("storage credential does not exist")
+	ErrStorageCredentialForbidden            = errors.New("storage credential is not owned by the acting subject")
+	ErrStorageCredentialRevision             = errors.New("storage credential revision no longer matches")
 	ErrAlreadyClaimed                        = errors.New("task already has an execution")
 	ErrClaimIneligible                       = errors.New("task is not eligible for this agent")
 	ErrEventRejected                         = errors.New("execution event violates its lease or sequence")
@@ -75,10 +79,18 @@ type TaskSubmission struct {
 	PrecheckID         string
 	CredentialID       string
 	CredentialRevision int64
-	ConfigFingerprint  string
-	ToolVersion        string
-	MetadataVersion    string
-	CapabilityVersion  string
+	// StorageCredentialID/StorageCredentialRevision 是 EX-I6 存储凭据槽位的任务引用
+	// （仅对象存储输出任务携带；本地输出为空，Agent 不解析存储槽位）。
+	StorageCredentialID       string
+	StorageCredentialRevision int64
+	ConfigFingerprint         string
+	ToolVersion               string
+	MetadataVersion           string
+	CapabilityVersion         string
+	// ParentTaskID/DerivationKind 是 EX-I8 派生任务关系（原始任务为空）。
+	// 基于原配置新建 / 从头重新执行 / 从检查点继续均产生新任务 ID 并保留来源关系。
+	ParentTaskID   string
+	DerivationKind string
 	// SnapshotVersion 标记快照结构版本：v1 为原始扁平快照，v2 为泛化快照。
 	SnapshotVersion        string
 	SnapshotJSON           string
@@ -115,10 +127,33 @@ type TaskSummary struct {
 	State                  string
 	ExecutionID            string
 	ReconciliationRequired bool
-	SubmittedAt            time.Time
-	StartedAt              time.Time
-	FinishedAt             time.Time
-	UpdatedAt              time.Time
+	// ResultSummary 是 EX-I8 起 Agent 上报并经控制面合并的任务级结果摘要（可空，未执行或未上报时为空）。
+	ResultSummary *ExecutionResultSummary
+	// ParentTaskID/DerivationKind 是 EX-I8 派生任务关系（原始任务为空）。
+	ParentTaskID   string
+	DerivationKind string
+	SubmittedAt    time.Time
+	StartedAt      time.Time
+	FinishedAt     time.Time
+	UpdatedAt      time.Time
+}
+
+// ExecutionResultSummary 是任务级结果摘要的安全投影：
+// 只含 Agent 观察到的文件数量/字节数/受限相对路径清单与 dump.ckpt 存在性事实，
+// 不含文件内容、校验和、行数或任何秘密。
+type ExecutionResultSummary struct {
+	Result            string
+	FileCount         uint64
+	TotalBytes        uint64
+	Files             []ExecutionResultFile
+	CheckpointPresent bool
+	ObservedAt        time.Time
+}
+
+// ExecutionResultFile 是单个结果文件的相对路径与字节数。
+type ExecutionResultFile struct {
+	Path string
+	Size uint64
 }
 
 // TaskListQuery 是授权任务列表的固定游标查询。
@@ -271,6 +306,39 @@ func (c *EncryptedExecutionDatabaseConnection) Destroy() {
 	c.Ciphertext = nil
 	c.OwnerSubjectID = ""
 	c.NodeID = ""
+}
+
+// EncryptedExecutionStorageCredential 是对象存储任务执行时解析的存储凭据信封投影。
+// 只承载加密信封与安全标识，绝不包含 access-key/secret-key 明文。
+// 本地输出任务解析结果为空值（StorageCredentialID 为空），Agent 调用方据此跳过存储注入。
+type EncryptedExecutionStorageCredential struct {
+	StorageCredentialID string
+	Provider            string
+	Revision            int64
+	// AccessKeyCredentialID/SecretKeyCredentialID 是加密信封自身的 credentialId（AAD 绑定项）。
+	// 解密时必须使用它们而不是 StorageCredentialID，否则 AES-GCM 附加数据校验必然失败。
+	AccessKeyCredentialID string
+	AccessKeyKeyID        string
+	AccessKeyNonce        []byte
+	AccessKeyCiphertext   []byte
+	SecretKeyCredentialID string
+	SecretKeyKeyID        string
+	SecretKeyNonce        []byte
+	SecretKeyCiphertext   []byte
+}
+
+// Destroy 尽力清除存储凭据信封中的短时敏感字节。
+func (c *EncryptedExecutionStorageCredential) Destroy() {
+	if c == nil {
+		return
+	}
+	for _, value := range [][]byte{c.AccessKeyNonce, c.AccessKeyCiphertext, c.SecretKeyNonce, c.SecretKeyCiphertext} {
+		for index := range value {
+			value[index] = 0
+		}
+	}
+	c.AccessKeyNonce, c.AccessKeyCiphertext, c.SecretKeyNonce, c.SecretKeyCiphertext = nil, nil, nil, nil
+	c.AccessKeyKeyID, c.SecretKeyKeyID = "", ""
 }
 
 // DataSourceSummary 是列表与详情 API 可返回的非敏感数据源投影。
@@ -826,6 +894,16 @@ type OutputConfig struct {
 	CompressionLevel *int64 `json:"compressionLevel,omitempty"`
 	ControlFilePath  string `json:"controlFilePath,omitempty"`
 	TmpPath          string `json:"tmpPath,omitempty"`
+	// StorageCredential 是对象存储输出绑定的凭据引用（EX-I6 存储凭据槽位）；
+	// 只含标识与修订，LOCAL 输出携带即失败关闭。
+	StorageCredential *StorageCredentialBinding `json:"storageCredential,omitempty"`
+}
+
+// StorageCredentialBinding 是草稿配置中的对象存储凭据引用。
+// 绝不携带 access-key/secret-key 或信封材料。
+type StorageCredentialBinding struct {
+	StorageCredentialID string `json:"storageCredentialId"`
+	Revision            int64  `json:"revision"`
 }
 
 // PerformanceConfig 表达性能与资源参数。
@@ -899,6 +977,10 @@ type ExportDraft struct {
 	ConfigJSON        string
 	ConfigFingerprint string
 	InvalidationJSON  string
+	// SourceTaskID/SourceDerivation 是 EX-I8 派生草稿的来源标记（基于原配置新建/从头重新执行）；
+	// 提交派生草稿时写入新任务的 parent_task_id/derivation_kind。原始草稿为空。
+	SourceTaskID     string
+	SourceDerivation string
 	// 结构化子配置 JSON，仅 v6 草稿持久化非空值；v5 草稿保持 '{}'。
 	ObjectScopeJSON       string
 	ContentSelectionJSON  string
@@ -909,6 +991,53 @@ type ExportDraft struct {
 	DDLBehaviorJSON       string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+}
+
+// TaskDerivationSource 是派生操作（基于原配置新建/从头重新执行/从检查点继续）需要读取的冻结任务事实。
+// 它包含非敏感配置与执行摘要，绝不包含凭据明文、日志正文或原始错误；调用方必须在授权谓词下使用。
+type TaskDerivationSource struct {
+	TaskID                    string
+	CreatorSubjectID          string
+	DataSourceID              string
+	NodeID                    string
+	PrecheckID                string
+	CredentialID              string
+	CredentialRevision        int64
+	StorageCredentialID       string
+	StorageCredentialRevision int64
+	ConfigFingerprint         string
+	ToolVersion               string
+	MetadataVersion           string
+	CapabilityVersion         string
+	SnapshotVersion           string
+	SnapshotJSON              string
+	PlannedArgvJSON           string
+	PlannedCommandRedacted    string
+	State                     string
+	ParentTaskID              string
+	DerivationKind            string
+	ResultSummary             *ExecutionResultSummary
+	SubmittedAt               time.Time
+}
+
+// CheckpointResumeDerivation 是一次从检查点继续的受控输入：
+// 新任务继承原快照与凭据绑定，追加官方 --retry，并记录 parent_task_id/derivation_kind。
+type CheckpointResumeDerivation struct {
+	TaskID           string
+	CreatorSubjectID string
+	AuditActorID     string
+	SourceTaskID     string
+	RequestID        string
+	IdempotencyKey   string
+	RequestDigest    string
+	Now              time.Time
+}
+
+// CheckpointResumeResult 给出新建或幂等重放得到的继续任务标识与调度所需节点标识。
+type CheckpointResumeResult struct {
+	TaskID   string
+	NodeID   string
+	Replayed bool
 }
 
 // ExportDraftCreate 将草稿、审计与创建幂等记录绑定在同一事务内。
@@ -1015,9 +1144,10 @@ type PrecheckLeaseGrant struct {
 	Replayed         bool
 }
 
-// PrecheckExecutionContext 是固定 EXPORT_PREFLIGHT 在 Agent 本地执行六项检查所需的最小非秘密输入。
+// PrecheckExecutionContext 是固定 EXPORT_PREFLIGHT 在 Agent 本地执行检查所需的最小非秘密输入。
 // 所有字段都必须由当前冻结草稿和节点配置重新核验，Agent 不能用本地参数覆盖它们。
 // Objects 是冻结对象清单：SPECIFIED 范围为名称列表，ALL 范围为空清单（按数据库级投影检查）。
+// EX-I6：对象存储输出通过 OutputKind + StorageTarget 表达受控 URI 与 --tmp-path；本地输出缺省。
 type PrecheckExecutionContext struct {
 	CompatibilityMode string
 	Database          string
@@ -1028,6 +1158,17 @@ type PrecheckExecutionContext struct {
 	SkipCheckDir      bool
 	TargetPlatform    string
 	AllowedRoots      []string
+	OutputKind        string // LOCAL | OSS | S3 | COS | OBS
+	StorageTarget     *PrecheckStorageTarget
+}
+
+// PrecheckStorageTarget 是预检查上下文中的对象存储目标段；
+// URI 为受控存储 URI（无密钥参数），Endpoint 由控制面从 URI 参数解析（可空），TmpPath 为 --tmp-path（可空）。
+type PrecheckStorageTarget struct {
+	Provider string
+	URI      string
+	Endpoint string
+	TmpPath  string
 }
 
 // PrecheckSecretResolutionRequest 是 Agent 在已确认短租约内请求数据库连接槽位的受控输入。
@@ -1347,4 +1488,76 @@ type DataSourceConnectionTestCompletionResult struct {
 	SysResultCode         string
 	CompletedAt           time.Time
 	Replayed              bool
+}
+
+// StorageCredential 是主体级对象存储凭据的主表投影（绝不包含任何秘密）。
+type StorageCredential struct {
+	StorageCredentialID string
+	OwnerSubjectID      string
+	DisplayName         string
+	Provider            string // OSS | S3 | COS | OBS
+	CurrentRevision     int64
+	Revision            int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+// EncryptedStorageSecret 是存储凭据单个秘密（access-key 或 secret-key）的加密信封输入。
+// 该类型故意不能表达秘密明文。
+type EncryptedStorageSecret struct {
+	CredentialID string
+	Revision     int64
+	KeyID        string
+	Nonce        []byte
+	Ciphertext   []byte
+}
+
+// StorageCredentialCreate 持久化新对象存储凭据及其两个加密信封（access-key/secret-key）。
+type StorageCredentialCreate struct {
+	StorageCredentialID string
+	OwnerSubjectID      string
+	DisplayName         string
+	Provider            string
+	AccessKey           EncryptedStorageSecret
+	SecretKey           EncryptedStorageSecret
+	RequestID           string
+	IdempotencyKey      string
+	RequestDigest       string
+	CreatedAt           time.Time
+}
+
+// StorageCredentialCreateResult 让 HTTP 适配器在幂等重试时返回原始资源。
+type StorageCredentialCreateResult struct {
+	StorageCredentialID string
+	Replayed            bool
+}
+
+// StorageCredentialRotate 表达一次受版本保护的凭据轮换（access-key 与 secret-key 同时轮换）。
+type StorageCredentialRotate struct {
+	StorageCredentialID string
+	ActorSubjectID      string
+	ExpectedRevision    int64
+	AccessKey           EncryptedStorageSecret
+	SecretKey           EncryptedStorageSecret
+	RequestID           string
+	IdempotencyKey      string
+	RequestDigest       string
+	UpdatedAt           time.Time
+}
+
+// StorageCredentialDeletion 表达一次受版本保护的凭据删除请求。
+type StorageCredentialDeletion struct {
+	StorageCredentialID string
+	ActorSubjectID      string
+	ExpectedRevision    int64
+	RequestID           string
+	DeletedAt           time.Time
+}
+
+// StorageCredentialReference 是任务快照引用存储凭据的安全投影（不含秘密）。
+type StorageCredentialReference struct {
+	StorageCredentialID string
+	Provider            string
+	Revision            int64
+	OwnerSubjectID      string
 }

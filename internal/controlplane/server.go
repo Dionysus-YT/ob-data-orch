@@ -72,6 +72,8 @@ type Server struct {
 	coordinator        *agentstate.Coordinator
 	encryptor          CredentialEncryptor
 	decryptor          CredentialDecryptor
+	storageCredentials StorageCredentialStore
+	templates          ExportTemplateStore
 	csrf               CSRFValidator
 	keyID              string
 	requestIDGenerator func() (string, error)
@@ -133,6 +135,16 @@ type DataSourceConnectionTestStore interface {
 // 返回值不得进入响应、日志或错误信息。
 type DataSourceCredentialReferenceReader interface {
 	GetDataSourceCredentialReference(context.Context, string) (store.DataSourceCredentialReference, error)
+}
+
+// ExportTemplateStore 只暴露模板的受控读写边界（EX-I8 模板复用）。
+// 模板不保存凭据、节点、预检查、风险确认、命令、日志或结果；配置不可原地修改，只能改名或删除。
+type ExportTemplateStore interface {
+	CreateExportConfigTemplate(context.Context, store.ExportConfigTemplateCreate) (store.ExportConfigTemplateCreateResult, error)
+	ListExportConfigTemplates(context.Context, string) ([]store.ExportConfigTemplate, error)
+	GetAuthorizedExportConfigTemplate(context.Context, string, string) (store.ExportConfigTemplate, error)
+	UpdateExportConfigTemplate(context.Context, store.ExportConfigTemplateUpdate) (int64, error)
+	DeleteExportConfigTemplate(context.Context, string, string, int64, string, time.Time) error
 }
 
 // ExportDraftStore 组合草稿创建、读取和乐观锁更新能力。
@@ -250,10 +262,14 @@ type ExportPrecheckStore interface {
 
 // ExportTaskStore 只暴露任务冻结、预检查读取和安全详情投影。
 // HTTP 层不能自行绕过预检查条件拼装任务记录。
+// EX-I8：派生操作（基于原配置新建/从头重新执行/从检查点继续）也经由该边界，
+// 由仓储层在同一授权谓词与事务内复验冻结事实。
 type ExportTaskStore interface {
 	GetPrecheckRun(context.Context, string) (store.PrecheckRun, error)
 	SubmitTaskIdempotent(context.Context, store.TaskSubmission, string, string) (store.TaskSubmissionResult, error)
 	GetAuthorizedTaskSummary(context.Context, string, string) (store.TaskSummary, error)
+	GetAuthorizedTaskDerivationSource(context.Context, string, string) (store.TaskDerivationSource, error)
+	DeriveTaskFromCheckpoint(context.Context, store.CheckpointResumeDerivation) (store.CheckpointResumeResult, error)
 	ListTaskSummaries(context.Context, store.TaskListQuery) ([]store.TaskListItem, error)
 	CountAuthorizedTaskSummaries(context.Context, string) (int, error)
 }
@@ -272,6 +288,9 @@ type AuthenticatedAgentExecutionStore interface {
 	ClaimNextExecution(context.Context, store.ExecutionClaimNext) (store.ExecutionLeaseGrant, bool, error)
 	RenewExecutionLease(context.Context, store.LeaseRenewal) error
 	ResolveExecutionDatabaseConnection(context.Context, store.ExecutionSecretResolutionRequest) (store.EncryptedExecutionDatabaseConnection, error)
+	// ResolveExecutionStorageCredential 在同一租约内解析对象存储任务的存储凭据信封；
+	// 本地输出任务返回空结构（StorageCredentialID 为空）。
+	ResolveExecutionStorageCredential(context.Context, store.ExecutionSecretResolutionRequest) (store.EncryptedExecutionStorageCredential, error)
 	FinishExecutionSecretResolution(context.Context, store.ExecutionSecretResolutionOutcome) error
 	AppendAuthenticatedExecutionEvent(context.Context, string, store.ExecutionEvent) (string, error)
 }
@@ -279,6 +298,304 @@ type AuthenticatedAgentExecutionStore interface {
 // CredentialEncryptor keeps raw root-key material out of the HTTP package.
 type CredentialEncryptor interface {
 	Encrypt(string, credential.Reference, []byte) (credential.Envelope, error)
+}
+
+// StorageCredentialStore 是对象存储凭据（EX-I6 存储凭据槽位）的持久化边界。
+// 它只接收已加密信封，绝不接收或返回 access-key/secret-key 明文。
+type StorageCredentialStore interface {
+	CreateStorageCredential(context.Context, store.StorageCredentialCreate) (store.StorageCredentialCreateResult, error)
+	ListStorageCredentials(context.Context, string) ([]store.StorageCredential, error)
+	GetStorageCredentialReference(context.Context, string) (store.StorageCredentialReference, error)
+	RotateStorageCredential(context.Context, store.StorageCredentialRotate) (store.StorageCredential, error)
+	DeleteStorageCredential(context.Context, store.StorageCredentialDeletion) error
+}
+
+// parseStorageCredentialAction 解析 /api/v1/storage-credentials/<id>[:rotate] 路径后缀。
+func parseStorageCredentialAction(suffix string) (string, string, bool) {
+	parts := strings.Split(suffix, ":")
+	switch len(parts) {
+	case 1:
+		if parts[0] != "" && !strings.Contains(parts[0], "/") {
+			return parts[0], "", true
+		}
+	case 2:
+		if parts[0] != "" && parts[1] == "rotate" {
+			return parts[0], "rotate", true
+		}
+	}
+	return "", "", false
+}
+
+// storageCredentialWriteRequest 是创建/轮换的请求体。
+// accessKey/secretKey 明文只存在于该请求体内存中，加密后立即清零，绝不进入响应、日志、审计或快照。
+type storageCredentialWriteRequest struct {
+	DisplayName string `json:"displayName"`
+	Provider    string `json:"provider"`
+	AccessKey   string `json:"accessKey"`
+	SecretKey   string `json:"secretKey"`
+}
+
+func (r storageCredentialWriteRequest) validate() error {
+	if strings.TrimSpace(r.DisplayName) == "" || len(r.DisplayName) > 256 {
+		return errors.New("storage credential display name is invalid")
+	}
+	switch r.Provider {
+	case "OSS", "S3", "COS", "OBS":
+	default:
+		return errors.New("storage credential provider is unsupported")
+	}
+	if r.AccessKey == "" || len(r.AccessKey) > 4096 || strings.ContainsAny(r.AccessKey, "\x00\r\n") {
+		return errors.New("storage access key is invalid")
+	}
+	if r.SecretKey == "" || len(r.SecretKey) > 4096 || strings.ContainsAny(r.SecretKey, "\x00\r\n") {
+		return errors.New("storage secret key is invalid")
+	}
+	return nil
+}
+
+// storageCredentialResponse 是存储凭据的安全投影：绝不含 access-key/secret-key 明文或信封材料。
+type storageCredentialResponse struct {
+	ID              string `json:"id"`
+	DisplayName     string `json:"displayName"`
+	Provider        string `json:"provider"`
+	CurrentRevision int64  `json:"currentRevision"`
+	Revision        int64  `json:"revision"`
+	UpdatedAt       string `json:"updatedAt"`
+}
+
+func newStorageCredentialResponse(credential store.StorageCredential) storageCredentialResponse {
+	return storageCredentialResponse{
+		ID: credential.StorageCredentialID, DisplayName: credential.DisplayName, Provider: credential.Provider,
+		CurrentRevision: credential.CurrentRevision, Revision: credential.Revision,
+		UpdatedAt: credential.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+// encryptStorageSecrets 把请求体中的两个密钥明文加密为信封并在返回后清零副本。
+func (s *Server) encryptStorageSecrets(storageCredentialID string, revision int64, request storageCredentialWriteRequest) (accessKey, secretKey store.EncryptedStorageSecret, err error) {
+	if s.encryptor == nil || s.keyID == "" {
+		return store.EncryptedStorageSecret{}, store.EncryptedStorageSecret{}, errors.New("credential encryption is unavailable")
+	}
+	accessPlaintext := []byte(request.AccessKey)
+	secretPlaintext := []byte(request.SecretKey)
+	defer credential.Zero(accessPlaintext)
+	defer credential.Zero(secretPlaintext)
+	accessEnvelope, err := s.encryptor.Encrypt(s.keyID, credential.Reference{
+		CredentialID: newOpaqueID(), Revision: revision, SecretType: credential.StorageAccessKey, DataSourceID: storageCredentialID,
+	}, accessPlaintext)
+	if err != nil {
+		return store.EncryptedStorageSecret{}, store.EncryptedStorageSecret{}, fmt.Errorf("encrypt storage access key: %w", err)
+	}
+	secretEnvelope, err := s.encryptor.Encrypt(s.keyID, credential.Reference{
+		CredentialID: newOpaqueID(), Revision: revision, SecretType: credential.StorageSecretKey, DataSourceID: storageCredentialID,
+	}, secretPlaintext)
+	if err != nil {
+		return store.EncryptedStorageSecret{}, store.EncryptedStorageSecret{}, fmt.Errorf("encrypt storage secret key: %w", err)
+	}
+	return store.EncryptedStorageSecret{CredentialID: accessEnvelope.Reference.CredentialID, Revision: revision, KeyID: accessEnvelope.KeyID, Nonce: accessEnvelope.Nonce, Ciphertext: accessEnvelope.Ciphertext},
+		store.EncryptedStorageSecret{CredentialID: secretEnvelope.Reference.CredentialID, Revision: revision, KeyID: secretEnvelope.KeyID, Nonce: secretEnvelope.Nonce, Ciphertext: secretEnvelope.Ciphertext}, nil
+}
+
+// listStorageCredentials 返回当前主体拥有的存储凭据安全投影。
+func (s *Server) listStorageCredentials(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.storageCredentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置对象存储凭据管理", false)
+		return
+	}
+	credentials, err := s.storageCredentials.ListStorageCredentials(r.Context(), principal.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_QUERY_FAILED", "对象存储凭据查询失败", true)
+		return
+	}
+	items := make([]storageCredentialResponse, 0, len(credentials))
+	for _, credential := range credentials {
+		items = append(items, newStorageCredentialResponse(credential))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
+}
+
+// createStorageCredential 创建主体拥有的存储凭据：请求体密钥加密为信封后持久化。
+// 与其他浏览器写操作同口径要求 CSRF；缺省失败关闭，不能因凭据对象独立而绕过安全上下文。
+func (s *Server) createStorageCredential(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.storageCredentials == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置对象存储凭据管理", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	var request storageCredentialWriteRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	if err := request.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	storageCredentialID := newOpaqueID()
+	accessKey, secretKey, err := s.encryptStorageSecrets(storageCredentialID, 1, request)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据加密暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.storageCredentials.CreateStorageCredential(r.Context(), store.StorageCredentialCreate{
+		StorageCredentialID: storageCredentialID, OwnerSubjectID: principal.ID, DisplayName: strings.TrimSpace(request.DisplayName), Provider: request.Provider,
+		AccessKey: accessKey, SecretKey: secretKey,
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: storageCredentialDigest(request), CreatedAt: now,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_CREATE_FAILED", "对象存储凭据创建失败", true)
+		return
+	}
+	reference, err := s.storageCredentials.GetStorageCredentialReference(r.Context(), result.StorageCredentialID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_QUERY_FAILED", "对象存储凭据查询失败", true)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"requestId": requestID(w), "replayed": result.Replayed,
+		"item": storageCredentialResponse{ID: reference.StorageCredentialID, DisplayName: strings.TrimSpace(request.DisplayName), Provider: reference.Provider, CurrentRevision: reference.Revision, Revision: reference.Revision, UpdatedAt: now.Format(time.RFC3339Nano)},
+	})
+}
+
+// rotateStorageCredential 轮换凭据的两个密钥：新明文加密为新修订，旧修订标记 SUPERSEDED。
+// 需要 CSRF、If-Match 乐观锁与幂等键；幂等键由仓储层写回执，缺失或格式无效在入口失败关闭。
+func (s *Server) rotateStorageCredential(w http.ResponseWriter, r *http.Request, principal identity.Principal, storageCredentialID string) {
+	if s.storageCredentials == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置对象存储凭据管理", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	reference, err := s.storageCredentials.GetStorageCredentialReference(r.Context(), storageCredentialID)
+	if err != nil {
+		if errors.Is(err, store.ErrStorageCredentialNotFound) {
+			notFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_QUERY_FAILED", "对象存储凭据查询失败", true)
+		return
+	}
+	if reference.OwnerSubjectID != principal.ID {
+		notFound(w, r)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_REQUIRED", "需要有效的凭据版本号", false)
+		return
+	}
+	var request storageCredentialWriteRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	if err := request.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
+		return
+	}
+	newRevision := reference.Revision + 1
+	accessKey, secretKey, err := s.encryptStorageSecrets(storageCredentialID, newRevision, request)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_ENCRYPTION_UNAVAILABLE", "凭据加密暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	rotated, err := s.storageCredentials.RotateStorageCredential(r.Context(), store.StorageCredentialRotate{
+		StorageCredentialID: storageCredentialID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		AccessKey: accessKey, SecretKey: secretKey,
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: storageCredentialDigest(request), UpdatedAt: now,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrStorageCredentialNotFound):
+			notFound(w, r)
+			return
+		case errors.Is(err, store.ErrStorageCredentialForbidden):
+			notFound(w, r)
+			return
+		case errors.Is(err, store.ErrStorageCredentialRevision):
+			writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "凭据版本已变化，请刷新后重试", false)
+			return
+		default:
+			writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_ROTATE_FAILED", "对象存储凭据轮换失败", true)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newStorageCredentialResponse(rotated)})
+}
+
+// deleteStorageCredential 删除主体拥有的凭据；历史任务快照只保留引用标识。
+// 与其他浏览器写操作同口径要求 CSRF 与 If-Match 乐观锁。
+func (s *Server) deleteStorageCredential(w http.ResponseWriter, r *http.Request, principal identity.Principal, storageCredentialID string) {
+	if s.storageCredentials == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置对象存储凭据管理", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	reference, err := s.storageCredentials.GetStorageCredentialReference(r.Context(), storageCredentialID)
+	if err != nil {
+		if errors.Is(err, store.ErrStorageCredentialNotFound) {
+			notFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_QUERY_FAILED", "对象存储凭据查询失败", true)
+		return
+	}
+	if reference.OwnerSubjectID != principal.ID {
+		notFound(w, r)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_REQUIRED", "需要有效的凭据版本号", false)
+		return
+	}
+	if err := s.storageCredentials.DeleteStorageCredential(r.Context(), store.StorageCredentialDeletion{
+		StorageCredentialID: storageCredentialID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		RequestID: requestID(w), DeletedAt: time.Now().UTC(),
+	}); err != nil {
+		switch {
+		case errors.Is(err, store.ErrStorageCredentialNotFound), errors.Is(err, store.ErrStorageCredentialForbidden):
+			notFound(w, r)
+			return
+		case errors.Is(err, store.ErrStorageCredentialRevision):
+			writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "凭据版本已变化，请刷新后重试", false)
+			return
+		default:
+			writeError(w, http.StatusInternalServerError, "STORAGE_CREDENTIAL_DELETE_FAILED", "对象存储凭据删除失败", true)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "deleted": true})
+}
+
+// storageCredentialDigest 基于显示字段与密钥存在性生成幂等摘要。
+// 密钥明文绝不进入摘要（与数据源密码同口径，避免持久化秘密派生哈希形成新的敏感面）。
+func storageCredentialDigest(request storageCredentialWriteRequest) string {
+	payload := fmt.Sprintf("%s|%s|accessKey=true|secretKey=true", strings.TrimSpace(request.DisplayName), request.Provider)
+	digest := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(digest[:])
 }
 
 // CredentialDecryptor 仅供受控 Agent 秘密槽位解析使用。
@@ -325,7 +642,11 @@ type Dependencies struct {
 	PrecheckSecrets        AgentPrecheckSecretStore
 	AgentConnectionTests   AgentDataSourceConnectionTestStore
 	ConnectionTestSecrets  AgentDataSourceConnectionTestSecretStore
-	Generator              ExportCommandGenerator
+	// StorageCredentials 是对象存储凭据（EX-I6 存储凭据槽位）的持久化边界。
+	StorageCredentials StorageCredentialStore
+	// Templates 是导出配置模板（EX-I8 模板复用）的持久化边界。
+	Templates ExportTemplateStore
+	Generator ExportCommandGenerator
 	// GeneralizedGenerator 服务 EX-I2 起的泛化能力切片；缺失时泛化请求失败关闭，冻结单表 CSV 不受影响。
 	GeneralizedGenerator ExportCommandGenerator
 	PrecheckTTL          time.Duration
@@ -365,7 +686,7 @@ func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies)
 	if requestIDGenerator == nil {
 		requestIDGenerator = identifier.NewUUIDV4
 	}
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, deleter: dependencies.Deleter, connectionTests: dependencies.ConnectionTests, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger, dependencies.PersistentLogs), nodes: dependencies.Nodes, nodeManagement: dependencies.NodeManagement, nodeEnvironment: dependencies.NodeEnvironment, nodeDeleter: dependencies.NodeDeleter, nodeCandidates: dependencies.NodeCandidates, agentProtocol: dependencies.AgentProtocol, agentEnvironmentChecks: dependencies.AgentEnvironmentChecks, agentPrechecks: dependencies.AgentPrechecks, precheckSecrets: dependencies.PrecheckSecrets, agentConnectionTests: dependencies.AgentConnectionTests, connectionTestSecrets: dependencies.ConnectionTestSecrets, agentJDBCConnectionTestEnabled: dependencies.AgentJDBCConnectionTestEnabled, realExecutionEnabled: dependencies.RealExecutionEnabled, generator: dependencies.Generator, generalGenerator: dependencies.GeneralizedGenerator, precheckTTL: dependencies.PrecheckTTL, connectionTestTTL: dependencies.ConnectionTestTTL, enrollmentTTL: dependencies.EnrollmentTTL, heartbeatTTL: dependencies.HeartbeatTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, decryptor: dependencies.Decryptor, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID, requestIDGenerator: requestIDGenerator}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, deleter: dependencies.Deleter, connectionTests: dependencies.ConnectionTests, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger, dependencies.PersistentLogs), nodes: dependencies.Nodes, nodeManagement: dependencies.NodeManagement, nodeEnvironment: dependencies.NodeEnvironment, nodeDeleter: dependencies.NodeDeleter, nodeCandidates: dependencies.NodeCandidates, agentProtocol: dependencies.AgentProtocol, agentEnvironmentChecks: dependencies.AgentEnvironmentChecks, agentPrechecks: dependencies.AgentPrechecks, precheckSecrets: dependencies.PrecheckSecrets, agentConnectionTests: dependencies.AgentConnectionTests, connectionTestSecrets: dependencies.ConnectionTestSecrets, agentJDBCConnectionTestEnabled: dependencies.AgentJDBCConnectionTestEnabled, realExecutionEnabled: dependencies.RealExecutionEnabled, generator: dependencies.Generator, generalGenerator: dependencies.GeneralizedGenerator, precheckTTL: dependencies.PrecheckTTL, connectionTestTTL: dependencies.ConnectionTestTTL, enrollmentTTL: dependencies.EnrollmentTTL, heartbeatTTL: dependencies.HeartbeatTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, decryptor: dependencies.Decryptor, storageCredentials: dependencies.StorageCredentials, templates: dependencies.Templates, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID, requestIDGenerator: requestIDGenerator}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -426,6 +747,55 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/data-sources" {
 		s.createDataSource(w, r, principal)
 		return
+	}
+	// 对象存储凭据（EX-I6 存储凭据槽位）：access-key/secret-key 只接受加密信封输入，绝不进响应或日志。
+	if r.URL.Path == "/api/v1/storage-credentials" {
+		switch r.Method {
+		case http.MethodGet:
+			s.listStorageCredentials(w, r, principal)
+			return
+		case http.MethodPost:
+			s.createStorageCredential(w, r, principal)
+			return
+		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/storage-credentials/") {
+		suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/storage-credentials/")
+		if credentialID, action, ok := parseStorageCredentialAction(suffix); ok {
+			switch {
+			case r.Method == http.MethodPost && action == "rotate":
+				s.rotateStorageCredential(w, r, principal, credentialID)
+				return
+			case r.Method == http.MethodDelete && action == "":
+				s.deleteStorageCredential(w, r, principal, credentialID)
+				return
+			}
+		}
+	}
+	// 导出配置模板（EX-I8 模板复用）：列表/改名/删除、由模板创建草稿与从成功任务保存模板。
+	// 手工新建模板（POST）保持契约声明但未实现（404），模板只从成功任务保存。
+	if r.URL.Path == "/api/v1/export-config-templates" && r.Method == http.MethodGet {
+		s.listExportConfigTemplates(w, r, principal)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/export-config-templates/") {
+		suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/export-config-templates/")
+		if strings.HasSuffix(suffix, ":create-draft") {
+			templateID := strings.TrimSuffix(suffix, ":create-draft")
+			if r.Method == http.MethodPost && validTaskPathID(templateID) {
+				s.createDraftFromTemplate(w, r, principal, templateID)
+				return
+			}
+		} else if validTaskPathID(suffix) {
+			switch r.Method {
+			case http.MethodPatch:
+				s.updateExportConfigTemplate(w, r, principal, suffix)
+				return
+			case http.MethodDelete:
+				s.deleteExportConfigTemplate(w, r, principal, suffix)
+				return
+			}
+		}
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/export-drafts" {
 		s.createExportDraft(w, r, principal)
@@ -492,6 +862,30 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 				return
 			case "logs-stream":
 				s.streamTaskLogs(w, r, principal, taskID)
+				return
+			}
+		}
+	}
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/") {
+		suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
+		if strings.HasSuffix(suffix, ":rebuild-draft") {
+			taskID := strings.TrimSuffix(suffix, ":rebuild-draft")
+			if validTaskPathID(taskID) {
+				s.rebuildTaskDraft(w, r, principal, taskID)
+				return
+			}
+		}
+		if strings.HasSuffix(suffix, ":resume-checkpoint") {
+			taskID := strings.TrimSuffix(suffix, ":resume-checkpoint")
+			if validTaskPathID(taskID) {
+				s.resumeTaskFromCheckpoint(w, r, principal, taskID)
+				return
+			}
+		}
+		if strings.HasSuffix(suffix, ":save-template") {
+			taskID := strings.TrimSuffix(suffix, ":save-template")
+			if validTaskPathID(taskID) {
+				s.saveTaskTemplate(w, r, principal, taskID)
 				return
 			}
 		}
@@ -754,6 +1148,8 @@ type normalizedExportDraft struct {
 	ExcludeDataTypes []string
 	// EX-I7 剩余参数第二批：仅 MySQL 的 DATE/DATETIME 值格式已启用，且只在 CSV/CUT 数据内容活动。
 	TimestampFormats store.TimestampFormatConfig
+	// EX-I6 存储凭据槽位（2026-08-14）：对象存储输出绑定的凭据引用（LOCAL 不携带）。
+	StorageCredential *store.StorageCredentialBinding
 }
 
 // maxExportObjectExpressions 限制单个草稿的对象、排除表、分区和类型列表数量，
@@ -979,9 +1375,23 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		if output.FilePath == "" {
 			return normalizedExportDraft{}, errors.New("v6 output config must be a local file path only")
 		}
+		// 本地输出没有对象存储凭据语义，携带引用即失败关闭。
+		if output.StorageCredential != nil {
+			return normalizedExportDraft{}, errors.New("v6 storage credential requires object storage output")
+		}
 	case "OSS", "S3", "COS", "OBS":
 		if err := validateControlledStorageURI(output.OutputKind, output.FilePath); err != nil {
 			return normalizedExportDraft{}, err
+		}
+		// EX-I6 存储凭据槽位：引用可缺省（依赖 Hadoop 标准配置链）；携带时只接受完整标识与正修订。
+		if output.StorageCredential != nil {
+			if output.StorageCredential.StorageCredentialID == "" || len(output.StorageCredential.StorageCredentialID) > 256 || output.StorageCredential.Revision < 1 {
+				return normalizedExportDraft{}, errors.New("v6 storage credential reference is invalid")
+			}
+			normalized.StorageCredential = &store.StorageCredentialBinding{
+				StorageCredentialID: output.StorageCredential.StorageCredentialID,
+				Revision:            output.StorageCredential.Revision,
+			}
 		}
 	default:
 		return normalizedExportDraft{}, errors.New("v6 output kind is unsupported")
@@ -2045,12 +2455,8 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	// EX-I6 门禁（2026-08-10）：对象存储输出的存储专用预检查（凭据、网络、权限、空间）尚未完成，
-	// 固定预检查只接受本地绝对路径；对象存储草稿返回稳定的功能门禁错误，不把存储 URI 伪装成本地路径。
-	if normalized.OutputKind != "" && normalized.OutputKind != "LOCAL" {
-		writeError(w, http.StatusUnprocessableEntity, "STORAGE_PRECHECK_UNAVAILABLE", "对象存储输出的存储专用预检查尚未完成，暂不能发起固定预检查", false)
-		return
-	}
+	// EX-I6（2026-08-14）：对象存储草稿允许发起预检查。存储层检查（网络可达性/凭据有效性）
+	// 由 Agent 按受控上下文执行；未授权探测默认 UNKNOWN，提交门禁按结果失败关闭。
 	credentialReference, err := s.credentials.GetDataSourceCredentialReference(r.Context(), draft.DataSourceID)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_REFERENCE_UNAVAILABLE", "凭据引用暂时不可用", true)
@@ -2796,11 +3202,68 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "草稿或预检查已失效，请重新预检查", false)
 		return
 	}
-	// EX-I6 门禁（2026-08-10）：对象存储输出的任务提交同样保持功能门禁阻断，
-	// 与预检查门禁一致，存储专用预检查完成前不允许冻结任务。
+	// EX-I6 存储凭据槽位（2026-08-14）：对象存储输出携带凭据引用时，
+	// 在冻结前校验引用存在、provider 与输出类型一致、属于当前主体且修订未过期。
+	// 无权或不存在的凭据一律 404，不泄露凭据存在性。
+	var storageCredentialID string
+	var storageCredentialRevision int64
+	if normalized.StorageCredential != nil {
+		reference, err := s.storageCredentials.GetStorageCredentialReference(r.Context(), normalized.StorageCredential.StorageCredentialID)
+		if err != nil {
+			if errors.Is(err, store.ErrStorageCredentialNotFound) {
+				notFound(w, r)
+				return
+			}
+			writeError(w, http.StatusServiceUnavailable, "STORAGE_CREDENTIAL_QUERY_FAILED", "对象存储凭据查询失败", true)
+			return
+		}
+		if reference.OwnerSubjectID != principal.ID {
+			notFound(w, r)
+			return
+		}
+		if reference.Provider != normalized.OutputKind {
+			writeError(w, http.StatusUnprocessableEntity, "STORAGE_CREDENTIAL_PROVIDER_MISMATCH", "存储凭据提供方与输出类型不一致", false)
+			return
+		}
+		if reference.Revision != normalized.StorageCredential.Revision {
+			writeError(w, http.StatusUnprocessableEntity, "STORAGE_CREDENTIAL_REVISION_STALE", "存储凭据已轮换，请重新保存草稿", false)
+			return
+		}
+		storageCredentialID, storageCredentialRevision = reference.StorageCredentialID, reference.Revision
+	}
+	// EX-I6 提交门禁（2026-08-14）：对象存储输出不再由功能门禁硬阻断，
+	// 而要求同一预检查结果中 STORAGE_CONNECTIVITY 与 STORAGE_AUTH 均 PASSED。
+	// 真实网络/凭据探测未授权时这两项为 UNKNOWN，提交保持失败关闭（真实取证归 EX-V1）。
 	if normalized.OutputKind != "" && normalized.OutputKind != "LOCAL" {
-		writeError(w, http.StatusUnprocessableEntity, "STORAGE_PRECHECK_UNAVAILABLE", "对象存储输出的存储专用预检查尚未完成，暂不能提交任务", false)
-		return
+		if !precheckStorageChecksPassed(run.Results) {
+			writeError(w, http.StatusUnprocessableEntity, "STORAGE_PRECHECK_REQUIRED", "对象存储输出要求存储专用预检查（端点连通性与凭据有效性）通过后才能提交", false)
+			return
+		}
+	}
+	// EX-I8 派生关系（2026-08-14）：派生草稿提交时把来源任务与派生方式写入新任务。
+	// 从头重新执行不允许修改参数：配置指纹必须与来源任务冻结快照一致，否则引导使用基于原配置新建。
+	var parentTaskID, derivationKind string
+	if draft.SourceTaskID != "" {
+		source, err := s.tasks.GetAuthorizedTaskDerivationSource(r.Context(), draft.SourceTaskID, principal.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrDataSourceNotFound) {
+				writeError(w, http.StatusUnprocessableEntity, "TASK_DERIVATION_SOURCE_UNAVAILABLE", "来源任务不存在或当前身份无权访问", false)
+				return
+			}
+			writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+			return
+		}
+		switch draft.SourceDerivation {
+		case "REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH":
+		default:
+			writeError(w, http.StatusUnprocessableEntity, "TASK_DERIVATION_INVALID", "草稿来源派生方式无效", false)
+			return
+		}
+		if draft.SourceDerivation == "RERUN_FROM_SCRATCH" && preview.ConfigFingerprint != source.ConfigFingerprint {
+			writeError(w, http.StatusUnprocessableEntity, "RERUN_CONFIGURATION_CHANGED", "从头重新执行不允许修改参数；如需修改请使用“基于原配置新建”", false)
+			return
+		}
+		parentTaskID, derivationKind = source.TaskID, draft.SourceDerivation
 	}
 	argv, err := json.Marshal(preview.ArgvTemplate)
 	if err != nil {
@@ -2816,6 +3279,8 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 	result, err := s.tasks.SubmitTaskIdempotent(r.Context(), store.TaskSubmission{
 		TaskID: taskID, CreatorSubjectID: principal.ID, AuditActorID: principal.ID, DataSourceID: draft.DataSourceID, NodeID: draft.NodeID,
 		PrecheckID: run.PrecheckID, CredentialID: run.CredentialID, CredentialRevision: run.CredentialRevision,
+		StorageCredentialID: storageCredentialID, StorageCredentialRevision: storageCredentialRevision,
+		ParentTaskID: parentTaskID, DerivationKind: derivationKind,
 		ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion,
 		CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: draftSnapshotVersion(draft.ConfigVersion), SnapshotJSON: draft.ConfigJSON, PlannedArgvJSON: string(argv),
 		PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now,
@@ -2854,6 +3319,18 @@ func draftSnapshotVersion(configVersion string) string {
 	return "v1"
 }
 
+// precheckStorageChecksPassed 只接受预检查结果中两项存储层检查均 PASSED 的结论。
+// UNKNOWN（探测未授权/不可用）与 FAILED 一样阻断提交，不能把未验证事实提升为可执行。
+func precheckStorageChecksPassed(results []store.PrecheckCheckResult) bool {
+	passed := map[string]bool{}
+	for _, result := range results {
+		if result.Check == "STORAGE_CONNECTIVITY" || result.Check == "STORAGE_AUTH" {
+			passed[result.Check] = result.Status == "PASSED"
+		}
+	}
+	return passed["STORAGE_CONNECTIVITY"] && passed["STORAGE_AUTH"]
+}
+
 // parseTaskReadPath 只将固定读取后缀解释为任务只读投影。
 // 任务标识和资源后缀必须分别完整匹配，避免路径被扩展成任意子资源入口。
 func parseTaskReadPath(path string) (string, string, bool) {
@@ -2878,13 +3355,21 @@ func parseTaskReadPath(path string) (string, string, bool) {
 }
 
 // taskOverviewResponse 是任务详情页头所需的最小不可变标识，不混入配置、命令或执行状态。
+// EX-I8：派生关系只下发来源任务标识与派生方式，不展开来源任务的其他事实。
 type taskOverviewResponse struct {
-	ID           string `json:"id"`
-	Type         string `json:"type"`
-	DataSourceID string `json:"dataSourceId"`
-	NodeID       string `json:"nodeId"`
-	PrecheckID   string `json:"precheckId"`
-	SubmittedAt  string `json:"submittedAt"`
+	ID             string `json:"id"`
+	Type           string `json:"type"`
+	DataSourceID   string `json:"dataSourceId"`
+	NodeID         string `json:"nodeId"`
+	PrecheckID     string `json:"precheckId"`
+	SubmittedAt    string `json:"submittedAt"`
+	ParentTaskID   string `json:"parentTaskId,omitempty"`
+	DerivationKind string `json:"derivationKind,omitempty"`
+}
+
+// validTaskPathID 只接受任务路径标识的受限形态。
+func validTaskPathID(value string) bool {
+	return value != "" && !strings.Contains(value, "/") && !strings.Contains(value, ":")
 }
 
 // taskSnapshotResponse 只返回当前切片可安全解释的冻结配置事实。
@@ -2917,15 +3402,48 @@ type taskCommandEvidenceResponse struct {
 
 // taskExecutionResponse 只携带平台已经确认的执行状态和时间事实。
 // 阶段、进度和结果解析尚无可靠映射时必须显式标为 UNAVAILABLE。
+// EX-I8：ResultSummary 只投影 Agent 观察到的文件/字节/检查点事实，不含路径原文、内容或秘密。
 type taskExecutionResponse struct {
-	State                  string `json:"state"`
-	ExecutionID            string `json:"executionId,omitempty"`
-	ReconciliationRequired bool   `json:"reconciliationRequired"`
-	StageEvidence          string `json:"stageEvidence"`
-	ProgressEvidence       string `json:"progressEvidence"`
-	StartedAt              string `json:"startedAt,omitempty"`
-	FinishedAt             string `json:"finishedAt,omitempty"`
-	UpdatedAt              string `json:"updatedAt"`
+	State                  string                     `json:"state"`
+	ExecutionID            string                     `json:"executionId,omitempty"`
+	ReconciliationRequired bool                       `json:"reconciliationRequired"`
+	StageEvidence          string                     `json:"stageEvidence"`
+	ProgressEvidence       string                     `json:"progressEvidence"`
+	StartedAt              string                     `json:"startedAt,omitempty"`
+	FinishedAt             string                     `json:"finishedAt,omitempty"`
+	UpdatedAt              string                     `json:"updatedAt"`
+	ResultSummary          *taskResultSummaryResponse `json:"resultSummary,omitempty"`
+}
+
+// taskResultSummaryResponse 是任务级结果摘要的安全投影。
+type taskResultSummaryResponse struct {
+	Result            string                   `json:"result"`
+	FileCount         uint64                   `json:"fileCount"`
+	TotalBytes        uint64                   `json:"totalBytes"`
+	Files             []taskResultFileResponse `json:"files"`
+	CheckpointPresent bool                     `json:"checkpointPresent"`
+	ObservedAt        string                   `json:"observedAt"`
+}
+
+// taskResultFileResponse 是单个结果文件的相对路径与字节数；相对路径不含节点绝对路径前缀。
+type taskResultFileResponse struct {
+	Path string `json:"path"`
+	Size uint64 `json:"size"`
+}
+
+// newTaskResultSummaryResponse 把仓储投影转成浏览器安全响应；空值缺省。
+func newTaskResultSummaryResponse(summary *store.ExecutionResultSummary) *taskResultSummaryResponse {
+	if summary == nil {
+		return nil
+	}
+	files := make([]taskResultFileResponse, 0, len(summary.Files))
+	for _, file := range summary.Files {
+		files = append(files, taskResultFileResponse{Path: file.Path, Size: file.Size})
+	}
+	return &taskResultSummaryResponse{
+		Result: summary.Result, FileCount: summary.FileCount, TotalBytes: summary.TotalBytes, Files: files,
+		CheckpointPresent: summary.CheckpointPresent, ObservedAt: summary.ObservedAt.UTC().Format(time.RFC3339Nano),
+	}
 }
 
 // loadAuthorizedTaskSummary 对每个任务只读投影重新执行服务端范围校验。
@@ -2956,6 +3474,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request, principal ident
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskOverviewResponse{
 		ID: summary.TaskID, Type: "OBDUMPER_EXPORT", DataSourceID: summary.DataSourceID, NodeID: summary.NodeID,
 		PrecheckID: summary.PrecheckID, SubmittedAt: summary.SubmittedAt.Format(time.RFC3339Nano),
+		ParentTaskID: summary.ParentTaskID, DerivationKind: summary.DerivationKind,
 	}})
 }
 
@@ -3024,7 +3543,185 @@ func (s *Server) getTaskExecution(w http.ResponseWriter, r *http.Request, princi
 		State: summary.State, ExecutionID: summary.ExecutionID, ReconciliationRequired: summary.ReconciliationRequired,
 		StageEvidence: "UNAVAILABLE", ProgressEvidence: "UNAVAILABLE", StartedAt: optionalTaskTime(summary.StartedAt),
 		FinishedAt: optionalTaskTime(summary.FinishedAt), UpdatedAt: summary.UpdatedAt.Format(time.RFC3339Nano),
+		ResultSummary: newTaskResultSummaryResponse(summary.ResultSummary),
 	}})
+}
+
+// taskDerivationRequest 是派生草稿操作的请求体：只接受两种受控派生方式。
+type taskDerivationRequest struct {
+	Derivation string `json:"derivation"`
+}
+
+// rebuildTaskDraft 从失败任务的冻结快照重建可编辑 v6 草稿（EX-I8 基于原配置新建/从头重新执行）。
+// 不复制凭据明文、预检查结果、风险确认、日志或执行事实；提交时仍按当前工具版本与参数元数据重新校验，
+// 并生成新的预检查与风险确认。
+func (s *Server) rebuildTaskDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.tasks == nil || s.drafts == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务派生依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	var request taskDerivationRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	if request.Derivation != "REBUILD_FROM_CONFIG" && request.Derivation != "RERUN_FROM_SCRATCH" {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "派生方式无效", false)
+		return
+	}
+	source, err := s.tasks.GetAuthorizedTaskDerivationSource(r.Context(), taskID, principal.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			notFound(w, r)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+		return
+	}
+	if source.State != "FAILED" {
+		writeError(w, http.StatusUnprocessableEntity, "TASK_NOT_FAILED", "只有失败任务可以派生新草稿", false)
+		return
+	}
+	if source.SnapshotVersion != "v2" {
+		writeError(w, http.StatusUnprocessableEntity, "TASK_DERIVATION_UNSUPPORTED", "该任务快照版本不支持派生草稿", false)
+		return
+	}
+	var stored struct {
+		Config *store.ExportConfig `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(source.SnapshotJSON), &stored); err != nil || stored.Config == nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_SNAPSHOT_UNAVAILABLE", "任务快照暂时不可用", true)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, source.DataSourceID) != nil || identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, source.NodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	writeRequest := exportDraftWriteRequest{ConfigVersion: "v6", DataSourceID: source.DataSourceID, NodeID: source.NodeID, Config: stored.Config}
+	normalized, err := normalizeExportDraftRequest(writeRequest)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "来源任务配置不符合当前可派生边界", false)
+		return
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, "")
+	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "来源任务配置不符合当前可派生边界", false)
+		return
+	}
+	configVersion, configJSON, structured, err := buildDraftPersistence(writeRequest, normalized)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "来源任务配置不符合当前可派生边界", false)
+		return
+	}
+	draftID := newOpaqueID()
+	if draftID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	created, err := s.drafts.CreateExportDraft(r.Context(), store.ExportDraftCreate{
+		ExportDraft: store.ExportDraft{
+			DraftID: draftID, OwnerSubjectID: principal.ID, DataSourceID: source.DataSourceID, NodeID: source.NodeID,
+			ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion,
+			ConfigVersion: configVersion, ConfigJSON: configJSON, ConfigFingerprint: preview.ConfigFingerprint, InvalidationJSON: `{}`,
+			ObjectScopeJSON: structured.ObjectScopeJSON, ContentSelectionJSON: structured.ContentSelectionJSON, DataFormatJSON: structured.DataFormatJSON,
+			OutputConfigJSON: structured.OutputConfigJSON, PerformanceConfigJSON: structured.PerformanceConfigJSON,
+			FilterConfigJSON: structured.FilterConfigJSON, DDLBehaviorJSON: structured.DDLBehaviorJSON,
+			SourceTaskID: source.TaskID, SourceDerivation: request.Derivation,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: taskDerivationDigest(taskID, request.Derivation),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+			return
+		}
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			writeError(w, http.StatusUnprocessableEntity, "DERIVED_DRAFT_SOURCE_UNAVAILABLE", "数据源或执行节点当前不可用于新草稿，请先恢复其可用性", false)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "DERIVED_DRAFT_CREATE_FAILED", "派生草稿创建失败", true)
+		return
+	}
+	status := http.StatusCreated
+	if created.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "draftId": created.DraftID, "sourceTaskId": source.TaskID, "derivation": request.Derivation, "replayed": created.Replayed})
+}
+
+// resumeTaskFromCheckpoint 从失败导出任务的冻结快照创建检查点继续任务（EX-I8）：
+// 新任务继承原快照并追加官方 --retry，不重新执行预检查（检查点内含继续语义）。
+// 资格条件由仓储层复验：失败终态 + dump.ckpt 存在 + 原预检查曾成功完成。
+func (s *Server) resumeTaskFromCheckpoint(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.tasks == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务派生依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	derivedTaskID := newOpaqueID()
+	if derivedTaskID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	result, err := s.tasks.DeriveTaskFromCheckpoint(r.Context(), store.CheckpointResumeDerivation{
+		TaskID: derivedTaskID, CreatorSubjectID: principal.ID, AuditActorID: principal.ID, SourceTaskID: taskID,
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: taskDerivationDigest(taskID, "CHECKPOINT_RESUME"), Now: now,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrDataSourceNotFound):
+			notFound(w, r)
+		case errors.Is(err, store.ErrCheckpointResumeUnavailable):
+			writeError(w, http.StatusUnprocessableEntity, "CHECKPOINT_RESUME_UNAVAILABLE", "不满足检查点继续条件：任务不是失败终态，或输出目录没有可读 dump.ckpt，或快照已携带 --retry", false)
+		case errors.Is(err, store.ErrPrecheckInvalid):
+			writeError(w, http.StatusUnprocessableEntity, "CHECKPOINT_PRECHECK_UNAVAILABLE", "原预检查已失效，不能从检查点继续", false)
+		case errors.Is(err, store.ErrIdempotencyConflict):
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		default:
+			writeError(w, http.StatusServiceUnavailable, "TASK_DERIVATION_UNAVAILABLE", "检查点继续暂时不可用", true)
+		}
+		return
+	}
+	if !s.realExecutionEnabled {
+		if err := s.coordinator.Schedule(agentstate.TaskSchedule{TaskID: result.TaskID, NodeID: result.NodeID}); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "TASK_SCHEDULING_UNAVAILABLE", "继续任务已冻结但暂时无法进入合成队列", true)
+			return
+		}
+	}
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "id": result.TaskID, "parentTaskId": taskID, "derivationKind": "CHECKPOINT_RESUME", "replayed": result.Replayed, "realExecutionEnabled": s.realExecutionEnabled})
+}
+
+// taskDerivationDigest 基于来源任务与派生方式生成幂等摘要（不含任何敏感字段）。
+func taskDerivationDigest(taskID, derivation string) string {
+	digest := sha256.Sum256([]byte(taskID + "|" + derivation))
+	return hex.EncodeToString(digest[:])
 }
 
 const taskListDefaultPageSize = 10
@@ -3889,16 +4586,32 @@ func (s *Server) claimNextAuthenticatedPrecheck(w http.ResponseWriter, r *http.R
 			"configFingerprint": grant.Binding.ConfigFingerprint, "credentialRevision": grant.Binding.CredentialRevision,
 			"nodeFactsVersion": grant.Binding.NodeFactsRevision,
 		},
-		"bindingDigest": grant.Binding.BindingDigest, "checkSet": agentpreflight.FixedChecks(), "realExecutionEnabled": false,
-		"executionContext": map[string]any{
-			"compatibilityMode": grant.ExecutionContext.CompatibilityMode,
-			"database":          grant.ExecutionContext.Database, "objects": grant.ExecutionContext.Objects,
-			"contentKind": grant.ExecutionContext.ContentKind,
-			"outputPath":  grant.ExecutionContext.OutputPath, "targetPlatform": grant.ExecutionContext.TargetPlatform,
-			"logPath": grant.ExecutionContext.LogPath, "skipCheckDir": grant.ExecutionContext.SkipCheckDir,
-			"allowedRoots": grant.ExecutionContext.AllowedRoots,
-		},
+		"bindingDigest": grant.Binding.BindingDigest,
+		// EX-I6：检查清单按冻结草稿的输出类型派生——本地保持冻结六项，对象存储使用存储形态清单。
+		"checkSet":             agentpreflight.ChecksForOutputKind(agentpreflight.OutputKind(grant.ExecutionContext.OutputKind)),
+		"realExecutionEnabled": false,
+		"executionContext":     precheckExecutionContextPayload(grant.ExecutionContext),
 	})
+}
+
+// precheckExecutionContextPayload 把持久化上下文投影为 Agent 协议载荷；
+// 对象存储输出附带受控存储目标段（不含密钥），本地输出缺省。
+func precheckExecutionContextPayload(context store.PrecheckExecutionContext) map[string]any {
+	payload := map[string]any{
+		"compatibilityMode": context.CompatibilityMode,
+		"database":          context.Database, "objects": context.Objects,
+		"contentKind": context.ContentKind,
+		"outputPath":  context.OutputPath, "targetPlatform": context.TargetPlatform,
+		"logPath": context.LogPath, "skipCheckDir": context.SkipCheckDir,
+		"allowedRoots": context.AllowedRoots, "outputKind": context.OutputKind,
+	}
+	if context.StorageTarget != nil {
+		payload["storageTarget"] = map[string]any{
+			"provider": context.StorageTarget.Provider, "uri": context.StorageTarget.URI,
+			"endpoint": context.StorageTarget.Endpoint, "tmpPath": context.StorageTarget.TmpPath,
+		}
+	}
+	return payload
 }
 
 // acknowledgeAuthenticatedPrecheck 持久化 Agent 对当前租约和固定检查集的确认。
@@ -4021,8 +4734,9 @@ func (s *Server) resolveAuthenticatedPrecheckSecret(w http.ResponseWriter, r *ht
 	})
 }
 
-// completeAuthenticatedPrecheck 持久化固定六项检查的最终安全投影。
+// completeAuthenticatedPrecheck 持久化检查结果的最终安全投影。
 // 控制面根据每项 PASSED/FAILED/UNKNOWN 推导结果；此路径不接收整体成功布尔值或自由证据文本。
+// 检查清单顺序与输出类型形态由仓储层按冻结草稿复核，这里只做结构失败关闭。
 func (s *Server) completeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Request, precheckID string) {
 	machine, ok := s.authenticatedPrecheckAgent(w, r)
 	if !ok {
@@ -4039,17 +4753,8 @@ func (s *Server) completeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Re
 		return
 	}
 	results := make([]store.PrecheckCheckResult, 0, len(request.Payload.Results))
-	report := agentpreflight.Report{PrecheckID: precheckID, Succeeded: true, Results: make([]agentpreflight.Result, 0, len(request.Payload.Results))}
 	for _, item := range request.Payload.Results {
 		results = append(results, store.PrecheckCheckResult{Check: string(item.Check), Status: string(item.Status), EvidenceCode: item.EvidenceCode})
-		report.Results = append(report.Results, agentpreflight.Result{Check: item.Check, Status: item.Status, EvidenceCode: item.EvidenceCode})
-		if item.Status != agentpreflight.StatusPassed {
-			report.Succeeded = false
-		}
-	}
-	if err := agentpreflight.ValidateReport(report); err != nil {
-		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
-		return
 	}
 	result, err := s.agentPrechecks.CompleteAgentPrecheck(r.Context(), store.AgentPrecheckCompletion{
 		AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
@@ -6097,4 +6802,318 @@ func requestID(w http.ResponseWriter) string {
 		return carrier.RequestID()
 	}
 	return ""
+}
+
+// templateWriteRequest 是模板改名/保存请求体；配置内容不可变，只允许名称输入。
+type templateWriteRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+// templateCreateDraftRequest 是由模板创建草稿的请求体：数据源与执行节点在此时重新选择。
+type templateCreateDraftRequest struct {
+	DataSourceID string `json:"dataSourceId"`
+	NodeID       string `json:"nodeId"`
+}
+
+// templateResponse 是模板安全投影：绝不包含配置 JSON 原文（配置只在创建草稿时服务端读取）。
+type templateResponse struct {
+	ID                string `json:"id"`
+	DisplayName       string `json:"displayName"`
+	CapabilityVersion string `json:"capabilityVersion"`
+	ConfigFingerprint string `json:"configFingerprint"`
+	SourceTaskID      string `json:"sourceTaskId,omitempty"`
+	Revision          int64  `json:"revision"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
+}
+
+func newTemplateResponse(template store.ExportConfigTemplate) templateResponse {
+	return templateResponse{
+		ID: template.TemplateID, DisplayName: template.DisplayName, CapabilityVersion: template.CapabilityVersion,
+		ConfigFingerprint: template.ConfigFingerprint, SourceTaskID: template.SourceTaskID, Revision: template.Revision,
+		CreatedAt: template.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: template.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+// listExportConfigTemplates 返回当前主体拥有的模板安全投影（不含配置）。
+func (s *Server) listExportConfigTemplates(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
+	if s.templates == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置模板管理", false)
+		return
+	}
+	templates, err := s.templates.ListExportConfigTemplates(r.Context(), principal.ID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_QUERY_FAILED", "模板查询失败", true)
+		return
+	}
+	items := make([]templateResponse, 0, len(templates))
+	for _, template := range templates {
+		items = append(items, newTemplateResponse(template))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
+}
+
+// saveTaskTemplate 从成功任务保存模板（EX-I8 模板复用）：
+// 只复制非敏感 v6 配置并剥离对象存储凭据引用；不复制凭据、节点、预检查、风险确认、日志或结果。
+func (s *Server) saveTaskTemplate(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.templates == nil || s.tasks == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置模板管理依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	var request templateWriteRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	displayName := strings.TrimSpace(request.DisplayName)
+	if displayName == "" || len(displayName) > 256 {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "模板名称无效", false)
+		return
+	}
+	source, err := s.tasks.GetAuthorizedTaskDerivationSource(r.Context(), taskID, principal.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			notFound(w, r)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
+		return
+	}
+	if source.State != "SUCCEEDED" {
+		writeError(w, http.StatusUnprocessableEntity, "TASK_NOT_SUCCEEDED", "只有成功任务可以保存为模板", false)
+		return
+	}
+	if source.SnapshotVersion != "v2" {
+		writeError(w, http.StatusUnprocessableEntity, "TEMPLATE_SOURCE_UNSUPPORTED", "该任务快照版本不支持保存为模板", false)
+		return
+	}
+	configJSON, err := templateConfigFromSource(source.SnapshotJSON)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TASK_SNAPSHOT_UNAVAILABLE", "任务快照暂时不可用", true)
+		return
+	}
+	templateID := newOpaqueID()
+	if templateID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	created, err := s.templates.CreateExportConfigTemplate(r.Context(), store.ExportConfigTemplateCreate{
+		ExportConfigTemplate: store.ExportConfigTemplate{
+			TemplateID: templateID, OwnerSubjectID: principal.ID, DisplayName: displayName,
+			CapabilityVersion: source.CapabilityVersion, ConfigJSON: configJSON, ConfigFingerprint: source.ConfigFingerprint,
+			SourceTaskID: source.TaskID, CreatedAt: now, UpdatedAt: now,
+		},
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: taskDerivationDigest(taskID, "SAVE_TEMPLATE"),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_CREATE_FAILED", "模板创建失败", true)
+		return
+	}
+	status := http.StatusCreated
+	if created.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "id": created.TemplateID, "sourceTaskId": taskID, "replayed": created.Replayed})
+}
+
+// templateConfigFromSource 从任务冻结快照解析嵌套 v6 配置并剥离对象存储凭据引用。
+// 模板不复制凭据；由模板创建草稿时用户在向导中重新绑定存储凭据。
+func templateConfigFromSource(snapshotJSON string) (string, error) {
+	var stored struct {
+		Config *store.ExportConfig `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(snapshotJSON), &stored); err != nil || stored.Config == nil {
+		return "", errors.New("template source config is unavailable")
+	}
+	stored.Config.OutputConfig.StorageCredential = nil
+	raw, err := json.Marshal(stored.Config)
+	if err != nil {
+		return "", errors.New("template config encode failed")
+	}
+	return string(raw), nil
+}
+
+// updateExportConfigTemplate 只允许版本保护下的模板改名；配置内容不可变。
+func (s *Server) updateExportConfigTemplate(w http.ResponseWriter, r *http.Request, principal identity.Principal, templateID string) {
+	if s.templates == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置模板管理", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_REQUIRED", "需要有效的模板版本号", false)
+		return
+	}
+	var request templateWriteRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	displayName := strings.TrimSpace(request.DisplayName)
+	if displayName == "" || len(displayName) > 256 {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "模板名称无效", false)
+		return
+	}
+	revision, err := s.templates.UpdateExportConfigTemplate(r.Context(), store.ExportConfigTemplateUpdate{
+		TemplateID: templateID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		DisplayName: displayName, RequestID: requestID(w), UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			notFound(w, r)
+			return
+		}
+		if errors.Is(err, store.ErrRevisionConflict) {
+			writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "模板已发生变化，请刷新后重试", false)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_UPDATE_FAILED", "模板更新失败", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "revision": revision})
+}
+
+// deleteExportConfigTemplate 删除主体拥有的模板（版本保护；无权与不存在同 404）。
+func (s *Server) deleteExportConfigTemplate(w http.ResponseWriter, r *http.Request, principal identity.Principal, templateID string) {
+	if s.templates == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置模板管理", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusPreconditionFailed, "REVISION_REQUIRED", "需要有效的模板版本号", false)
+		return
+	}
+	if err := s.templates.DeleteExportConfigTemplate(r.Context(), templateID, principal.ID, expectedRevision, requestID(w), time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			notFound(w, r)
+			return
+		}
+		if errors.Is(err, store.ErrRevisionConflict) {
+			writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "模板已发生变化，请刷新后重试", false)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_DELETE_FAILED", "模板删除失败", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "deleted": true})
+}
+
+// createDraftFromTemplate 由模板创建可编辑 v6 草稿（EX-I8 模板复用）：
+// 数据源与执行节点由用户此时重新选择；模板不复制凭据（存储凭据引用已剥离）、预检查或风险确认。
+func (s *Server) createDraftFromTemplate(w http.ResponseWriter, r *http.Request, principal identity.Principal, templateID string) {
+	if s.templates == nil || s.drafts == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置模板依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	var request templateCreateDraftRequest
+	if !decodeBrowserJSON(w, r, &request) {
+		return
+	}
+	if request.DataSourceID == "" || request.NodeID == "" {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "数据源与执行节点不能为空", false)
+		return
+	}
+	template, err := s.templates.GetAuthorizedExportConfigTemplate(r.Context(), templateID, principal.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			notFound(w, r)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_QUERY_FAILED", "模板查询失败", true)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, request.DataSourceID) != nil || identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, request.NodeID) != nil {
+		notFound(w, r)
+		return
+	}
+	var config store.ExportConfig
+	if err := json.Unmarshal([]byte(template.ConfigJSON), &config); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_CONFIG_UNAVAILABLE", "模板配置暂时不可用", true)
+		return
+	}
+	writeRequest := exportDraftWriteRequest{ConfigVersion: "v6", DataSourceID: request.DataSourceID, NodeID: request.NodeID, Config: &config}
+	normalized, err := normalizeExportDraftRequest(writeRequest)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "模板配置不符合当前可派生边界", false)
+		return
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, "")
+	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "模板配置不符合当前可派生边界", false)
+		return
+	}
+	configVersion, configJSON, structured, err := buildDraftPersistence(writeRequest, normalized)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "模板配置不符合当前可派生边界", false)
+		return
+	}
+	draftID := newOpaqueID()
+	if draftID == "" {
+		writeError(w, http.StatusServiceUnavailable, "IDENTIFIER_UNAVAILABLE", "服务暂时不可用", true)
+		return
+	}
+	now := time.Now().UTC()
+	created, err := s.drafts.CreateExportDraft(r.Context(), store.ExportDraftCreate{
+		ExportDraft: store.ExportDraft{
+			DraftID: draftID, OwnerSubjectID: principal.ID, DataSourceID: request.DataSourceID, NodeID: request.NodeID,
+			ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion,
+			ConfigVersion: configVersion, ConfigJSON: configJSON, ConfigFingerprint: preview.ConfigFingerprint, InvalidationJSON: `{}`,
+			ObjectScopeJSON: structured.ObjectScopeJSON, ContentSelectionJSON: structured.ContentSelectionJSON, DataFormatJSON: structured.DataFormatJSON,
+			OutputConfigJSON: structured.OutputConfigJSON, PerformanceConfigJSON: structured.PerformanceConfigJSON,
+			FilterConfigJSON: structured.FilterConfigJSON, DDLBehaviorJSON: structured.DDLBehaviorJSON,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: taskDerivationDigest(templateID, "CREATE_DRAFT"),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+			return
+		}
+		if errors.Is(err, store.ErrDataSourceNotFound) {
+			writeError(w, http.StatusUnprocessableEntity, "TEMPLATE_DRAFT_SOURCE_UNAVAILABLE", "数据源或执行节点当前不可用，请先恢复其可用性", false)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "TEMPLATE_DRAFT_CREATE_FAILED", "由模板创建草稿失败", true)
+		return
+	}
+	status := http.StatusCreated
+	if created.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "draftId": created.DraftID, "templateId": templateID, "replayed": created.Replayed})
 }

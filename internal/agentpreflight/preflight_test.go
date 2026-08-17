@@ -159,6 +159,98 @@ func validRequest() Request {
 	return Request{Capability: CapabilityExportPreflight, PrecheckID: binding.PrecheckID, NodeID: binding.NodeID, AgentID: "agent-1", LeaseID: "lease-1", LeaseEpoch: 1, Binding: binding, CompatibilityMode: "MYSQL", Database: "synthetic_db", Objects: []string{"synthetic_table"}, ContentKind: "DATA_ONLY", TargetPlatform: commandgen.PlatformWindowsAMD64, OutputPath: "/E:/synthetic/output", AllowedRoots: []string{`E:\synthetic`}}
 }
 
+// validStorageRequest 构造对象存储输出任务的预检查请求（EX-I6 存储专用预检查）。
+func validStorageRequest() Request {
+	request := validRequest()
+	request.OutputKind = OutputKindOSS
+	request.OutputPath = "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com"
+	request.LogPath = ""
+	request.StorageTarget = &StorageTarget{
+		Provider: "OSS", URI: request.OutputPath, Endpoint: "oss-cn-hangzhou.aliyuncs.com", TmpPath: "/E:/synthetic/tmp",
+	}
+	return request
+}
+
+// Test存储预检查执行存储形态清单且前置失败时存储检查保持未知 验证：
+// 1) 对象存储输出使用六项存储形态清单（无 OUTPUT_PATH/OUTPUT_EMPTY，含两项存储检查）；
+// 2) 本机前置失败时数据库与存储检查都保持 UNKNOWN 且不调用 Probe。
+func Test存储预检查执行存储形态清单且前置失败时存储检查保持未知(t *testing.T) {
+	probe := &syntheticProbe{}
+	report, err := Run(context.Background(), validStorageRequest(), probe)
+	if err != nil {
+		t.Fatalf("Run() 错误 = %v", err)
+	}
+	expected := storageCheckList
+	if len(report.Results) != len(expected) {
+		t.Fatalf("结果数量 = %d，期望 %d", len(report.Results), len(expected))
+	}
+	for index, check := range expected {
+		if report.Results[index].Check != check {
+			t.Fatalf("报告结果顺序 %d = %q，期望 %q", index, report.Results[index].Check, check)
+		}
+	}
+	if err := ValidateReportFor(OutputKindOSS, report); err != nil {
+		t.Fatalf("ValidateReportFor(storage) 错误 = %v", err)
+	}
+	// 本机前置失败：TOOL_ENVIRONMENT 失败后数据库与存储检查全部 UNKNOWN 且不再调用 Probe。
+	failed := &syntheticProbe{results: map[CheckID]Status{CheckToolEnvironment: StatusFailed}}
+	report, err = Run(context.Background(), validStorageRequest(), failed)
+	if err != nil {
+		t.Fatalf("Run() 错误 = %v", err)
+	}
+	if reflect.DeepEqual(failed.checks, storageCheckList) {
+		t.Fatalf("本机前置失败后仍执行了全部检查：%#v", failed.checks)
+	}
+	if report.Results[0].Status != StatusUnknown || report.Results[1].Status != StatusUnknown ||
+		report.Results[4].Status != StatusUnknown || report.Results[4].EvidenceCode != "STORAGE_CONNECTIVITY_UNAVAILABLE" ||
+		report.Results[5].Status != StatusUnknown || report.Results[5].EvidenceCode != "STORAGE_AUTH_UNAVAILABLE" {
+		t.Fatalf("前置失败后的存储形态报告 = %#v", report.Results)
+	}
+}
+
+// Test存储预检查拒绝不安全存储目标 验证存储形态的失败关闭：
+// provider 与输出类型不一致、目标缺失、URI 含控制字符、非平台形态 tmp-path 均拒绝。
+func Test存储预检查拒绝不安全存储目标(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Request)
+	}{
+		{name: "存储输出缺少目标", mutate: func(request *Request) { request.StorageTarget = nil }},
+		{name: "provider 与输出类型不一致", mutate: func(request *Request) { request.StorageTarget.Provider = "S3" }},
+		{name: "URI 含换行", mutate: func(request *Request) { request.OutputPath = "oss://bucket/path\n" }},
+		{name: "URI 与控制目标不一致", mutate: func(request *Request) { request.StorageTarget.URI = "s3://bucket/path" }},
+		{name: "tmp-path 不是平台绝对路径", mutate: func(request *Request) { request.StorageTarget.TmpPath = "relative/tmp" }},
+		{name: "存储输出携带本地日志路径", mutate: func(request *Request) { request.LogPath = "/E:/synthetic/logs" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := validStorageRequest()
+			test.mutate(&request)
+			if _, err := Run(context.Background(), request, &syntheticProbe{}); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("Run() 错误 = %v，期望 %v", err, ErrInvalidRequest)
+			}
+		})
+	}
+}
+
+// TestValidateReportFor按输出类型拒绝形态混淆 验证存储形态报告不能通过本地校验，反之亦然。
+func TestValidateReportFor按输出类型拒绝形态混淆(t *testing.T) {
+	local, err := Run(context.Background(), validRequest(), &syntheticProbe{})
+	if err != nil {
+		t.Fatalf("Run(local) 错误 = %v", err)
+	}
+	if err := ValidateReportFor(OutputKindOSS, local); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("本地报告被存储形态校验接受: %v", err)
+	}
+	storage, err := Run(context.Background(), validStorageRequest(), &syntheticProbe{})
+	if err != nil {
+		t.Fatalf("Run(storage) 错误 = %v", err)
+	}
+	if err := ValidateReportFor(OutputKindLocal, storage); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("存储报告被本地形态校验接受: %v", err)
+	}
+}
+
 func executionCheckOrder() []CheckID {
 	return append(append([]CheckID(nil), localChecks...), databaseChecks...)
 }

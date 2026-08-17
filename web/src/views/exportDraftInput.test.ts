@@ -26,6 +26,9 @@ const completeValues: ExportDraftFormValues = {
   storageEndpoint: '',
   storageRegion: '',
   tmpPath: '',
+  storageCredentialId: '',
+  storageCredentialRevision: 0,
+  storageCredentialProvider: '',
   controlFilePath: '',
   skipHeader: false,
   columnSeparator: '',
@@ -333,6 +336,29 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, outputKind: 'LOCAL', filePath: 'oss://bucket/path' })).toMatchObject({ valid: false, message: expect.stringContaining('/E:/exports') })
     // 临时分块目录必须是节点绝对路径。
     expect(validateExportDraftInput({ ...completeValues, outputKind: 'OBS', storageBucket: 'bucket', storagePath: '/exports', storageRegion: 'cn-north-1', tmpPath: 'relative/tmp' })).toMatchObject({ valid: false, message: expect.stringContaining('临时分块目录') })
+  })
+
+  it('对象存储输出按需绑定存储凭据引用，本地输出与 provider 不一致失败关闭', () => {
+    // 显式绑定：只发送标识与当前修订，不含任何密钥材料。
+    const bound = validateExportDraftInput({
+      ...completeValues,
+      outputKind: 'OSS',
+      storageBucket: 'my-bucket',
+      storagePath: '/exports',
+      storageEndpoint: 'oss-cn-hangzhou.aliyuncs.com',
+      storageCredentialId: 'storage-1',
+      storageCredentialRevision: 3,
+      storageCredentialProvider: 'OSS',
+    })
+    expect(bound).toMatchObject({ valid: true })
+    if (bound.valid) {
+      expect(bound.input.config.outputConfig.storageCredential).toEqual({ storageCredentialId: 'storage-1', revision: 3 })
+    }
+    // 本地输出携带引用必须失败关闭（与服务端 422 同口径）。
+    expect(validateExportDraftInput({ ...completeValues, storageCredentialId: 'storage-1', storageCredentialRevision: 1, storageCredentialProvider: 'OSS' })).toMatchObject({ valid: false, message: expect.stringContaining('本地输出不能绑定') })
+    // provider 与输出类型不一致、缺修订均失败关闭。
+    expect(validateExportDraftInput({ ...completeValues, outputKind: 'OSS', storageBucket: 'bucket', storagePath: '/exports', storageEndpoint: 'endpoint', storageCredentialId: 'storage-1', storageCredentialRevision: 1, storageCredentialProvider: 'S3' })).toMatchObject({ valid: false, message: expect.stringContaining('不一致') })
+    expect(validateExportDraftInput({ ...completeValues, outputKind: 'OSS', storageBucket: 'bucket', storagePath: '/exports', storageEndpoint: 'endpoint', storageCredentialId: 'storage-1', storageCredentialRevision: 0, storageCredentialProvider: 'OSS' })).toMatchObject({ valid: false, message: expect.stringContaining('修订') })
   })
 
   it('拒绝空字段、非法对象名、视图导出数据和不匹配平台的输出路径', () => {

@@ -12,6 +12,7 @@ import HomeView from '@/views/HomeView.vue'
 import LogCenterView from '@/views/LogCenterView.vue'
 import NormalImportWizardView from '@/views/NormalImportWizardView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
+import StorageCredentialsView from '@/views/StorageCredentialsView.vue'
 import TaskCenterView from '@/views/TaskCenterView.vue'
 import TaskDetailView from '@/views/TaskDetailView.vue'
 import TemplateCenterView from '@/views/TemplateCenterView.vue'
@@ -36,6 +37,7 @@ export const router = createRouter({
     { path: '/logs', name: 'logs', component: LogCenterView, meta: { title: '日志中心' } },
     { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },
     { path: '/settings/access-control', name: 'access-control', component: AccessControlView, meta: { title: '权限配置' } },
+    { path: '/settings/storage-credentials', name: 'storage-credentials', component: StorageCredentialsView, meta: { title: '存储凭据' } },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: '页面不存在' } },
   ],
 })

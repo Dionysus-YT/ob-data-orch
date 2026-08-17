@@ -55,6 +55,20 @@ export function executionNodeErrorMessage(error: unknown, fallback: string): str
   return apiError.message || fallback
 }
 
+// storageCredentialErrorMessage 为存储凭据读写失败保留安全错误语义：
+// 越权与不存在统一为 404，版本冲突与幂等冲突要求刷新后重试。
+export function storageCredentialErrorMessage(error: unknown, fallback: string): string {
+  const apiError = error as Partial<ApiError>
+  if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE') return '当前页面未获得请求安全令牌，已拒绝写操作。请刷新页面后重试。'
+  if (apiError.status === 401) return '登录状态或请求安全校验已失效，请刷新页面后重试。'
+  if (apiError.status === 404) return '存储凭据不存在或当前身份无权访问。'
+  if (apiError.status === 409 || apiError.status === 412 || apiError.conflict) return '存储凭据已发生变化，请刷新后重新比较。'
+  if (apiError.code === 'STORAGE_CREDENTIAL_PROVIDER_MISMATCH') return '所选存储凭据与输出类型不一致。'
+  if (apiError.code === 'STORAGE_CREDENTIAL_REVISION_STALE') return '存储凭据已轮换，请重新保存草稿。'
+  if (apiError.code === 'NETWORK_UNAVAILABLE') return '无法连接控制面，请检查当前环境后重试。'
+  return apiError.message || fallback
+}
+
 interface DataSourceProjection {
   readonly id: string
   readonly displayName: string
@@ -336,6 +350,34 @@ export interface PerformanceOptions {
 // EX-I6 对象存储（2026-08-07）：输出目标类型；对象存储要求受控 URI（凭据走执行槽位，不进 URI）。
 export type ExportOutputKind = 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS'
 
+// EX-I6 存储凭据槽位（2026-08-14）：对象存储凭据类型与安全投影。
+export type StorageCredentialProvider = 'OSS' | 'S3' | 'COS' | 'OBS'
+
+export interface StorageCredentialListItem {
+  readonly id: string
+  readonly displayName: string
+  readonly provider: StorageCredentialProvider
+  readonly currentRevision: number
+  readonly revision: number
+  readonly updatedAt: string
+}
+
+// StorageCredentialWrite 只在创建/轮换请求体内承载密钥明文；
+// 密钥绝不进入草稿、命令、日志或任何读取响应。
+export interface StorageCredentialWrite {
+  readonly displayName: string
+  readonly provider: StorageCredentialProvider
+  readonly accessKey: string
+  readonly secretKey: string
+}
+
+// StorageCredentialReference 是草稿输出配置中的对象存储凭据引用；
+// 只引用标识与修订，不携带任何密钥材料。
+export interface StorageCredentialReference {
+  readonly storageCredentialId: string
+  readonly revision: number
+}
+
 // 前置 DROP 与保留 Schema 仅 DDL 内容时携带，紧凑 Schema 同样仅 DDL 内容；
 // addExtraMessage 保留用于既有草稿解码，需完成 sys 权限预检查前浏览器保持关闭。
 export interface DDLBehaviorOptions {
@@ -371,6 +413,8 @@ export interface GeneralizedExportConfig {
     readonly controlFilePath?: string
     // EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
     readonly tmpPath?: string
+    // EX-I6 存储凭据槽位（2026-08-14）：对象存储输出的凭据引用；可缺省（依赖 Hadoop 标准配置链），LOCAL 输出不携带。
+    readonly storageCredential?: StorageCredentialReference
   }
   readonly filterConfig?: FilterOptions
   readonly performanceConfig?: PerformanceOptions
@@ -414,7 +458,7 @@ export interface Precheck {
 }
 
 export interface PrecheckResult {
-	readonly check: 'DATABASE_CONNECTIVITY' | 'OBJECT_ACCESS' | 'TOOL_ENVIRONMENT' | 'OUTPUT_PATH' | 'OUTPUT_EMPTY' | 'AVAILABLE_SPACE'
+	readonly check: 'DATABASE_CONNECTIVITY' | 'OBJECT_ACCESS' | 'TOOL_ENVIRONMENT' | 'OUTPUT_PATH' | 'OUTPUT_EMPTY' | 'AVAILABLE_SPACE' | 'STORAGE_CONNECTIVITY' | 'STORAGE_AUTH'
 	readonly status: 'PASSED' | 'FAILED' | 'UNKNOWN'
 	readonly evidenceCode: string
 }
@@ -426,6 +470,36 @@ export interface TaskOverview {
   readonly nodeId: string
   readonly precheckId: string
   readonly submittedAt: string
+  // EX-I8 派生任务关系：基于原配置新建/从头重新执行/从检查点继续的来源任务与派生方式（原始任务缺省）。
+  readonly parentTaskId?: string
+  readonly derivationKind?: string
+}
+
+// TaskDerivationKind 是 EX-I8 三种受控派生方式的浏览器枚举。
+export type TaskDerivationKind = 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH' | 'CHECKPOINT_RESUME'
+
+export interface TaskDerivedDraft {
+  readonly draftId: string
+  readonly sourceTaskId: string
+  readonly derivation: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
+}
+
+export interface TaskDerivedResume {
+  readonly id: string
+  readonly parentTaskId: string
+  readonly derivationKind: 'CHECKPOINT_RESUME'
+}
+
+// ExportConfigTemplateItem 是模板列表的安全投影；配置 JSON 不进入浏览器。
+export interface ExportConfigTemplateItem {
+  readonly id: string
+  readonly displayName: string
+  readonly capabilityVersion: string
+  readonly configFingerprint: string
+  readonly sourceTaskId?: string
+  readonly revision: number
+  readonly createdAt: string
+  readonly updatedAt: string
 }
 
 export interface TaskSnapshot {
@@ -457,6 +531,17 @@ export interface TaskExecution {
   readonly startedAt?: string
   readonly finishedAt?: string
   readonly updatedAt: string
+  // EX-I8 结果与失败事实：Agent 观察到的文件/字节/检查点事实（未执行或未上报时缺省）。
+  readonly resultSummary?: TaskResultSummary
+}
+
+export interface TaskResultSummary {
+  readonly result: 'VERIFIED' | 'FAILED'
+  readonly fileCount: number
+  readonly totalBytes: number
+  readonly files: readonly { readonly path: string; readonly size: number }[]
+  readonly checkpointPresent: boolean
+  readonly observedAt: string
 }
 
 export interface TaskListItem {
@@ -530,8 +615,22 @@ export interface BrowserApi {
   startPrecheck(draft: ExportDraft): Promise<string>
   getPrecheck(precheckId: string): Promise<Precheck>
   submitExportDraft(draft: ExportDraft, precheckId: string): Promise<string>
+  listStorageCredentials(): Promise<StorageCredentialListItem[]>
+  createStorageCredential(input: StorageCredentialWrite): Promise<StorageCredentialListItem>
+  rotateStorageCredential(storageCredentialId: string, revision: number, input: StorageCredentialWrite): Promise<StorageCredentialListItem>
+  deleteStorageCredential(storageCredentialId: string, revision: number): Promise<void>
   listTasks(cursor?: string, limit?: TaskListPageSize): Promise<TaskListPage>
   getTaskOverview(taskId: string): Promise<TaskOverview>
+  // EX-I8 派生操作：从失败任务重建可编辑草稿（基于原配置新建/从头重新执行），
+  // 或从失败导出任务创建检查点继续任务（继承原快照并追加 --retry）。
+  rebuildTaskDraft(taskId: string, derivation: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'): Promise<TaskDerivedDraft>
+  resumeTaskFromCheckpoint(taskId: string): Promise<TaskDerivedResume>
+  // EX-I8 模板复用：列表/改名/删除、从成功任务保存模板、由模板创建草稿。
+  listExportConfigTemplates(): Promise<ExportConfigTemplateItem[]>
+  saveTaskTemplate(taskId: string, displayName: string): Promise<string>
+  renameExportConfigTemplate(templateId: string, revision: number, displayName: string): Promise<number>
+  deleteExportConfigTemplate(templateId: string, revision: number): Promise<void>
+  createDraftFromTemplate(templateId: string, dataSourceId: string, nodeId: string): Promise<string>
   getTaskSnapshot(taskId: string): Promise<TaskSnapshot>
   getTaskCommandEvidence(taskId: string): Promise<TaskCommandEvidence>
   getTaskExecution(taskId: string): Promise<TaskExecution>
@@ -681,6 +780,22 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draft.id)}:submit`, writeRequest(options, { precheckId }, draft.revision, 'POST', true))
       return requiredString(body, 'id')
     },
+    async listStorageCredentials() {
+      const body = await request(options, '/api/v1/storage-credentials', { method: 'GET' })
+      return listOf(body, 'items').map(parseStorageCredentialListItem)
+    },
+    async createStorageCredential(input) {
+      const body = await request(options, '/api/v1/storage-credentials', writeRequest(options, input))
+      return parseStorageCredentialListItem(requiredObject(body, 'item'))
+    },
+    async rotateStorageCredential(storageCredentialId, revision, input) {
+      // 轮换同时要求 If-Match 乐观锁与幂等键；服务端轮换后返回新修订的安全投影。
+      const body = await request(options, `/api/v1/storage-credentials/${encodeURIComponent(storageCredentialId)}:rotate`, writeRequest(options, input, revision, 'POST', true))
+      return parseStorageCredentialListItem(requiredObject(body, 'item'))
+    },
+    async deleteStorageCredential(storageCredentialId, revision) {
+      await request(options, `/api/v1/storage-credentials/${encodeURIComponent(storageCredentialId)}`, writeRequest(options, {}, revision, 'DELETE', false))
+    },
     async listTasks(cursor, limit = 10) {
       const query = new URLSearchParams({ limit: String(limit) })
       if (cursor) query.set('cursor', cursor)
@@ -694,6 +809,51 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async getTaskOverview(taskId) {
       const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' })
       return parseTaskOverview(requiredObject(body, 'item'))
+    },
+    async rebuildTaskDraft(taskId, derivation) {
+      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:rebuild-draft`, writeRequest(options, { derivation }))
+      const draftId = requiredString(body, 'draftId')
+      const sourceTaskId = requiredString(body, 'sourceTaskId')
+      const responded = requiredString(body, 'derivation')
+      if (responded !== derivation || sourceTaskId !== taskId) {
+        throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的派生草稿。')
+      }
+      return { draftId, sourceTaskId, derivation }
+    },
+    async resumeTaskFromCheckpoint(taskId) {
+      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:resume-checkpoint`, writeEmptyPost(options))
+      const id = requiredString(body, 'id')
+      if (requiredString(body, 'parentTaskId') !== taskId || requiredString(body, 'derivationKind') !== 'CHECKPOINT_RESUME') {
+        throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的继续任务。')
+      }
+      return { id, parentTaskId: taskId, derivationKind: 'CHECKPOINT_RESUME' }
+    },
+    async listExportConfigTemplates() {
+      const body = await request(options, '/api/v1/export-config-templates', { method: 'GET' })
+      return listOf(body, 'items').map(parseExportConfigTemplateItem)
+    },
+    async saveTaskTemplate(taskId, displayName) {
+      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:save-template`, writeRequest(options, { displayName }))
+      const id = requiredString(body, 'id')
+      if (requiredString(body, 'sourceTaskId') !== taskId) {
+        throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的模板。')
+      }
+      return id
+    },
+    async renameExportConfigTemplate(templateId, revision, displayName) {
+      const body = await request(options, `/api/v1/export-config-templates/${encodeURIComponent(templateId)}`, writeRequest(options, { displayName }, revision, 'PATCH', false))
+      return requiredNumber(body, 'revision')
+    },
+    async deleteExportConfigTemplate(templateId, revision) {
+      await request(options, `/api/v1/export-config-templates/${encodeURIComponent(templateId)}`, writeRequest(options, {}, revision, 'DELETE', false))
+    },
+    async createDraftFromTemplate(templateId, dataSourceId, nodeId) {
+      const body = await request(options, `/api/v1/export-config-templates/${encodeURIComponent(templateId)}:create-draft`, writeRequest(options, { dataSourceId, nodeId }))
+      const draftId = requiredString(body, 'draftId')
+      if (requiredString(body, 'templateId') !== templateId) {
+        throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的草稿。')
+      }
+      return draftId
     },
     async getTaskSnapshot(taskId) {
       const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}/snapshot`, { method: 'GET' })
@@ -900,6 +1060,29 @@ function parseExecutionNodeCandidate(value: unknown): ExecutionNodeCandidate {
   const node = asRecord(value)
   const platform = parseExecutionNodePlatform(node)
   return { id: requiredString(node, 'id'), displayName: requiredString(node, 'displayName'), platform }
+}
+
+// parseStorageCredentialListItem 按白名单解析存储凭据安全投影：
+// provider 只接受四种受控类型，修订必须为正整数，密钥字段绝不进入页面状态。
+function parseStorageCredentialListItem(value: unknown): StorageCredentialListItem {
+  const item = asRecord(value)
+  const provider = requiredString(item, 'provider')
+  if (provider !== 'OSS' && provider !== 'S3' && provider !== 'COS' && provider !== 'OBS') {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效存储凭据提供方。')
+  }
+  const currentRevision = requiredNumber(item, 'currentRevision')
+  const revision = requiredNumber(item, 'revision')
+  if (!Number.isSafeInteger(currentRevision) || currentRevision < 1 || !Number.isSafeInteger(revision) || revision < 1 || revision > currentRevision) {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效存储凭据修订。')
+  }
+  return {
+    id: requiredString(item, 'id'),
+    displayName: requiredString(item, 'displayName'),
+    provider,
+    currentRevision,
+    revision,
+    updatedAt: requiredString(item, 'updatedAt'),
+  }
 }
 
 function parseExecutionNodeSummary(value: unknown): ExecutionNodeSummary {
@@ -1151,6 +1334,8 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
       controlFilePath: optionalDraftString(outputConfig, 'controlFilePath'),
       // EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
       tmpPath: optionalDraftString(outputConfig, 'tmpPath'),
+      // EX-I6 存储凭据槽位：对象存储输出的凭据引用往返；LOCAL 输出不携带。
+      storageCredential: parseStorageCredentialReference(outputConfig),
     },
     filterConfig: parseFilterConfig(nested),
     performanceConfig: parsePerformanceConfig(nested),
@@ -1203,6 +1388,20 @@ function parseCompressionAlgo(outputConfig: Record<string, unknown>): Compressio
     throw localError('RESPONSE_INVALID', '控制面返回了无效的压缩算法。')
   }
   return raw
+}
+
+// parseStorageCredentialReference 解析草稿输出配置中的存储凭据引用；缺省或 null 视为未绑定。
+// 只接受非空标识与正修订，绝不接受或回显密钥字段。
+function parseStorageCredentialReference(outputConfig: Record<string, unknown>): StorageCredentialReference | undefined {
+  const raw = outputConfig['storageCredential']
+  if (raw === undefined || raw === null) return undefined
+  const reference = asRecord(raw)
+  const storageCredentialId = requiredString(reference, 'storageCredentialId')
+  const revision = requiredNumber(reference, 'revision')
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效存储凭据引用。')
+  }
+  return { storageCredentialId, revision }
 }
 
 // parseFilterConfig 解析 EX-I3 筛选选项；缺省或 null 视为未设置。
@@ -1302,13 +1501,16 @@ function parsePrecheck(value: Record<string, unknown>): Precheck {
 
 function requiredPrecheckResults(value: Record<string, unknown>, field: string): readonly PrecheckResult[] {
   const raw = value[field]
-  const fixedChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'] as const
-  if (!Array.isArray(raw) || raw.length !== fixedChecks.length) throw localError('RESPONSE_INVALID', '控制面返回了无效预检查结果。')
+  // EX-I6：预检查清单按输出类型二选一——本地冻结六项或对象存储六项（含两项存储检查）。
+  const localChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'] as const
+  const storageChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'AVAILABLE_SPACE', 'STORAGE_CONNECTIVITY', 'STORAGE_AUTH'] as const
+  const knownChecks = [...localChecks, ...storageChecks] as const
+  if (!Array.isArray(raw) || raw.length !== localChecks.length) throw localError('RESPONSE_INVALID', '控制面返回了无效预检查结果。')
   const results = raw.map((item) => {
     const result = asRecord(item)
     const check = requiredString(result, 'check')
     const status = requiredString(result, 'status')
-    if (!fixedChecks.includes(check as typeof fixedChecks[number])) {
+    if (!(knownChecks as readonly string[]).includes(check)) {
       throw localError('RESPONSE_INVALID', '控制面返回了未知预检查项。')
     }
     if (status !== 'PASSED' && status !== 'FAILED' && status !== 'UNKNOWN') {
@@ -1316,15 +1518,42 @@ function requiredPrecheckResults(value: Record<string, unknown>, field: string):
     }
     return { check, status, evidenceCode: requiredString(result, 'evidenceCode') }
   })
-  if (new Set(results.map((result) => result.check)).size !== fixedChecks.length) {
-    throw localError('RESPONSE_INVALID', '控制面返回了重复或缺失的预检查项。')
+  if (new Set(results.map((result) => result.check)).size !== results.length) {
+    throw localError('RESPONSE_INVALID', '控制面返回了重复的预检查项。')
+  }
+  const orderedChecks = results.map((result) => result.check).join(',')
+  if (orderedChecks !== localChecks.join(',') && orderedChecks !== storageChecks.join(',')) {
+    throw localError('RESPONSE_INVALID', '控制面返回了未知顺序的预检查项。')
   }
   return results as readonly PrecheckResult[]
+}
+
+// parseExportConfigTemplateItem 按白名单解析模板列表投影：配置 JSON 不进入页面状态。
+function parseExportConfigTemplateItem(value: unknown): ExportConfigTemplateItem {
+  const item = asRecord(value)
+  return {
+    id: requiredString(item, 'id'),
+    displayName: requiredString(item, 'displayName'),
+    capabilityVersion: requiredString(item, 'capabilityVersion'),
+    configFingerprint: requiredString(item, 'configFingerprint'),
+    sourceTaskId: optionalString(item, 'sourceTaskId'),
+    revision: requiredNumber(item, 'revision'),
+    createdAt: requiredString(item, 'createdAt'),
+    updatedAt: requiredString(item, 'updatedAt'),
+  }
 }
 
 function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
   const type = requiredString(value, 'type')
   if (type !== 'OBDUMPER_EXPORT') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务类型。')
+  const parentTaskId = optionalString(value, 'parentTaskId')
+  const derivationKind = optionalString(value, 'derivationKind')
+  if (derivationKind !== undefined && derivationKind !== 'REBUILD_FROM_CONFIG' && derivationKind !== 'RERUN_FROM_SCRATCH' && derivationKind !== 'CHECKPOINT_RESUME') {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效的派生方式。')
+  }
+  if ((parentTaskId === undefined) !== (derivationKind === undefined)) {
+    throw localError('RESPONSE_INVALID', '控制面返回了不一致的派生关系。')
+  }
   return {
     id: requiredString(value, 'id'),
     type,
@@ -1332,6 +1561,7 @@ function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
     nodeId: requiredString(value, 'nodeId'),
     precheckId: requiredString(value, 'precheckId'),
     submittedAt: requiredString(value, 'submittedAt'),
+    ...(parentTaskId && derivationKind ? { parentTaskId, derivationKind } : {}),
   }
 }
 
@@ -1385,6 +1615,49 @@ function parseTaskExecution(value: Record<string, unknown>): TaskExecution {
     startedAt: optionalString(value, 'startedAt'),
     finishedAt: optionalString(value, 'finishedAt'),
     updatedAt: requiredString(value, 'updatedAt'),
+    resultSummary: parseTaskResultSummary(value['resultSummary']),
+  }
+}
+
+// containsResultPathControlBreak 检测结果文件相对路径中的 NUL、回车与换行。
+function containsResultPathControlBreak(value: string): boolean {
+  for (const character of value) {
+    if (character === '\u0000' || character === '\r' || character === '\n') return true
+  }
+  return false
+}
+
+// parseTaskResultSummary 按白名单解析结果摘要：result 枚举、非负整数与受限相对路径清单；
+// 缺省（未执行/未上报）返回 undefined，越界响应失败关闭。
+function parseTaskResultSummary(value: unknown): TaskResultSummary | undefined {
+  if (value === undefined || value === null) return undefined
+  const summary = asRecord(value)
+  const result = requiredString(summary, 'result')
+  if (result !== 'VERIFIED' && result !== 'FAILED') throw localError('RESPONSE_INVALID', '控制面返回了无效结果结论。')
+  const fileCount = requiredNumber(summary, 'fileCount')
+  const totalBytes = requiredNumber(summary, 'totalBytes')
+  if (!Number.isSafeInteger(fileCount) || fileCount < 0 || !Number.isSafeInteger(totalBytes) || totalBytes < 0) {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效结果数量。')
+  }
+  const rawFiles = summary['files']
+  if (!Array.isArray(rawFiles) || rawFiles.length > 100) throw localError('RESPONSE_INVALID', '控制面返回了无效结果文件清单。')
+  const files = rawFiles.map((item) => {
+    const file = asRecord(item)
+    const path = requiredString(file, 'path')
+    const size = requiredNumber(file, 'size')
+    if (!path || path.length > 512 || containsResultPathControlBreak(path) || path.startsWith('/') || path.includes('../') || path.endsWith('/..') || path.includes('..\\')) {
+      throw localError('RESPONSE_INVALID', '控制面返回了无效结果文件路径。')
+    }
+    if (!Number.isSafeInteger(size) || size < 0) throw localError('RESPONSE_INVALID', '控制面返回了无效结果文件大小。')
+    return { path, size }
+  })
+  return {
+    result,
+    fileCount,
+    totalBytes,
+    files,
+    checkpointPresent: requiredBoolean(summary, 'checkpointPresent'),
+    observedAt: requiredString(summary, 'observedAt'),
   }
 }
 

@@ -78,7 +78,7 @@ func TestClaimNextPrecheckRetriesWithSameRequestIDAndMachineCredential(t *testin
 	if err != nil || !found {
 		t.Fatalf("ClaimNextPrecheck() found=%t error=%v", found, err)
 	}
-	if grant.PrecheckID != "precheck-1" || grant.LeaseID != "lease-1" || grant.LeaseEpoch != 1 || grant.Binding.PrecheckID != grant.PrecheckID || grant.Binding.NodeID != "node-1" || !validPrecheckCheckSet(grant.CheckSet) {
+	if grant.PrecheckID != "precheck-1" || grant.LeaseID != "lease-1" || grant.LeaseEpoch != 1 || grant.Binding.PrecheckID != grant.PrecheckID || grant.Binding.NodeID != "node-1" || !validPrecheckCheckSet(grant.Context.OutputKind, grant.CheckSet) {
 		t.Fatalf("预检查租约不完整: %#v", grant)
 	}
 
@@ -427,6 +427,88 @@ func successfulPrecheckReport(precheckID string) agentpreflight.Report {
 		results = append(results, agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "SYNTHETIC_OK"})
 	}
 	return agentpreflight.Report{PrecheckID: precheckID, Succeeded: true, Results: results}
+}
+
+// TestClaimNextPrecheck接受存储形态上下文与检查清单 验证 EX-I6 对象存储预检查租约：
+// 受控存储目标段、输出类型与存储形态检查清单必须原样解析且通过失败关闭校验。
+func TestClaimNextPrecheck接受存储形态上下文与检查清单(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/agent/v1/enrollments:exchange":
+			var enrolled enrollmentExchangeRequest
+			if err := json.NewDecoder(request.Body).Decode(&enrolled); err != nil {
+				t.Fatalf("解析关联请求失败: %v", err)
+			}
+			writeProtocolResponse(t, writer, "ENROLLED", map[string]any{
+				"agentId": enrolled.AgentID, "nodeId": enrolled.NodeID, "protocolVersion": Version,
+				"replayed": false, "realExecutionEnabled": false,
+			})
+		case "/agent/v1/prechecks:claim-next":
+			response := precheckClaimResponse("precheck-storage", "lease-storage")
+			response["checkSet"] = agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindOSS)
+			response["executionContext"] = map[string]any{
+				"compatibilityMode": "MYSQL",
+				"database":          "synthetic_db",
+				"objects":           []string{"synthetic_table"},
+				"contentKind":       "DATA_ONLY",
+				"outputPath":        "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com",
+				"targetPlatform":    "WINDOWS_AMD64",
+				"allowedRoots":      []string{`E:\tmp`},
+				"outputKind":        "OSS",
+				"storageTarget": map[string]any{
+					"provider": "OSS", "uri": "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com",
+					"endpoint": "oss-cn-hangzhou.aliyuncs.com", "tmpPath": "/E:/tmp/upload",
+				},
+			}
+			writeProtocolResponse(t, writer, "PRECHECK_CLAIMED", response)
+		default:
+			t.Fatalf("意外 Agent 请求路径: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store := prepareTLSEnrollment(t, server)
+	if err := store.EnsureEnrollment(context.Background()); err != nil {
+		t.Fatalf("EnsureEnrollment() error = %v", err)
+	}
+	grant, found, err := store.ClaimNextPrecheck(context.Background(), PrecheckClaimNext{
+		BootID: "boot-1", SentAt: time.Date(2026, 7, 27, 1, 2, 3, 0, time.UTC),
+	})
+	if err != nil || !found {
+		t.Fatalf("ClaimNextPrecheck() found=%t error=%v", found, err)
+	}
+	if grant.Context.OutputKind != agentpreflight.OutputKindOSS || grant.Context.StorageTarget == nil ||
+		grant.Context.StorageTarget.Endpoint != "oss-cn-hangzhou.aliyuncs.com" || grant.Context.StorageTarget.TmpPath != "/E:/tmp/upload" {
+		t.Fatalf("存储上下文解析失败: %#v", grant.Context)
+	}
+	if len(grant.CheckSet) != len(agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindOSS)) || grant.CheckSet[4] != agentpreflight.CheckStorageConnectivity || grant.CheckSet[5] != agentpreflight.CheckStorageAuth {
+		t.Fatalf("存储检查清单解析失败: %#v", grant.CheckSet)
+	}
+}
+
+// TestCompletePrecheck接受存储形态结果 验证 Agent 客户端对存储形态报告的宽松结构复核
+// （顺序与形态的权威校验由控制面按冻结草稿执行）。
+func TestCompletePrecheck接受存储形态结果(t *testing.T) {
+	report := agentpreflight.Report{PrecheckID: "precheck-storage", Succeeded: true, Results: []agentpreflight.Result{
+		{Check: agentpreflight.CheckDatabaseConnectivity, Status: agentpreflight.StatusPassed, EvidenceCode: "DATABASE_CONNECTED"},
+		{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: "OBJECT_ACCESSIBLE"},
+		{Check: agentpreflight.CheckToolEnvironment, Status: agentpreflight.StatusPassed, EvidenceCode: "TOOL_RUNTIME_READY"},
+		{Check: agentpreflight.CheckAvailableSpace, Status: agentpreflight.StatusPassed, EvidenceCode: "OUTPUT_SPACE_SUFFICIENT"},
+		{Check: agentpreflight.CheckStorageConnectivity, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_ENDPOINT_REACHABLE"},
+		{Check: agentpreflight.CheckStorageAuth, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_CREDENTIAL_VERIFIED"},
+	}}
+	input := PrecheckCompletion{BootID: "boot-1", PrecheckID: "precheck-storage", LeaseID: "lease-storage", LeaseEpoch: 1, BindingDigest: precheckBindingDigest, SentAt: time.Date(2026, 7, 27, 1, 2, 3, 0, time.UTC), Report: report}
+	if !validPrecheckCompletion(input) {
+		t.Fatal("存储形态报告被客户端校验拒绝")
+	}
+	// 伪造成功结论（结果含 UNKNOWN 但 Succeeded=true）必须拒绝。
+	forged := report
+	forged.Results[4].Status = agentpreflight.StatusUnknown
+	forged.Results[4].EvidenceCode = "STORAGE_CONNECTIVITY_UNAVAILABLE"
+	input.Report = forged
+	if validPrecheckCompletion(input) {
+		t.Fatal("伪造成功的存储形态报告被接受")
+	}
 }
 
 func decodePrecheckRequestBody(t *testing.T, request *http.Request) []byte {

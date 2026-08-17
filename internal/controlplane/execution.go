@@ -263,6 +263,46 @@ func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *h
 		return
 	}
 	defer credential.Zero(plaintext)
+	// EX-I6 存储凭据槽位（2026-08-14）：同一解析请求内附带对象存储任务的凭据。
+	// 本地输出任务返回空结构，不附带 storageCredential 段。
+	encryptedStorage, err := executions.ResolveExecutionStorageCredential(r.Context(), store.ExecutionSecretResolutionRequest{
+		AgentID: machine.AgentID, ExecutionID: executionID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
+		EnvelopeDigest: request.Payload.EnvelopeDigest, RequestID: request.RequestID, RequestDigest: requestDigest, Now: now,
+	})
+	if err != nil {
+		_ = finish(false)
+		writeExecutionStoreError(w, err)
+		return
+	}
+	defer encryptedStorage.Destroy()
+	var storagePayload any
+	if encryptedStorage.StorageCredentialID != "" {
+		accessKeyPlaintext, err := s.decryptor.Decrypt(credential.Envelope{
+			FormatVersion: credential.FormatVersion, KeyID: encryptedStorage.AccessKeyKeyID,
+			Reference: credential.Reference{CredentialID: encryptedStorage.AccessKeyCredentialID, Revision: encryptedStorage.Revision, SecretType: credential.StorageAccessKey, DataSourceID: encryptedStorage.StorageCredentialID},
+			Nonce:     encryptedStorage.AccessKeyNonce, Ciphertext: encryptedStorage.AccessKeyCiphertext,
+		})
+		if err != nil {
+			_ = finish(false)
+			writeError(w, http.StatusServiceUnavailable, "EXECUTION_SECRET_RESOLUTION_UNAVAILABLE", "导出秘密槽位暂时不可用", true)
+			return
+		}
+		defer credential.Zero(accessKeyPlaintext)
+		secretKeyPlaintext, err := s.decryptor.Decrypt(credential.Envelope{
+			FormatVersion: credential.FormatVersion, KeyID: encryptedStorage.SecretKeyKeyID,
+			Reference: credential.Reference{CredentialID: encryptedStorage.SecretKeyCredentialID, Revision: encryptedStorage.Revision, SecretType: credential.StorageSecretKey, DataSourceID: encryptedStorage.StorageCredentialID},
+			Nonce:     encryptedStorage.SecretKeyNonce, Ciphertext: encryptedStorage.SecretKeyCiphertext,
+		})
+		if err != nil {
+			_ = finish(false)
+			writeError(w, http.StatusServiceUnavailable, "EXECUTION_SECRET_RESOLUTION_UNAVAILABLE", "导出秘密槽位暂时不可用", true)
+			return
+		}
+		defer credential.Zero(secretKeyPlaintext)
+		storagePayload = map[string]any{
+			"provider": encryptedStorage.Provider, "accessKey": accessKeyPlaintext, "secretKey": secretKeyPlaintext,
+		}
+	}
 	if err := finish(true); err != nil {
 		writeExecutionStoreError(w, err)
 		return
@@ -271,6 +311,7 @@ func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *h
 		"agentRequestId": request.RequestID, "executionId": executionID, "leaseId": request.Payload.LeaseID,
 		"leaseEpoch": request.Payload.LeaseEpoch, "envelopeDigest": request.Payload.EnvelopeDigest,
 		"connection":           map[string]any{"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext},
+		"storageCredential":    storagePayload,
 		"realExecutionEnabled": true,
 	})
 }

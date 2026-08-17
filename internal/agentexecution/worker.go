@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,11 +74,12 @@ type LogQueueObserver interface {
 
 // Outcome 是一次领取后的无秘密执行结果投影。
 type Outcome struct {
-	TaskID      string
-	ExecutionID string
-	Succeeded   bool
-	FileCount   uint64
-	TotalBytes  uint64
+	TaskID            string
+	ExecutionID       string
+	Succeeded         bool
+	FileCount         uint64
+	TotalBytes        uint64
+	CheckpointPresent bool
 }
 
 // Worker 串行执行当前 Agent 最多一条 OBDUMPER_EXPORT。
@@ -124,14 +126,19 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 	}
 	executionPaths, ok := executionPathsFromArgv(w.Runtime.TargetPlatform, grant.Argv)
-	if !ok || !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots) || (executionPaths.LogPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.LogPath, w.Runtime.AllowedRoots)) {
+	if !ok || (!executionPaths.StorageOutput && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots)) ||
+		(executionPaths.LogPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.LogPath, w.Runtime.AllowedRoots)) ||
+		(executionPaths.TmpPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.TmpPath, w.Runtime.AllowedRoots)) {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
-	localOutputPath, ok := outputpath.LocalFilesystemPath(w.Runtime.TargetPlatform, executionPaths.OutputPath)
-	if !ok {
-		_ = w.appendStartRejected(ctx, grant)
-		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+	var localOutputPath string
+	if !executionPaths.StorageOutput {
+		localOutputPath, ok = outputpath.LocalFilesystemPath(w.Runtime.TargetPlatform, executionPaths.OutputPath)
+		if !ok {
+			_ = w.appendStartRejected(ctx, grant)
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+		}
 	}
 	workspace, err := credential.CreateWorkspace(w.Runtime.WorkspaceRoot, grant.ExecutionID)
 	if err != nil {
@@ -157,12 +164,29 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
+	// EX-I6 存储凭据槽位（2026-08-14）：对象存储任务在 execution 私有目录生成 core-site.xml，
+	// 通过 HADOOP_CONF_DIR 环境变量短时注入；密钥绝不进入 argv、日志或长期环境。
+	toolEnvironment := append([]string(nil), w.Runtime.Environment...)
+	if slot.StorageCredential != nil {
+		storageContent, err := credential.GenerateStorageConfiguration(slot.StorageCredential.Provider, slot.StorageCredential.AccessKey, slot.StorageCredential.SecretKey)
+		if err != nil {
+			_ = w.appendStartRejected(ctx, grant)
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+		}
+		defer credential.Zero(storageContent)
+		confDir, err := workspace.WriteStorageConfiguration(storageContent)
+		if err != nil {
+			_ = w.appendStartRejected(ctx, grant)
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+		}
+		toolEnvironment = append(toolEnvironment, "HADOOP_CONF_DIR="+confDir)
+	}
 	javaDigest, err := digestFile(w.Runtime.JavaPath)
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
-	policy, err := executionLogPolicy(slot.Password)
+	policy, err := executionLogPolicy(slot.Password, slot.StorageCredential)
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
@@ -172,7 +196,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	process, err := agentexec.StartDirectJava(ctx, workspace, agentexec.DirectJavaLaunch{
 		Intent: agentexec.StartIntent{ExecutionID: grant.ExecutionID, TaskID: grant.TaskID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, CreatedAt: w.now()},
 		BootID: w.BootID, JavaPath: w.Runtime.JavaPath, JavaSHA256: javaDigest, ToolHome: w.Runtime.ToolHome,
-		SecurityConfiguration: paths.SecurityConfiguration, BusinessArguments: append([]string(nil), grant.Argv...), Environment: append([]string(nil), w.Runtime.Environment...),
+		SecurityConfiguration: paths.SecurityConfiguration, BusinessArguments: append([]string(nil), grant.Argv...), Environment: toolEnvironment,
 		Output: agentexec.DirectJavaOutput{Policy: policy, Stdout: agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 1, ParserVersion: "direct-java-v1"}, Stderr: agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 2, ParserVersion: "direct-java-v1"}, Sink: logs.append},
 	})
 	if err != nil {
@@ -195,20 +219,45 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		if err := w.appendEvent(ctx, grant, 5, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED"}); err != nil {
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 		}
-		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionFailed
+		// EX-I8：失败路径同样上报结果事实与 dump.ckpt 存在性（作为失败终态后的迟到事实，
+		// 由控制面按同一租约与连续序号接受）；这是失败任务检查点继续资格的唯一起点事实。
+		fileCount, totalBytes, files, _ := executionOutputFacts(executionPaths, localOutputPath)
+		fileEvidence := make([]map[string]any, 0, len(files))
+		for _, file := range files {
+			fileEvidence = append(fileEvidence, map[string]any{"path": file.Path, "size": file.Size})
+		}
+		checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
+		if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", map[string]any{
+			"result": "FAILED", "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
+			"checkpointPresent": checkpoint,
+		}); err != nil {
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
+		}
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
 	}
 	if err := w.appendEvent(ctx, grant, 5, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "SUCCEEDED"}); err != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 	}
-	fileCount, totalBytes, outputOK := outputFacts(localOutputPath)
+	fileCount, totalBytes, files, outputOK := executionOutputFacts(executionPaths, localOutputPath)
 	result := "FAILED"
-	if outputOK && fileCount > 0 && totalBytes > 0 {
+	if outputOK && (executionPaths.StorageOutput || fileCount > 0 && totalBytes > 0) {
 		result = "VERIFIED"
 	}
-	if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", map[string]any{"result": result, "fileCount": fileCount, "totalBytes": totalBytes}); err != nil {
+	fileEvidence := make([]map[string]any, 0, len(files))
+	for _, file := range files {
+		fileEvidence = append(fileEvidence, map[string]any{"path": file.Path, "size": file.Size})
+	}
+	// EX-I8 结果与失败事实：结果事实与 dump.ckpt 存在性合并为同一事件上报。
+	// 结果事实事件会触发任务终态转换与租约释放，检查点事实必须随它一起到达；
+	// 失败任务的检查点继续资格由控制面依据该事实与冻结快照共同判定。
+	checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
+	if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", map[string]any{
+		"result": result, "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
+		"checkpointPresent": checkpoint,
+	}); err != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 	}
-	return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, Succeeded: result == "VERIFIED", FileCount: fileCount, TotalBytes: totalBytes}, true, nil
+	return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, Succeeded: result == "VERIFIED", FileCount: fileCount, TotalBytes: totalBytes, CheckpointPresent: checkpoint}, true, nil
 }
 
 func (w *Worker) appendStartRejected(ctx context.Context, grant agentwire.ExecutionGrant) error {
@@ -285,13 +334,25 @@ func validGrant(grant agentwire.ExecutionGrant) bool {
 // executionPaths 是从冻结参数令牌中识别出的受控文件系统路径。
 // 日志目录与导出目录均要在启动前核验，避免额外路径参数扩大 Agent 的写入范围。
 type executionPaths struct {
-	OutputPath string
-	LogPath    string
+	OutputPath    string
+	LogPath       string
+	TmpPath       string
+	StorageOutput bool
 }
 
 func executionPathsFromArgv(platform string, argv []string) (executionPaths, bool) {
 	paths, ok := executionPathArguments(argv)
-	if !ok || !outputpath.IsExportOutputPath(platform, paths.OutputPath) || (paths.LogPath != "" && !outputpath.IsExportOutputPath(platform, paths.LogPath)) {
+	if !ok {
+		return executionPaths{}, false
+	}
+	paths.StorageOutput = isControlledStorageOutputPath(paths.OutputPath)
+	if paths.StorageOutput {
+		if paths.LogPath != "" || (paths.TmpPath != "" && !outputpath.IsExportOutputPath(platform, paths.TmpPath)) {
+			return executionPaths{}, false
+		}
+		return paths, true
+	}
+	if !outputpath.IsExportOutputPath(platform, paths.OutputPath) || (paths.LogPath != "" && !outputpath.IsExportOutputPath(platform, paths.LogPath)) || (paths.TmpPath != "" && !outputpath.IsExportOutputPath(platform, paths.TmpPath)) {
 		return executionPaths{}, false
 	}
 	return paths, true
@@ -315,7 +376,7 @@ func executionPathArguments(argv []string) (executionPaths, bool) {
 		if strings.ContainsRune(value, 0) || strings.ContainsAny(value, "\r\n") || value == "--password" || strings.HasPrefix(value, "--password=") || strings.HasPrefix(value, "-p") {
 			return executionPaths{}, false
 		}
-		if value != "--file-path" && value != "--log-path" {
+		if value != "--file-path" && value != "--log-path" && value != "--tmp-path" {
 			continue
 		}
 		if index+1 >= len(argv) || strings.ContainsRune(argv[index+1], 0) || strings.ContainsAny(argv[index+1], "\r\n") || strings.TrimSpace(argv[index+1]) != argv[index+1] {
@@ -324,6 +385,8 @@ func executionPathArguments(argv []string) (executionPaths, bool) {
 		key := "file"
 		if value == "--log-path" {
 			key = "log"
+		} else if value == "--tmp-path" {
+			key = "tmp"
 		}
 		if seen[key] {
 			return executionPaths{}, false
@@ -331,18 +394,47 @@ func executionPathArguments(argv []string) (executionPaths, bool) {
 		seen[key] = true
 		if key == "file" {
 			paths.OutputPath = argv[index+1]
-		} else {
+		} else if key == "log" {
 			paths.LogPath = argv[index+1]
+		} else {
+			paths.TmpPath = argv[index+1]
 		}
 		index++
 	}
 	return paths, paths.OutputPath != ""
 }
 
-// executionLogPolicy 仅保存密码这一秘密值用于双层脱敏。
+// isControlledStorageOutputPath 只接受控制面已冻结的四种对象存储 URI 形态。
+// URI 参数沿用草稿契约，不在 Agent 侧扩展新的目标或秘密传递方式。
+func isControlledStorageOutputPath(value string) bool {
+	if len(value) == 0 || len(value) > 4096 || value != strings.TrimSpace(value) || strings.ContainsAny(value, "\x00\r\n") {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "oss", "s3", "cos", "obs":
+	default:
+		return false
+	}
+	for key := range parsed.Query() {
+		if key != "endpoint" && key != "region" && key != "storage-class" {
+			return false
+		}
+	}
+	return true
+}
+
+// executionLogPolicy 保存当前 execution 的全部秘密值用于 Agent 第一层日志脱敏。
 // 用户名是命令身份的一部分，应保留在工具日志中以便人工诊断连接对象。
-func executionLogPolicy(password []byte) (logstream.Policy, error) {
-	return logstream.NewBytePolicy("execution-redaction-v1", [][]byte{password}, nil)
+func executionLogPolicy(password []byte, storageCredential *agentwire.StorageCredentialSlot) (logstream.Policy, error) {
+	secrets := [][]byte{password}
+	if storageCredential != nil {
+		secrets = append(secrets, storageCredential.AccessKey, storageCredential.SecretKey)
+	}
+	return logstream.NewBytePolicy("execution-redaction-v1", secrets, nil)
 }
 
 func withinAllowedRoots(platform, path string, roots []string) bool {
@@ -364,36 +456,92 @@ func digestFile(path string) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func outputFacts(path string) (uint64, uint64, bool) {
+// outputFileFact 是执行结果的单个文件事实：只含输出目录内的相对路径与字节数，不含内容或校验和。
+type outputFileFact struct {
+	Path string
+	Size uint64
+}
+
+// maxOutputFileFacts 限制随结果事件上报的文件清单长度，避免异常输出目录撑大事件载荷。
+const maxOutputFileFacts = 100
+
+// maxOutputFilePath 限制单个结果文件相对路径长度；含控制字符或越界时整个结果事实失败关闭。
+const maxOutputFilePath = 512
+
+// outputFacts 只读枚举输出目录内的事实：常规文件数量、总字节数与受限相对路径清单。
+// 符号链接、读取失败或超限都返回 ok=false，不把未验证事实当作可靠结果。
+func outputFacts(path string) (uint64, uint64, []outputFileFact, bool) {
 	var count, bytes uint64
-	err := filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
+	var files []outputFileFact
+	err := filepath.WalkDir(path, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return errors.New("output contains symbolic link")
 		}
-		if entry.Type().IsRegular() {
-			info, err := entry.Info()
-			if err != nil {
-				return err
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if count == ^uint64(0) {
+			return errors.New("output file count overflow")
+		}
+		count++
+		if info.Size() < 0 {
+			return errors.New("invalid output size")
+		}
+		size := uint64(info.Size())
+		if ^uint64(0)-bytes < size {
+			return errors.New("output byte count overflow")
+		}
+		bytes += size
+		if len(files) < maxOutputFileFacts {
+			relative, err := filepath.Rel(path, current)
+			if err != nil || relative == "" || len(relative) > maxOutputFilePath || strings.ContainsAny(relative, "\x00\r\n") {
+				return errors.New("output file path is invalid")
 			}
-			if count == ^uint64(0) {
-				return errors.New("output file count overflow")
-			}
-			count++
-			if info.Size() < 0 {
-				return errors.New("invalid output size")
-			}
-			size := uint64(info.Size())
-			if ^uint64(0)-bytes < size {
-				return errors.New("output byte count overflow")
-			}
-			bytes += size
+			files = append(files, outputFileFact{Path: filepath.ToSlash(relative), Size: size})
 		}
 		return nil
 	})
-	return count, bytes, err == nil
+	return count, bytes, files, err == nil
+}
+
+// executionOutputFacts 按输出形态生成结果事实。
+// 本地输出继续要求可枚举的非空文件事实；对象存储在 EX-V1 远端清单取证完成前没有本地结果目录，
+// 由受控进程正常退出与固定工具成功终态确认结果，文件清单保持空值且不伪造远端对象。
+func executionOutputFacts(paths executionPaths, localOutputPath string) (uint64, uint64, []outputFileFact, bool) {
+	if paths.StorageOutput {
+		return 0, 0, []outputFileFact{}, true
+	}
+	return outputFacts(localOutputPath)
+}
+
+// executionCheckpointPresent 只允许本地输出目录提供检查点事实；对象存储不把临时目录伪装为正式输出目录。
+func executionCheckpointPresent(paths executionPaths, localOutputPath string) bool {
+	return !paths.StorageOutput && checkpointPresent(localOutputPath)
+}
+
+// checkpointPresent 只做存在性/可读性检查：dump.ckpt 必须是输出目录下的常规可读文件。
+// 不读取或解析检查点内容；继续资格的最终判定由控制面依据冻结快照完成。
+func checkpointPresent(outputPath string) bool {
+	if outputPath == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(outputPath, "dump.ckpt"))
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	file, err := os.Open(filepath.Join(outputPath, "dump.ckpt"))
+	if err != nil {
+		return false
+	}
+	_ = file.Close()
+	return true
 }
 
 type logUploader struct {

@@ -1,5 +1,5 @@
 import { isStructuredFormat } from '@/api/browser'
-import type { CompressionAlgo, CsvOptions, CsvQuoteMode, CutOptions, DDLBehaviorOptions, ExportContentKind, ExportDataFormatKind, ExportDraftInput, ExportObjectType, ExportOutputKind, ExportScopeKind, FilterOptions, GeneralizedExportConfig, PerformanceOptions, TimestampFormatsOptions } from '@/api/browser'
+import type { CompressionAlgo, CsvOptions, CsvQuoteMode, CutOptions, DDLBehaviorOptions, ExportContentKind, ExportDataFormatKind, ExportDraftInput, ExportObjectType, ExportOutputKind, ExportScopeKind, FilterOptions, GeneralizedExportConfig, PerformanceOptions, StorageCredentialReference, TimestampFormatsOptions } from '@/api/browser'
 
 // ExportDraftFormValues 是导出向导对象、内容、格式与输出步骤的页面状态。
 // 校验通过后构造当前泛化草稿请求；服务端仍会按能力矩阵再次失败关闭。
@@ -31,6 +31,11 @@ export interface ExportDraftFormValues {
   readonly storageEndpoint: string
   readonly storageRegion: string
   readonly tmpPath: string
+  // EX-I6 存储凭据槽位（2026-08-14）：对象存储输出的凭据引用（可缺省）；
+  // storageCredentialRevision 取凭据当前修订，storageCredentialProvider 用于本地一致性校验。
+  readonly storageCredentialId: string
+  readonly storageCredentialRevision: number
+  readonly storageCredentialProvider: string
   // EX-I4 POS 定版（2026-08-07 实测）：控制文件目录（--ctl-path），仅 POS 格式必填。
   readonly controlFilePath: string
   // EX-I3 选项：CSV 序列化、压缩、文件布局、筛选与资源参数。
@@ -163,6 +168,8 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   const outputKind = values.outputKind
   if (outputKind === 'LOCAL') {
     if (!isAbsolutePathForPlatform(filePath, values.platform)) return { valid: false, message: '导出路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
+    // 本地输出没有对象存储凭据语义，残留引用必须失败关闭（与服务端 422 同口径）。
+    if (values.storageCredentialId.trim()) return { valid: false, message: '本地输出不能绑定对象存储凭据。' }
   } else {
     const bucket = values.storageBucket.trim()
     const storagePath = values.storagePath.trim()
@@ -171,6 +178,12 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     if (!bucket || !storagePath.startsWith('/')) return { valid: false, message: '对象存储需要填写 Bucket 和以 / 开头的对象路径。' }
     if (!endpoint && !region) return { valid: false, message: '对象存储需要填写 Endpoint 或 Region。' }
     // EX-I6 安全边界：存储凭据不进 URI，走执行槽位；表单不收集密钥。
+    const credentialId = values.storageCredentialId.trim()
+    if (credentialId) {
+      // 凭据引用必须携带正修订，且提供方与输出类型一致（服务端提交前同样复验）。
+      if (values.storageCredentialProvider !== outputKind) return { valid: false, message: '所选存储凭据与输出类型不一致，请重新选择。' }
+      if (!Number.isSafeInteger(values.storageCredentialRevision) || values.storageCredentialRevision < 1) return { valid: false, message: '所选存储凭据缺少有效修订，请刷新凭据列表后重新选择。' }
+    }
   }
   if (logPath && !isAbsolutePathForPlatform(logPath, values.platform)) return { valid: false, message: '日志路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
   if (values.tmpPath.trim() && !isAbsolutePathForPlatform(values.tmpPath.trim(), values.platform)) return { valid: false, message: '临时分块目录必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
@@ -312,6 +325,8 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
       controlFilePath: dataOptions && formatKind === 'POS' ? (values.controlFilePath.trim() || undefined) : undefined,
       // EX-I6 对象存储：Multipart 本地临时分块目录。
       tmpPath: values.tmpPath.trim() || undefined,
+      // EX-I6 存储凭据槽位：仅对象存储输出携带引用；LOCAL 不携带（服务端对携带失败关闭）。
+      storageCredential: buildStorageCredentialReference(values),
     },
     filterConfig: filterOptions,
     performanceConfig: performanceOptions,
@@ -353,6 +368,15 @@ function buildOutputFilePath(values: ExportDraftFormValues, filePath: string): s
   if (values.storageRegion.trim()) params.push(`region=${encodeURIComponent(values.storageRegion.trim())}`)
   const query = params.length > 0 ? `?${params.join('&')}` : ''
   return `${scheme}://${values.storageBucket.trim()}${values.storagePath.trim()}${query}`
+}
+
+// buildStorageCredentialReference 仅对象存储输出且显式选择凭据时构造引用；
+// 引用只含标识与当前修订，绝不携带密钥材料。
+function buildStorageCredentialReference(values: ExportDraftFormValues): StorageCredentialReference | undefined {
+  if (values.outputKind === 'LOCAL') return undefined
+  const storageCredentialId = values.storageCredentialId.trim()
+  if (!storageCredentialId || !Number.isSafeInteger(values.storageCredentialRevision) || values.storageCredentialRevision < 1) return undefined
+  return { storageCredentialId, revision: values.storageCredentialRevision }
 }
 
 // buildSerializationOptions 按格式只发送服务端能力矩阵内适用的序列化选项：

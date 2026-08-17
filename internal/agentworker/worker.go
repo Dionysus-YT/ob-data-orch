@@ -128,8 +128,8 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	probe := secretGatedProbe{delegate: w.ProbeFactory(resolver), resolver: resolver}
 	request := requestForGrant(identity.AgentID, grant)
 	report, err := agentpreflight.Run(ctx, request, probe)
-	if err != nil || agentpreflight.ValidateReport(report) != nil {
-		report = failedReport(grant.PrecheckID)
+	if err != nil || agentpreflight.ValidateReportFor(kindForGrant(grant), report) != nil {
+		report = failedReport(kindForGrant(grant), grant.PrecheckID)
 	}
 	if w.expired(grant) {
 		return Outcome{}, true, ErrLeaseExpired
@@ -194,7 +194,7 @@ func completion(bootID string, grant agentwire.PrecheckGrant, report agentprefli
 }
 
 func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflight.Request {
-	return agentpreflight.Request{
+	request := agentpreflight.Request{
 		Capability:        agentpreflight.CapabilityExportPreflight,
 		PrecheckID:        grant.PrecheckID,
 		NodeID:            grant.Binding.NodeID,
@@ -211,12 +211,28 @@ func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflig
 		LogPath:           grant.Context.LogPath,
 		SkipCheckDir:      grant.Context.SkipCheckDir,
 		AllowedRoots:      append([]string(nil), grant.Context.AllowedRoots...),
+		OutputKind:        agentpreflight.OutputKind(grant.Context.OutputKind),
 	}
+	if grant.Context.StorageTarget != nil {
+		request.StorageTarget = &agentpreflight.StorageTarget{
+			Provider: grant.Context.StorageTarget.Provider, URI: grant.Context.StorageTarget.URI,
+			Endpoint: grant.Context.StorageTarget.Endpoint, TmpPath: grant.Context.StorageTarget.TmpPath,
+		}
+	}
+	return request
+}
+
+// kindForGrant 把租约上下文的输出类型归一化；缺省保持本地语义。
+func kindForGrant(grant agentwire.PrecheckGrant) agentpreflight.OutputKind {
+	if grant.Context.OutputKind == "" {
+		return agentpreflight.OutputKindLocal
+	}
+	return agentpreflight.OutputKind(grant.Context.OutputKind)
 }
 
 func validGrant(identity agentwire.AgentIdentity, localPlatform commandgen.Platform, grant agentwire.PrecheckGrant) bool {
 	if !validPathIdentifier(grant.PrecheckID) || !validOpaque(grant.LeaseID, 256) || grant.Binding.NodeID != identity.NodeID || grant.Context.TargetPlatform != localPlatform || grant.LeaseEpoch < 1 || grant.ExpiresAt.IsZero() ||
-		!validOpaque(grant.BindingDigest, 256) || !validBinding(grant.Binding) || !fixedCheckSet(grant.CheckSet) || !validExecutionContext(grant.Context) {
+		!validOpaque(grant.BindingDigest, 256) || !validBinding(grant.Binding) || !checkSetForKind(kindForGrant(grant), grant.CheckSet) || !validExecutionContext(grant.Context) {
 		return false
 	}
 	return grant.Binding.PrecheckID == grant.PrecheckID
@@ -227,12 +243,13 @@ func validBinding(binding agentstate.PrecheckBinding) bool {
 		validOpaque(binding.ConfigFingerprint, 256) && binding.CredentialRevision > 0 && binding.NodeFactsVersion > 0
 }
 
-func fixedCheckSet(checkSet []agentpreflight.CheckID) bool {
-	fixedChecks := agentpreflight.FixedChecks()
-	if len(checkSet) != len(fixedChecks) {
+// checkSetForKind 校验控制面下发的检查清单与输出类型形态一致（本地六项或存储六项）。
+func checkSetForKind(kind agentpreflight.OutputKind, checkSet []agentpreflight.CheckID) bool {
+	expected := agentpreflight.ChecksForOutputKind(kind)
+	if len(checkSet) != len(expected) {
 		return false
 	}
-	for index, check := range fixedChecks {
+	for index, check := range expected {
 		if checkSet[index] != check {
 			return false
 		}
@@ -241,8 +258,29 @@ func fixedCheckSet(checkSet []agentpreflight.CheckID) bool {
 }
 
 func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) bool {
-	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || (executionContext.ContentKind != "DATA_ONLY" && executionContext.ContentKind != "DDL_ONLY" && executionContext.ContentKind != "DDL_AND_DATA") || len(executionContext.Objects) > 100 || !validExportOutputPath(executionContext.TargetPlatform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validExportOutputPath(executionContext.TargetPlatform, executionContext.LogPath)) || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
+	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || (executionContext.ContentKind != "DATA_ONLY" && executionContext.ContentKind != "DDL_ONLY" && executionContext.ContentKind != "DDL_AND_DATA") || len(executionContext.Objects) > 100 || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
 		return false
+	}
+	// EX-I6：缺省输出类型保持本地语义；对象存储输出必须携带受控存储目标段。
+	kind := executionContext.OutputKind
+	if kind == "" {
+		kind = agentpreflight.OutputKindLocal
+	}
+	if kind.IsStorageOutput() {
+		if executionContext.StorageTarget == nil || executionContext.StorageTarget.Provider != string(kind) ||
+			!validOpaque(executionContext.OutputPath, 4096) || executionContext.LogPath != "" {
+			return false
+		}
+		if executionContext.StorageTarget.Endpoint != "" && !validOpaque(executionContext.StorageTarget.Endpoint, 253) {
+			return false
+		}
+		if executionContext.StorageTarget.TmpPath != "" && !validExportOutputPath(executionContext.TargetPlatform, executionContext.StorageTarget.TmpPath) {
+			return false
+		}
+	} else {
+		if executionContext.StorageTarget != nil || !validExportOutputPath(executionContext.TargetPlatform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validExportOutputPath(executionContext.TargetPlatform, executionContext.LogPath)) {
+			return false
+		}
 	}
 	for _, object := range executionContext.Objects {
 		if !validOpaque(object, 256) {
@@ -410,9 +448,9 @@ func containsForbiddenSecretByte(value []byte) bool {
 	return false
 }
 
-func failedReport(precheckID string) agentpreflight.Report {
-	results := make([]agentpreflight.Result, 0, len(agentpreflight.FixedChecks()))
-	for _, check := range agentpreflight.FixedChecks() {
+func failedReport(kind agentpreflight.OutputKind, precheckID string) agentpreflight.Report {
+	results := make([]agentpreflight.Result, 0, len(agentpreflight.ChecksForOutputKind(kind)))
+	for _, check := range agentpreflight.ChecksForOutputKind(kind) {
 		results = append(results, agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: failureEvidenceCode(check)})
 	}
 	return agentpreflight.Report{PrecheckID: precheckID, Results: results}
@@ -430,6 +468,10 @@ func failureEvidenceCode(check agentpreflight.CheckID) string {
 		return "OUTPUT_PATH_UNAVAILABLE"
 	case agentpreflight.CheckAvailableSpace:
 		return "OUTPUT_SPACE_UNAVAILABLE"
+	case agentpreflight.CheckStorageConnectivity:
+		return "STORAGE_CONNECTIVITY_UNAVAILABLE"
+	case agentpreflight.CheckStorageAuth:
+		return "STORAGE_AUTH_UNAVAILABLE"
 	default:
 		return "SYNTHETIC_OK"
 	}

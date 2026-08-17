@@ -116,8 +116,8 @@ func (k *Keyring) lookup(keyID string) ([]byte, bool) {
 }
 
 func validateReference(reference Reference) error {
-	// 数据库密码与可选的 sys 凭据都走同一加密信封；其他秘密类型一律拒绝。
-	if reference.CredentialID == "" || reference.Revision < 1 || (reference.SecretType != DatabasePassword && reference.SecretType != SysPassword) || reference.DataSourceID == "" {
+	// 数据库密码、可选的 sys 凭据与对象存储凭据都走同一加密信封；其他秘密类型一律拒绝。
+	if reference.CredentialID == "" || reference.Revision < 1 || (reference.SecretType != DatabasePassword && reference.SecretType != SysPassword && reference.SecretType != StorageAccessKey && reference.SecretType != StorageSecretKey) || reference.DataSourceID == "" {
 		return ErrInvalidReference
 	}
 	return nil

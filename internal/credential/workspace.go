@@ -123,6 +123,84 @@ func (w Workspace) OwnsSecurityConfiguration(path string) bool {
 	return filepath.Clean(path) == filepath.Join(w.securityDir, "security.properties")
 }
 
+// storageConfigurationPropertyNames 返回各 provider 在 Hadoop core-site.xml 中的官方密钥属性名。
+// 属性名只接受四种受控 provider；未知 provider 失败关闭。
+func storageConfigurationPropertyNames(provider string) (accessKeyProperty, secretKeyProperty string, ok bool) {
+	switch provider {
+	case "OSS":
+		return "fs.oss.accessKeyId", "fs.oss.accessKeySecret", true
+	case "S3":
+		return "fs.s3a.access.key", "fs.s3a.secret.key", true
+	case "COS":
+		return "fs.cosn.userinfo.secretId", "fs.cosn.userinfo.secretKey", true
+	case "OBS":
+		return "fs.obs.access.key", "fs.obs.secret.key", true
+	default:
+		return "", "", false
+	}
+}
+
+// escapeXMLValue 转义 Hadoop XML 属性值中的保留字符，防止密钥内容破坏配置文件结构。
+func escapeXMLValue(value []byte) []byte {
+	escaped := make([]byte, 0, len(value)+16)
+	for _, char := range value {
+		switch char {
+		case '&':
+			escaped = append(escaped, "&amp;"...)
+		case '<':
+			escaped = append(escaped, "&lt;"...)
+		case '>':
+			escaped = append(escaped, "&gt;"...)
+		case '"':
+			escaped = append(escaped, "&quot;"...)
+		case '\'':
+			escaped = append(escaped, "&apos;"...)
+		default:
+			escaped = append(escaped, char)
+		}
+	}
+	return escaped
+}
+
+// GenerateStorageConfiguration 生成 Hadoop core-site.xml 内容（EX-I6 存储凭据槽位）。
+// access-key 与 secret-key 只进入该 XML 值区（转义后），绝不进入 argv、日志或环境变量。
+// NUL、回车与换行会破坏 XML 结构或注入伪行，一律失败关闭。
+func GenerateStorageConfiguration(provider string, accessKey, secretKey []byte) ([]byte, error) {
+	if len(accessKey) == 0 || len(secretKey) == 0 || bytesContainLineBreak(accessKey) || bytesContainLineBreak(secretKey) || bytesContainNul(accessKey) || bytesContainNul(secretKey) {
+		return nil, errors.New("storage configuration secret is invalid")
+	}
+	accessKeyProperty, secretKeyProperty, ok := storageConfigurationPropertyNames(provider)
+	if !ok {
+		return nil, errors.New("storage configuration provider is unsupported")
+	}
+	content := make([]byte, 0, len(accessKey)+len(secretKey)+256)
+	content = append(content, []byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <property><name>")...)
+	content = append(content, []byte(accessKeyProperty)...)
+	content = append(content, []byte("</name><value>")...)
+	content = append(content, escapeXMLValue(accessKey)...)
+	content = append(content, []byte("</value></property>\n  <property><name>")...)
+	content = append(content, []byte(secretKeyProperty)...)
+	content = append(content, []byte("</name><value>")...)
+	content = append(content, escapeXMLValue(secretKey)...)
+	content = append(content, []byte("</value></property>\n</configuration>\n")...)
+	return content, nil
+}
+
+// WriteStorageConfiguration 把 core-site.xml 写入 execution 私有目录并返回 HADOOP_CONF_DIR 目标目录。
+func (w Workspace) WriteStorageConfiguration(content []byte) (string, error) {
+	if !w.valid() || len(content) == 0 {
+		return "", errors.New("storage configuration workspace is invalid")
+	}
+	confDir := filepath.Join(w.securityDir, "hadoop-conf")
+	if err := os.Mkdir(confDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", errors.New("create storage configuration directory failed")
+	}
+	if err := writePrivateFile(filepath.Join(confDir, "core-site.xml"), content); err != nil {
+		return "", err
+	}
+	return confDir, nil
+}
+
 func (w Workspace) Cleanup() error {
 	if !w.valid() {
 		return errors.New("security workspace cleanup target is invalid")
@@ -211,6 +289,16 @@ func javaPath(path string) string {
 func bytesContainLineBreak(value []byte) bool {
 	for _, character := range value {
 		if character == '\r' || character == '\n' {
+			return true
+		}
+	}
+	return false
+}
+
+// bytesContainNul 检测字节流中的 NUL 字符；XML 1.0 值区不允许出现 NUL。
+func bytesContainNul(value []byte) bool {
+	for _, character := range value {
+		if character == 0 {
 			return true
 		}
 	}

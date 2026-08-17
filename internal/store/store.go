@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"ob-data-orch/internal/agentpreflight"
+	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/migrate"
 	"ob-data-orch/internal/outputpath"
@@ -29,6 +32,14 @@ const sqlitePragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragm
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var windowsNativeAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:\\`)
 var fixedPrecheckChecks = precheckcontract.FixedChecks()
+
+// storagePrecheckCheckList 是对象存储输出任务的预检查清单（EX-I6 存储专用预检查）：
+// 本机检查裁剪掉不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY，空间检查转向 --tmp-path 卷，
+// 最后追加两项存储层检查；顺序固定，任何一项非 PASSED 都使整体失败。
+func storagePrecheckCheckList() []string {
+	checks := []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "AVAILABLE_SPACE"}
+	return append(checks, precheckcontract.StorageChecks()...)
+}
 
 // f3LogIndexPlaceholderRetention 仅满足现有段索引的非空保留时间列。
 // F3 尚无系统设置和物理清理实现，不能把这个占位值当成已确认的产品保留策略或据此删除日志。
@@ -1771,12 +1782,12 @@ func (s *Store) CreateExportDraft(ctx context.Context, input ExportDraftCreate) 
                 config_fingerprint, invalidation_json,
                 object_scope_json, content_selection_json, data_format_json, output_config_json,
                 performance_config_json, filter_config_json, ddl_behavior_json,
-                created_at, updated_at
+                source_task_id, source_derivation, created_at, updated_at
             )
             SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?,
                    COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'),
                    COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'), COALESCE(NULLIF(?, ''), '{}'),
-                   COALESCE(NULLIF(?, ''), '{}'), ?, ?
+                   COALESCE(NULLIF(?, ''), '{}'), NULLIF(?, ''), NULLIF(?, ''), ?, ?
             WHERE EXISTS (
                 SELECT 1 FROM data_sources
                 WHERE data_source_id = ? AND state = 'ENABLED'
@@ -1788,6 +1799,7 @@ func (s *Store) CreateExportDraft(ctx context.Context, input ExportDraftCreate) 
 			input.ConfigFingerprint, input.InvalidationJSON,
 			input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON,
 			input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON,
+			input.SourceTaskID, input.SourceDerivation,
 			utcText(input.CreatedAt), utcText(input.UpdatedAt),
 			input.DataSourceID, input.NodeID)
 		if err != nil {
@@ -1830,6 +1842,7 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
                COALESCE(config_fingerprint, ''), invalidation_json,
                object_scope_json, content_selection_json, data_format_json, output_config_json,
                performance_config_json, filter_config_json, ddl_behavior_json,
+               COALESCE(source_task_id, ''), COALESCE(source_derivation, ''),
                created_at, updated_at
         FROM export_drafts WHERE draft_id = ?
     `, draftID).Scan(&draft.DraftID, &draft.OwnerSubjectID, &draft.DataSourceID, &draft.NodeID, &draft.Revision,
@@ -1837,6 +1850,7 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
 		&draft.ConfigFingerprint, &draft.InvalidationJSON,
 		&draft.ObjectScopeJSON, &draft.ContentSelectionJSON, &draft.DataFormatJSON, &draft.OutputConfigJSON,
 		&draft.PerformanceConfigJSON, &draft.FilterConfigJSON, &draft.DDLBehaviorJSON,
+		&draft.SourceTaskID, &draft.SourceDerivation,
 		&createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ExportDraft{}, ErrDataSourceNotFound
@@ -2506,6 +2520,25 @@ func (s *Store) CompleteAgentPrecheck(ctx context.Context, input AgentPrecheckCo
 		if !acknowledged {
 			return ErrPrecheckLeaseRejected
 		}
+		// EX-I6：按冻结草稿的输出类型复核检查清单顺序与形态。
+		// 本地输出保持冻结六项；对象存储输出必须携带存储形态清单。伪造顺序或形态一律失败关闭。
+		executionContext, err := readPrecheckExecutionContext(ctx, tx, run.Binding)
+		if err != nil {
+			return ErrPrecheckLeaseRejected
+		}
+		reportResults := make([]agentpreflight.Result, 0, len(input.Results))
+		for _, result := range input.Results {
+			reportResults = append(reportResults, agentpreflight.Result{
+				Check: agentpreflight.CheckID(result.Check), Status: agentpreflight.Status(result.Status), EvidenceCode: result.EvidenceCode,
+			})
+		}
+		kind := agentpreflight.OutputKind(executionContext.OutputKind)
+		if kind == "" {
+			kind = agentpreflight.OutputKindLocal
+		}
+		if err := agentpreflight.ValidateReportFor(kind, agentpreflight.Report{PrecheckID: input.PrecheckID, Succeeded: succeeded, Results: reportResults}); err != nil {
+			return ErrPrecheckLeaseRejected
+		}
 		updated, err := tx.ExecContext(ctx, `
             UPDATE precheck_runs
             SET status = ?, result_json = ?, integrity_status = 'COMPLETE', completed_at = ?
@@ -2984,9 +3017,24 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 	}
 	executionContext, ok := parsePrecheckExecutionContext(configVersion, configJSON)
 	if !ok || (compatibilityMode != "MYSQL" && compatibilityMode != "ORACLE") ||
-		!validPrecheckObjectName(executionContext.Database) ||
-		!validPrecheckOutputPath(platform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validPrecheckOutputPath(platform, executionContext.LogPath)) {
+		!validPrecheckObjectName(executionContext.Database) {
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+	}
+	// EX-I6：按输出类型复核路径边界——本地输出保持平台绝对路径；
+	// 对象存储输出的路径字段是受控 URI，本地目录语义只适用于 --tmp-path。
+	if executionContext.OutputKind == "" || executionContext.OutputKind == "LOCAL" {
+		if executionContext.StorageTarget != nil || !validPrecheckOutputPath(platform, executionContext.OutputPath) || (executionContext.LogPath != "" && !validPrecheckOutputPath(platform, executionContext.LogPath)) {
+			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+		}
+	} else {
+		if executionContext.StorageTarget == nil || executionContext.StorageTarget.Provider != executionContext.OutputKind ||
+			!oneOf(executionContext.OutputKind, "OSS", "S3", "COS", "OBS") || executionContext.LogPath != "" ||
+			!validPrecheckStorageURI(executionContext.OutputPath) {
+			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+		}
+		if executionContext.StorageTarget.TmpPath != "" && !validPrecheckOutputPath(platform, executionContext.StorageTarget.TmpPath) {
+			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+		}
 	}
 	for _, object := range executionContext.Objects {
 		if !validPrecheckObjectName(object) {
@@ -3035,6 +3083,12 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 			FilePath     string `json:"filePath"`
 			LogPath      string `json:"logPath"`
 			SkipCheckDir bool   `json:"skipCheckDir"`
+			Config       struct {
+				OutputConfig struct {
+					OutputKind string `json:"outputKind"`
+					TmpPath    string `json:"tmpPath"`
+				} `json:"outputConfig"`
+			} `json:"config"`
 		}
 		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
 			return PrecheckExecutionContext{}, false
@@ -3056,6 +3110,15 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 		executionContext := PrecheckExecutionContext{
 			Database: config.Database, ContentKind: config.ContentKind,
 			OutputPath: config.FilePath, LogPath: config.LogPath, SkipCheckDir: config.SkipCheckDir,
+			OutputKind: config.Config.OutputConfig.OutputKind,
+		}
+		// EX-I6：对象存储输出从受控 URI 派生存储目标段（不含密钥参数）。
+		if executionContext.OutputKind != "" && executionContext.OutputKind != "LOCAL" {
+			target, ok := parsePrecheckStorageTarget(executionContext.OutputKind, config.FilePath, config.Config.OutputConfig.TmpPath)
+			if !ok {
+				return PrecheckExecutionContext{}, false
+			}
+			executionContext.StorageTarget = target
 		}
 		if config.ScopeKind == "SPECIFIED" {
 			objects := strings.Split(config.Table, ",")
@@ -3075,6 +3138,48 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 	}
 }
 
+// parsePrecheckStorageTarget 把受控对象存储 URI 解析为预检查目标段。
+// 只接受白名单 scheme 与 endpoint/region/storage-class 参数；URI 不含 access-key/secret-key（草稿创建时已拒绝）。
+// Endpoint 缺省（仅 region）时为空，Agent 端网络探测将回报 UNKNOWN。
+func parsePrecheckStorageTarget(outputKind, uri, tmpPath string) (*PrecheckStorageTarget, bool) {
+	scheme, ok := storageURIScheme(outputKind)
+	if !ok {
+		return nil, false
+	}
+	if !strings.HasPrefix(uri, scheme+"://") || len(uri) > 4096 || strings.ContainsAny(uri, "\x00\r\n") {
+		return nil, false
+	}
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Host == "" || parsed.Scheme != scheme {
+		return nil, false
+	}
+	query := parsed.Query()
+	for key := range query {
+		if key != "endpoint" && key != "region" && key != "storage-class" {
+			return nil, false
+		}
+	}
+	target := &PrecheckStorageTarget{Provider: outputKind, URI: uri, TmpPath: tmpPath}
+	target.Endpoint = query.Get("endpoint")
+	return target, true
+}
+
+// storageURIScheme 只接受四种受控输出类型的 URI scheme。
+func storageURIScheme(outputKind string) (string, bool) {
+	switch outputKind {
+	case "OSS":
+		return "oss", true
+	case "S3":
+		return "s3", true
+	case "COS":
+		return "cos", true
+	case "OBS":
+		return "obs", true
+	default:
+		return "", false
+	}
+}
+
 func validPrecheckObjectName(value string) bool {
 	return len(value) > 0 && len(value) <= 256 && value == strings.TrimSpace(value) && !strings.ContainsRune(value, '\x00') && !strings.ContainsAny(value, "\r\n")
 }
@@ -3087,6 +3192,12 @@ func validPrecheckOutputPath(platform, value string) bool {
 		return outputpath.IsExportOutputPath(platform, value)
 	}
 	return (platform == "LINUX_AMD64" || platform == "LINUX_ARM64") && strings.HasPrefix(value, "/")
+}
+
+// validPrecheckStorageURI 只做结构失败关闭：受控 URI 非空、长度上限且不含控制字符。
+// scheme 与参数白名单在 parsePrecheckStorageTarget 中复核，此处不重新解释 URI 语义。
+func validPrecheckStorageURI(value string) bool {
+	return value != "" && len(value) <= 4096 && !strings.ContainsAny(value, "\x00\r\n")
 }
 
 // ensurePrecheckAgentIdle 阻止单容量 Agent 在持有正式执行、预检查或连接测试租约时继续领取。
@@ -3330,8 +3441,9 @@ func encodeAgentPrecheckResults(results []PrecheckCheckResult) (string, bool, er
 	return string(payload), succeeded, nil
 }
 
-// decodePrecheckResults 仅从已持久化的固定检查 JSON 还原安全结果投影。
+// decodePrecheckResults 仅从已持久化的检查 JSON 还原安全结果投影。
 // 旧合成记录、损坏 JSON 或任意非固定检查都只返回空结果，不能把未校验内容暴露给浏览器。
+// EX-I6：接受本地六项与对象存储六项两种受控形态；顺序必须与对应清单完全一致。
 func decodePrecheckResults(value string) []PrecheckCheckResult {
 	var payload struct {
 		Checks []PrecheckCheckResult `json:"checks"`
@@ -3339,13 +3451,21 @@ func decodePrecheckResults(value string) []PrecheckCheckResult {
 	if value == "" || json.Unmarshal([]byte(value), &payload) != nil || len(payload.Checks) != len(fixedPrecheckChecks) {
 		return nil
 	}
-	for index, expected := range fixedPrecheckChecks {
-		result := payload.Checks[index]
-		if result.Check != expected || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
-			return nil
+	if matchesPrecheckShape(payload.Checks, fixedPrecheckChecks) || matchesPrecheckShape(payload.Checks, storagePrecheckCheckList()) {
+		return append([]PrecheckCheckResult(nil), payload.Checks...)
+	}
+	return nil
+}
+
+// matchesPrecheckShape 校验结果与受控清单顺序完全一致且证据码在契约内。
+func matchesPrecheckShape(results []PrecheckCheckResult, expected []string) bool {
+	for index, check := range expected {
+		result := results[index]
+		if result.Check != check || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
+			return false
 		}
 	}
-	return append([]PrecheckCheckResult(nil), payload.Checks...)
+	return true
 }
 
 func nullableTimeText(value time.Time) any {
@@ -3477,9 +3597,10 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
                 task_id, creator_subject_id, data_source_id, node_id, precheck_id,
                 credential_id, credential_revision, config_fingerprint, tool_version,
                 metadata_version, capability_version, snapshot_version, snapshot_json, planned_argv_json,
-                planned_command_redacted, submitted_at
+                planned_command_redacted, storage_credential_id, storage_credential_revision,
+                parent_task_id, derivation_kind, submitted_at
             )
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?
             WHERE EXISTS (
                 SELECT 1
                 FROM precheck_runs
@@ -3512,7 +3633,8 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 		input.TaskID, input.CreatorSubjectID, input.DataSourceID, input.NodeID, input.PrecheckID,
 		input.CredentialID, input.CredentialRevision, input.ConfigFingerprint, input.ToolVersion,
 		input.MetadataVersion, input.CapabilityVersion, input.SnapshotVersion, input.SnapshotJSON, input.PlannedArgvJSON,
-		input.PlannedCommandRedacted, utcText(input.SubmittedAt),
+		input.PlannedCommandRedacted, nullableString(input.StorageCredentialID), nullableInt64(input.StorageCredentialRevision),
+		input.ParentTaskID, input.DerivationKind, utcText(input.SubmittedAt),
 		input.PrecheckID, input.DataSourceID, input.NodeID, input.CredentialID,
 		input.CredentialRevision, input.ConfigFingerprint, utcText(input.SubmittedAt),
 	)
@@ -3530,6 +3652,47 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 		return err
 	}
 	return nil
+}
+
+// parseExecutionResultSummary 只把受控结果摘要 JSON 还原为安全投影。
+// 空值、损坏 JSON 或越界字段返回 nil（失败关闭），绝不把未校验内容暴露给调用方。
+func parseExecutionResultSummary(value sql.NullString) *ExecutionResultSummary {
+	if !value.Valid || value.String == "" {
+		return nil
+	}
+	var payload struct {
+		Result     string `json:"result"`
+		FileCount  uint64 `json:"fileCount"`
+		TotalBytes uint64 `json:"totalBytes"`
+		Files      []struct {
+			Path string `json:"path"`
+			Size uint64 `json:"size"`
+		} `json:"files"`
+		CheckpointPresent *bool  `json:"checkpointPresent"`
+		ObservedAt        string `json:"observedAt"`
+	}
+	if json.Unmarshal([]byte(value.String), &payload) != nil || (payload.Result != "VERIFIED" && payload.Result != "FAILED") {
+		return nil
+	}
+	if payload.Files != nil && len(payload.Files) > 100 {
+		return nil
+	}
+	files := make([]ExecutionResultFile, 0, len(payload.Files))
+	for _, file := range payload.Files {
+		if file.Path == "" || len(file.Path) > 512 || strings.ContainsAny(file.Path, "\x00\r\n") || strings.HasPrefix(file.Path, "/") || strings.Contains(file.Path, "../") || strings.HasSuffix(file.Path, "/..") || strings.Contains(file.Path, "..\\") {
+			return nil
+		}
+		files = append(files, ExecutionResultFile{Path: file.Path, Size: file.Size})
+	}
+	observedAt, err := parseTaskListTime(payload.ObservedAt, false)
+	if err != nil {
+		return nil
+	}
+	summary := &ExecutionResultSummary{Result: payload.Result, FileCount: payload.FileCount, TotalBytes: payload.TotalBytes, Files: files, ObservedAt: observedAt}
+	if payload.CheckpointPresent != nil {
+		summary.CheckpointPresent = *payload.CheckpointPresent
+	}
+	return summary
 }
 
 // GetTaskSummary 返回任务的冻结非敏感投影；控制面必须在调用后校验创建者范围。
@@ -3590,6 +3753,7 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 	}
 	var summary TaskSummary
 	var submittedAt, startedAt, finishedAt, updatedAt string
+	var resultSummaryJSON sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
 		       t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
@@ -3600,7 +3764,8 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		       t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
 		       COALESCE(e.execution_id, ''), COALESCE(e.reconciliation_required, 0),
 		       t.submitted_at, COALESCE(e.started_at, ''), COALESCE(e.finished_at, ''),
-		       COALESCE(e.updated_at, t.submitted_at)
+		       COALESCE(e.updated_at, t.submitted_at), e.result_summary_json,
+		       COALESCE(t.parent_task_id, ''), COALESCE(t.derivation_kind, '')
         FROM tasks t
         LEFT JOIN task_executions e ON e.task_id = t.task_id
         WHERE t.task_id = ?
@@ -3621,13 +3786,15 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
 		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
-		&submittedAt, &startedAt, &finishedAt, &updatedAt)
+		&submittedAt, &startedAt, &finishedAt, &updatedAt, &resultSummaryJSON,
+		&summary.ParentTaskID, &summary.DerivationKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TaskSummary{}, ErrDataSourceNotFound
 	}
 	if err != nil {
 		return TaskSummary{}, fmt.Errorf("read authorized task summary: %w", err)
 	}
+	summary.ResultSummary = parseExecutionResultSummary(resultSummaryJSON)
 	if summary.SubmittedAt, err = parseTaskListTime(submittedAt, true); err != nil {
 		return TaskSummary{}, fmt.Errorf("parse task submission time: %w", err)
 	}
@@ -3641,6 +3808,244 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		return TaskSummary{}, fmt.Errorf("parse task update time: %w", err)
 	}
 	return summary, nil
+}
+
+// GetAuthorizedTaskDerivationSource 只在当前主体拥有任务或具备对应数据源任务范围时
+// 返回派生操作需要的冻结任务事实（配置/argv/执行摘要，不含凭据明文与日志原文）。
+// 无权对象与不存在对象使用同一错误。
+func (s *Store) GetAuthorizedTaskDerivationSource(ctx context.Context, taskID, subjectID string) (TaskDerivationSource, error) {
+	if s == nil || s.db == nil {
+		return TaskDerivationSource{}, errors.New("SQLite store is nil")
+	}
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(subjectID) == "" {
+		return TaskDerivationSource{}, ErrDataSourceNotFound
+	}
+	var source TaskDerivationSource
+	var submittedAt string
+	var resultSummaryJSON sql.NullString
+	var storageCredentialID sql.NullString
+	var storageCredentialRevision sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+        SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
+               t.credential_id, t.credential_revision, t.config_fingerprint, t.tool_version,
+               t.metadata_version, t.capability_version, t.snapshot_version, t.snapshot_json,
+               t.planned_argv_json, t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
+               COALESCE(t.parent_task_id, ''), COALESCE(t.derivation_kind, ''), t.submitted_at,
+               e.result_summary_json, t.storage_credential_id, t.storage_credential_revision
+        FROM tasks t
+        LEFT JOIN task_executions e ON e.task_id = t.task_id
+        WHERE t.task_id = ?
+          AND EXISTS (
+              SELECT 1 FROM auth_subjects subject
+              WHERE subject.subject_id = ? AND subject.account_status = 'ACTIVE'
+          )
+          AND (
+              t.creator_subject_id = ?
+              OR EXISTS (
+                  SELECT 1 FROM subject_object_scopes task_scope
+                  WHERE task_scope.subject_id = ?
+                    AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE'
+                    AND task_scope.object_id = t.data_source_id
+              )
+          )
+    `, taskID, subjectID, subjectID, subjectID).Scan(&source.TaskID, &source.CreatorSubjectID, &source.DataSourceID, &source.NodeID,
+		&source.PrecheckID, &source.CredentialID, &source.CredentialRevision, &source.ConfigFingerprint, &source.ToolVersion,
+		&source.MetadataVersion, &source.CapabilityVersion, &source.SnapshotVersion, &source.SnapshotJSON,
+		&source.PlannedArgvJSON, &source.PlannedCommandRedacted, &source.State,
+		&source.ParentTaskID, &source.DerivationKind, &submittedAt, &resultSummaryJSON,
+		&storageCredentialID, &storageCredentialRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaskDerivationSource{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return TaskDerivationSource{}, fmt.Errorf("read authorized task derivation source: %w", err)
+	}
+	source.ResultSummary = parseExecutionResultSummary(resultSummaryJSON)
+	if source.SubmittedAt, err = parseTaskListTime(submittedAt, true); err != nil {
+		return TaskDerivationSource{}, fmt.Errorf("parse task derivation submission time: %w", err)
+	}
+	if storageCredentialID.Valid {
+		source.StorageCredentialID = storageCredentialID.String
+	}
+	if storageCredentialRevision.Valid {
+		source.StorageCredentialRevision = storageCredentialRevision.Int64
+	}
+	return source, nil
+}
+
+// DeriveTaskFromCheckpoint 从失败导出任务的冻结快照创建检查点继续任务：
+// 新任务继承原快照/凭据/节点/预检查绑定，追加官方 --retry，并记录 parent_task_id/derivation_kind。
+// 资格条件：执行终态 FAILED、结果摘要确认 dump.ckpt 存在、原预检查曾成功完成。
+// 当前事实（数据源/凭据/节点/Agent 事实版本）仍在领取执行时由 ClaimNextExecution 复验。
+func (s *Store) DeriveTaskFromCheckpoint(ctx context.Context, input CheckpointResumeDerivation) (CheckpointResumeResult, error) {
+	if err := validateCheckpointResumeDerivation(input); err != nil {
+		return CheckpointResumeResult{}, err
+	}
+	result := CheckpointResumeResult{TaskID: input.TaskID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var digest, existingID string
+		err := tx.QueryRowContext(ctx, `
+            SELECT request_digest, COALESCE(resource_id, '')
+            FROM request_idempotency
+            WHERE subject_id = ? AND operation = 'RESUME_EXPORT_TASK' AND idempotency_key = ?`,
+			input.CreatorSubjectID, input.IdempotencyKey).Scan(&digest, &existingID)
+		switch {
+		case err == nil:
+			if digest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.TaskID, result.Replayed = existingID, true
+			if err := tx.QueryRowContext(ctx, `SELECT node_id FROM tasks WHERE task_id = ?`, existingID).Scan(&result.NodeID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrCheckpointResumeUnavailable
+				}
+				return fmt.Errorf("read checkpoint resume replay node: %w", err)
+			}
+			return nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("read checkpoint resume idempotency: %w", err)
+		}
+		source, err := readTaskDerivationSourceTx(ctx, tx, input.SourceTaskID, input.CreatorSubjectID)
+		if err != nil {
+			return err
+		}
+		result.NodeID = source.NodeID
+		if source.State != "FAILED" || source.ResultSummary == nil || !source.ResultSummary.CheckpointPresent {
+			return ErrCheckpointResumeUnavailable
+		}
+		var precheckStatus, precheckIntegrity string
+		if err := tx.QueryRowContext(ctx, `SELECT status, integrity_status FROM precheck_runs WHERE precheck_id = ?`, source.PrecheckID).Scan(&precheckStatus, &precheckIntegrity); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrPrecheckInvalid
+			}
+			return fmt.Errorf("read checkpoint resume precheck: %w", err)
+		}
+		if precheckStatus != "SUCCEEDED" || precheckIntegrity != "COMPLETE" {
+			return ErrPrecheckInvalid
+		}
+		var argv []string
+		if err := json.Unmarshal([]byte(source.PlannedArgvJSON), &argv); err != nil || len(argv) == 0 {
+			return ErrCheckpointResumeUnavailable
+		}
+		for _, token := range argv {
+			if token == "--retry" {
+				return ErrCheckpointResumeUnavailable
+			}
+		}
+		resumedArgv := append(append([]string(nil), argv...), "--retry")
+		if !validExecutionArgv(resumedArgv) {
+			return ErrCheckpointResumeUnavailable
+		}
+		resumedArgvJSON, err := json.Marshal(resumedArgv)
+		if err != nil {
+			return fmt.Errorf("encode checkpoint resume argv: %w", err)
+		}
+		// 脱敏命令只追加固定官方令牌；原命令已通过密码遮蔽校验。
+		resumedCommand := strings.TrimSpace(source.PlannedCommandRedacted) + " --retry"
+		insert, err := tx.ExecContext(ctx, `
+            INSERT INTO tasks(
+                task_id, creator_subject_id, data_source_id, node_id, precheck_id,
+                credential_id, credential_revision, config_fingerprint, tool_version,
+                metadata_version, capability_version, snapshot_version, snapshot_json, planned_argv_json,
+                planned_command_redacted, storage_credential_id, storage_credential_revision,
+                parent_task_id, derivation_kind, submitted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CHECKPOINT_RESUME', ?)
+        `, input.TaskID, input.CreatorSubjectID, source.DataSourceID, source.NodeID, source.PrecheckID,
+			source.CredentialID, source.CredentialRevision, source.ConfigFingerprint, source.ToolVersion,
+			source.MetadataVersion, source.CapabilityVersion, source.SnapshotVersion, source.SnapshotJSON, string(resumedArgvJSON),
+			resumedCommand, nullableString(source.StorageCredentialID), nullableInt64(source.StorageCredentialRevision),
+			source.TaskID, utcText(input.Now))
+		if err != nil {
+			return fmt.Errorf("insert checkpoint resume task: %w", err)
+		}
+		affected, err := insert.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read checkpoint resume insert result: %w", err)
+		}
+		if affected != 1 {
+			return ErrCheckpointResumeUnavailable
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.AuditActorID, "TASK_RESUMED_FROM_CHECKPOINT", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.Now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO request_idempotency(
+                subject_id, operation, idempotency_key, request_digest, result_status,
+                resource_kind, resource_id, response_json, created_at, expires_at
+            ) VALUES (?, 'RESUME_EXPORT_TASK', ?, ?, 201, 'TASK', ?, '{}', ?, ?)
+        `, input.CreatorSubjectID, input.IdempotencyKey, input.RequestDigest, input.TaskID,
+			utcText(input.Now), utcText(input.Now.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write checkpoint resume idempotency: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return CheckpointResumeResult{}, err
+	}
+	return result, nil
+}
+
+// readTaskDerivationSourceTx 在同一事务内按授权谓词读取冻结任务事实（与 GetAuthorizedTaskDerivationSource 同口径）。
+func readTaskDerivationSourceTx(ctx context.Context, tx *sql.Tx, taskID, subjectID string) (TaskDerivationSource, error) {
+	var source TaskDerivationSource
+	var submittedAt string
+	var resultSummaryJSON sql.NullString
+	var storageCredentialID sql.NullString
+	var storageCredentialRevision sql.NullInt64
+	err := tx.QueryRowContext(ctx, `
+        SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
+               t.credential_id, t.credential_revision, t.config_fingerprint, t.tool_version,
+               t.metadata_version, t.capability_version, t.snapshot_version, t.snapshot_json,
+               t.planned_argv_json, t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
+               COALESCE(t.parent_task_id, ''), COALESCE(t.derivation_kind, ''), t.submitted_at,
+               e.result_summary_json, t.storage_credential_id, t.storage_credential_revision
+        FROM tasks t
+        LEFT JOIN task_executions e ON e.task_id = t.task_id
+        WHERE t.task_id = ?
+          AND EXISTS (
+              SELECT 1 FROM auth_subjects subject
+              WHERE subject.subject_id = ? AND subject.account_status = 'ACTIVE'
+          )
+          AND (
+              t.creator_subject_id = ?
+              OR EXISTS (
+                  SELECT 1 FROM subject_object_scopes task_scope
+                  WHERE task_scope.subject_id = ?
+                    AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE'
+                    AND task_scope.object_id = t.data_source_id
+              )
+          )
+    `, taskID, subjectID, subjectID, subjectID).Scan(&source.TaskID, &source.CreatorSubjectID, &source.DataSourceID, &source.NodeID,
+		&source.PrecheckID, &source.CredentialID, &source.CredentialRevision, &source.ConfigFingerprint, &source.ToolVersion,
+		&source.MetadataVersion, &source.CapabilityVersion, &source.SnapshotVersion, &source.SnapshotJSON,
+		&source.PlannedArgvJSON, &source.PlannedCommandRedacted, &source.State,
+		&source.ParentTaskID, &source.DerivationKind, &submittedAt, &resultSummaryJSON,
+		&storageCredentialID, &storageCredentialRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaskDerivationSource{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return TaskDerivationSource{}, fmt.Errorf("read task derivation source: %w", err)
+	}
+	source.ResultSummary = parseExecutionResultSummary(resultSummaryJSON)
+	if source.SubmittedAt, err = parseTaskListTime(submittedAt, true); err != nil {
+		return TaskDerivationSource{}, fmt.Errorf("parse task derivation submission time: %w", err)
+	}
+	if storageCredentialID.Valid {
+		source.StorageCredentialID = storageCredentialID.String
+	}
+	if storageCredentialRevision.Valid {
+		source.StorageCredentialRevision = storageCredentialRevision.Int64
+	}
+	return source, nil
+}
+
+// validateCheckpointResumeDerivation 校验检查点继续请求的固定输入。
+func validateCheckpointResumeDerivation(input CheckpointResumeDerivation) error {
+	if validAgentOpaqueValue(input.TaskID, 256) && validAgentOpaqueValue(input.CreatorSubjectID, 256) && validAgentOpaqueValue(input.AuditActorID, 256) && validAgentOpaqueValue(input.SourceTaskID, 256) && validAgentOpaqueValue(input.RequestID, 256) && validAgentOpaqueValue(input.IdempotencyKey, 256) && isSHA256(input.RequestDigest) && !input.Now.IsZero() {
+		return nil
+	}
+	return errors.New("checkpoint resume derivation is invalid")
 }
 
 // CountAuthorizedTaskSummaries 只统计当前主体在任务列表可读取范围内的任务。
@@ -3853,7 +4258,8 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 			  AND n.environment_check_facts_revision = a.facts_revision
 			  AND a.last_heartbeat_at IS NOT NULL AND a.last_heartbeat_at >= ?
               AND a.capacity_total = 1 AND a.capacity_used = 0
-              AND p.status = 'SUCCEEDED' AND p.integrity_status = 'COMPLETE' AND p.valid_until > ?
+              AND p.status = 'SUCCEEDED' AND p.integrity_status = 'COMPLETE'
+              AND (p.valid_until > ? OR t.derivation_kind = 'CHECKPOINT_RESUME')
               AND p.binding_agent_id = a.agent_id AND p.node_facts_revision = a.facts_revision
               AND ds.state = 'ENABLED' AND ds.last_test_status = 'SUCCEEDED' AND ds.last_test_source = 'AGENT_JDBC'
               AND cr.status = 'ACTIVE' AND owner.account_status = 'ACTIVE'
@@ -4019,6 +4425,76 @@ func (s *Store) ResolveExecutionDatabaseConnection(ctx context.Context, input Ex
 	return connection, nil
 }
 
+// ResolveExecutionStorageCredential 在同一租约内解析对象存储任务的存储凭据信封。
+// 它只读取，不写入收据（收据由同一请求的数据库连接解析统一管理）；
+// 任务未绑定存储凭据（本地输出）时返回空结构且不报错，Agent 调用方据此跳过存储注入。
+func (s *Store) ResolveExecutionStorageCredential(ctx context.Context, input ExecutionSecretResolutionRequest) (EncryptedExecutionStorageCredential, error) {
+	if err := validateExecutionSecretResolutionRequest(input); err != nil {
+		return EncryptedExecutionStorageCredential{}, err
+	}
+	var storageCredential EncryptedExecutionStorageCredential
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var bound sql.NullString
+		if err := tx.QueryRowContext(ctx, `
+            SELECT t.storage_credential_id
+            FROM task_executions AS e
+            JOIN tasks AS t ON t.task_id = e.task_id
+            JOIN execution_leases AS l ON l.execution_id = e.execution_id AND l.lease_id = ? AND l.lease_epoch = ?
+            WHERE e.execution_id = ? AND e.agent_id = ? AND l.agent_id = ?
+              AND l.status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE') AND l.expires_at > ?
+        `, input.LeaseID, input.LeaseEpoch, input.ExecutionID, input.AgentID, input.AgentID, utcText(input.Now)).Scan(&bound); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrEventRejected
+			}
+			return fmt.Errorf("read execution storage credential binding: %w", err)
+		}
+		if !bound.Valid || bound.String == "" {
+			// 本地输出任务不绑定存储凭据：空结构表示跳过存储注入。
+			return nil
+		}
+		var revision int64
+		var accessKeyCredentialID, accessKeyKeyID, secretKeyCredentialID, secretKeyKeyID, provider string
+		var accessKeyNonce, accessKeyCiphertext, secretKeyNonce, secretKeyCiphertext []byte
+		err := tx.QueryRowContext(ctx, `
+            SELECT sc.provider, t.storage_credential_revision,
+                   ak.credential_id, ak.key_id, ak.nonce, ak.ciphertext,
+                   sk.credential_id, sk.key_id, sk.nonce, sk.ciphertext
+            FROM tasks AS t
+            JOIN storage_credentials AS sc ON sc.storage_credential_id = t.storage_credential_id
+            JOIN storage_credential_revisions AS ak
+              ON ak.storage_credential_id = sc.storage_credential_id
+             AND ak.revision = t.storage_credential_revision
+             AND ak.secret_type = 'STORAGE_ACCESS_KEY' AND ak.status IN ('ACTIVE', 'SUPERSEDED')
+            JOIN storage_credential_revisions AS sk
+              ON sk.storage_credential_id = sc.storage_credential_id
+             AND sk.revision = t.storage_credential_revision
+             AND sk.secret_type = 'STORAGE_SECRET_KEY' AND sk.status IN ('ACTIVE', 'SUPERSEDED')
+            WHERE t.task_id = (SELECT task_id FROM task_executions WHERE execution_id = ?)
+        `, input.ExecutionID).Scan(
+			&provider, &revision,
+			&accessKeyCredentialID, &accessKeyKeyID, &accessKeyNonce, &accessKeyCiphertext,
+			&secretKeyCredentialID, &secretKeyKeyID, &secretKeyNonce, &secretKeyCiphertext,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEventRejected
+		}
+		if err != nil {
+			return fmt.Errorf("read execution storage credential: %w", err)
+		}
+		storageCredential = EncryptedExecutionStorageCredential{
+			StorageCredentialID: bound.String, Provider: provider, Revision: revision,
+			AccessKeyCredentialID: accessKeyCredentialID, AccessKeyKeyID: accessKeyKeyID, AccessKeyNonce: accessKeyNonce, AccessKeyCiphertext: accessKeyCiphertext,
+			SecretKeyCredentialID: secretKeyCredentialID, SecretKeyKeyID: secretKeyKeyID, SecretKeyNonce: secretKeyNonce, SecretKeyCiphertext: secretKeyCiphertext,
+		}
+		return nil
+	})
+	if err != nil {
+		storageCredential.Destroy()
+		return EncryptedExecutionStorageCredential{}, err
+	}
+	return storageCredential, nil
+}
+
 // FinishExecutionSecretResolution 保存无秘密槽位解析结果，并在成功前再次确认租约仍有效。
 func (s *Store) FinishExecutionSecretResolution(ctx context.Context, input ExecutionSecretResolutionOutcome) error {
 	if err := validateExecutionSecretResolutionOutcome(input); err != nil {
@@ -4148,8 +4624,17 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
             FROM task_executions AS e
             JOIN execution_leases AS l ON l.execution_id = e.execution_id AND l.lease_id = ? AND l.lease_epoch = ?
             WHERE e.execution_id = ? AND e.agent_id = ? AND l.agent_id = ?
-              AND l.status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE') AND l.expires_at > ?
-        `, input.LeaseID, input.LeaseEpoch, input.ExecutionID, agentID, agentID, utcText(input.ReceivedAt)).Scan(&currentState, &nextSequence)
+              AND (
+                  l.status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE') AND l.expires_at > ?
+                  OR l.status = 'RELEASED' AND e.state = 'FAILED' AND ? = 'RESULT_FACTS_OBSERVED'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM execution_events AS result_event
+                         WHERE result_event.execution_id = e.execution_id
+                           AND result_event.event_type = 'RESULT_FACTS_OBSERVED'
+                           AND result_event.accepted = 1
+                     )
+              )
+        `, input.LeaseID, input.LeaseEpoch, input.ExecutionID, agentID, agentID, utcText(input.ReceivedAt), input.EventType).Scan(&currentState, &nextSequence)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEventRejected
 		}
@@ -4200,6 +4685,11 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 			}
 			if result == "VERIFIED" && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") && executionHasTerminal(ctx, tx, input.ExecutionID, "SUCCEEDED") {
 				state = "SUCCEEDED"
+			}
+			// EX-I8：结果事实（含 dump.ckpt 存在性）合并为任务级结果摘要，
+			// 供详情投影与检查点继续资格判定。
+			if err := mergeExecutionResultSummaryTx(ctx, tx, input.ExecutionID, input.ReceivedAt); err != nil {
+				return err
 			}
 		}
 		if state != currentState {
@@ -4744,10 +5234,34 @@ func validProjectedExecutionEvent(input ExecutionEvent) bool {
 	case "TOOL_TERMINAL_OBSERVED":
 		return len(payload) == 1 && (payload["terminal"] == "SUCCEEDED" || payload["terminal"] == "FAILED")
 	case "RESULT_FACTS_OBSERVED":
-		return len(payload) == 3 && (payload["result"] == "VERIFIED" || payload["result"] == "FAILED") && validExecutionCount(payload["fileCount"]) && validExecutionBytes(payload["totalBytes"])
+		_, checkpointPresent := payload["checkpointPresent"].(bool)
+		return len(payload) == 5 && (payload["result"] == "VERIFIED" || payload["result"] == "FAILED") && validExecutionCount(payload["fileCount"]) && validExecutionBytes(payload["totalBytes"]) && validExecutionOutputFiles(payload["files"]) && checkpointPresent
 	default:
 		return false
 	}
+}
+
+// validExecutionOutputFiles 只接受受限相对路径清单：数量上限、非负大小、长度与字符集边界。
+// 相对路径禁止绝对前缀与回退段，避免把结果事实变成路径探测通道。
+func validExecutionOutputFiles(value any) bool {
+	items, ok := value.([]any)
+	if !ok || len(items) > 100 {
+		return false
+	}
+	for _, raw := range items {
+		file, ok := raw.(map[string]any)
+		if !ok || len(file) != 2 {
+			return false
+		}
+		path, ok := file["path"].(string)
+		if !ok || path == "" || len(path) > 512 || strings.ContainsAny(path, "\x00\r\n") || strings.HasPrefix(path, "/") || strings.Contains(path, "../") || strings.HasSuffix(path, "/..") || strings.Contains(path, "..\\") {
+			return false
+		}
+		if !validExecutionBytes(file["size"]) {
+			return false
+		}
+	}
+	return true
 }
 
 func validExecutionPID(value any) bool {
@@ -4806,6 +5320,54 @@ func executionEventResult(payload string) string {
 	}
 	_ = json.Unmarshal([]byte(payload), &value)
 	return value.Result
+}
+
+// mergeExecutionResultSummaryTx 在同一事务内把已接受的结果事实（含 dump.ckpt 存在性）合并为任务级结果摘要。
+// 摘要只含无秘密受控字段；读取失败或字段越界时保持已有摘要不变（失败关闭），不伪造结果。
+func mergeExecutionResultSummaryTx(ctx context.Context, tx *sql.Tx, executionID string, observedAt time.Time) error {
+	summary := map[string]any{}
+	var factsPayload string
+	err := tx.QueryRowContext(ctx, `
+        SELECT payload_json FROM execution_events
+        WHERE execution_id = ? AND event_type = 'RESULT_FACTS_OBSERVED' AND accepted = 1
+        ORDER BY event_seq DESC LIMIT 1`, executionID).Scan(&factsPayload)
+	if err == nil {
+		var facts struct {
+			Result            string `json:"result"`
+			FileCount         uint64 `json:"fileCount"`
+			TotalBytes        uint64 `json:"totalBytes"`
+			CheckpointPresent bool   `json:"checkpointPresent"`
+			Files             []struct {
+				Path string `json:"path"`
+				Size uint64 `json:"size"`
+			} `json:"files"`
+		}
+		if json.Unmarshal([]byte(factsPayload), &facts) == nil && (facts.Result == "VERIFIED" || facts.Result == "FAILED") {
+			summary["result"] = facts.Result
+			summary["fileCount"] = facts.FileCount
+			summary["totalBytes"] = facts.TotalBytes
+			summary["checkpointPresent"] = facts.CheckpointPresent
+			files := make([]map[string]any, 0, len(facts.Files))
+			for _, file := range facts.Files {
+				files = append(files, map[string]any{"path": file.Path, "size": file.Size})
+			}
+			summary["files"] = files
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read execution result facts: %w", err)
+	}
+	if len(summary) == 0 {
+		return nil
+	}
+	summary["observedAt"] = utcText(observedAt)
+	raw, err := json.Marshal(summary)
+	if err != nil {
+		return fmt.Errorf("encode execution result summary: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET result_summary_json = ?, updated_at = ? WHERE execution_id = ?`, string(raw), utcText(observedAt), executionID); err != nil {
+		return fmt.Errorf("write execution result summary: %w", err)
+	}
+	return nil
 }
 
 // Backup creates a new, consistent SQLite snapshot using VACUUM INTO. It
@@ -5349,6 +5911,8 @@ func validatePrecheckCompletion(input PrecheckCompletion) error {
 }
 
 // validateAgentPrecheckCompletion 拒绝不完整、可携带自由文本或缺少租约绑定的正式完成请求。
+// 结果结构只做宽松复核（六项、受控检查名/状态/证据码、无重复、成功结论一致）；
+// 检查清单顺序与输出类型形态的权威校验在 CompleteAgentPrecheck 事务内按冻结草稿执行。
 func validateAgentPrecheckCompletion(input AgentPrecheckCompletion) error {
 	if !validAgentOpaqueValue(input.AgentID, 256) || !validAgentOpaqueValue(input.PrecheckID, 256) ||
 		!validAgentOpaqueValue(input.LeaseID, 256) || input.LeaseEpoch < 1 ||
@@ -5356,11 +5920,13 @@ func validateAgentPrecheckCompletion(input AgentPrecheckCompletion) error {
 		!isSHA256(input.RequestDigest) || input.Now.IsZero() || len(input.Results) != len(fixedPrecheckChecks) {
 		return errors.New("agent precheck completion is invalid")
 	}
-	for index, check := range fixedPrecheckChecks {
-		result := input.Results[index]
-		if result.Check != check || !oneOf(result.Status, "PASSED", "FAILED", "UNKNOWN") || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
+	seen := make(map[string]bool, len(input.Results))
+	for _, result := range input.Results {
+		if !oneOf(result.Check, "DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH") ||
+			seen[result.Check] || !oneOf(result.Status, "PASSED", "FAILED", "UNKNOWN") || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
 			return errors.New("agent precheck completion results are invalid")
 		}
+		seen[result.Check] = true
 	}
 	return nil
 }
@@ -5379,6 +5945,14 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+// nullableInt64 把可选的存储凭据修订映射为可空整数（0 表示未绑定）。
+func nullableInt64(value int64) sql.NullInt64 {
+	if value < 1 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: value, Valid: true}
 }
 
 // sysCredentialRevisionValue 把 sys 凭据修订映射为可空整数（0 表示未配置）。
@@ -5609,4 +6183,464 @@ func isExecutionEventConstraint(err error) bool {
 	message := err.Error()
 	return strings.Contains(message, "UNIQUE constraint failed: execution_events.execution_id, execution_events.event_seq") ||
 		strings.Contains(message, "FOREIGN KEY constraint failed")
+}
+
+// validateStorageCredentialCreate 校验存储凭据创建输入的固定约束（provider 白名单、两个秘密信封完整）。
+func validateStorageCredentialCreate(input StorageCredentialCreate) error {
+	if input.StorageCredentialID == "" || input.OwnerSubjectID == "" || input.DisplayName == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.RequestDigest == "" {
+		return errors.New("storage credential create input is incomplete")
+	}
+	if !oneOfStorageProvider(input.Provider) {
+		return errors.New("storage credential provider is unsupported")
+	}
+	if input.AccessKey.CredentialID == "" || input.AccessKey.Revision != 1 || input.AccessKey.KeyID == "" || len(input.AccessKey.Nonce) == 0 || len(input.AccessKey.Ciphertext) == 0 {
+		return errors.New("storage credential access key envelope is invalid")
+	}
+	if input.SecretKey.CredentialID == "" || input.SecretKey.Revision != 1 || input.SecretKey.KeyID == "" || len(input.SecretKey.Nonce) == 0 || len(input.SecretKey.Ciphertext) == 0 {
+		return errors.New("storage credential secret key envelope is invalid")
+	}
+	return nil
+}
+
+func oneOfStorageProvider(provider string) bool {
+	switch provider {
+	case "OSS", "S3", "COS", "OBS":
+		return true
+	default:
+		return false
+	}
+}
+
+// CreateStorageCredential 在同一事务内写入存储凭据主表、两个加密信封、审计与幂等记录。
+func (s *Store) CreateStorageCredential(ctx context.Context, input StorageCredentialCreate) (StorageCredentialCreateResult, error) {
+	if err := validateStorageCredentialCreate(input); err != nil {
+		return StorageCredentialCreateResult{}, err
+	}
+	result := StorageCredentialCreateResult{}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var existingID, digest string
+		err := tx.QueryRowContext(ctx, `
+            SELECT resource_id, request_digest FROM request_idempotency
+            WHERE subject_id = ? AND operation = 'CREATE_STORAGE_CREDENTIAL' AND idempotency_key = ?`,
+			input.OwnerSubjectID, input.IdempotencyKey).Scan(&existingID, &digest)
+		switch {
+		case err == nil:
+			// 同幂等键必须携带完全相同的请求摘要；不同内容重放按冲突失败关闭，不能静默返回旧资源。
+			if digest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.StorageCredentialID, result.Replayed = existingID, true
+			return nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("read storage credential idempotency: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO storage_credentials(
+                storage_credential_id, owner_subject_id, display_name, provider,
+                current_revision, revision, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 1, 1, ?, ?)
+        `, input.StorageCredentialID, input.OwnerSubjectID, input.DisplayName, input.Provider,
+			utcText(input.CreatedAt), utcText(input.CreatedAt)); err != nil {
+			return fmt.Errorf("insert storage credential: %w", err)
+		}
+		// access-key 与 secret-key 分别加密，AAD 绑定 storageCredentialId（信封 AAD JSON 键沿用 dataSourceId 以兼容既有格式）。
+		for _, secret := range []struct {
+			secretType string
+			envelope   EncryptedStorageSecret
+		}{
+			{secretType: credential.StorageAccessKey, envelope: input.AccessKey},
+			{secretType: credential.StorageSecretKey, envelope: input.SecretKey},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO storage_credential_revisions(
+                    credential_id, revision, storage_credential_id, secret_type, key_id,
+                    nonce, ciphertext, aad_json, status, created_at, retired_at
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
+            `, secret.envelope.CredentialID, input.StorageCredentialID, secret.secretType,
+				secret.envelope.KeyID, secret.envelope.Nonce, secret.envelope.Ciphertext, utcText(input.CreatedAt)); err != nil {
+				return fmt.Errorf("insert encrypted storage secret: %w", err)
+			}
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "STORAGE_CREDENTIAL_CREATED", "STORAGE_CREDENTIAL", input.StorageCredentialID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO request_idempotency(
+                subject_id, operation, idempotency_key, request_digest, result_status,
+                resource_kind, resource_id, response_json, created_at, expires_at
+            ) VALUES (?, 'CREATE_STORAGE_CREDENTIAL', ?, ?, 201, 'STORAGE_CREDENTIAL', ?, '{}', ?, ?)
+        `, input.OwnerSubjectID, input.IdempotencyKey, input.RequestDigest, input.StorageCredentialID,
+			utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write storage credential idempotency: %w", err)
+		}
+		result.StorageCredentialID = input.StorageCredentialID
+		return nil
+	})
+	return result, err
+}
+
+// ListStorageCredentials 返回指定主体拥有的存储凭据安全投影（不含秘密）。
+func (s *Store) ListStorageCredentials(ctx context.Context, ownerSubjectID string) ([]StorageCredential, error) {
+	if ownerSubjectID == "" {
+		return nil, errors.New("storage credential owner is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT storage_credential_id, owner_subject_id, display_name, provider,
+               current_revision, revision, created_at, updated_at
+        FROM storage_credentials WHERE owner_subject_id = ? ORDER BY created_at`,
+		ownerSubjectID)
+	if err != nil {
+		return nil, fmt.Errorf("list storage credentials: %w", err)
+	}
+	defer rows.Close()
+	var credentials []StorageCredential
+	for rows.Next() {
+		var credential StorageCredential
+		var createdAt, updatedAt string
+		if err := rows.Scan(&credential.StorageCredentialID, &credential.OwnerSubjectID, &credential.DisplayName, &credential.Provider,
+			&credential.CurrentRevision, &credential.Revision, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan storage credential: %w", err)
+		}
+		credential.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse storage credential created time: %w", err)
+		}
+		credential.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse storage credential updated time: %w", err)
+		}
+		credentials = append(credentials, credential)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate storage credentials: %w", err)
+	}
+	return credentials, nil
+}
+
+// GetStorageCredentialReference 返回任务快照可引用的存储凭据安全投影。
+func (s *Store) GetStorageCredentialReference(ctx context.Context, storageCredentialID string) (StorageCredentialReference, error) {
+	if storageCredentialID == "" {
+		return StorageCredentialReference{}, errors.New("storage credential id is required")
+	}
+	var reference StorageCredentialReference
+	var updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+        SELECT storage_credential_id, provider, current_revision, owner_subject_id, updated_at
+        FROM storage_credentials WHERE storage_credential_id = ?`, storageCredentialID).
+		Scan(&reference.StorageCredentialID, &reference.Provider, &reference.Revision, &reference.OwnerSubjectID, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StorageCredentialReference{}, ErrStorageCredentialNotFound
+	}
+	if err != nil {
+		return StorageCredentialReference{}, fmt.Errorf("read storage credential reference: %w", err)
+	}
+	return reference, nil
+}
+
+// RotateStorageCredential 在事务内轮换 access-key 与 secret-key 两个信封并递增版本。
+func (s *Store) RotateStorageCredential(ctx context.Context, input StorageCredentialRotate) (StorageCredential, error) {
+	if input.StorageCredentialID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.RequestID == "" || input.IdempotencyKey == "" || input.RequestDigest == "" {
+		return StorageCredential{}, errors.New("storage credential rotate input is incomplete")
+	}
+	if input.AccessKey.CredentialID == "" || input.AccessKey.Revision < 1 || input.SecretKey.CredentialID == "" || input.SecretKey.Revision < 1 {
+		return StorageCredential{}, errors.New("storage credential rotate envelope is invalid")
+	}
+	var rotated StorageCredential
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var owner, displayName, provider string
+		var currentRevision int64
+		if err := tx.QueryRowContext(ctx, `
+            SELECT owner_subject_id, current_revision, display_name, provider
+            FROM storage_credentials WHERE storage_credential_id = ?`,
+			input.StorageCredentialID).Scan(&owner, &currentRevision, &displayName, &provider); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrStorageCredentialNotFound
+			}
+			return fmt.Errorf("read storage credential for rotate: %w", err)
+		}
+		if owner != input.ActorSubjectID {
+			return ErrStorageCredentialForbidden
+		}
+		// 乐观锁：ExpectedRevision 是调用方看到的当前版本（与数据源更新同口径）。
+		if currentRevision != input.ExpectedRevision {
+			return ErrStorageCredentialRevision
+		}
+		newRevision := currentRevision + 1
+		for _, secret := range []struct {
+			secretType string
+			envelope   EncryptedStorageSecret
+		}{
+			{secretType: credential.StorageAccessKey, envelope: input.AccessKey},
+			{secretType: credential.StorageSecretKey, envelope: input.SecretKey},
+		} {
+			if secret.envelope.Revision != newRevision {
+				return errors.New("storage credential rotate revision does not match current credential")
+			}
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO storage_credential_revisions(
+                    credential_id, revision, storage_credential_id, secret_type, key_id,
+                    nonce, ciphertext, aad_json, status, created_at, retired_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'ACTIVE', ?, NULL)
+            `, secret.envelope.CredentialID, newRevision, input.StorageCredentialID, secret.secretType,
+				secret.envelope.KeyID, secret.envelope.Nonce, secret.envelope.Ciphertext, utcText(input.UpdatedAt)); err != nil {
+				return fmt.Errorf("insert rotated encrypted storage secret: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+            UPDATE storage_credential_revisions
+            SET status = 'SUPERSEDED', retired_at = ?
+            WHERE storage_credential_id = ? AND revision = ? AND status = 'ACTIVE'
+        `, utcText(input.UpdatedAt), input.StorageCredentialID, currentRevision); err != nil {
+			return fmt.Errorf("retire prior storage credential revision: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+            UPDATE storage_credentials
+            SET current_revision = ?, revision = revision + 1, updated_at = ?
+            WHERE storage_credential_id = ?
+        `, newRevision, utcText(input.UpdatedAt), input.StorageCredentialID); err != nil {
+			return fmt.Errorf("advance storage credential revision: %w", err)
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "STORAGE_CREDENTIAL_ROTATED", "STORAGE_CREDENTIAL", input.StorageCredentialID, "SUCCEEDED", input.RequestID, input.UpdatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO request_idempotency(
+                subject_id, operation, idempotency_key, request_digest, result_status,
+                resource_kind, resource_id, response_json, created_at, expires_at
+            ) VALUES (?, 'ROTATE_STORAGE_CREDENTIAL', ?, ?, 200, 'STORAGE_CREDENTIAL', ?, '{}', ?, ?)
+        `, input.ActorSubjectID, input.IdempotencyKey, input.RequestDigest, input.StorageCredentialID,
+			utcText(input.UpdatedAt), utcText(input.UpdatedAt.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write storage credential rotate idempotency: %w", err)
+		}
+		rotated.StorageCredentialID = input.StorageCredentialID
+		rotated.OwnerSubjectID = owner
+		rotated.DisplayName = displayName
+		rotated.Provider = provider
+		rotated.CurrentRevision = newRevision
+		rotated.Revision = newRevision
+		rotated.UpdatedAt = input.UpdatedAt
+		return nil
+	})
+	return rotated, err
+}
+
+// DeleteStorageCredential 物理删除主体拥有的存储凭据及其全部信封修订。
+// 已提交任务的历史快照只保留引用标识，不受删除影响（凭据已删即不可再解析）。
+func (s *Store) DeleteStorageCredential(ctx context.Context, input StorageCredentialDeletion) error {
+	if input.StorageCredentialID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.RequestID == "" {
+		return errors.New("storage credential deletion input is incomplete")
+	}
+	return s.withWrite(ctx, func(tx *sql.Tx) error {
+		var owner string
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `
+            SELECT owner_subject_id, revision FROM storage_credentials WHERE storage_credential_id = ?`,
+			input.StorageCredentialID).Scan(&owner, &revision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrStorageCredentialNotFound
+			}
+			return fmt.Errorf("read storage credential for delete: %w", err)
+		}
+		if owner != input.ActorSubjectID {
+			return ErrStorageCredentialForbidden
+		}
+		if revision != input.ExpectedRevision {
+			return ErrStorageCredentialRevision
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM storage_credential_revisions WHERE storage_credential_id = ?`, input.StorageCredentialID); err != nil {
+			return fmt.Errorf("delete storage credential revisions: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM storage_credentials WHERE storage_credential_id = ?`, input.StorageCredentialID); err != nil {
+			return fmt.Errorf("delete storage credential: %w", err)
+		}
+		return insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "STORAGE_CREDENTIAL_DELETED", "STORAGE_CREDENTIAL", input.StorageCredentialID, "SUCCEEDED", input.RequestID, input.DeletedAt)
+	})
+}
+
+// CreateExportConfigTemplate 在同一事务内写入模板、审计与幂等记录（EX-I8 模板复用）。
+// 模板只保存非敏感 v6 配置（凭据引用已由调用方剥离），绝不保存凭据、节点、预检查或风险确认。
+func (s *Store) CreateExportConfigTemplate(ctx context.Context, input ExportConfigTemplateCreate) (ExportConfigTemplateCreateResult, error) {
+	if err := validateExportConfigTemplateCreate(input); err != nil {
+		return ExportConfigTemplateCreateResult{}, err
+	}
+	result := ExportConfigTemplateCreateResult{TemplateID: input.TemplateID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var digest, existingID string
+		err := tx.QueryRowContext(ctx, `
+            SELECT request_digest, COALESCE(resource_id, '')
+            FROM request_idempotency
+            WHERE subject_id = ? AND operation = 'CREATE_EXPORT_CONFIG_TEMPLATE' AND idempotency_key = ?`,
+			input.OwnerSubjectID, input.IdempotencyKey).Scan(&digest, &existingID)
+		switch {
+		case err == nil:
+			if digest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.TemplateID, result.Replayed = existingID, true
+			return nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("read export config template idempotency: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO export_config_templates(
+                template_id, owner_subject_id, display_name, capability_version, config_json,
+                config_fingerprint, source_task_id, created_at, updated_at, revision
+            ) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, 1)
+        `, input.TemplateID, input.OwnerSubjectID, input.DisplayName, input.CapabilityVersion, input.ConfigJSON,
+			input.ConfigFingerprint, input.SourceTaskID, utcText(input.CreatedAt), utcText(input.UpdatedAt)); err != nil {
+			return fmt.Errorf("insert export config template: %w", err)
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "EXPORT_CONFIG_TEMPLATE_CREATED", "EXPORT_CONFIG_TEMPLATE", input.TemplateID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO request_idempotency(
+                subject_id, operation, idempotency_key, request_digest, result_status,
+                resource_kind, resource_id, response_json, created_at, expires_at
+            ) VALUES (?, 'CREATE_EXPORT_CONFIG_TEMPLATE', ?, ?, 201, 'EXPORT_CONFIG_TEMPLATE', ?, '{}', ?, ?)
+        `, input.OwnerSubjectID, input.IdempotencyKey, input.RequestDigest, input.TemplateID,
+			utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour))); err != nil {
+			return fmt.Errorf("write export config template idempotency: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return ExportConfigTemplateCreateResult{}, err
+	}
+	return result, nil
+}
+
+// ListExportConfigTemplates 返回指定主体拥有的模板安全投影（不含配置 JSON）。
+func (s *Store) ListExportConfigTemplates(ctx context.Context, ownerSubjectID string) ([]ExportConfigTemplate, error) {
+	if ownerSubjectID == "" {
+		return nil, errors.New("template owner is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT template_id, owner_subject_id, display_name, capability_version, '' , config_fingerprint,
+               COALESCE(source_task_id, ''), revision, created_at, updated_at
+        FROM export_config_templates WHERE owner_subject_id = ? ORDER BY created_at DESC`, ownerSubjectID)
+	if err != nil {
+		return nil, fmt.Errorf("list export config templates: %w", err)
+	}
+	defer rows.Close()
+	var templates []ExportConfigTemplate
+	for rows.Next() {
+		var template ExportConfigTemplate
+		var configJSON string
+		var createdAt, updatedAt string
+		if err := rows.Scan(&template.TemplateID, &template.OwnerSubjectID, &template.DisplayName, &template.CapabilityVersion,
+			&configJSON, &template.ConfigFingerprint, &template.SourceTaskID, &template.Revision, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan export config template: %w", err)
+		}
+		if template.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+			return nil, fmt.Errorf("parse export config template create time: %w", err)
+		}
+		if template.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt); err != nil {
+			return nil, fmt.Errorf("parse export config template update time: %w", err)
+		}
+		templates = append(templates, template)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate export config templates: %w", err)
+	}
+	return templates, nil
+}
+
+// GetAuthorizedExportConfigTemplate 只在当前主体拥有模板时返回完整模板（含配置 JSON）。
+// 无权对象与不存在对象使用同一错误。
+func (s *Store) GetAuthorizedExportConfigTemplate(ctx context.Context, templateID, subjectID string) (ExportConfigTemplate, error) {
+	if templateID == "" || subjectID == "" {
+		return ExportConfigTemplate{}, ErrDataSourceNotFound
+	}
+	var template ExportConfigTemplate
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+        SELECT template_id, owner_subject_id, display_name, capability_version, config_json, config_fingerprint,
+               COALESCE(source_task_id, ''), revision, created_at, updated_at
+        FROM export_config_templates WHERE template_id = ? AND owner_subject_id = ?`, templateID, subjectID).
+		Scan(&template.TemplateID, &template.OwnerSubjectID, &template.DisplayName, &template.CapabilityVersion, &template.ConfigJSON,
+			&template.ConfigFingerprint, &template.SourceTaskID, &template.Revision, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ExportConfigTemplate{}, ErrDataSourceNotFound
+	}
+	if err != nil {
+		return ExportConfigTemplate{}, fmt.Errorf("read authorized export config template: %w", err)
+	}
+	if template.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return ExportConfigTemplate{}, fmt.Errorf("parse export config template create time: %w", err)
+	}
+	if template.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt); err != nil {
+		return ExportConfigTemplate{}, fmt.Errorf("parse export config template update time: %w", err)
+	}
+	return template, nil
+}
+
+// UpdateExportConfigTemplate 只允许版本保护的模板名称更新；配置内容不可变。
+func (s *Store) UpdateExportConfigTemplate(ctx context.Context, input ExportConfigTemplateUpdate) (int64, error) {
+	if input.TemplateID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.RequestID == "" || strings.TrimSpace(input.DisplayName) == "" || len(input.DisplayName) > 256 || input.UpdatedAt.IsZero() {
+		return 0, errors.New("export config template update is invalid")
+	}
+	revision := int64(0)
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var owner string
+		var currentRevision int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner_subject_id, revision FROM export_config_templates WHERE template_id = ?`, input.TemplateID).Scan(&owner, &currentRevision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrDataSourceNotFound
+			}
+			return fmt.Errorf("read export config template for update: %w", err)
+		}
+		if owner != input.ActorSubjectID {
+			return ErrDataSourceNotFound
+		}
+		if currentRevision != input.ExpectedRevision {
+			return ErrRevisionConflict
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE export_config_templates SET display_name = ?, revision = revision + 1, updated_at = ? WHERE template_id = ?`,
+			strings.TrimSpace(input.DisplayName), utcText(input.UpdatedAt), input.TemplateID); err != nil {
+			return fmt.Errorf("update export config template: %w", err)
+		}
+		revision = currentRevision + 1
+		return insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "EXPORT_CONFIG_TEMPLATE_RENAMED", "EXPORT_CONFIG_TEMPLATE", input.TemplateID, "SUCCEEDED", input.RequestID, input.UpdatedAt)
+	})
+	return revision, err
+}
+
+// DeleteExportConfigTemplate 物理删除主体拥有的模板（版本保护；无权与不存在同错误）。
+func (s *Store) DeleteExportConfigTemplate(ctx context.Context, templateID, actorSubjectID string, expectedRevision int64, requestID string, deletedAt time.Time) error {
+	if templateID == "" || actorSubjectID == "" || expectedRevision < 1 || requestID == "" || deletedAt.IsZero() {
+		return errors.New("export config template deletion is invalid")
+	}
+	return s.withWrite(ctx, func(tx *sql.Tx) error {
+		var owner string
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner_subject_id, revision FROM export_config_templates WHERE template_id = ?`, templateID).Scan(&owner, &revision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrDataSourceNotFound
+			}
+			return fmt.Errorf("read export config template for deletion: %w", err)
+		}
+		if owner != actorSubjectID {
+			return ErrDataSourceNotFound
+		}
+		if revision != expectedRevision {
+			return ErrRevisionConflict
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM export_config_templates WHERE template_id = ?`, templateID); err != nil {
+			return fmt.Errorf("delete export config template: %w", err)
+		}
+		return insertAudit(ctx, tx, "SUBJECT", actorSubjectID, "EXPORT_CONFIG_TEMPLATE_DELETED", "EXPORT_CONFIG_TEMPLATE", templateID, "SUCCEEDED", requestID, deletedAt)
+	})
+}
+
+// validateExportConfigTemplateCreate 校验模板创建输入：名称、指纹与安全配置 JSON。
+func validateExportConfigTemplateCreate(input ExportConfigTemplateCreate) error {
+	if input.TemplateID == "" || input.OwnerSubjectID == "" || strings.TrimSpace(input.DisplayName) == "" || len(input.DisplayName) > 256 ||
+		input.CapabilityVersion == "" || !isSHA256(input.ConfigFingerprint) || input.RequestID == "" || input.IdempotencyKey == "" || !isSHA256(input.RequestDigest) || input.CreatedAt.IsZero() {
+		return errors.New("export config template create is incomplete")
+	}
+	if err := validateSafeObjectJSON(input.ConfigJSON); err != nil {
+		return fmt.Errorf("export config template config is invalid: %w", err)
+	}
+	return nil
 }

@@ -98,16 +98,20 @@ func windowsHadoopRuntimeReady(environment []string) bool {
 	return true
 }
 
-// Probe 组合固定 JDBC、运行时、目录和空间检查。
+// Probe 组合固定 JDBC、运行时、目录、空间与存储检查。
 // 除 JDBC 的两项固定检查外，它不解析秘密、不启动进程，也不会把本地文件错误原文传出 Agent。
+// EX-I6：StorageConnectivity/StorageAuth 只在对象存储输出任务上被编排器调用；
+// 未装配或未授权时分别投影为受控 UNKNOWN，不把网络错误原文传给预检查结果。
 type Probe struct {
 	JDBC                  agentpreflight.Probe
 	Runtime               RuntimeValidator
 	MinimumAvailableBytes uint64
 	AvailableBytes        func(string) (uint64, error)
+	StorageConnectivity   StorageConnectivityProber
+	StorageAuth           StorageAuthProber
 }
 
-// Probe 只接受六项既定检查。任何本机事实缺失、路径漂移或依赖异常都以稳定 UNKNOWN 结果失败关闭。
+// Probe 只接受既定检查。任何本机事实缺失、路径漂移或依赖异常都以稳定 UNKNOWN 结果失败关闭。
 func (p Probe) Probe(ctx context.Context, check agentpreflight.CheckID, request agentpreflight.Request) (agentpreflight.Result, error) {
 	if ctx == nil || ctx.Err() != nil {
 		return unavailableResult(check), nil
@@ -123,6 +127,10 @@ func (p Probe) Probe(ctx context.Context, check agentpreflight.CheckID, request 
 		return p.outputEmptyResult(request), nil
 	case agentpreflight.CheckAvailableSpace:
 		return p.availableSpaceResult(request), nil
+	case agentpreflight.CheckStorageConnectivity:
+		return p.storageConnectivityResult(ctx, request)
+	case agentpreflight.CheckStorageAuth:
+		return p.storageAuthResult(ctx, request)
 	default:
 		return agentpreflight.Result{}, agentpreflight.ErrInvalidRequest
 	}
@@ -207,11 +215,26 @@ func (p Probe) availableSpaceResult(request agentpreflight.Request) agentpreflig
 	if p.MinimumAvailableBytes == 0 || p.AvailableBytes == nil {
 		return unavailableResult(agentpreflight.CheckAvailableSpace)
 	}
-	directory, err := secureOutputDirectory(request)
-	if err != nil {
-		return unavailableResult(agentpreflight.CheckAvailableSpace)
+	// EX-I6：对象存储输出没有本地导出目录，空间检查转向 --tmp-path 所在卷；
+	// 未指定 tmp-path 时无法定位卷，回报 UNKNOWN 失败关闭。
+	var probePath string
+	if request.OutputKind.IsStorageOutput() {
+		if request.StorageTarget == nil || request.StorageTarget.TmpPath == "" {
+			return unavailableResult(agentpreflight.CheckAvailableSpace)
+		}
+		directory, err := secureDirectory(request, request.StorageTarget.TmpPath)
+		if err != nil {
+			return unavailableResult(agentpreflight.CheckAvailableSpace)
+		}
+		probePath = directory.probeDirectory
+	} else {
+		directory, err := secureOutputDirectory(request)
+		if err != nil {
+			return unavailableResult(agentpreflight.CheckAvailableSpace)
+		}
+		probePath = directory.probeDirectory
 	}
-	available, err := p.AvailableBytes(directory.probeDirectory)
+	available, err := p.AvailableBytes(probePath)
 	if err != nil {
 		return unavailableResult(agentpreflight.CheckAvailableSpace)
 	}
@@ -352,6 +375,10 @@ func unavailableResult(check agentpreflight.CheckID) agentpreflight.Result {
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "OUTPUT_PATH_UNAVAILABLE"}
 	case agentpreflight.CheckAvailableSpace:
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "OUTPUT_SPACE_UNAVAILABLE"}
+	case agentpreflight.CheckStorageConnectivity:
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_CONNECTIVITY_UNAVAILABLE"}
+	case agentpreflight.CheckStorageAuth:
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"}
 	default:
 		return agentpreflight.Result{}
 	}

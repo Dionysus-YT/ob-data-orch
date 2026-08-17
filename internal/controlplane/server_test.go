@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1846,14 +1844,25 @@ func TestExportDraftV6ObjectStorageFlow(t *testing.T) {
 	if strings.Contains(previewBody, "access-key") || strings.Contains(previewBody, "secret-key") {
 		t.Fatalf("oss preview must not carry storage credentials: %s", previewBody)
 	}
-	// 存储专用预检查完成前，预检查与提交均被功能门禁拦截（STORAGE_PRECHECK_UNAVAILABLE）。
+	// EX-I6（2026-08-14）：对象存储草稿允许发起预检查；提交门禁改为按存储检查结果失败关闭。
 	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
 	precheck.Header.Set("If-Match", `"rev-1"`)
 	precheck.Header.Set("Idempotency-Key", "synthetic-exi6-oss-precheck-key")
 	prechecked := httptest.NewRecorder()
 	handler.ServeHTTP(prechecked, precheck)
-	if prechecked.Code != http.StatusUnprocessableEntity || !strings.Contains(prechecked.Body.String(), "STORAGE_PRECHECK_UNAVAILABLE") {
-		t.Fatalf("oss precheck gate response=%d body=%s", prechecked.Code, prechecked.Body.String())
+	if prechecked.Code != http.StatusAccepted {
+		t.Fatalf("oss precheck response=%d body=%s", prechecked.Code, prechecked.Body.String())
+	}
+	// 预检查结果没有通过的两项存储检查时，提交必须返回结果驱动门禁而非冻结任务。
+	tasks.run = prechecks.created
+	tasks.run.Status, tasks.run.IntegrityStatus = "SUCCEEDED", "COMPLETE"
+	submit := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:submit", bytes.NewBufferString(`{"precheckId":"precheck-synthetic"}`))
+	submit.Header.Set("If-Match", `"rev-1"`)
+	submit.Header.Set("Idempotency-Key", "synthetic-exi6-oss-submit-key")
+	submitted := httptest.NewRecorder()
+	handler.ServeHTTP(submitted, submit)
+	if submitted.Code != http.StatusUnprocessableEntity || !strings.Contains(submitted.Body.String(), "STORAGE_PRECHECK_REQUIRED") || tasks.input.TaskID != "" {
+		t.Fatalf("oss submit gate response=%d body=%s task=%#v", submitted.Code, submitted.Body.String(), tasks.input)
 	}
 }
 
@@ -2625,6 +2634,17 @@ func (browserOnlyIdentityProvider) AuthenticateAgent(*http.Request) (identity.Pr
 	return identity.Principal{}, errors.New("synthetic agent authentication denied")
 }
 
+// browserOtherIdentityProvider 返回与合成主体不同的另一主体（用于越权负例）。
+type browserOtherIdentityProvider struct{}
+
+func (browserOtherIdentityProvider) AuthenticateBrowser(*http.Request) (identity.Principal, error) {
+	return identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-other-subject"}, nil
+}
+
+func (browserOtherIdentityProvider) AuthenticateAgent(*http.Request) (identity.Principal, error) {
+	return identity.Principal{}, errors.New("synthetic agent authentication denied")
+}
+
 type countingIdentityProvider struct {
 	browserCalls int
 }
@@ -2729,6 +2749,11 @@ func (allowedRoleAuthorizer) AuthorizeRole(context.Context, identity.Principal, 
 type allowedCSRF struct{}
 
 func (allowedCSRF) ValidateCSRF(*http.Request) error { return nil }
+
+// deniedCSRF 固定拒绝全部请求，用于验证存储凭据写操作在 CSRF 缺失时失败关闭。
+type deniedCSRF struct{}
+
+func (deniedCSRF) ValidateCSRF(*http.Request) error { return errors.New("csrf denied") }
 
 type recordingCreator struct{ input store.DataSourceCreate }
 
@@ -3053,6 +3078,9 @@ type recordingTaskStore struct {
 	run               store.PrecheckRun
 	input             store.TaskSubmission
 	summary           store.TaskSummary
+	derivationSource  store.TaskDerivationSource
+	resumeInput       store.CheckpointResumeDerivation
+	resumeErr         error
 	listItems         []store.TaskListItem
 	listQuery         store.TaskListQuery
 	countSubject      string
@@ -3269,6 +3297,48 @@ func (s *recordingTaskStore) SubmitTaskIdempotent(_ context.Context, input store
 	return store.TaskSubmissionResult{TaskID: input.TaskID}, nil
 }
 
+// TestTaskExecutionProjectionIncludesResultSummary 验证 EX-I8 执行投影返回受控结果摘要，
+// 相对路径与大小原样投影，且不包含任何秘密字段。
+func TestTaskExecutionProjectionIncludesResultSummary(t *testing.T) {
+	t.Parallel()
+	tasks := &recordingTaskStore{}
+	observed := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
+	tasks.summary = store.TaskSummary{
+		TaskID: "task-1", CreatorSubjectID: "subject-1", DataSourceID: "source-allowed", NodeID: "node-1",
+		State: "FAILED", ExecutionID: "execution-1", ReconciliationRequired: false,
+		UpdatedAt: observed, SubmittedAt: observed.Add(-time.Hour),
+		ResultSummary: &store.ExecutionResultSummary{
+			Result: "FAILED", FileCount: 3, TotalBytes: 512, CheckpointPresent: true, ObservedAt: observed,
+			Files: []store.ExecutionResultFile{{Path: "data_1.csv", Size: 100}, {Path: "dump.ckpt", Size: 412}},
+		},
+	}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{Identity: browserOnlyIdentityProvider{}, Tasks: tasks})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-1/execution", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("execution response=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{`"result":"FAILED"`, `"fileCount":3`, `"totalBytes":512`, `"checkpointPresent":true`, `"path":"data_1.csv"`, `"size":412`} {
+		if !bytes.Contains(response.Body.Bytes(), []byte(expected)) {
+			t.Fatalf("execution projection missing %s: %s", expected, response.Body.String())
+		}
+	}
+	for _, forbidden := range []string{"password", "secret", "ciphertext", "checksum", "content"} {
+		if bytes.Contains(response.Body.Bytes(), []byte(forbidden)) {
+			t.Fatalf("execution projection leaked %s: %s", forbidden, response.Body.String())
+		}
+	}
+	// 未上报结果事实的任务不返回 resultSummary 字段（缺省，不伪造）。
+	empty := &recordingTaskStore{}
+	empty.summary = store.TaskSummary{TaskID: "task-2", CreatorSubjectID: "subject-1", State: "WAITING_SCHEDULE", UpdatedAt: observed, SubmittedAt: observed}
+	handler = NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{Identity: browserOnlyIdentityProvider{}, Tasks: empty})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-2/execution", nil))
+	if response.Code != http.StatusOK || bytes.Contains(response.Body.Bytes(), []byte("resultSummary")) {
+		t.Fatalf("pending execution must omit resultSummary: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func (s *recordingTaskStore) GetAuthorizedTaskSummary(_ context.Context, _ string, subjectID string) (store.TaskSummary, error) {
 	s.authorizedSubject = subjectID
 	if s.summary.TaskID != "" {
@@ -3282,6 +3352,24 @@ func (s *recordingTaskStore) GetAuthorizedTaskSummary(_ context.Context, _ strin
 	}
 	_ = json.Unmarshal([]byte(s.input.SnapshotJSON), &projection)
 	return store.TaskSummary{TaskID: s.input.TaskID, CreatorSubjectID: s.input.CreatorSubjectID, DataSourceID: s.input.DataSourceID, NodeID: s.input.NodeID, PrecheckID: s.input.PrecheckID, ConfigFingerprint: s.input.ConfigFingerprint, ToolVersion: s.input.ToolVersion, MetadataVersion: s.input.MetadataVersion, CapabilityVersion: s.input.CapabilityVersion, SnapshotVersion: s.input.SnapshotVersion, Database: projection.Database, Table: projection.Table, Format: projection.Format, PlannedCommandRedacted: s.input.PlannedCommandRedacted, State: "WAITING_SCHEDULE", SubmittedAt: s.input.SubmittedAt}, nil
+}
+
+// derivationSource 是 EX-I8 派生操作测试用的冻结任务事实夹具。
+func (s *recordingTaskStore) GetAuthorizedTaskDerivationSource(_ context.Context, taskID string, subjectID string) (store.TaskDerivationSource, error) {
+	s.authorizedSubject = subjectID
+	if s.derivationSource.TaskID == "" {
+		return store.TaskDerivationSource{}, store.ErrDataSourceNotFound
+	}
+	return s.derivationSource, nil
+}
+
+// resumeResult 是检查点继续测试用的受控结果夹具。
+func (s *recordingTaskStore) DeriveTaskFromCheckpoint(_ context.Context, input store.CheckpointResumeDerivation) (store.CheckpointResumeResult, error) {
+	s.resumeInput = input
+	if s.resumeErr != nil {
+		return store.CheckpointResumeResult{}, s.resumeErr
+	}
+	return store.CheckpointResumeResult{TaskID: input.TaskID, NodeID: s.derivationSource.NodeID}, nil
 }
 
 func (s *recordingTaskStore) ListTaskSummaries(_ context.Context, input store.TaskListQuery) ([]store.TaskListItem, error) {
@@ -3353,24 +3441,91 @@ func TestAPIDomainsFailClosedWithSafeErrorEnvelope(t *testing.T) {
 	}
 }
 
-// TestExportDraftStorageOutputPrecheckGate 验证对象存储输出的草稿在存储专用预检查
-// （凭据、网络、权限、空间）完成前，固定预检查与任务提交均返回稳定的功能门禁错误，
-// 且真实 SQLite 预检查仓储不产生任何记录（门禁必须阻止 CreatePrecheck 被真实调用）。
-// 该测试使用真实 SQLite 仓储链而非记录型假预检查存储。
-func TestExportDraftStorageOutputPrecheckGate(t *testing.T) {
+// TestTaskDerivationEndpoints 验证 EX-I8 派生端点：
+// 1) rebuild-draft 从失败任务冻结快照重建 v6 派生草稿（来源标记落库）；
+// 2) 非失败任务与未知任务失败关闭；
+// 3) resume-checkpoint 按仓储结论创建继续任务或返回稳定门禁错误。
+func TestTaskDerivationEndpoints(t *testing.T) {
+	t.Parallel()
+	const snapshotConfig = `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","scopeKind":"SPECIFIED","table":"synthetic_table","contentKind":"DATA_ONLY","format":"CSV","filePath":"/E:/tmp/out","logPath":"","skipCheckDir":false,"config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`
+	failedSource := store.TaskDerivationSource{
+		TaskID: "task-failed", CreatorSubjectID: "subject-1", DataSourceID: "source-allowed", NodeID: "node-1",
+		SnapshotVersion: "v2", SnapshotJSON: snapshotConfig, State: "FAILED", PlannedCommandRedacted: `obdumper --host 127.0.0.1 --port 2881 --user ****** --database synthetic_db --table synthetic_table --csv --file-path /E:/tmp/out`,
+	}
+	// 1) 正例：失败任务重建派生草稿。
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{derivationSource: failedSource}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	rebuild := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-failed:rebuild-draft", bytes.NewBufferString(`{"derivation":"RERUN_FROM_SCRATCH"}`))
+	rebuild.Header.Set("Idempotency-Key", "synthetic-derivation-rebuild-key-0001")
+	rebuilt := httptest.NewRecorder()
+	handler.ServeHTTP(rebuilt, rebuild)
+	if rebuilt.Code != http.StatusCreated || !bytes.Contains(rebuilt.Body.Bytes(), []byte(`"sourceTaskId":"task-failed"`)) || !bytes.Contains(rebuilt.Body.Bytes(), []byte(`"derivation":"RERUN_FROM_SCRATCH"`)) {
+		t.Fatalf("rebuild response=%d body=%s", rebuilt.Code, rebuilt.Body.String())
+	}
+	if drafts.created.SourceTaskID != "task-failed" || drafts.created.SourceDerivation != "RERUN_FROM_SCRATCH" {
+		t.Fatalf("derived draft source = %#v", drafts.created)
+	}
+	// 2) 非失败任务与未知任务失败关闭。
+	pendingTasks := &recordingTaskStore{derivationSource: func() store.TaskDerivationSource {
+		source := failedSource
+		source.TaskID, source.State = "task-pending", "SUCCEEDED"
+		return source
+	}()}
+	handler = newGeneralizedFlowHandler(t, drafts, prechecks, pendingTasks)
+	rebuild = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-pending:rebuild-draft", bytes.NewBufferString(`{"derivation":"REBUILD_FROM_CONFIG"}`))
+	rebuild.Header.Set("Idempotency-Key", "synthetic-derivation-rebuild-key-0002")
+	rebuilt = httptest.NewRecorder()
+	handler.ServeHTTP(rebuilt, rebuild)
+	if rebuilt.Code != http.StatusUnprocessableEntity || !bytes.Contains(rebuilt.Body.Bytes(), []byte("TASK_NOT_FAILED")) {
+		t.Fatalf("non-failed rebuild response=%d body=%s", rebuilt.Code, rebuilt.Body.String())
+	}
+	missingTasks := &recordingTaskStore{}
+	handler = newGeneralizedFlowHandler(t, drafts, prechecks, missingTasks)
+	rebuild = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-none:rebuild-draft", bytes.NewBufferString(`{"derivation":"REBUILD_FROM_CONFIG"}`))
+	rebuild.Header.Set("Idempotency-Key", "synthetic-derivation-rebuild-key-0003")
+	rebuilt = httptest.NewRecorder()
+	handler.ServeHTTP(rebuilt, rebuild)
+	if rebuilt.Code != http.StatusNotFound {
+		t.Fatalf("missing rebuild response=%d body=%s", rebuilt.Code, rebuilt.Body.String())
+	}
+	// 3) 检查点继续：正例与门禁负例。
+	resumeTasks := &recordingTaskStore{derivationSource: failedSource}
+	handler = newGeneralizedFlowHandler(t, drafts, prechecks, resumeTasks)
+	resume := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-failed:resume-checkpoint", nil)
+	resume.Header.Set("Idempotency-Key", "synthetic-derivation-resume-key-0001")
+	resumed := httptest.NewRecorder()
+	handler.ServeHTTP(resumed, resume)
+	if resumed.Code != http.StatusCreated || !bytes.Contains(resumed.Body.Bytes(), []byte(`"parentTaskId":"task-failed"`)) || !bytes.Contains(resumed.Body.Bytes(), []byte(`"derivationKind":"CHECKPOINT_RESUME"`)) {
+		t.Fatalf("resume response=%d body=%s", resumed.Code, resumed.Body.String())
+	}
+	if resumeTasks.resumeInput.SourceTaskID != "task-failed" || resumeTasks.resumeInput.CreatorSubjectID != "synthetic-subject" {
+		t.Fatalf("resume input = %#v", resumeTasks.resumeInput)
+	}
+	blockedTasks := &recordingTaskStore{derivationSource: failedSource, resumeErr: store.ErrCheckpointResumeUnavailable}
+	handler = newGeneralizedFlowHandler(t, drafts, prechecks, blockedTasks)
+	resume = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-failed:resume-checkpoint", nil)
+	resume.Header.Set("Idempotency-Key", "synthetic-derivation-resume-key-0002")
+	resumed = httptest.NewRecorder()
+	handler.ServeHTTP(resumed, resume)
+	if resumed.Code != http.StatusUnprocessableEntity || !bytes.Contains(resumed.Body.Bytes(), []byte("CHECKPOINT_RESUME_UNAVAILABLE")) {
+		t.Fatalf("blocked resume response=%d body=%s", resumed.Code, resumed.Body.String())
+	}
+}
+
+// TestExportDraftStorageOutputSubmitGate 验证对象存储输出的提交门禁按预检查结果驱动：
+// STORAGE_CONNECTIVITY/STORAGE_AUTH 非 PASSED 时 422 STORAGE_PRECHECK_REQUIRED；
+// 两项均 PASSED 时任务可以冻结（合成链验证，不连接真实对象存储）。
+func TestExportDraftStorageOutputSubmitGate(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
 	tasks := &recordingTaskStore{}
-	databasePath := filepath.Join(t.TempDir(), "metadata.db")
-	realStore, err := store.Open(context.Background(), databasePath)
-	if err != nil {
-		t.Fatalf("open real sqlite store: %v", err)
-	}
-	t.Cleanup(func() { _ = realStore.Close() })
-	handler := newGeneralizedFlowHandler(t, drafts, realStore, tasks)
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"OSS","filePath":"oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com","tmpPath":"/E:/workespace/ob-data-orch/tmp/synthetic-staging"}}}`
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
-	create.Header.Set("Idempotency-Key", "synthetic-storage-gate-draft-key")
+	create.Header.Set("Idempotency-Key", "synthetic-storage-submit-draft-key")
 	created := httptest.NewRecorder()
 	handler.ServeHTTP(created, create)
 	if created.Code != http.StatusCreated {
@@ -3378,23 +3533,370 @@ func TestExportDraftStorageOutputPrecheckGate(t *testing.T) {
 	}
 	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
 	precheck.Header.Set("If-Match", `"rev-1"`)
-	precheck.Header.Set("Idempotency-Key", "synthetic-storage-gate-precheck-key")
+	precheck.Header.Set("Idempotency-Key", "synthetic-storage-submit-precheck-key")
 	prechecked := httptest.NewRecorder()
 	handler.ServeHTTP(prechecked, precheck)
-	if prechecked.Code != http.StatusUnprocessableEntity || !strings.Contains(prechecked.Body.String(), "STORAGE_PRECHECK_UNAVAILABLE") {
-		t.Fatalf("storage precheck gate response=%d body=%s", prechecked.Code, prechecked.Body.String())
+	if prechecked.Code != http.StatusAccepted {
+		t.Fatalf("storage precheck response=%d body=%s", prechecked.Code, prechecked.Body.String())
 	}
-	// 真实 SQLite 仓储链验证：门禁错误发生后 precheck_runs 表必须保持零记录。
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(databasePath)+"?_pragma=busy_timeout(5000)")
+	submit := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:submit", bytes.NewBufferString(`{"precheckId":"precheck-synthetic"}`))
+		request.Header.Set("If-Match", `"rev-1"`)
+		request.Header.Set("Idempotency-Key", "synthetic-storage-submit-task-key")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	// 负例：存储检查 UNKNOWN（探测未授权）必须阻断提交。
+	tasks.run = prechecks.created
+	tasks.run.Status, tasks.run.IntegrityStatus = "SUCCEEDED", "COMPLETE"
+	tasks.run.Results = []store.PrecheckCheckResult{
+		{Check: "DATABASE_CONNECTIVITY", Status: "PASSED", EvidenceCode: "DATABASE_CONNECTED"},
+		{Check: "OBJECT_ACCESS", Status: "PASSED", EvidenceCode: "OBJECT_ACCESSIBLE"},
+		{Check: "TOOL_ENVIRONMENT", Status: "PASSED", EvidenceCode: "TOOL_RUNTIME_READY"},
+		{Check: "AVAILABLE_SPACE", Status: "PASSED", EvidenceCode: "OUTPUT_SPACE_SUFFICIENT"},
+		{Check: "STORAGE_CONNECTIVITY", Status: "UNKNOWN", EvidenceCode: "STORAGE_CONNECTIVITY_UNAVAILABLE"},
+		{Check: "STORAGE_AUTH", Status: "UNKNOWN", EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"},
+	}
+	blocked := submit()
+	if blocked.Code != http.StatusUnprocessableEntity || !strings.Contains(blocked.Body.String(), "STORAGE_PRECHECK_REQUIRED") || tasks.input.TaskID != "" {
+		t.Fatalf("storage submit gate response=%d body=%s task=%#v", blocked.Code, blocked.Body.String(), tasks.input)
+	}
+	// 正例：两项存储检查 PASSED 后任务可以冻结（合成验证，不代表真实存储可用）。
+	tasks.run.Results[4].Status, tasks.run.Results[4].EvidenceCode = "PASSED", "STORAGE_ENDPOINT_REACHABLE"
+	tasks.run.Results[5].Status, tasks.run.Results[5].EvidenceCode = "PASSED", "STORAGE_CREDENTIAL_VERIFIED"
+	allowed := submit()
+	if allowed.Code != http.StatusCreated || tasks.input.TaskID == "" {
+		t.Fatalf("storage submit allowed response=%d body=%s task=%#v", allowed.Code, allowed.Body.String(), tasks.input)
+	}
+	if tasks.input.StorageCredentialID != "" || tasks.input.StorageCredentialRevision != 0 {
+		t.Fatalf("storage submit must not invent a credential binding: %#v", tasks.input)
+	}
+}
+
+// recordingStorageCredentialStore 是存储凭据接口的内存记录实现（只用于测试）。
+type recordingStorageCredentialStore struct {
+	created     *store.StorageCredentialCreate
+	rotated     *store.StorageCredentialRotate
+	deleted     *store.StorageCredentialDeletion
+	listOwner   string
+	credentials map[string]store.StorageCredential
+}
+
+func newRecordingStorageCredentialStore() *recordingStorageCredentialStore {
+	return &recordingStorageCredentialStore{credentials: map[string]store.StorageCredential{}}
+}
+
+func (r *recordingStorageCredentialStore) CreateStorageCredential(ctx context.Context, input store.StorageCredentialCreate) (store.StorageCredentialCreateResult, error) {
+	r.created = &input
+	r.credentials[input.StorageCredentialID] = store.StorageCredential{
+		StorageCredentialID: input.StorageCredentialID, OwnerSubjectID: input.OwnerSubjectID, DisplayName: input.DisplayName,
+		Provider: input.Provider, CurrentRevision: 1, Revision: 1, CreatedAt: input.CreatedAt, UpdatedAt: input.CreatedAt,
+	}
+	return store.StorageCredentialCreateResult{StorageCredentialID: input.StorageCredentialID}, nil
+}
+
+func (r *recordingStorageCredentialStore) ListStorageCredentials(ctx context.Context, ownerSubjectID string) ([]store.StorageCredential, error) {
+	r.listOwner = ownerSubjectID
+	var items []store.StorageCredential
+	for _, credential := range r.credentials {
+		if credential.OwnerSubjectID == ownerSubjectID {
+			items = append(items, credential)
+		}
+	}
+	return items, nil
+}
+
+func (r *recordingStorageCredentialStore) GetStorageCredentialReference(ctx context.Context, storageCredentialID string) (store.StorageCredentialReference, error) {
+	credential, ok := r.credentials[storageCredentialID]
+	if !ok {
+		return store.StorageCredentialReference{}, store.ErrStorageCredentialNotFound
+	}
+	return store.StorageCredentialReference{StorageCredentialID: credential.StorageCredentialID, Provider: credential.Provider, Revision: credential.CurrentRevision, OwnerSubjectID: credential.OwnerSubjectID}, nil
+}
+
+func (r *recordingStorageCredentialStore) RotateStorageCredential(ctx context.Context, input store.StorageCredentialRotate) (store.StorageCredential, error) {
+	r.rotated = &input
+	credential := r.credentials[input.StorageCredentialID]
+	if credential.OwnerSubjectID != input.ActorSubjectID {
+		return store.StorageCredential{}, store.ErrStorageCredentialForbidden
+	}
+	if credential.CurrentRevision != input.ExpectedRevision {
+		return store.StorageCredential{}, store.ErrStorageCredentialRevision
+	}
+	credential.CurrentRevision++
+	credential.Revision++
+	credential.UpdatedAt = input.UpdatedAt
+	r.credentials[input.StorageCredentialID] = credential
+	return credential, nil
+}
+
+func (r *recordingStorageCredentialStore) DeleteStorageCredential(ctx context.Context, input store.StorageCredentialDeletion) error {
+	r.deleted = &input
+	credential, ok := r.credentials[input.StorageCredentialID]
+	if !ok {
+		return store.ErrStorageCredentialNotFound
+	}
+	if credential.OwnerSubjectID != input.ActorSubjectID {
+		return store.ErrStorageCredentialForbidden
+	}
+	if credential.Revision != input.ExpectedRevision {
+		return store.ErrStorageCredentialRevision
+	}
+	delete(r.credentials, input.StorageCredentialID)
+	return nil
+}
+
+// syntheticStorageCredentialEncryptor 用内存合成密钥构造与真实实现同结构的信封（只用于测试）。
+type syntheticStorageCredentialEncryptor struct{}
+
+func (syntheticStorageCredentialEncryptor) Encrypt(keyID string, reference credential.Reference, plaintext []byte) (credential.Envelope, error) {
+	return credential.Envelope{FormatVersion: credential.FormatVersion, KeyID: keyID, Reference: reference, Nonce: []byte("nonce"), Ciphertext: append([]byte(nil), plaintext...)}, nil
+}
+
+// TestStorageCredentialAPI 验证存储凭据 API 正负例：创建/列表/轮换/删除与秘密不回显。
+func TestStorageCredentialAPI(t *testing.T) {
+	t.Parallel()
+	storage := newRecordingStorageCredentialStore()
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, CSRF: allowedCSRF{},
+		StorageCredentials: storage, Encryptor: syntheticStorageCredentialEncryptor{}, CredentialKeyID: "test-key",
+	})
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/storage-credentials", bytes.NewBufferString(`{"displayName":"合成 OSS 凭据","provider":"OSS","accessKey":"synthetic-access-key","secretKey":"synthetic-secret-key"}`))
+	create.Header.Set("Idempotency-Key", "synthetic-storage-credential-create-0001")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated || !bytes.Contains(created.Body.Bytes(), []byte(`"provider":"OSS"`)) {
+		t.Fatalf("create response=%d body=%s", created.Code, created.Body.String())
+	}
+	// 响应与错误不得回显密钥明文。
+	if bytes.Contains(created.Body.Bytes(), []byte("synthetic-access-key")) || bytes.Contains(created.Body.Bytes(), []byte("synthetic-secret-key")) {
+		t.Fatalf("create response leaked storage secret: %s", created.Body.String())
+	}
+	// 存储层收到的必须是信封（密文来自合成加密器，与明文同值但经 Envelope 包装；测试断言字段完整性）。
+	if storage.created == nil || storage.created.Provider != "OSS" || storage.created.AccessKey.KeyID != "test-key" || len(storage.created.SecretKey.Nonce) == 0 {
+		t.Fatalf("stored create input = %#v", storage.created)
+	}
+	// CSRF 拒绝：写操作必须在入口失败关闭，不能因凭据对象独立绕过浏览器安全上下文。
+	csrfDenied := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, CSRF: deniedCSRF{},
+		StorageCredentials: storage, Encryptor: syntheticStorageCredentialEncryptor{}, CredentialKeyID: "test-key",
+	})
+	csrfCreate := httptest.NewRecorder()
+	csrfRequest := httptest.NewRequest(http.MethodPost, "/api/v1/storage-credentials", bytes.NewBufferString(`{"displayName":"CSRF 拒绝凭据","provider":"OSS","accessKey":"access","secretKey":"secret"}`))
+	csrfRequest.Header.Set("Idempotency-Key", "synthetic-storage-credential-csrf-0001")
+	csrfDenied.ServeHTTP(csrfCreate, csrfRequest)
+	if csrfCreate.Code != http.StatusUnauthorized || !bytes.Contains(csrfCreate.Body.Bytes(), []byte("CSRF_VALIDATION_FAILED")) {
+		t.Fatalf("csrf-denied create response=%d body=%s", csrfCreate.Code, csrfCreate.Body.String())
+	}
+	// 轮换必须携带合法幂等键，缺失时入口 400 而不是仓储层 500。
+	rotateMissingKey := httptest.NewRequest(http.MethodPost, "/api/v1/storage-credentials/"+storage.created.StorageCredentialID+":rotate", bytes.NewBufferString(`{"displayName":"合成 OSS 凭据","provider":"OSS","accessKey":"rotated-access-key","secretKey":"rotated-secret-key"}`))
+	rotateMissingKey.Header.Set("If-Match", `"rev-1"`)
+	missingKey := httptest.NewRecorder()
+	handler.ServeHTTP(missingKey, rotateMissingKey)
+	if missingKey.Code != http.StatusBadRequest || !bytes.Contains(missingKey.Body.Bytes(), []byte("IDEMPOTENCY_KEY_INVALID")) {
+		t.Fatalf("rotate without idempotency key response=%d body=%s", missingKey.Code, missingKey.Body.String())
+	}
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/storage-credentials", nil))
+	if list.Code != http.StatusOK || !bytes.Contains(list.Body.Bytes(), []byte(`"provider":"OSS"`)) || bytes.Contains(list.Body.Bytes(), []byte("synthetic-access-key")) {
+		t.Fatalf("list response=%d body=%s", list.Code, list.Body.String())
+	}
+	credentialID := storage.created.StorageCredentialID
+	// 轮换：版本头 + 新密钥。
+	rotate := httptest.NewRequest(http.MethodPost, "/api/v1/storage-credentials/"+credentialID+":rotate", bytes.NewBufferString(`{"displayName":"合成 OSS 凭据","provider":"OSS","accessKey":"rotated-access-key","secretKey":"rotated-secret-key"}`))
+	rotate.Header.Set("If-Match", `"rev-1"`)
+	rotate.Header.Set("Idempotency-Key", "synthetic-storage-credential-rotate-0001")
+	rotated := httptest.NewRecorder()
+	handler.ServeHTTP(rotated, rotate)
+	if rotated.Code != http.StatusOK || !bytes.Contains(rotated.Body.Bytes(), []byte(`"currentRevision":2`)) {
+		t.Fatalf("rotate response=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	if bytes.Contains(rotated.Body.Bytes(), []byte("rotated-access-key")) {
+		t.Fatalf("rotate response leaked storage secret: %s", rotated.Body.String())
+	}
+	// 越权负例：非所有者操作返回 404 且不泄露存在性。
+	foreign := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOtherIdentityProvider{}, CSRF: allowedCSRF{},
+		StorageCredentials: storage, Encryptor: syntheticStorageCredentialEncryptor{}, CredentialKeyID: "test-key",
+	})
+	foreignDelete := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/storage-credentials/"+credentialID, nil)
+	request.Header.Set("If-Match", `"rev-2"`)
+	foreign.ServeHTTP(foreignDelete, request)
+	if foreignDelete.Code != http.StatusNotFound {
+		t.Fatalf("foreign delete response=%d body=%s", foreignDelete.Code, foreignDelete.Body.String())
+	}
+	// 所有者删除。
+	del := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodDelete, "/api/v1/storage-credentials/"+credentialID, nil)
+	request.Header.Set("If-Match", `"rev-2"`)
+	handler.ServeHTTP(del, request)
+	if del.Code != http.StatusOK {
+		t.Fatalf("delete response=%d body=%s", del.Code, del.Body.String())
+	}
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/v1/storage-credentials", nil))
+	if missing.Code != http.StatusOK || bytes.Contains(missing.Body.Bytes(), []byte(`"provider"`)) {
+		t.Fatalf("list after delete response=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
+// recordingTemplateStore 是模板存储接口的内存记录实现（只用于测试）。
+type recordingTemplateStore struct {
+	created   store.ExportConfigTemplate
+	templates map[string]store.ExportConfigTemplate
+	renamed   store.ExportConfigTemplateUpdate
+	deleted   string
+}
+
+func newRecordingTemplateStore() *recordingTemplateStore {
+	return &recordingTemplateStore{templates: map[string]store.ExportConfigTemplate{}}
+}
+
+func (s *recordingTemplateStore) CreateExportConfigTemplate(_ context.Context, input store.ExportConfigTemplateCreate) (store.ExportConfigTemplateCreateResult, error) {
+	s.created = input.ExportConfigTemplate
+	s.created.TemplateID = "template-synthetic"
+	s.created.Revision = 1
+	s.templates[s.created.TemplateID] = s.created
+	return store.ExportConfigTemplateCreateResult{TemplateID: s.created.TemplateID}, nil
+}
+
+func (s *recordingTemplateStore) ListExportConfigTemplates(_ context.Context, ownerSubjectID string) ([]store.ExportConfigTemplate, error) {
+	var items []store.ExportConfigTemplate
+	for _, template := range s.templates {
+		if template.OwnerSubjectID == ownerSubjectID {
+			items = append(items, template)
+		}
+	}
+	return items, nil
+}
+
+func (s *recordingTemplateStore) GetAuthorizedExportConfigTemplate(_ context.Context, templateID, subjectID string) (store.ExportConfigTemplate, error) {
+	template, ok := s.templates[templateID]
+	if !ok || template.OwnerSubjectID != subjectID {
+		return store.ExportConfigTemplate{}, store.ErrDataSourceNotFound
+	}
+	return template, nil
+}
+
+func (s *recordingTemplateStore) UpdateExportConfigTemplate(_ context.Context, input store.ExportConfigTemplateUpdate) (int64, error) {
+	template, ok := s.templates[input.TemplateID]
+	if !ok || template.OwnerSubjectID != input.ActorSubjectID {
+		return 0, store.ErrDataSourceNotFound
+	}
+	if template.Revision != input.ExpectedRevision {
+		return 0, store.ErrRevisionConflict
+	}
+	s.renamed = input
+	return input.ExpectedRevision + 1, nil
+}
+
+func (s *recordingTemplateStore) DeleteExportConfigTemplate(_ context.Context, templateID, actorSubjectID string, expectedRevision int64, _ string, _ time.Time) error {
+	template, ok := s.templates[templateID]
+	if !ok || template.OwnerSubjectID != actorSubjectID {
+		return store.ErrDataSourceNotFound
+	}
+	if template.Revision != expectedRevision {
+		return store.ErrRevisionConflict
+	}
+	s.deleted = templateID
+	delete(s.templates, templateID)
+	return nil
+}
+
+// TestExportConfigTemplateEndpoints 验证 EX-I8 模板端点：
+// 从成功任务保存模板（剥离凭据引用）、列表/改名/删除与由模板创建草稿。
+func TestExportConfigTemplateEndpoints(t *testing.T) {
+	t.Parallel()
+	const snapshotConfig = `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","database":"synthetic_db","scopeKind":"SPECIFIED","table":"synthetic_table","contentKind":"DATA_ONLY","format":"CSV","filePath":"/E:/tmp/out","logPath":"","skipCheckDir":false,"config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`
+	succeededSource := store.TaskDerivationSource{
+		TaskID: "task-done", CreatorSubjectID: "subject-1", DataSourceID: "source-allowed", NodeID: "node-1",
+		SnapshotVersion: "v2", SnapshotJSON: snapshotConfig, State: "SUCCEEDED",
+		CapabilityVersion: "export-odp-full-csv-v1", ConfigFingerprint: strings.Repeat("a", 64),
+		PlannedCommandRedacted: `obdumper --host 127.0.0.1 --port 2881 --user ****** --database synthetic_db --table synthetic_table --csv --file-path /E:/tmp/out`,
+	}
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{derivationSource: succeededSource}
+	templates := newRecordingTemplateStore()
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	handler = newHandlerWithTemplates(t, drafts, prechecks, tasks, templates)
+	// 保存模板：成功任务 → 201；模板配置不包含凭据引用。
+	save := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-done:save-template", bytes.NewBufferString(`{"displayName":"合成成功模板"}`))
+	save.Header.Set("Idempotency-Key", "synthetic-template-save-key-0001")
+	saved := httptest.NewRecorder()
+	handler.ServeHTTP(saved, save)
+	if saved.Code != http.StatusCreated || !bytes.Contains(saved.Body.Bytes(), []byte(`"sourceTaskId":"task-done"`)) {
+		t.Fatalf("save template response=%d body=%s", saved.Code, saved.Body.String())
+	}
+	if templates.created.ConfigJSON == "" || strings.Contains(templates.created.ConfigJSON, "storageCredential") || templates.created.SourceTaskID != "task-done" {
+		t.Fatalf("saved template = %#v", templates.created)
+	}
+	// 非成功任务不能保存。
+	failedTasks := &recordingTaskStore{derivationSource: func() store.TaskDerivationSource {
+		source := succeededSource
+		source.TaskID, source.State = "task-failed-2", "FAILED"
+		return source
+	}()}
+	handler = newHandlerWithTemplates(t, drafts, prechecks, failedTasks, templates)
+	save = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-failed-2:save-template", bytes.NewBufferString(`{"displayName":"失败任务模板"}`))
+	save.Header.Set("Idempotency-Key", "synthetic-template-save-key-0002")
+	saved = httptest.NewRecorder()
+	handler.ServeHTTP(saved, save)
+	if saved.Code != http.StatusUnprocessableEntity || !bytes.Contains(saved.Body.Bytes(), []byte("TASK_NOT_SUCCEEDED")) {
+		t.Fatalf("failed save response=%d body=%s", saved.Code, saved.Body.String())
+	}
+	// 列表/改名/删除。
+	handler = newHandlerWithTemplates(t, drafts, prechecks, tasks, templates)
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/export-config-templates", nil))
+	if list.Code != http.StatusOK || !bytes.Contains(list.Body.Bytes(), []byte(`"displayName":"合成成功模板"`)) || bytes.Contains(list.Body.Bytes(), []byte("objectScope")) {
+		t.Fatalf("template list response=%d body=%s", list.Code, list.Body.String())
+	}
+	rename := httptest.NewRequest(http.MethodPatch, "/api/v1/export-config-templates/template-synthetic", bytes.NewBufferString(`{"displayName":"改名模板"}`))
+	rename.Header.Set("If-Match", `"rev-1"`)
+	renamed := httptest.NewRecorder()
+	handler.ServeHTTP(renamed, rename)
+	if renamed.Code != http.StatusOK || !bytes.Contains(renamed.Body.Bytes(), []byte(`"revision":2`)) {
+		t.Fatalf("rename response=%d body=%s", renamed.Code, renamed.Body.String())
+	}
+	// 由模板创建草稿：需要数据源与节点，模板配置不含凭据。
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-config-templates/template-synthetic:create-draft", bytes.NewBufferString(`{"dataSourceId":"source-allowed","nodeId":"node-1"}`))
+	create.Header.Set("Idempotency-Key", "synthetic-template-draft-key-0001")
+	createdDraft := httptest.NewRecorder()
+	handler.ServeHTTP(createdDraft, create)
+	if createdDraft.Code != http.StatusCreated || !bytes.Contains(createdDraft.Body.Bytes(), []byte(`"templateId":"template-synthetic"`)) {
+		t.Fatalf("create draft from template response=%d body=%s", createdDraft.Code, createdDraft.Body.String())
+	}
+	// 删除。
+	del := httptest.NewRequest(http.MethodDelete, "/api/v1/export-config-templates/template-synthetic", nil)
+	del.Header.Set("If-Match", `"rev-1"`)
+	deleted := httptest.NewRecorder()
+	handler.ServeHTTP(deleted, del)
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete response=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+}
+
+// newHandlerWithTemplates 在泛化流程夹具上追加模板存储依赖。
+func newHandlerWithTemplates(t *testing.T, drafts *recordingDraftStore, prechecks *recordingPrecheckStore, tasks *recordingTaskStore, templates *recordingTemplateStore) http.Handler {
+	t.Helper()
+	generator, err := commandgen.NewDefault()
 	if err != nil {
-		t.Fatalf("open database for verification: %v", err)
+		t.Fatalf("NewDefault() error = %v", err)
 	}
-	defer db.Close()
-	var precheckCount int
-	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM precheck_runs`).Scan(&precheckCount); err != nil {
-		t.Fatalf("count precheck runs: %v", err)
+	generalized, err := commandgen.NewGeneralized()
+	if err != nil {
+		t.Fatalf("NewGeneralized() error = %v", err)
 	}
-	if precheckCount != 0 {
-		t.Fatalf("precheck_runs count = %d, want 0（门禁必须阻止真实仓储写入）", precheckCount)
+	coordinator, err := agentstate.NewCoordinator(testClock{})
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
 	}
+	return NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Tasks: tasks,
+		Templates: templates, Generator: generator, GeneralizedGenerator: generalized, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
+	})
 }

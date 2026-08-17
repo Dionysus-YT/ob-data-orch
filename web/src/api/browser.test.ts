@@ -1165,4 +1165,92 @@ describe('浏览器 API 客户端', () => {
     }))
     await expect(unknown.api.getTaskSnapshot('task-1')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
+
+  it('存储凭据列表按白名单解析且绝不回显密钥字段', async () => {
+    const { api } = apiWith(Response.json({
+      items: [{
+        id: 'storage-1', displayName: '合成 OSS 凭据', provider: 'OSS', currentRevision: 2, revision: 2,
+        updatedAt: '2026-08-14T00:00:00Z', accessKey: 'must-not-be-read', secretKey: 'must-not-be-read', ciphertext: 'must-not-be-read',
+      }],
+    }))
+    const [credential] = await api.listStorageCredentials()
+    expect(credential).toEqual({ id: 'storage-1', displayName: '合成 OSS 凭据', provider: 'OSS', currentRevision: 2, revision: 2, updatedAt: '2026-08-14T00:00:00Z' })
+    expect(credential).not.toHaveProperty('accessKey')
+    expect(credential).not.toHaveProperty('secretKey')
+    expect(credential).not.toHaveProperty('ciphertext')
+    const invalid = apiWith(Response.json({ items: [{ id: 'storage-2', displayName: '未知提供方', provider: 'FTP', currentRevision: 1, revision: 1, updatedAt: '2026-08-14T00:00:00Z' }] }))
+    await expect(invalid.api.listStorageCredentials()).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
+
+  it('创建/轮换/删除存储凭据使用 CSRF、幂等键与 If-Match', async () => {
+    const calls: Array<{ path: string; init: RequestInit }> = []
+    // 每次调用都返回新的 Response：同一 Response 的 body 只能消费一次。
+    const fetcher = (async (path: string | URL | Request, init?: RequestInit) => {
+      calls.push({ path: String(path), init: init ?? {} })
+      return Response.json({ item: { id: 'storage-1', displayName: '合成 OSS 凭据', provider: 'OSS', currentRevision: 1, revision: 1, updatedAt: '2026-08-14T00:00:00Z' } })
+    }) as FetchLike
+    const api = createBrowserApi({ fetcher, csrfToken: () => 'synthetic-csrf-token', idempotencyKey: () => 'synthetic-idempotency-key' })
+    await api.createStorageCredential({ displayName: '合成 OSS 凭据', provider: 'OSS', accessKey: 'access', secretKey: 'secret' })
+    expect(calls[0]?.path).toBe('/api/v1/storage-credentials')
+    expect(calls[0]?.init.headers).toMatchObject({ 'X-CSRF-Token': 'synthetic-csrf-token', 'Idempotency-Key': 'synthetic-idempotency-key' })
+    // 轮换同时携带 If-Match 与幂等键。
+    await api.rotateStorageCredential('storage-1', 2, { displayName: '合成 OSS 凭据', provider: 'OSS', accessKey: 'rotated', secretKey: 'rotated' })
+    expect(calls[1]?.path).toBe('/api/v1/storage-credentials/storage-1:rotate')
+    expect(calls[1]?.init.headers).toMatchObject({ 'If-Match': '"rev-2"', 'Idempotency-Key': 'synthetic-idempotency-key' })
+    // 删除携带 If-Match 但不携带幂等键（与数据源删除同口径）。
+    await api.deleteStorageCredential('storage-1', 3)
+    expect(calls[2]?.path).toBe('/api/v1/storage-credentials/storage-1')
+    expect(calls[2]?.init.method).toBe('DELETE')
+    expect(calls[2]?.init.headers).toMatchObject({ 'If-Match': '"rev-3"' })
+  })
+
+  it('草稿输出配置往返保留存储凭据引用', async () => {
+    const { api } = apiWith(Response.json({
+      item: {
+        id: 'draft-storage', dataSourceId: 'source-1', nodeId: 'node-1', revision: 1, configVersion: 'v6',
+        config: {
+          config: {
+            objectScope: { database: 'synthetic_db', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ name: 'synthetic_table' }] },
+            contentSelection: { contentKind: 'DATA_ONLY' },
+            dataFormat: { formatKind: 'CSV' },
+            outputConfig: { outputKind: 'OSS', filePath: 'oss://bucket/path?region=cn-hangzhou', storageCredential: { storageCredentialId: 'storage-1', revision: 2 } },
+          },
+        },
+        configFingerprint: 'synthetic-fingerprint',
+      },
+    }))
+    const draft = await api.getExportDraft('draft-storage')
+    expect(draft.config.outputConfig.storageCredential).toEqual({ storageCredentialId: 'storage-1', revision: 2 })
+  })
+
+  it('派生操作使用 CSRF 与幂等键并校验响应一致性', async () => {
+    const calls: Array<{ path: string; init: RequestInit }> = []
+    const fetcher = (async (path: string | URL | Request, init?: RequestInit) => {
+      calls.push({ path: String(path), init: init ?? {} })
+      if (String(path).includes(':rebuild-draft')) {
+        return Response.json({ draftId: 'draft-derived', sourceTaskId: 'task-1', derivation: 'REBUILD_FROM_CONFIG' })
+      }
+      return Response.json({ id: 'task-derived', parentTaskId: 'task-1', derivationKind: 'CHECKPOINT_RESUME' })
+    }) as FetchLike
+    const api = createBrowserApi({ fetcher, csrfToken: () => 'synthetic-csrf-token', idempotencyKey: () => 'synthetic-idempotency-key' })
+    await expect(api.rebuildTaskDraft('task-1', 'REBUILD_FROM_CONFIG')).resolves.toEqual({ draftId: 'draft-derived', sourceTaskId: 'task-1', derivation: 'REBUILD_FROM_CONFIG' })
+    expect(calls[0]?.path).toBe('/api/v1/tasks/task-1:rebuild-draft')
+    expect(calls[0]?.init.headers).toMatchObject({ 'X-CSRF-Token': 'synthetic-csrf-token', 'Idempotency-Key': 'synthetic-idempotency-key' })
+    await expect(api.resumeTaskFromCheckpoint('task-1')).resolves.toEqual({ id: 'task-derived', parentTaskId: 'task-1', derivationKind: 'CHECKPOINT_RESUME' })
+    expect(calls[1]?.path).toBe('/api/v1/tasks/task-1:resume-checkpoint')
+    expect(calls[1]?.init.headers).toMatchObject({ 'X-CSRF-Token': 'synthetic-csrf-token', 'Idempotency-Key': 'synthetic-idempotency-key' })
+  })
+
+  it('任务概览按白名单解析派生关系', async () => {
+    const { api } = apiWith(Response.json({
+      item: {
+        id: 'task-derived', type: 'OBDUMPER_EXPORT', dataSourceId: 'source-1', nodeId: 'node-1',
+        precheckId: 'precheck-1', submittedAt: '2026-08-14T08:00:00Z',
+        parentTaskId: 'task-1', derivationKind: 'CHECKPOINT_RESUME', password: 'must-not-be-read',
+      },
+    }))
+    await expect(api.getTaskOverview('task-derived')).resolves.toMatchObject({ id: 'task-derived', parentTaskId: 'task-1', derivationKind: 'CHECKPOINT_RESUME' })
+    const inconsistent = apiWith(Response.json({ item: { id: 'task-bad', type: 'OBDUMPER_EXPORT', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'p', submittedAt: '2026-08-14T08:00:00Z', derivationKind: 'CHECKPOINT_RESUME' } }))
+    await expect(inconsistent.api.getTaskOverview('task-bad')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
 })

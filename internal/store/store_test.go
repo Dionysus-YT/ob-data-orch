@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2352,6 +2353,127 @@ func passedPrecheckResults() []PrecheckCheckResult {
 	return results
 }
 
+// passedStoragePrecheckResults 返回对象存储形态的六项 PASSED 结果（EX-I6 存储专用预检查）。
+func passedStoragePrecheckResults() []PrecheckCheckResult {
+	results := make([]PrecheckCheckResult, 0, len(storagePrecheckCheckList()))
+	for _, check := range storagePrecheckCheckList() {
+		evidence := "SYNTHETIC_OK"
+		if check == "STORAGE_CONNECTIVITY" {
+			evidence = "STORAGE_ENDPOINT_REACHABLE"
+		}
+		if check == "STORAGE_AUTH" {
+			evidence = "STORAGE_CREDENTIAL_VERIFIED"
+		}
+		results = append(results, PrecheckCheckResult{Check: check, Status: "PASSED", EvidenceCode: evidence})
+	}
+	return results
+}
+
+// storageDraftConfigJSON 是合成 v6 对象存储草稿的持久化配置（扁平投影 + 嵌套标准文档）。
+// filePath 为受控 OSS URI（无密钥参数），tmpPath 为节点本地临时分块目录。
+const storageDraftConfigJSON = `{"configVersion":"v6","dataSourceId":"source-1","nodeId":"node-1","database":"synthetic_db","scopeKind":"SPECIFIED","table":"synthetic_table","contentKind":"DATA_ONLY","format":"CSV","filePath":"oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com","logPath":"","skipCheckDir":false,"config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"OSS","filePath":"oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com","tmpPath":"/E:/workespace/tmp"}}}`
+
+// TestParsePrecheckExecutionContextStorageShape 验证 v6 对象存储草稿解析出受控存储目标段，
+// 并拒绝 scheme 不符、URI 携带密钥参数、未知查询参数与缺 bucket 的失败关闭输入。
+func TestParsePrecheckExecutionContextStorageShape(t *testing.T) {
+	t.Parallel()
+	context, ok := parsePrecheckExecutionContext("v6", storageDraftConfigJSON)
+	if !ok {
+		t.Fatal("存储草稿上下文解析失败")
+	}
+	if context.OutputKind != "OSS" || context.OutputPath != "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com" || context.LogPath != "" {
+		t.Fatalf("存储上下文 = %#v", context)
+	}
+	if context.StorageTarget == nil || context.StorageTarget.Provider != "OSS" || context.StorageTarget.Endpoint != "oss-cn-hangzhou.aliyuncs.com" || context.StorageTarget.TmpPath != "/E:/workespace/tmp" {
+		t.Fatalf("存储目标段 = %#v", context.StorageTarget)
+	}
+	base := func(outputKind, filePath string) string {
+		return `{"configVersion":"v6","dataSourceId":"source-1","nodeId":"node-1","database":"synthetic_db","scopeKind":"SPECIFIED","table":"synthetic_table","contentKind":"DATA_ONLY","format":"CSV","filePath":` + strconv.Quote(filePath) + `,"logPath":"","skipCheckDir":false,"config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":` + strconv.Quote(outputKind) + `,"filePath":` + strconv.Quote(filePath) + `}}}`
+	}
+	positive := base("COS", "cos://bucket/path?endpoint=cos.example.com&storage-class=STANDARD")
+	if context, ok := parsePrecheckExecutionContext("v6", positive); !ok || context.StorageTarget == nil || context.StorageTarget.Provider != "COS" || context.StorageTarget.Endpoint != "cos.example.com" {
+		t.Fatalf("COS storage-class 上下文 = %#v, %t", context, ok)
+	}
+	negative := map[string]string{
+		"scheme 与输出类型不符": base("OSS", "s3://bucket/path?endpoint=host"),
+		"URI 携带密钥参数":     base("OSS", "oss://bucket/path?endpoint=host&access-key=AK"),
+		"URI 携带未知参数":     base("S3", "s3://bucket/path?region=x&unknown=y"),
+		"URI 缺少 bucket":  base("COS", "cos:///path?region=x"),
+		"URI 含换行":        base("OSS", "oss://bucket/path\n?endpoint=host"),
+	}
+	for name, config := range negative {
+		if context, ok := parsePrecheckExecutionContext("v6", config); ok {
+			t.Fatalf("%s 被接受：%#v", name, context)
+		}
+	}
+}
+
+// TestCompleteAgentPrecheckEnforcesStorageShape 验证正式完成端点按冻结草稿的输出类型
+// 复核检查清单：对象存储草稿提交本地六项形态被拒绝，存储六项形态被接受。
+func TestCompleteAgentPrecheckEnforcesStorageShape(t *testing.T) {
+	t.Parallel()
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	// 插入合成 v6 对象存储草稿（与 seedBaseFixture 的 draft-1 同口径但输出为受控 OSS URI）。
+	if _, err := store.db.ExecContext(ctx, `
+        INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at)
+        VALUES ('draft-storage-1', 'subject-1', 'source-1', 'node-1', 1, '4.3.5-RELEASE', 'obdumper-4.3.5-slice-v7', 'export-odp-full-csv-v1', 'v6', ?, ?, '{}', ?, ?)`,
+		storageDraftConfigJSON, testFingerprint, utcText(testTime), utcText(testTime)); err != nil {
+		t.Fatalf("插入存储草稿失败: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE data_sources SET last_test_status = 'SUCCEEDED', last_tested_at = ?, last_test_source = 'AGENT_JDBC' WHERE data_source_id = 'source-1'`, utcText(testTime)); err != nil {
+		t.Fatalf("seed connection test: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET facts_revision = 1 WHERE agent_id = 'agent-1'`); err != nil {
+		t.Fatalf("seed agent facts: %v", err)
+	}
+	run := PrecheckRun{
+		PrecheckID: "precheck-storage", DraftID: "draft-storage-1", DraftRevision: 1, ConfigFingerprint: testFingerprint,
+		DataSourceID: "source-1", CredentialID: "credential-1", CredentialRevision: 1, NodeID: "node-1",
+		CreatedAt: testTime, ValidUntil: testTime.Add(10 * time.Minute),
+	}
+	if _, err := store.CreatePrecheck(ctx, PrecheckCreate{
+		PrecheckRun: run, CreatorSubjectID: "subject-1", RequestID: "request-precheck-storage",
+		IdempotencyKey: "idempotency-precheck-storage", RequestDigest: strings.Repeat("a", 64),
+	}); err != nil {
+		t.Fatalf("CreatePrecheck(storage) = %v", err)
+	}
+	now := testTime.Add(time.Minute)
+	grant, err := store.ClaimPrecheck(ctx, PrecheckClaim{
+		AgentID: "agent-1", NodeID: "node-1", PrecheckID: run.PrecheckID, LeaseID: "lease-storage",
+		RequestID: "precheck-claim-storage", RequestDigest: strings.Repeat("b", 64), LeaseTTL: 2 * time.Minute, Now: now,
+	})
+	if err != nil || grant.ExecutionContext.OutputKind != "OSS" || grant.ExecutionContext.StorageTarget == nil || grant.ExecutionContext.StorageTarget.Endpoint != "oss-cn-hangzhou.aliyuncs.com" {
+		t.Fatalf("ClaimPrecheck(storage) = %#v, %v", grant, err)
+	}
+	if _, err := store.AcknowledgePrecheck(ctx, PrecheckAcknowledgement{
+		AgentID: "agent-1", PrecheckID: run.PrecheckID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "precheck-ack-storage", RequestDigest: strings.Repeat("c", 64), Now: now.Add(30 * time.Second),
+	}); err != nil {
+		t.Fatalf("AcknowledgePrecheck(storage) = %v", err)
+	}
+	completion := func(requestID, digest string, results []PrecheckCheckResult) AgentPrecheckCompletion {
+		return AgentPrecheckCompletion{
+			AgentID: "agent-1", PrecheckID: run.PrecheckID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+			BindingDigest: grant.Binding.BindingDigest, RequestID: requestID, RequestDigest: digest, Results: results, Now: now.Add(time.Minute),
+		}
+	}
+	// 负例：本地六项形态（含 OUTPUT_PATH/OUTPUT_EMPTY）与存储草稿不匹配，必须失败关闭。
+	if _, err := store.CompleteAgentPrecheck(ctx, completion("precheck-complete-storage-wrong", strings.Repeat("d", 64), passedPrecheckResults())); !errors.Is(err, ErrPrecheckLeaseRejected) {
+		t.Fatalf("本地形态完成错误 = %v, want ErrPrecheckLeaseRejected", err)
+	}
+	// 正例：存储六项形态接受，结果按存储清单持久化。
+	completed, err := store.CompleteAgentPrecheck(ctx, completion("precheck-complete-storage", strings.Repeat("e", 64), passedStoragePrecheckResults()))
+	if err != nil || completed.Status != "SUCCEEDED" || completed.IntegrityStatus != "COMPLETE" {
+		t.Fatalf("CompleteAgentPrecheck(storage) = %#v, %v", completed, err)
+	}
+	stored, err := store.GetPrecheckRun(ctx, run.PrecheckID)
+	if err != nil || len(stored.Results) != len(storagePrecheckCheckList()) || stored.Results[4].Check != "STORAGE_CONNECTIVITY" || stored.Results[5].Check != "STORAGE_AUTH" {
+		t.Fatalf("存储预检查结果 = %#v, %v", stored.Results, err)
+	}
+}
+
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "metadata.db")
@@ -2361,6 +2483,375 @@ func openTestStore(t *testing.T) (*Store, string) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store, path
+}
+
+// TestDeriveTaskFromCheckpoint 验证 EX-I8 检查点继续：失败任务 + dump.ckpt 事实满足时
+// 派生新任务（parent/derivation + 追加 --retry），不满足条件或重复 --retry 时失败关闭。
+func TestDeriveTaskFromCheckpoint(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-resume-source")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	claim := validClaim("execution-resume", "lease-resume", "event-resume-claim", "request-resume-claim")
+	claim.TaskID = "task-resume-source"
+	if err := store.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask(): %v", err)
+	}
+	appendEvent := func(seq int64, eventID, eventType, payload string) {
+		t.Helper()
+		if _, err := store.AppendAuthenticatedExecutionEvent(ctx, "agent-1", ExecutionEvent{
+			EventID: eventID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch,
+			EventSeq: seq, EventType: eventType, PayloadJSON: payload, ReceivedAt: testTime.Add(3 * time.Minute).Add(time.Duration(seq) * 30 * time.Second),
+		}); err != nil {
+			t.Fatalf("append %s: %v", eventType, err)
+		}
+	}
+	appendEvent(2, "event-resume-ack", "LEASE_ACKNOWLEDGED", `{}`)
+	appendEvent(3, "event-resume-started", "PROCESS_STARTED", `{"pid":42,"startedAt":"2026-07-27T01:00:00Z","executableDigest":"`+strings.Repeat("a", 64)+`","bootId":"boot-1"}`)
+	appendEvent(4, "event-resume-exited", "PROCESS_EXITED", `{"exitCode":1}`)
+	appendEvent(5, "event-resume-terminal", "TOOL_TERMINAL_OBSERVED", `{"terminal":"FAILED"}`)
+	appendEvent(6, "event-resume-facts", "RESULT_FACTS_OBSERVED", `{"result":"FAILED","fileCount":1,"totalBytes":10,"files":[{"path":"data_1.csv","size":10}],"checkpointPresent":true}`)
+	// 失败终态只接受第一份迟到结果事实，防止不同事件覆盖任务摘要或检查点资格。
+	if _, err := store.AppendAuthenticatedExecutionEvent(ctx, "agent-1", ExecutionEvent{
+		EventID: "event-resume-facts-conflict", ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch,
+		EventSeq: 7, EventType: "RESULT_FACTS_OBSERVED", PayloadJSON: `{"result":"FAILED","fileCount":0,"totalBytes":0,"files":[],"checkpointPresent":false}`,
+		ReceivedAt: testTime.Add(7 * time.Minute),
+	}); !errors.Is(err, ErrEventRejected) {
+		t.Fatalf("second late result error = %v, want ErrEventRejected", err)
+	}
+	// 不满足条件的负例：来源任务不存在。
+	if _, err := store.DeriveTaskFromCheckpoint(ctx, CheckpointResumeDerivation{
+		TaskID: "task-resume-missing", CreatorSubjectID: "subject-1", AuditActorID: "subject-1", SourceTaskID: "task-none",
+		RequestID: "request-resume-missing", IdempotencyKey: "idem-resume-missing", RequestDigest: strings.Repeat("a", 64), Now: testTime.Add(5 * time.Minute),
+	}); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("missing source error = %v, want ErrDataSourceNotFound", err)
+	}
+	// 正例：派生继续任务，argv 追加 --retry，parent/derivation 落库。
+	result, err := store.DeriveTaskFromCheckpoint(ctx, CheckpointResumeDerivation{
+		TaskID: "task-resume-derived", CreatorSubjectID: "subject-1", AuditActorID: "subject-1", SourceTaskID: "task-resume-source",
+		RequestID: "request-resume-1", IdempotencyKey: "idem-resume-1", RequestDigest: strings.Repeat("b", 64), Now: testTime.Add(5 * time.Minute),
+	})
+	if err != nil || result.TaskID != "task-resume-derived" || result.NodeID != "node-1" || result.Replayed {
+		t.Fatalf("DeriveTaskFromCheckpoint() = %#v, %v", result, err)
+	}
+	var parent, derivation, argvJSON string
+	if err := store.db.QueryRowContext(ctx, `SELECT COALESCE(parent_task_id,''), COALESCE(derivation_kind,''), planned_argv_json FROM tasks WHERE task_id = 'task-resume-derived'`).Scan(&parent, &derivation, &argvJSON); err != nil {
+		t.Fatalf("read derived task: %v", err)
+	}
+	if parent != "task-resume-source" || derivation != "CHECKPOINT_RESUME" {
+		t.Fatalf("derived relation = %q %q", parent, derivation)
+	}
+	var argv []string
+	if err := json.Unmarshal([]byte(argvJSON), &argv); err != nil || len(argv) < 2 || argv[len(argv)-1] != "--retry" {
+		t.Fatalf("derived argv = %s, %v", argvJSON, err)
+	}
+	// 幂等重放返回同一任务。
+	replayed, err := store.DeriveTaskFromCheckpoint(ctx, CheckpointResumeDerivation{
+		TaskID: "task-resume-derived-2", CreatorSubjectID: "subject-1", AuditActorID: "subject-1", SourceTaskID: "task-resume-source",
+		RequestID: "request-resume-1", IdempotencyKey: "idem-resume-1", RequestDigest: strings.Repeat("b", 64), Now: testTime.Add(5 * time.Minute),
+	})
+	if err != nil || !replayed.Replayed || replayed.TaskID != "task-resume-derived" || replayed.NodeID != "node-1" {
+		t.Fatalf("replayed resume = %#v, %v", replayed, err)
+	}
+}
+
+// TestDeriveTaskFromCheckpointRejectsResumeOfResumeAndMissingCheckpoint 验证失败关闭边界：
+// 已带 --retry 的继续任务不能再次继续；无 dump.ckpt 事实的任务不能继续。
+func TestDeriveTaskFromCheckpointRejectsResumeOfResumeAndMissingCheckpoint(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	// 来源任务为 WAITING_SCHEDULE（无执行事实）→ 不满足失败+检查点条件。
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-resume-pending")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	if _, err := store.DeriveTaskFromCheckpoint(ctx, CheckpointResumeDerivation{
+		TaskID: "task-resume-invalid", CreatorSubjectID: "subject-1", AuditActorID: "subject-1", SourceTaskID: "task-resume-pending",
+		RequestID: "request-resume-pending", IdempotencyKey: "idem-resume-pending", RequestDigest: strings.Repeat("c", 64), Now: testTime.Add(5 * time.Minute),
+	}); !errors.Is(err, ErrCheckpointResumeUnavailable) {
+		t.Fatalf("pending source error = %v, want ErrCheckpointResumeUnavailable", err)
+	}
+	// 来源任务 argv 已带 --retry（模拟历史继续任务）→ 不能链式继续。
+	withRetry := validTaskSubmission("task-resume-already")
+	withRetry.PlannedArgvJSON = `["--host","127.0.0.1","--port","2881","--user","synthetic_user@synthetic_tenant","--database","synthetic_db","--table","synthetic_table","--csv","--file-path","/E:/tmp/output","--retry"]`
+	withRetry.ParentTaskID, withRetry.DerivationKind = "task-resume-pending", "CHECKPOINT_RESUME"
+	if err := store.SubmitTask(ctx, withRetry); err != nil {
+		t.Fatalf("SubmitTask(retry): %v", err)
+	}
+	claim := validClaim("execution-resume-2", "lease-resume-2", "event-resume-2-claim", "request-resume-2-claim")
+	claim.TaskID = "task-resume-already"
+	if err := store.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask(): %v", err)
+	}
+	appendEvent := func(seq int64, eventID, eventType, payload string) {
+		t.Helper()
+		if _, err := store.AppendAuthenticatedExecutionEvent(ctx, "agent-1", ExecutionEvent{
+			EventID: eventID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch,
+			EventSeq: seq, EventType: eventType, PayloadJSON: payload, ReceivedAt: testTime.Add(3 * time.Minute).Add(time.Duration(seq) * 30 * time.Second),
+		}); err != nil {
+			t.Fatalf("append %s: %v", eventType, err)
+		}
+	}
+	appendEvent(2, "event-resume2-ack", "LEASE_ACKNOWLEDGED", `{}`)
+	appendEvent(3, "event-resume2-started", "PROCESS_STARTED", `{"pid":42,"startedAt":"2026-07-27T01:00:00Z","executableDigest":"`+strings.Repeat("a", 64)+`","bootId":"boot-1"}`)
+	appendEvent(4, "event-resume2-exited", "PROCESS_EXITED", `{"exitCode":1}`)
+	appendEvent(5, "event-resume2-terminal", "TOOL_TERMINAL_OBSERVED", `{"terminal":"FAILED"}`)
+	appendEvent(6, "event-resume2-facts", "RESULT_FACTS_OBSERVED", `{"result":"FAILED","fileCount":1,"totalBytes":10,"files":[{"path":"data_1.csv","size":10}],"checkpointPresent":true}`)
+	if _, err := store.DeriveTaskFromCheckpoint(ctx, CheckpointResumeDerivation{
+		TaskID: "task-resume-chained", CreatorSubjectID: "subject-1", AuditActorID: "subject-1", SourceTaskID: "task-resume-already",
+		RequestID: "request-resume-chained", IdempotencyKey: "idem-resume-chained", RequestDigest: strings.Repeat("d", 64), Now: testTime.Add(5 * time.Minute),
+	}); !errors.Is(err, ErrCheckpointResumeUnavailable) {
+		t.Fatalf("chained resume error = %v, want ErrCheckpointResumeUnavailable", err)
+	}
+}
+
+// TestExecutionResultSummaryMerge 验证 EX-I8 结果事实与检查点事实合并进任务级结果摘要，
+// 摘要只含受控字段并可经授权详情投影读取。
+func TestExecutionResultSummaryMerge(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-result")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	claim := validClaim("execution-result", "lease-result", "event-result-claim", "request-result-claim")
+	claim.TaskID = "task-result"
+	if err := store.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask(): %v", err)
+	}
+	appendEvent := func(seq int64, eventID, eventType, payload string) {
+		t.Helper()
+		if _, err := store.AppendAuthenticatedExecutionEvent(ctx, "agent-1", ExecutionEvent{
+			EventID: eventID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch,
+			EventSeq: seq, EventType: eventType, PayloadJSON: payload, ReceivedAt: testTime.Add(3 * time.Minute).Add(time.Duration(seq) * 30 * time.Second),
+		}); err != nil {
+			t.Fatalf("append %s: %v", eventType, err)
+		}
+	}
+	appendEvent(2, "event-result-ack", "LEASE_ACKNOWLEDGED", `{}`)
+	appendEvent(3, "event-result-started", "PROCESS_STARTED", `{"pid":42,"startedAt":"2026-07-27T01:00:00Z","executableDigest":"`+strings.Repeat("a", 64)+`","bootId":"boot-1"}`)
+	appendEvent(4, "event-result-exited", "PROCESS_EXITED", `{"exitCode":0}`)
+	appendEvent(5, "event-result-terminal", "TOOL_TERMINAL_OBSERVED", `{"terminal":"SUCCEEDED"}`)
+	appendEvent(6, "event-result-facts", "RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":2,"totalBytes":120,"files":[{"path":"data_1.csv","size":100},{"path":"data_2.csv","size":20}],"checkpointPresent":true}`)
+	summary, err := store.GetAuthorizedTaskSummary(ctx, "task-result", "subject-1")
+	if err != nil {
+		t.Fatalf("GetAuthorizedTaskSummary(): %v", err)
+	}
+	if summary.State != "SUCCEEDED" || summary.ResultSummary == nil {
+		t.Fatalf("任务摘要 = %#v", summary)
+	}
+	if summary.ResultSummary.Result != "VERIFIED" || summary.ResultSummary.FileCount != 2 || summary.ResultSummary.TotalBytes != 120 || !summary.ResultSummary.CheckpointPresent || len(summary.ResultSummary.Files) != 2 {
+		t.Fatalf("结果摘要 = %#v", summary.ResultSummary)
+	}
+	if summary.ResultSummary.Files[0].Path != "data_1.csv" || summary.ResultSummary.Files[0].Size != 100 {
+		t.Fatalf("结果文件清单 = %#v", summary.ResultSummary.Files)
+	}
+}
+
+// TestExecutionEventValidationResultAndCheckpoint 验证结果/检查点事件负载的失败关闭边界。
+func TestExecutionEventValidationResultAndCheckpoint(t *testing.T) {
+	t.Parallel()
+	validFacts := `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[{"path":"data_1.csv","size":10}],"checkpointPresent":true}`
+	if !validProjectedExecutionEvent(ExecutionEvent{EventType: "RESULT_FACTS_OBSERVED", PayloadJSON: validFacts}) {
+		t.Fatal("受控结果事实被拒绝")
+	}
+	negative := map[string]struct {
+		eventType string
+		payload   string
+	}{
+		"文件路径为绝对路径":   {"RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[{"path":"/E:/tmp/data.csv","size":10}],"checkpointPresent":false}`},
+		"文件路径含回退段":    {"RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[{"path":"../data.csv","size":10}],"checkpointPresent":false}`},
+		"文件路径含换行":     {"RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[{"path":"data\n.csv","size":10}],"checkpointPresent":false}`},
+		"检查点字段非布尔":    {"RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[],"checkpointPresent":"yes"}`},
+		"结果事实缺少检查点字段": {"RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[]}`},
+		"结果事实含多余字段":   {"RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[],"checkpointPresent":false,"extra":1}`},
+	}
+	for name, test := range negative {
+		if validProjectedExecutionEvent(ExecutionEvent{EventType: test.eventType, PayloadJSON: test.payload}) {
+			t.Fatalf("%s 被接受", name)
+		}
+	}
+}
+
+// TestStorageCredentialLifecycle 验证对象存储凭据（EX-I6 存储凭据槽位）的
+// 创建/幂等重放/轮换/删除/越权负例全生命周期。
+func TestStorageCredentialLifecycle(t *testing.T) {
+	t.Parallel()
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	subject := "subject-1"
+	if err := s.EnsureAuthSubject(ctx, AuthSubject{SubjectID: subject, ExternalSubject: "external-1", DisplayName: "Synthetic User", AccountStatus: "ACTIVE", CreatedAt: testTime, UpdatedAt: testTime}); err != nil {
+		t.Fatalf("EnsureAuthSubject(): %v", err)
+	}
+	created, err := s.CreateStorageCredential(ctx, StorageCredentialCreate{
+		StorageCredentialID: "storage-1", OwnerSubjectID: subject, DisplayName: "合成 OSS 凭据", Provider: "OSS",
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-key-1", Revision: 1, KeyID: "key-1", Nonce: []byte{1}, Ciphertext: []byte{2}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-secret-1", Revision: 1, KeyID: "key-1", Nonce: []byte{3}, Ciphertext: []byte{4}},
+		RequestID: "req-1", IdempotencyKey: "idem-1", RequestDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CreatedAt: testTime,
+	})
+	if err != nil || created.StorageCredentialID != "storage-1" || created.Replayed {
+		t.Fatalf("CreateStorageCredential() = %#v, %v", created, err)
+	}
+	// 幂等重放必须返回同一资源且不重复插入。
+	replayed, err := s.CreateStorageCredential(ctx, StorageCredentialCreate{
+		StorageCredentialID: "storage-1b", OwnerSubjectID: subject, DisplayName: "合成 OSS 凭据", Provider: "OSS",
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-key-1", Revision: 1, KeyID: "key-1", Nonce: []byte{1}, Ciphertext: []byte{2}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-secret-1", Revision: 1, KeyID: "key-1", Nonce: []byte{3}, Ciphertext: []byte{4}},
+		RequestID: "req-1", IdempotencyKey: "idem-1", RequestDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CreatedAt: testTime,
+	})
+	if err != nil || !replayed.Replayed || replayed.StorageCredentialID != "storage-1" {
+		t.Fatalf("replayed create = %#v, %v", replayed, err)
+	}
+	// 同幂等键异内容必须冲突，不能静默返回旧资源。
+	if _, err := s.CreateStorageCredential(ctx, StorageCredentialCreate{
+		StorageCredentialID: "storage-1c", OwnerSubjectID: subject, DisplayName: "另一份合成凭据", Provider: "S3",
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-key-1x", Revision: 1, KeyID: "key-1", Nonce: []byte{11}, Ciphertext: []byte{12}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-secret-1x", Revision: 1, KeyID: "key-1", Nonce: []byte{13}, Ciphertext: []byte{14}},
+		RequestID: "req-1b", IdempotencyKey: "idem-1", RequestDigest: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", CreatedAt: testTime,
+	}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting replay error = %v, want ErrIdempotencyConflict", err)
+	}
+	// 引用投影必须不含秘密且返回 provider/版本/所有者。
+	reference, err := s.GetStorageCredentialReference(ctx, "storage-1")
+	if err != nil || reference.Provider != "OSS" || reference.Revision != 1 || reference.OwnerSubjectID != subject {
+		t.Fatalf("GetStorageCredentialReference() = %#v, %v", reference, err)
+	}
+	// 列表只投影安全字段。
+	list, err := s.ListStorageCredentials(ctx, subject)
+	if err != nil || len(list) != 1 || list[0].DisplayName != "合成 OSS 凭据" || list[0].CurrentRevision != 1 {
+		t.Fatalf("ListStorageCredentials() = %#v, %v", list, err)
+	}
+	// 轮换：两个信封同时轮换，旧修订 SUPERSEDED，版本递增（ExpectedRevision 为当前版本乐观锁）。
+	rotated, err := s.RotateStorageCredential(ctx, StorageCredentialRotate{
+		StorageCredentialID: "storage-1", ActorSubjectID: subject, ExpectedRevision: 1,
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-key-2", Revision: 2, KeyID: "key-1", Nonce: []byte{5}, Ciphertext: []byte{6}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-secret-2", Revision: 2, KeyID: "key-1", Nonce: []byte{7}, Ciphertext: []byte{8}},
+		RequestID: "req-2", IdempotencyKey: "idem-2", RequestDigest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", UpdatedAt: testTime,
+	})
+	if err != nil || rotated.DisplayName != "合成 OSS 凭据" || rotated.Provider != "OSS" || rotated.CurrentRevision != 2 || rotated.Revision != 2 {
+		t.Fatalf("RotateStorageCredential() = %#v, %v", rotated, err)
+	}
+	var activeCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM storage_credential_revisions WHERE storage_credential_id = 'storage-1' AND status = 'ACTIVE'`).Scan(&activeCount); err != nil {
+		t.Fatalf("count active revisions: %v", err)
+	}
+	if activeCount != 2 {
+		t.Fatalf("active revision count = %d, want 2", activeCount)
+	}
+	var supersededCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM storage_credential_revisions WHERE storage_credential_id = 'storage-1' AND status = 'SUPERSEDED'`).Scan(&supersededCount); err != nil {
+		t.Fatalf("count superseded revisions: %v", err)
+	}
+	if supersededCount != 2 {
+		t.Fatalf("superseded revision count = %d, want 2", supersededCount)
+	}
+	// 越权负例：非所有者轮换与删除必须失败关闭。
+	if _, err := s.RotateStorageCredential(ctx, StorageCredentialRotate{
+		StorageCredentialID: "storage-1", ActorSubjectID: "subject-other", ExpectedRevision: 2,
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-key-3", Revision: 3, KeyID: "key-1", Nonce: []byte{9}, Ciphertext: []byte{10}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-secret-3", Revision: 3, KeyID: "key-1", Nonce: []byte{11}, Ciphertext: []byte{12}},
+		RequestID: "req-3", IdempotencyKey: "idem-3", RequestDigest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", UpdatedAt: testTime,
+	}); !errors.Is(err, ErrStorageCredentialForbidden) {
+		t.Fatalf("foreign rotate error = %v, want ErrStorageCredentialForbidden", err)
+	}
+	if err := s.DeleteStorageCredential(ctx, StorageCredentialDeletion{
+		StorageCredentialID: "storage-1", ActorSubjectID: "subject-other", ExpectedRevision: 2, RequestID: "req-4", DeletedAt: testTime,
+	}); !errors.Is(err, ErrStorageCredentialForbidden) {
+		t.Fatalf("foreign delete error = %v, want ErrStorageCredentialForbidden", err)
+	}
+	// 版本冲突负例。
+	if err := s.DeleteStorageCredential(ctx, StorageCredentialDeletion{
+		StorageCredentialID: "storage-1", ActorSubjectID: subject, ExpectedRevision: 99, RequestID: "req-5", DeletedAt: testTime,
+	}); !errors.Is(err, ErrStorageCredentialRevision) {
+		t.Fatalf("stale delete error = %v, want ErrStorageCredentialRevision", err)
+	}
+	// 所有者删除：物理删除主表与全部信封。
+	if err := s.DeleteStorageCredential(ctx, StorageCredentialDeletion{
+		StorageCredentialID: "storage-1", ActorSubjectID: subject, ExpectedRevision: 2, RequestID: "req-6", DeletedAt: testTime,
+	}); err != nil {
+		t.Fatalf("DeleteStorageCredential() = %v", err)
+	}
+	if _, err := s.GetStorageCredentialReference(ctx, "storage-1"); !errors.Is(err, ErrStorageCredentialNotFound) {
+		t.Fatalf("reference after delete error = %v, want ErrStorageCredentialNotFound", err)
+	}
+	var remaining int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM storage_credential_revisions WHERE storage_credential_id = 'storage-1'`).Scan(&remaining); err != nil {
+		t.Fatalf("count remaining revisions: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining revisions = %d, want 0", remaining)
+	}
+}
+
+// TestResolveExecutionStorageCredentialReturnsEnvelopeIDs 验证执行槽位解析返回加密信封自身的
+// credentialId（AAD 绑定项），控制面解密必须使用它们而不是 storageCredentialId；
+// 本地输出任务不绑定凭据时必须返回空结构且不报错。
+func TestResolveExecutionStorageCredentialReturnsEnvelopeIDs(t *testing.T) {
+	t.Parallel()
+	s, _ := openTestStore(t)
+	seedBaseFixture(t, s)
+	ctx := context.Background()
+	if _, err := s.CreateStorageCredential(ctx, StorageCredentialCreate{
+		StorageCredentialID: "storage-exec-1", OwnerSubjectID: "subject-1", DisplayName: "执行槽位 OSS 凭据", Provider: "OSS",
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-envelope-access-1", Revision: 1, KeyID: "key-1", Nonce: []byte{21}, Ciphertext: []byte{22}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-envelope-secret-1", Revision: 1, KeyID: "key-1", Nonce: []byte{23}, Ciphertext: []byte{24}},
+		RequestID: "req-exec-1", IdempotencyKey: "idem-exec-1", RequestDigest: testFingerprint, CreatedAt: testTime,
+	}); err != nil {
+		t.Fatalf("CreateStorageCredential(): %v", err)
+	}
+	storageSubmission := validTaskSubmission("task-storage-1")
+	storageSubmission.StorageCredentialID = "storage-exec-1"
+	storageSubmission.StorageCredentialRevision = 1
+	if err := s.SubmitTask(ctx, storageSubmission); err != nil {
+		t.Fatalf("SubmitTask(storage): %v", err)
+	}
+	claim := validClaim("execution-storage-1", "lease-storage-1", "event-storage-1", "request-storage-1")
+	claim.TaskID = "task-storage-1"
+	if err := s.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask(storage): %v", err)
+	}
+	// 任务已冻结版本 1 后轮换到版本 2；旧修订虽已 SUPERSEDED，排队/已领取任务仍须可解析。
+	if _, err := s.RotateStorageCredential(ctx, StorageCredentialRotate{
+		StorageCredentialID: "storage-exec-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		AccessKey: EncryptedStorageSecret{CredentialID: "storage-envelope-access-2", Revision: 2, KeyID: "key-1", Nonce: []byte{25}, Ciphertext: []byte{26}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "storage-envelope-secret-2", Revision: 2, KeyID: "key-1", Nonce: []byte{27}, Ciphertext: []byte{28}},
+		RequestID: "req-exec-rotate", IdempotencyKey: "idem-exec-rotate", RequestDigest: strings.Repeat("d", 64), UpdatedAt: testTime.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("RotateStorageCredential(): %v", err)
+	}
+	resolved, err := s.ResolveExecutionStorageCredential(ctx, ExecutionSecretResolutionRequest{
+		AgentID: "agent-1", ExecutionID: "execution-storage-1", LeaseID: "lease-storage-1", LeaseEpoch: 1,
+		EnvelopeDigest: strings.Repeat("a", 64), RequestID: "request-resolve-1", RequestDigest: strings.Repeat("b", 64),
+		Now: testTime.Add(4 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("ResolveExecutionStorageCredential(): %v", err)
+	}
+	defer resolved.Destroy()
+	if resolved.StorageCredentialID != "storage-exec-1" || resolved.Provider != "OSS" || resolved.Revision != 1 ||
+		resolved.AccessKeyCredentialID != "storage-envelope-access-1" || resolved.SecretKeyCredentialID != "storage-envelope-secret-1" {
+		t.Fatalf("ResolveExecutionStorageCredential() = %#v", resolved)
+	}
+	// 本地输出任务：空结构、无错误，调用方据此跳过存储注入。
+	localSubmission := validTaskSubmission("task-local-1")
+	if err := s.SubmitTask(ctx, localSubmission); err != nil {
+		t.Fatalf("SubmitTask(local): %v", err)
+	}
+	localClaim := validClaim("execution-local-1", "lease-local-1", "event-local-1", "request-local-1")
+	localClaim.TaskID = "task-local-1"
+	if err := s.ClaimTask(ctx, localClaim); err != nil {
+		t.Fatalf("ClaimTask(local): %v", err)
+	}
+	local, err := s.ResolveExecutionStorageCredential(ctx, ExecutionSecretResolutionRequest{
+		AgentID: "agent-1", ExecutionID: "execution-local-1", LeaseID: "lease-local-1", LeaseEpoch: 1,
+		EnvelopeDigest: strings.Repeat("a", 64), RequestID: "request-resolve-2", RequestDigest: strings.Repeat("c", 64),
+		Now: testTime.Add(4 * time.Minute),
+	})
+	if err != nil || local.StorageCredentialID != "" {
+		t.Fatalf("local ResolveExecutionStorageCredential() = %#v, %v", local, err)
+	}
 }
 
 func seedBaseFixture(t *testing.T, store *Store) {
@@ -2555,5 +3046,76 @@ func TestDataSourceSysCredentialLifecycle(t *testing.T) {
 	}
 	if _, err := store.UpdateDataSource(ctx, conflict); err == nil {
 		t.Fatal("UpdateDataSource() must reject clearing and rotating sys credential at once")
+	}
+}
+
+// TestExportConfigTemplateLifecycle 验证 EX-I8 模板复用存储生命周期：
+// 创建/幂等重放/列表/授权读取/改名/删除/越权与版本冲突负例。
+func TestExportConfigTemplateLifecycle(t *testing.T) {
+	t.Parallel()
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	if err := s.EnsureAuthSubject(ctx, AuthSubject{SubjectID: "subject-1", ExternalSubject: "external-1", DisplayName: "Synthetic User", AccountStatus: "ACTIVE", CreatedAt: testTime, UpdatedAt: testTime}); err != nil {
+		t.Fatalf("EnsureAuthSubject(): %v", err)
+	}
+	created, err := s.CreateExportConfigTemplate(ctx, ExportConfigTemplateCreate{
+		ExportConfigTemplate: ExportConfigTemplate{
+			TemplateID: "template-1", OwnerSubjectID: "subject-1", DisplayName: "合成 CSV 模板",
+			CapabilityVersion: "export-odp-full-csv-v1", ConfigJSON: `{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}`,
+			ConfigFingerprint: testFingerprint, CreatedAt: testTime, UpdatedAt: testTime,
+		},
+		RequestID: "request-template-1", IdempotencyKey: "idem-template-1", RequestDigest: strings.Repeat("a", 64),
+	})
+	if err != nil || created.TemplateID != "template-1" || created.Replayed {
+		t.Fatalf("CreateExportConfigTemplate() = %#v, %v", created, err)
+	}
+	replayed, err := s.CreateExportConfigTemplate(ctx, ExportConfigTemplateCreate{
+		ExportConfigTemplate: ExportConfigTemplate{
+			TemplateID: "template-1b", OwnerSubjectID: "subject-1", DisplayName: "合成 CSV 模板",
+			CapabilityVersion: "export-odp-full-csv-v1", ConfigJSON: `{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}`,
+			ConfigFingerprint: testFingerprint, CreatedAt: testTime, UpdatedAt: testTime,
+		},
+		RequestID: "request-template-1", IdempotencyKey: "idem-template-1", RequestDigest: strings.Repeat("a", 64),
+	})
+	if err != nil || !replayed.Replayed || replayed.TemplateID != "template-1" {
+		t.Fatalf("replayed template create = %#v, %v", replayed, err)
+	}
+	// 列表不返回配置 JSON；授权读取返回完整模板。
+	list, err := s.ListExportConfigTemplates(ctx, "subject-1")
+	if err != nil || len(list) != 1 || list[0].DisplayName != "合成 CSV 模板" || list[0].ConfigJSON != "" {
+		t.Fatalf("ListExportConfigTemplates() = %#v, %v", list, err)
+	}
+	got, err := s.GetAuthorizedExportConfigTemplate(ctx, "template-1", "subject-1")
+	if err != nil || got.ConfigJSON == "" {
+		t.Fatalf("GetAuthorizedExportConfigTemplate() = %#v, %v", got, err)
+	}
+	// 越权与不存在同错误。
+	if _, err := s.GetAuthorizedExportConfigTemplate(ctx, "template-1", "subject-other"); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("foreign template read error = %v, want ErrDataSourceNotFound", err)
+	}
+	// 改名与版本冲突。
+	revision, err := s.UpdateExportConfigTemplate(ctx, ExportConfigTemplateUpdate{
+		TemplateID: "template-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		DisplayName: "改名后的模板", RequestID: "request-template-2", UpdatedAt: testTime,
+	})
+	if err != nil || revision != 2 {
+		t.Fatalf("UpdateExportConfigTemplate() = %d, %v", revision, err)
+	}
+	if _, err := s.UpdateExportConfigTemplate(ctx, ExportConfigTemplateUpdate{
+		TemplateID: "template-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		DisplayName: "再次改名", RequestID: "request-template-3", UpdatedAt: testTime,
+	}); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale rename error = %v, want ErrRevisionConflict", err)
+	}
+	// 越权删除失败关闭；所有者删除成功。
+	if err := s.DeleteExportConfigTemplate(ctx, "template-1", "subject-other", 2, "request-template-4", testTime); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("foreign delete error = %v, want ErrDataSourceNotFound", err)
+	}
+	if err := s.DeleteExportConfigTemplate(ctx, "template-1", "subject-1", 2, "request-template-5", testTime); err != nil {
+		t.Fatalf("DeleteExportConfigTemplate() = %v", err)
+	}
+	left, err := s.ListExportConfigTemplates(ctx, "subject-1")
+	if err != nil || len(left) != 0 {
+		t.Fatalf("list after delete = %#v, %v", left, err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/outputpath"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 // PrecheckClaimNext 是 Agent 请求服务端原子领取下一条固定 EXPORT_PREFLIGHT 的最小输入。
@@ -37,6 +38,7 @@ type PrecheckGrant struct {
 // PrecheckExecutionContext 是控制面从冻结草稿和节点声明派生的固定本地检查输入。
 // Agent 必须按原样使用它，不能通过命令行、本地环境或浏览器请求覆盖数据库对象、路径或根目录。
 // Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
+// EX-I6：对象存储输出通过 OutputKind + StorageTarget 表达受控 URI 与 --tmp-path；本地输出缺省。
 type PrecheckExecutionContext struct {
 	CompatibilityMode string
 	Database          string
@@ -47,6 +49,17 @@ type PrecheckExecutionContext struct {
 	SkipCheckDir      bool
 	TargetPlatform    commandgen.Platform
 	AllowedRoots      []string
+	OutputKind        agentpreflight.OutputKind
+	StorageTarget     *PrecheckStorageTarget
+}
+
+// PrecheckStorageTarget 是预检查协议中的对象存储目标段；
+// URI 为受控存储 URI（无密钥参数），Endpoint 由控制面解析（可空），TmpPath 为 --tmp-path（可空）。
+type PrecheckStorageTarget struct {
+	Provider string
+	URI      string
+	Endpoint string
+	TmpPath  string
 }
 
 // PrecheckLeaseAcknowledgement 是 Agent 对一个已领取预检查租约的固定确认输入。
@@ -85,11 +98,33 @@ type PrecheckSecretSlotRequest struct {
 
 // DatabaseConnectionSlot 是 Agent 只在内存中使用的短时数据库连接槽位。
 // Username 和 Password 必须由调用方在 JDBC 探针返回后立即清零，不能放入状态文件、日志或环境变量。
+// StorageCredential 是 EX-I6 对象存储任务的短时凭据槽位（本地输出任务为空）。
 type DatabaseConnectionSlot struct {
-	Host     string
-	Port     int
-	Username []byte
-	Password []byte
+	Host              string
+	Port              int
+	Username          []byte
+	Password          []byte
+	StorageCredential *StorageCredentialSlot
+}
+
+// StorageCredentialSlot 是 Agent 只在内存中使用的短时对象存储凭据槽位。
+// AccessKey 与 SecretKey 绝不能进入状态文件、日志、argv 或环境变量；
+// Agent 只在 execution 私有目录生成 core-site.xml 并通过 HADOOP_CONF_DIR 短时注入。
+type StorageCredentialSlot struct {
+	Provider  string
+	AccessKey []byte
+	SecretKey []byte
+}
+
+// Destroy 尽力清除短时存储凭据字节。
+func (s *StorageCredentialSlot) Destroy() {
+	if s == nil {
+		return
+	}
+	credential.Zero(s.AccessKey)
+	credential.Zero(s.SecretKey)
+	s.AccessKey = nil
+	s.SecretKey = nil
 }
 
 // Destroy 尽力清除短时数据库连接凭据，减少它们在普通 Agent 逻辑中继续存活的机会。
@@ -101,6 +136,10 @@ func (s *DatabaseConnectionSlot) Destroy() {
 	credential.Zero(s.Password)
 	s.Username = nil
 	s.Password = nil
+	if s.StorageCredential != nil {
+		s.StorageCredential.Destroy()
+		s.StorageCredential = nil
+	}
 }
 
 // PrecheckState 表示控制面确认的预检查终态。
@@ -207,6 +246,16 @@ type precheckExecutionContextPayload struct {
 	SkipCheckDir      bool     `json:"skipCheckDir"`
 	TargetPlatform    string   `json:"targetPlatform"`
 	AllowedRoots      []string `json:"allowedRoots"`
+	// EX-I6：对象存储输出附带的受控存储目标段；本地输出缺省。
+	OutputKind    string                        `json:"outputKind"`
+	StorageTarget *precheckStorageTargetPayload `json:"storageTarget"`
+}
+
+type precheckStorageTargetPayload struct {
+	Provider string `json:"provider"`
+	URI      string `json:"uri"`
+	Endpoint string `json:"endpoint"`
+	TmpPath  string `json:"tmpPath"`
 }
 
 type precheckClaimResponsePayload struct {
@@ -569,7 +618,7 @@ func (p precheckBindingPayload) toBinding() agentstate.PrecheckBinding {
 }
 
 func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
-	return PrecheckExecutionContext{
+	context := PrecheckExecutionContext{
 		CompatibilityMode: p.CompatibilityMode,
 		Database:          p.Database,
 		Objects:           append([]string(nil), p.Objects...),
@@ -579,7 +628,12 @@ func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
 		SkipCheckDir:      p.SkipCheckDir,
 		TargetPlatform:    commandgen.Platform(p.TargetPlatform),
 		AllowedRoots:      append([]string(nil), p.AllowedRoots...),
+		OutputKind:        agentpreflight.OutputKind(p.OutputKind),
 	}
+	if p.StorageTarget != nil {
+		context.StorageTarget = &PrecheckStorageTarget{Provider: p.StorageTarget.Provider, URI: p.StorageTarget.URI, Endpoint: p.StorageTarget.Endpoint, TmpPath: p.StorageTarget.TmpPath}
+	}
+	return context
 }
 
 func (p *precheckSecretSlotResponsePayload) destroy() {
@@ -617,19 +671,79 @@ func validPrecheckCompletion(input PrecheckCompletion) bool {
 	if !validOpaqueValue(input.BootID, 256) || !validPrecheckPathID(input.PrecheckID) || !validOpaqueValue(input.LeaseID, 256) || input.LeaseEpoch < 1 || !validOpaqueValue(input.BindingDigest, 256) || input.SentAt.IsZero() || input.Report.PrecheckID != input.PrecheckID {
 		return false
 	}
-	return agentpreflight.ValidateReport(input.Report) == nil
+	// Agent 客户端无法得知控制面按输出类型选择的检查形态，
+	// 这里只做结构复核（六项、受控检查名/状态/证据码、无重复、成功结论一致）；
+	// 顺序与形态的权威校验由控制面在完成端点上按冻结绑定执行。
+	return validLenientReport(input.Report)
+}
+
+// validLenientReport 复核报告的结构安全，不假设具体检查清单顺序。
+func validLenientReport(report agentpreflight.Report) bool {
+	if len(report.Results) != 6 {
+		return false
+	}
+	seen := make(map[agentpreflight.CheckID]bool, len(report.Results))
+	succeeded := true
+	for _, result := range report.Results {
+		if !validPrecheckCheckID(result.Check) || seen[result.Check] || !validPrecheckResultStatus(result.Status) || !precheckcontract.ValidResult(string(result.Check), string(result.Status), result.EvidenceCode) {
+			return false
+		}
+		seen[result.Check] = true
+		if result.Status != agentpreflight.StatusPassed {
+			succeeded = false
+		}
+	}
+	return report.Succeeded == succeeded
+}
+
+// validPrecheckCheckID 只接受固定六项与两项存储检查的受控检查名。
+func validPrecheckCheckID(check agentpreflight.CheckID) bool {
+	switch check {
+	case agentpreflight.CheckDatabaseConnectivity, agentpreflight.CheckObjectAccess, agentpreflight.CheckToolEnvironment,
+		agentpreflight.CheckOutputPath, agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace,
+		agentpreflight.CheckStorageConnectivity, agentpreflight.CheckStorageAuth:
+		return true
+	default:
+		return false
+	}
+}
+
+// validPrecheckResultStatus 只接受三种受控结论。
+func validPrecheckResultStatus(status agentpreflight.Status) bool {
+	return status == agentpreflight.StatusPassed || status == agentpreflight.StatusFailed || status == agentpreflight.StatusUnknown
 }
 
 func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
-	if !validOpaqueValue(grant.PrecheckID, 256) || !validOpaqueValue(grant.LeaseID, 256) || grant.LeaseEpoch < 1 || grant.ExpiresAt.IsZero() || !validOpaqueValue(grant.BindingDigest, 256) || !validPrecheckBinding(grant.Binding) || !validPrecheckCheckSet(grant.CheckSet) {
+	if !validOpaqueValue(grant.PrecheckID, 256) || !validOpaqueValue(grant.LeaseID, 256) || grant.LeaseEpoch < 1 || grant.ExpiresAt.IsZero() || !validOpaqueValue(grant.BindingDigest, 256) || !validPrecheckBinding(grant.Binding) || !validPrecheckCheckSet(grant.Context.OutputKind, grant.CheckSet) {
 		return false
 	}
 	return grant.Binding.PrecheckID == grant.PrecheckID && grant.Binding.NodeID == nodeID && validPrecheckExecutionContext(grant.Context)
 }
 
 func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
-	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validPrecheckContentKind(context.ContentKind) || len(context.Objects) > 100 || !validExportOutputPath(context.TargetPlatform, context.OutputPath) || (context.LogPath != "" && !validExportOutputPath(context.TargetPlatform, context.LogPath)) || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
+	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validPrecheckContentKind(context.ContentKind) || len(context.Objects) > 100 || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
 		return false
+	}
+	// EX-I6：缺省输出类型保持本地语义；对象存储输出必须携带受控存储目标段，
+	// 路径字段承载受控 URI 且不携带本地日志路径。
+	if context.OutputKind == "" {
+		context.OutputKind = agentpreflight.OutputKindLocal
+	}
+	if context.OutputKind.IsStorageOutput() {
+		if context.StorageTarget == nil || context.StorageTarget.Provider != string(context.OutputKind) ||
+			!validStorageURI(context.StorageTarget.URI) || !validStorageURI(context.OutputPath) || context.LogPath != "" {
+			return false
+		}
+		if context.StorageTarget.Endpoint != "" && !validStorageURI(context.StorageTarget.Endpoint) {
+			return false
+		}
+		if context.StorageTarget.TmpPath != "" && !validExportOutputPath(context.TargetPlatform, context.StorageTarget.TmpPath) {
+			return false
+		}
+	} else {
+		if context.StorageTarget != nil || !validExportOutputPath(context.TargetPlatform, context.OutputPath) || (context.LogPath != "" && !validExportOutputPath(context.TargetPlatform, context.LogPath)) {
+			return false
+		}
 	}
 	for _, object := range context.Objects {
 		if !validOpaqueValue(object, 256) {
@@ -642,6 +756,12 @@ func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
 		}
 	}
 	return true
+}
+
+// validStorageURI 只做结构失败关闭：非空、长度上限且不含控制字符。
+// 受控 URI 的 scheme/参数白名单由控制面在草稿创建时校验，Agent 不重新解释 URI 语义。
+func validStorageURI(value string) bool {
+	return value != "" && len(value) <= 4096 && !strings.ContainsAny(value, "\x00\r\n")
 }
 
 // validPrecheckContentKind 只接受控制面已确认的三种导出内容类型。
@@ -665,7 +785,25 @@ func validDatabaseConnectionSlot(connection DatabaseConnectionSlot) bool {
 			return false
 		}
 	}
-	return !containsForbiddenSecretByte(connection.Username) && !containsForbiddenSecretByte(connection.Password)
+	if containsForbiddenSecretByte(connection.Username) || containsForbiddenSecretByte(connection.Password) {
+		return false
+	}
+	// EX-I6：对象存储任务附带的短时凭据段必须在协议层校验，失败关闭不能留到 worker 生成配置时才发现。
+	return connection.StorageCredential == nil || validStorageCredentialSlot(*connection.StorageCredential)
+}
+
+// validStorageCredentialSlot 只接受四种受控 provider 的完整密钥对。
+// 密钥禁止回车、换行与 NUL（core-site.xml 值区不可承载），长度与数据库密码同口径上限。
+func validStorageCredentialSlot(slot StorageCredentialSlot) bool {
+	switch slot.Provider {
+	case "OSS", "S3", "COS", "OBS":
+	default:
+		return false
+	}
+	if len(slot.AccessKey) == 0 || len(slot.AccessKey) > 4096 || len(slot.SecretKey) == 0 || len(slot.SecretKey) > 4096 {
+		return false
+	}
+	return !containsForbiddenSecretByte(slot.AccessKey) && !containsForbiddenSecretByte(slot.SecretKey)
 }
 
 func containsForbiddenSecretByte(value []byte) bool {
@@ -681,12 +819,15 @@ func validPrecheckBinding(binding agentstate.PrecheckBinding) bool {
 	return validOpaqueValue(binding.PrecheckID, 256) && validOpaqueValue(binding.NodeID, 256) && binding.DraftRevision > 0 && validOpaqueValue(binding.ConfigFingerprint, 256) && binding.CredentialRevision > 0 && binding.NodeFactsVersion > 0
 }
 
-func validPrecheckCheckSet(checkSet []agentpreflight.CheckID) bool {
-	fixedChecks := agentpreflight.FixedChecks()
-	if len(checkSet) != len(fixedChecks) {
+func validPrecheckCheckSet(kind agentpreflight.OutputKind, checkSet []agentpreflight.CheckID) bool {
+	if kind == "" {
+		kind = agentpreflight.OutputKindLocal
+	}
+	expected := agentpreflight.ChecksForOutputKind(kind)
+	if len(checkSet) != len(expected) {
 		return false
 	}
-	for index, check := range fixedChecks {
+	for index, check := range expected {
 		if checkSet[index] != check {
 			return false
 		}

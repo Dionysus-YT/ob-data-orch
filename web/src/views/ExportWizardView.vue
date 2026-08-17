@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { browserApi, dataSourceErrorMessage, exportDraftErrorMessage, type CommandPreview, type CompressionAlgo, type CsvQuoteMode, type DataSourceSummary, type ExecutionNodeCandidate, type ExportContentKind, type ExportDataFormatKind, type ExportDraft, type ExportObjectType, type ExportOutputKind, type ExportScopeKind, type Precheck, type PrecheckResult } from '@/api/browser'
+import { browserApi, dataSourceErrorMessage, exportDraftErrorMessage, storageCredentialErrorMessage, type CommandPreview, type CompressionAlgo, type CsvQuoteMode, type DataSourceSummary, type ExecutionNodeCandidate, type ExportContentKind, type ExportDataFormatKind, type ExportDraft, type ExportObjectType, type ExportOutputKind, type ExportScopeKind, type Precheck, type PrecheckResult, type StorageCredentialListItem } from '@/api/browser'
 import EmptyState from '@/components/EmptyState.vue'
 import WizardFrame from '@/components/WizardFrame.vue'
 import { isExportEligibleDataSource } from './exportDataSourceEligibility'
@@ -58,6 +58,12 @@ const storagePath = ref('')
 const storageEndpoint = ref('')
 const storageRegion = ref('')
 const tmpPath = ref('')
+// EX-I6 存储凭据槽位（2026-08-14）：对象存储输出可选绑定主体拥有的凭据引用。
+// 只保存标识与当前修订；密钥永远由任务级安全槽位解析，不会进入页面状态或草稿。
+const storageCredentials = ref<StorageCredentialListItem[]>([])
+const loadingStorageCredentials = ref(false)
+const storageCredentialLoadFailure = ref('')
+const storageCredentialID = ref('')
 // EX-I4 POS 定版（2026-08-07 实测）：控制文件目录（--ctl-path），仅 POS 格式使用。
 const controlFilePath = ref('')
 // EX-I3 选项状态。
@@ -176,18 +182,31 @@ const displayedNode = computed(() => {
   return nodes.value.find((node) => node.id === nodeID)
 })
 const precheckRunning = computed(() => activePrecheck.value?.status === 'PENDING' || activePrecheck.value?.status === 'LEASED' || (Boolean(precheckID.value) && !activePrecheck.value && !precheckFailure.value))
-// EX-I6 门禁（2026-08-10）：对象存储输出的存储专用预检查（凭据、网络、权限、空间）尚未完成，
-// 固定预检查与提交保持功能门禁阻断，不把存储 URI 伪装成本地路径进入固定预检查。
-const storagePrecheckBlocked = computed(() => outputKind.value !== 'LOCAL')
-const precheckRows = computed(() => fixedPrecheckChecks.map((check) => ({
-  check,
-  result: activePrecheck.value?.results.find((result) => result.check === check),
-})))
+// EX-I6 存储专用预检查（2026-08-14）：对象存储草稿可以发起预检查；
+// 检查清单切换为存储形态，端点连通性与凭据有效性两项未授权探测保持 UNKNOWN，
+// 提交按结果失败关闭（真实探测归 EX-V1）。
+const storageOutput = computed(() => outputKind.value !== 'LOCAL')
+// EX-I6 存储凭据槽位：只列出与当前输出类型同 provider 的凭据；不指定则依赖 Hadoop 标准配置链。
+const matchingStorageCredentials = computed(() => storageCredentials.value.filter((credential) => credential.provider === outputKind.value))
+const selectedStorageCredential = computed(() => storageCredentials.value.find((credential) => credential.id === storageCredentialID.value))
+const precheckRows = computed(() => {
+  // 预检查清单由服务端按输出类型确定：有结果时按服务端顺序展示，未执行时显示本地冻结六项。
+  const checks = activePrecheck.value && activePrecheck.value.results.length > 0 ? activePrecheck.value.results.map((result) => result.check) : fixedPrecheckChecks
+  return checks.map((check) => ({
+    check,
+    result: activePrecheck.value?.results.find((result) => result.check === check),
+  }))
+})
 const blockingPrecheckRows = computed(() => precheckRows.value.filter((row) => precheckResultBlocksSubmission(row.result)))
-const canSubmit = computed(() => activePrecheck.value?.status === 'SUCCEEDED' && activePrecheck.value.integrityStatus === 'COMPLETE' && Boolean(currentDraft.value) && !submitting.value && !storagePrecheckBlocked.value)
+const canSubmit = computed(() => activePrecheck.value?.status === 'SUCCEEDED' && activePrecheck.value.integrityStatus === 'COMPLETE' && Boolean(currentDraft.value) && !submitting.value)
 const footerBaselineNote = computed(() => {
-	if (activeStep.value === 6) return storagePrecheckBlocked.value ? '对象存储输出的存储专用预检查（凭据、网络、权限、空间）尚未完成，当前不能发起预检查或提交。' : (canSubmit.value ? '预检查已通过。提交后，所选 Agent 将领取已冻结的导出任务并启动 OBDUMPER。' : (currentDraft.value ? '草稿已保存；请先完成当前版本的固定预检查，提交后才会启动 OBDUMPER。' : '尚未读取草稿；请返回上一步完成固定字段并创建草稿。'))
-  return '仅在固定字段完整时才创建草稿；服务端会再次校验数据源和节点授权。'
+	if (activeStep.value === 6) {
+		if (storageOutput.value && blockingPrecheckRows.value.some((row) => row.check === 'STORAGE_CONNECTIVITY' || row.check === 'STORAGE_AUTH')) {
+			return '对象存储输出需要存储端点连通性与凭据有效性两项预检查通过后才能提交；这两项探测尚未授权（归 EX-V1 排期），当前保持未完成。'
+		}
+		return canSubmit.value ? '预检查已通过。提交后，所选 Agent 将领取已冻结的导出任务并启动 OBDUMPER。' : (currentDraft.value ? '草稿已保存；请先完成当前版本的固定预检查，提交后才会启动 OBDUMPER。' : '尚未读取草稿；请返回上一步完成固定字段并创建草稿。')
+	}
+	return '仅在固定字段完整时才创建草稿；服务端会再次校验数据源和节点授权。'
 })
 const objectInputMessage = computed(() => {
   if (!database.value.trim()) return '请填写默认数据库或 Schema。'
@@ -227,6 +246,9 @@ const draftValidation = computed(() => validateExportDraftInput({
   storageEndpoint: storageEndpoint.value,
   storageRegion: storageRegion.value,
   tmpPath: tmpPath.value,
+  storageCredentialId: storageCredentialID.value,
+  storageCredentialRevision: selectedStorageCredential.value?.currentRevision ?? 0,
+  storageCredentialProvider: selectedStorageCredential.value?.provider ?? '',
   controlFilePath: controlFilePath.value,
   skipHeader: skipHeader.value,
   columnSeparator: columnSeparator.value,
@@ -276,6 +298,7 @@ const draftValidation = computed(() => validateExportDraftInput({
 }))
 const draftInput = computed(() => draftValidation.value.valid ? draftValidation.value.input : undefined)
 const draftValidationMessage = computed(() => draftValidation.value.valid ? '' : draftValidation.value.message)
+const derivedDraftBindingLocked = computed(() => currentDraft.value !== null && typeof route.query.draft === 'string' && route.query.draft === currentDraft.value.id)
 const canAdvance = computed(() => {
   if (activeStep.value === 1) return Boolean(selectedSource.value)
   if (activeStep.value === 2) return Boolean(selectedSource.value) && !objectInputMessage.value
@@ -299,6 +322,7 @@ const outputPathPlaceholder = computed(() => selectedNode.value?.platform === 'W
 let precheckPollTimer: ReturnType<typeof setTimeout> | undefined
 let precheckPollResolve: (() => void) | undefined
 let precheckPollVersion = 0
+let hydratingDerivedDraft = false
 
 // clearGatedParameters 清除尚未完成专用预检查的开关，避免状态切换后留下可提交残留。
 function clearGatedParameters() {
@@ -331,6 +355,7 @@ function clearUnverifiedTimestampFormats() {
 }
 
 watch(selectedSource, (source, previousSource) => {
+  if (hydratingDerivedDraft) return
   if (source?.id === previousSource?.id) return
   database.value = source?.defaultDatabase ?? ''
   scopeKind.value = 'SPECIFIED'
@@ -340,15 +365,23 @@ watch(selectedSource, (source, previousSource) => {
   contentKind.value = 'DATA_ONLY'
   clearGatedParameters()
   clearTimestampFormats()
-  clearDraftState()
+  invalidateDraftState()
 })
 
-watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema, compactSchema, addExtraMessage, partition, excludeDataTypes, enableHiddenPk, dateValueFormat, timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat, timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat], () => {
+watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, storageCredentialID, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema, compactSchema, addExtraMessage, partition, excludeDataTypes, enableHiddenPk, dateValueFormat, timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat, timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat], () => {
+  if (hydratingDerivedDraft) return
   // 任一配置变化都会作废已创建草稿并清除服务端错误提示。
-  clearDraftState()
+  invalidateDraftState()
 }, { deep: true })
 
+// EX-I6 存储凭据槽位：切换输出类型时清除凭据引用，避免跨 provider 或本地输出残留绑定。
+watch(outputKind, () => {
+  if (hydratingDerivedDraft) return
+  storageCredentialID.value = ''
+})
+
 watch(scopeKind, (kind) => {
+  if (hydratingDerivedDraft) return
   if (kind === 'ALL') excludeTablesText.value = ''
   clearGatedParameters()
   // 条件筛选只可随指定表发送，切到全部对象或已选视图时清除残留。
@@ -359,6 +392,7 @@ watch(scopeKind, (kind) => {
 })
 
 watch(objectType, (type, previousType) => {
+  if (hydratingDerivedDraft) return
   clearGatedParameters()
   if (type === 'VIEW') {
     where.value = ''
@@ -371,14 +405,17 @@ watch(objectType, (type, previousType) => {
 
 // 紧凑 Schema 失去表 DDL 前提时立即清值，避免隐藏残留进入草稿构造。
 watch(compactSchemaSupported, (supported) => {
+  if (hydratingDerivedDraft) return
   if (!supported) compactSchema.value = false
 })
 
 // 分区筛选失去指定表数据前提时立即清值；时间格式仅保留 MySQL 的两个已验证字段。
 watch(partitionSupported, (supported) => {
+  if (hydratingDerivedDraft) return
   if (!supported) partition.value = ''
 })
 watch(timestampFormatsSupported, (supported) => {
+  if (hydratingDerivedDraft) return
   clearUnverifiedTimestampFormats()
   if (!supported) {
     dateValueFormat.value = ''
@@ -387,6 +424,7 @@ watch(timestampFormatsSupported, (supported) => {
 }, { immediate: true })
 
 watch(compress, (enabled) => {
+  if (hydratingDerivedDraft) return
   // 取消压缩时清除算法与等级值，避免禁用态控件保留旧值造成校验死锁。
   if (!enabled) {
     compressionAlgo.value = ''
@@ -396,10 +434,12 @@ watch(compress, (enabled) => {
 
 // 切换压缩算法时清除不适用或越界的等级值（gzip/snappy 不支持等级）。
 watch(compressionAlgo, (algo) => {
+  if (hydratingDerivedDraft) return
   if (algo === 'gzip' || algo === 'snappy') compressionLevel.value = ''
 })
 
 watch(contentKind, (kind) => {
+  if (hydratingDerivedDraft) return
   clearGatedParameters()
   if (kind === 'DDL_ONLY') {
     // 仅 DDL 时清除数据专属选项，避免残留值进入下一个草稿。
@@ -452,6 +492,7 @@ watch(contentKind, (kind) => {
 
 // 切换数据格式时清空不适用格式的选项，避免残留值进入下一个草稿。
 watch(formatKind, (kind, previousKind) => {
+  if (hydratingDerivedDraft) return
   if (kind === previousKind) return
   // 离开 CSV：只清 CSV 专属序列化选项；文件布局、筛选与性能选项官方不限定格式，切换后保留。
   if (kind !== 'CSV') {
@@ -479,10 +520,151 @@ watch(formatKind, (kind, previousKind) => {
 })
 
 onMounted(() => {
-  void loadSources()
-  void loadNodeCandidates()
+  void initializeWizard()
 })
+
+// initializeWizard 先加载回填所需的引用数据，再处理派生草稿，避免数据源列表迟到触发 watcher 清空来源关系。
+async function initializeWizard() {
+  await Promise.all([loadSources(), loadNodeCandidates(), loadStorageCredentials()])
+  // EX-I8：派生草稿入口（基于原配置新建/从头重新执行）通过 ?draft=<id>&step=N 加载；
+  // 从头重新执行直接进入预检查步骤（服务端在提交时强制参数不可变）。
+  const derivedDraftID = typeof route.query.draft === 'string' ? route.query.draft : ''
+  if (derivedDraftID) await loadDerivedDraft(derivedDraftID)
+}
 onBeforeUnmount(stopPrecheckPolling)
+
+// loadDerivedDraft 加载派生草稿：回填向导表单（可编辑），并读取命令预览与草稿状态。
+async function loadDerivedDraft(draftID: string) {
+  loadingDraft.value = true
+  draftLoadFailure.value = ''
+  try {
+    const draft = await api.getExportDraft(draftID)
+    if (typeof route.query.draft !== 'string' || route.query.draft !== draftID) return
+    hydratingDerivedDraft = true
+    try {
+      populateFormFromDraft(draft)
+      // Vue 默认在下一轮刷新 watcher；保持 hydration 标记直到本轮 watcher 全部跳过。
+      await nextTick()
+    } finally {
+      hydratingDerivedDraft = false
+    }
+    createdDraftID.value = draftID
+    currentDraft.value = draft
+    draftNotice.value = '已加载来源任务派生的草稿；基于原配置新建可以修改参数，从头重新执行不允许修改参数（提交时由服务端复验）。'
+    await loadCommandPreview(draft)
+  } catch (error) {
+    draftLoadFailure.value = exportDraftErrorMessage(error, '无法读取派生草稿。')
+  } finally {
+    loadingDraft.value = false
+  }
+}
+
+// populateFormFromDraft 把服务端冻结配置回填到向导表单（纯展示映射，不改变语义）。
+function populateFormFromDraft(draft: ExportDraft) {
+  const config = draft.config
+  selectedDataSourceID.value = draft.dataSourceId
+  selectedNodeID.value = draft.nodeId
+  database.value = config.objectScope.database
+  scopeKind.value = config.objectScope.scopeKind
+  objectType.value = config.objectScope.objectTypes?.[0] ?? 'TABLE'
+  objectNames.value = (config.objectScope.expressions ?? []).map((expression) => expression.name)
+  if (objectNames.value.length === 0) objectNames.value = ['']
+  excludeTablesText.value = (config.objectScope.excludeTables ?? []).join(',')
+  contentKind.value = config.contentSelection.contentKind
+  formatKind.value = config.dataFormat?.formatKind ?? 'CSV'
+  const output = config.outputConfig
+  filePath.value = output.outputKind === 'LOCAL' ? output.filePath : ''
+  logPath.value = output.logPath ?? ''
+  skipCheckDir.value = output.skipCheckDir ?? false
+  noNestedDir.value = output.noNestedDir ?? false
+  maxFileSize.value = output.maxFileSize !== undefined ? String(output.maxFileSize) : ''
+  retainEmptyFiles.value = output.retainEmptyFiles ?? false
+  compress.value = output.compress ?? false
+  compressionAlgo.value = output.compressionAlgo ?? ''
+  compressionLevel.value = output.compressionLevel !== undefined ? String(output.compressionLevel) : ''
+  controlFilePath.value = output.controlFilePath ?? ''
+  tmpPath.value = output.tmpPath ?? ''
+  if (output.outputKind !== 'LOCAL') {
+    outputKind.value = output.outputKind
+    const parsed = parseControlledStorageURI(output.filePath)
+    storageBucket.value = parsed.bucket
+    storagePath.value = parsed.path
+    storageEndpoint.value = parsed.endpoint
+    storageRegion.value = parsed.region
+    storageCredentialID.value = output.storageCredential?.storageCredentialId ?? ''
+  }
+  const csv = config.dataFormat?.csvOptions
+  if (csv) {
+    skipHeader.value = csv.skipHeader ?? false
+    columnSeparator.value = csv.columnSeparator ?? ''
+    columnQuote.value = csv.columnQuote ?? ''
+    columnQuoteMode.value = csv.columnQuoteMode ?? ''
+    escapeCharacter.value = csv.escapeCharacter ?? ''
+    lineSeparator.value = csv.lineSeparator ?? ''
+    nullString.value = csv.nullString ?? ''
+    fileEncoding.value = csv.fileEncoding ?? ''
+    withTrim.value = csv.withTrim ?? false
+    columnSplitter.value = csv.columnSplitter ?? ''
+  }
+  const cut = config.dataFormat?.cutOptions
+  if (cut) {
+    trailDelimiter.value = cut.trailDelimiter ?? false
+    removeNewline.value = cut.removeNewline ?? false
+  }
+  const formats = config.dataFormat?.timestampFormats
+  if (formats) {
+    dateValueFormat.value = formats.dateValueFormat ?? ''
+    datetimeValueFormat.value = formats.datetimeValueFormat ?? ''
+  }
+  const filter = config.filterConfig
+  if (filter) {
+    querySql.value = filter.querySql ?? ''
+    where.value = filter.where ?? ''
+    includeColumnNames.value = (filter.includeColumnNames ?? []).join(',')
+    excludeColumnNames.value = (filter.excludeColumnNames ?? []).join(',')
+    excludeVirtualColumns.value = filter.excludeVirtualColumns ?? false
+    flashbackScn.value = filter.flashbackScn !== undefined ? String(filter.flashbackScn) : ''
+    flashbackTimestamp.value = filter.flashbackTimestamp ?? ''
+    snapshot.value = filter.snapshot ?? false
+    partition.value = filter.partition ?? ''
+    excludeDataTypes.value = (filter.excludeDataTypes ?? []).join(',')
+  }
+  const performance = config.performanceConfig
+  if (performance) {
+    thread.value = performance.thread !== undefined ? String(performance.thread) : ''
+    pageSize.value = performance.pageSize !== undefined ? String(performance.pageSize) : ''
+    parallelMacro.value = performance.parallelMacro !== undefined ? String(performance.parallelMacro) : ''
+    fetchSize.value = performance.fetchSize !== undefined ? String(performance.fetchSize) : ''
+    jvmMemory.value = performance.jvmMemory ?? ''
+    blockSize.value = performance.blockSize ?? ''
+  }
+  const ddl = config.ddlBehavior
+  if (ddl) {
+    dropObject.value = ddl.dropObject ?? false
+    retainSchema.value = ddl.retainSchema ?? false
+    compactSchema.value = ddl.compactSchema ?? false
+  }
+}
+
+// parseControlledStorageURI 把向导生成的受控 URI 还原为表单字段（与 buildOutputFilePath 互为逆操作）。
+function parseControlledStorageURI(uri: string): { bucket: string; path: string; endpoint: string; region: string } {
+  const schemeIndex = uri.indexOf('://')
+  const queryIndex = uri.indexOf('?')
+  const authority = uri.slice(schemeIndex + 3, queryIndex >= 0 ? queryIndex : undefined)
+  const slashIndex = authority.indexOf('/')
+  const bucket = slashIndex >= 0 ? authority.slice(0, slashIndex) : authority
+  const path = slashIndex >= 0 ? authority.slice(slashIndex) : '/'
+  let endpoint = ''
+  let region = ''
+  if (queryIndex >= 0) {
+    for (const pair of uri.slice(queryIndex + 1).split('&')) {
+      const [key, value] = pair.split('=')
+      if (key === 'endpoint') endpoint = decodeURIComponent(value ?? '')
+      if (key === 'region') region = decodeURIComponent(value ?? '')
+    }
+  }
+  return { bucket, path, endpoint, region }
+}
 
 async function loadSources() {
   loadingSources.value = true
@@ -510,6 +692,20 @@ async function loadNodeCandidates() {
   }
 }
 
+async function loadStorageCredentials() {
+  loadingStorageCredentials.value = true
+  storageCredentialLoadFailure.value = ''
+  try {
+    storageCredentials.value = await api.listStorageCredentials()
+    // 当前选择已被删除或轮换出列表时清除引用，避免提交陈旧绑定。
+    if (!storageCredentials.value.some((credential) => credential.id === storageCredentialID.value)) storageCredentialID.value = ''
+  } catch (error) {
+    storageCredentialLoadFailure.value = storageCredentialErrorMessage(error, '无法加载存储凭据，请稍后重试。')
+  } finally {
+    loadingStorageCredentials.value = false
+  }
+}
+
 function moveToStep(step: number) {
   void router.replace({ query: { ...route.query, step: String(step) } })
 }
@@ -529,8 +725,21 @@ function nextStep() {
 async function createDraft() {
   if (!draftInput.value) return
   creatingDraft.value = true
-  clearDraftState()
+  // EX-I8：已加载的派生草稿在步骤 5 保存时走更新路径，保留来源任务标记；
+  // 全新草稿仍走创建路径。
+  const existing = currentDraft.value
+  if (existing) invalidateDraftState()
+  else clearDraftState()
   try {
+    if (existing) {
+      const updated = await api.updateExportDraft({ ...existing, dataSourceId: draftInput.value.dataSourceId, nodeId: draftInput.value.nodeId, config: draftInput.value.config })
+      createdDraftID.value = updated.id
+      currentDraft.value = updated
+      draftNotice.value = '派生草稿已保存，正在重算命令预览。'
+      moveToStep(6)
+      await loadCommandPreview(updated)
+      return
+    }
     const draftID = await api.createExportDraft(draftInput.value)
     createdDraftID.value = draftID
     draftNotice.value = '导出草稿已创建，正在读取服务端配置快照。'
@@ -556,6 +765,18 @@ function clearDraftState() {
   precheckID.value = ''
   precheckFailure.value = ''
   submissionFailure.value = ''
+}
+
+// invalidateDraftState 清除旧预览与预检查；派生草稿保留资源标识，后续保存必须走更新接口，
+// 否则编辑后会退化成无来源关系的新草稿。
+function invalidateDraftState() {
+  const draft = currentDraft.value
+  const preserveDerivedDraft = draft !== null && typeof route.query.draft === 'string' && route.query.draft === draft.id
+  clearDraftState()
+  if (!preserveDerivedDraft || !draft) return
+  createdDraftID.value = draft.id
+  currentDraft.value = draft
+  draftNotice.value = '派生草稿包含未保存更改；保存后将保留来源任务关系并重算命令预览。'
 }
 
 async function loadCreatedDraft(draftID = createdDraftID.value) {
@@ -598,11 +819,6 @@ async function loadCommandPreview(draft = currentDraft.value) {
 
 async function startPrecheck() {
   if (!currentDraft.value || startingPrecheck.value || precheckRunning.value) return
-  // EX-I6 门禁：对象存储输出在存储专用预检查完成前不能进入只接受本地绝对路径的固定预检查。
-  if (storagePrecheckBlocked.value) {
-    precheckFailure.value = '对象存储输出的存储专用预检查（凭据、网络、权限、空间）尚未完成，当前不能发起固定预检查。'
-    return
-  }
   startingPrecheck.value = true
   precheckFailure.value = ''
   try {
@@ -755,13 +971,14 @@ function lastTestLabel(source: DataSourceSummary) {
         <EmptyState v-else-if="eligibleSources.length === 0" title="没有可选数据源" :description="sources.length === 0 ? '当前授权范围内没有数据源。请先登记数据源并完成一次成功的基础连接测试。' : '当前已授权数据源均未同时满足已启用和成功测试条件。请在数据源管理中完成受控测试并启用数据源。'" action="前往数据源管理" @action="router.push('/data-sources')" />
         <div v-else class="option-grid">
           <label v-for="source in eligibleSources" :key="source.id" class="option-card" :class="{ selected: selectedDataSourceID === source.id }">
-            <input v-model="selectedDataSourceID" type="radio" name="data-source" :value="source.id" />
+            <input v-model="selectedDataSourceID" type="radio" name="data-source" :value="source.id" :disabled="derivedDraftBindingLocked" />
             <strong>{{ source.displayName }}</strong>
             <span>{{ environmentLabel(source.environment) }} · 私有 ODP · {{ source.host }}:{{ source.port }}</span>
             <span>基础连接测试成功：{{ lastTestLabel(source) }}</span>
           </label>
         </div>
-        <p v-if="selectedSource" class="section-hint">已选择 {{ selectedSource.displayName }}。更换数据源会清除当前对象选择，并使已创建草稿不再代表当前页面配置。</p>
+        <p v-if="selectedSource && derivedDraftBindingLocked" class="section-hint">派生草稿固定使用来源任务的数据源；如需更换数据源，请退出派生流程后新建草稿。</p>
+        <p v-else-if="selectedSource" class="section-hint">已选择 {{ selectedSource.displayName }}。更换数据源会清除当前对象选择，并使已创建草稿不再代表当前页面配置。</p>
         <p v-else-if="eligibleSources.length > 0" class="section-hint">请选择一个数据源后继续；任务级对象、权限、路径和空间检查仍将在预检查阶段执行。</p>
       </section>
 
@@ -1082,6 +1299,14 @@ function lastTestLabel(source: DataSourceSummary) {
                   <input v-model.trim="storageRegion" class="tree-input" placeholder="例如 cn-hangzhou" autocomplete="off" />
                 </div>
                 <div class="tree-row">
+                  <span class="tree-label">存储凭据 <span class="muted">（可选）</span></span>
+                  <p v-if="storageCredentialLoadFailure" class="feedback feedback-error" role="alert">{{ storageCredentialLoadFailure }} <button type="button" class="link-button" @click="loadStorageCredentials">重试</button></p>
+                  <span v-else-if="loadingStorageCredentials" class="placeholder-control short">正在加载存储凭据…</span>
+                  <select v-else v-model="storageCredentialID" class="tree-input tree-select"><option value="">不指定（依赖执行节点 Hadoop 标准配置链）</option><option v-for="credential in matchingStorageCredentials" :key="credential.id" :value="credential.id">{{ credential.displayName }} · 修订 {{ credential.currentRevision }}</option></select>
+                </div>
+                <p v-if="matchingStorageCredentials.length === 0 && !loadingStorageCredentials && !storageCredentialLoadFailure" class="section-hint">当前没有 {{ outputKind }} 类型的存储凭据，可在「平台设置 · 存储凭据」中创建；不指定则依赖执行节点的 Hadoop 标准配置链。</p>
+                <p class="section-hint">所选凭据只以标识与当前修订写入草稿；密钥由任务级安全槽位在受控执行中短时解析，不会进入命令、日志或快照。</p>
+                <div class="tree-row">
                   <span class="tree-label">本地临时分块目录 <span class="muted">（高级，可选）</span></span>
                   <input v-model.trim="tmpPath" class="tree-input" :placeholder="outputPathPlaceholder" autocomplete="off" />
                 </div>
@@ -1098,9 +1323,10 @@ function lastTestLabel(source: DataSourceSummary) {
             <EmptyState v-else-if="nodes.length === 0" title="没有可选执行节点" description="当前授权范围内没有已启用节点。节点在线、工具、路径和空间事实仍需在后续预检查中确认。" />
             <div v-else class="tree-row">
               <span class="tree-label">执行节点 <b>*</b></span>
-              <select v-model="selectedNodeID" class="tree-input tree-select"><option value="" disabled>请选择执行节点</option><option v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</option></select>
+              <select v-model="selectedNodeID" class="tree-input tree-select" :disabled="derivedDraftBindingLocked"><option value="" disabled>请选择执行节点</option><option v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</option></select>
             </div>
-            <p v-if="selectedNode" class="section-hint">已选择 {{ selectedNode.displayName }}。此处只表示已授权且已启用，不代表节点在线、输出路径可写或任务已经预检查通过。</p>
+            <p v-if="selectedNode && derivedDraftBindingLocked" class="section-hint">派生草稿固定使用来源任务的执行节点；节点在线、工具、路径和空间事实仍由预检查确认。</p>
+            <p v-else-if="selectedNode" class="section-hint">已选择 {{ selectedNode.displayName }}。此处只表示已授权且已启用，不代表节点在线、输出路径可写或任务已经预检查通过。</p>
           </div>
         </details>
         <details v-if="dataOptionsActive" class="tree-node">
@@ -1231,8 +1457,8 @@ function lastTestLabel(source: DataSourceSummary) {
         </section>
         <section class="precheck-list">
           <h3>预检查结果</h3>
-          <p class="section-hint">预检查由已选择的 Agent 执行：确认数据源连接、当前草稿所选对象可读取（全部范围按数据库级可达性投影）、OB Loader/Dumper 与专用 Java 8 配置、导出目录及已填写日志目录可写、导出目录空性，以及至少 1 GiB 可用空间。勾选跳过选项时，仅目录空性检查会被跳过。它不会启动 OBDUMPER 或创建导出文件。</p>
-          <p v-if="storagePrecheckBlocked" class="feedback feedback-notice" role="status">对象存储输出暂不能发起预检查：存储凭据、网络、权限与空间预检查尚未完成，固定预检查只接受本地绝对路径输出。</p>
+          <p class="section-hint">预检查由已选择的 Agent 执行：确认数据源连接、当前草稿所选对象可读取（全部范围按数据库级可达性投影）、OB Loader/Dumper 与专用 Java 8 配置、导出目录及已填写日志目录可写、导出目录空性，以及至少 1 GiB 可用空间。对象存储输出额外检查端点连通性与凭据有效性（未授权探测保持未完成）。勾选跳过选项时，仅目录空性检查会被跳过。它不会启动 OBDUMPER 或创建导出文件。</p>
+          <p v-if="storageOutput" class="feedback feedback-notice" role="status">对象存储输出需要「存储端点连通性」与「存储凭据有效性」两项检查通过后才能提交；这两项真实探测尚未授权（归 EX-V1 排期），当前保持未完成。</p>
           <p v-if="precheckFailure" class="feedback feedback-error" role="alert">{{ precheckFailure }}</p>
           <p v-if="activePrecheck" class="precheck-current-status" :class="{ 'is-failed': activePrecheck.status === 'FAILED' }" :role="activePrecheck.status === 'FAILED' ? 'alert' : 'status'">当前状态：<strong>{{ precheckStatusLabel(activePrecheck.status) }}</strong></p>
           <section v-if="activePrecheck?.status === 'FAILED'" class="precheck-failure-summary" role="alert">
@@ -1286,7 +1512,7 @@ function lastTestLabel(source: DataSourceSummary) {
         <span class="footer-grow" />
         <button v-if="activeStep < 6" type="button" class="button button-primary" :disabled="!canAdvance" @click="nextStep">{{ footerLabel }}</button>
         <div v-else class="footer-actions">
-          <button type="button" class="button button-secondary" :disabled="!currentDraft || startingPrecheck || precheckRunning || submitting || storagePrecheckBlocked" @click="startPrecheck">{{ footerLabel }}</button>
+          <button type="button" class="button button-secondary" :disabled="!currentDraft || startingPrecheck || precheckRunning || submitting" @click="startPrecheck">{{ footerLabel }}</button>
           <button type="button" class="button button-primary" :disabled="!canSubmit" @click="submitTask">{{ submitting ? '正在提交任务…' : '提交并启动导出' }}</button>
         </div>
       </footer>

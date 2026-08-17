@@ -12,6 +12,11 @@ const (
 	// 与数据库密码同机制加密存储，绝不进入命令行、日志、审计、响应或快照。
 	SysPassword         = "SYS_PASSWORD"
 	SecurityPropertyKey = "oceanbase.jdbc.password"
+	// StorageAccessKey/StorageSecretKey 是对象存储凭据（EX-I6 存储凭据槽位）的两个秘密：
+	// access-key 与 secret-key 分别加密，AAD 绑定 storageCredentialId（复用 Reference.DataSourceID
+	// 字段承载，AAD JSON 键保持 dataSourceId 以兼容既有信封格式）。
+	StorageAccessKey = "STORAGE_ACCESS_KEY"
+	StorageSecretKey = "STORAGE_SECRET_KEY"
 )
 
 var (

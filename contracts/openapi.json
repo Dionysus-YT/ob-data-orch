@@ -22,7 +22,8 @@
     { "name": "AgentPrechecks" },
     { "name": "AgentConnectionTests" },
     { "name": "AgentExecutions" },
-    { "name": "ExportConfigTemplates" }
+    { "name": "ExportConfigTemplates" },
+    { "name": "StorageCredentials" }
   ],
   "paths": {
     "/api/v1/session": {
@@ -51,14 +52,22 @@
       "post": { "operationId": "enableExecutionNode", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "仅当当前 Agent 在线、平台匹配、容量可用，且同一 factsRevision 的固定环境检查为 TOOL_RUNTIME_READY 时启用节点。该动作不连接数据库、不启动 OBDUMPER，任务仍须通过独立预检查。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-config-templates": {
-      "get": { "operationId": "listExportConfigTemplates", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体拥有的导出配置模板。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "post": { "operationId": "createExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "从成功任务保存导出配置模板。控制面从冻结快照提取配置，浏览器只提供显示名称和源任务标识。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "listExportConfigTemplates", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体拥有的导出配置模板安全投影（不含配置 JSON 原文；配置只在由模板创建草稿时由服务端读取）。", "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "x-implementation-status": "NOT_IMPLEMENTED", "description": "手工新建模板契约保持声明但未实现；EX-I8 只支持从成功任务保存模板（见 /api/v1/tasks/{taskId}:save-template），不能将其视为可用能力。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-config-templates/{templateId}": {
       "parameters": [{ "name": "templateId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } }],
-      "get": { "operationId": "getExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "get": { "operationId": "getExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "x-implementation-status": "NOT_IMPLEMENTED", "description": "模板详情读取契约保持声明但未实现；列表投影已覆盖展示所需字段。", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
       "patch": { "operationId": "updateExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "只允许更新模板显示名称。配置内容、capabilityVersion 和来源任务不可变。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateRename" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "deleteExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "delete": { "operationId": "deleteExportConfigTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "物理删除主体拥有的模板（版本保护；无权与不存在同 404）。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-config-templates/{templateId}:create-draft": {
+      "parameters": [{ "name": "templateId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } }],
+      "post": { "operationId": "createDraftFromTemplate", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "EX-I8：由模板创建可编辑 v6 草稿；数据源与执行节点由用户此时重新选择，模板不复制凭据（存储凭据引用已剥离）、预检查或风险确认。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/TemplateDraftWrite" }, "responses": { "201": { "$ref": "#/components/responses/TemplateDraftCreated" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}:save-template": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "post": { "operationId": "saveTaskTemplate", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "EX-I8：从成功任务保存导出配置模板——只复制非敏感 v6 配置并剥离对象存储凭据引用；不复制凭据、节点、预检查、风险确认、日志或结果。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateRename" }, "responses": { "201": { "$ref": "#/components/responses/TemplateSaved" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources": {
       "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "仅返回逐项通过读取范围校验的数据源列表安全投影；包含普通业务用户名，不包含 sys 账号、组合用户名或凭据材料。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceList" }, "default": { "$ref": "#/components/responses/Error" } } },
@@ -140,6 +149,26 @@
     "/api/v1/tasks/{taskId}/logs:download": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
       "post": { "operationId": "downloadTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-implementation-status": "NOT_IMPLEMENTED", "description": "已确认的后续下载契约；F3.3 不实现该端点，不能将其视为可用能力。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }], "requestBody": { "$ref": "#/components/requestBodies/LogDownload" }, "responses": { "200": { "$ref": "#/components/responses/Download" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}:rebuild-draft": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "post": { "operationId": "rebuildTaskDraft", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-task-derivation": "REQUIRED", "description": "EX-I8：从失败任务的冻结快照重建可编辑 v6 草稿（REBUILD_FROM_CONFIG 可修改参数；RERUN_FROM_SCRATCH 提交时由服务端强制参数不可变）。不复制凭据明文、预检查结果、风险确认、日志或执行事实。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/TaskDerivationWrite" }, "responses": { "201": { "$ref": "#/components/responses/TaskDerivedDraftCreated" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}:resume-checkpoint": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "post": { "operationId": "resumeTaskFromCheckpoint", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "description": "EX-I8：从失败导出任务创建检查点继续任务——继承原快照并追加官方 --retry，不重新执行预检查。仅当失败终态 + Agent 确认输出目录存在可读 dump.ckpt + 原预检查曾成功完成时可用；不满足条件返回 CHECKPOINT_RESUME_UNAVAILABLE。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/TaskCheckpointResumeCreated" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/storage-credentials": {
+      "get": { "operationId": "listStorageCredentials", "tags": ["StorageCredentials"], "security": [{ "BrowserSession": [] }], "description": "仅返回当前主体拥有的对象存储凭据安全投影；绝不包含 access-key/secret-key 明文、信封材料或密钥存在性之外的推断字段。", "responses": { "200": { "$ref": "#/components/responses/StorageCredentialList" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createStorageCredential", "tags": ["StorageCredentials"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "description": "创建主体拥有的对象存储凭据；请求体内的 access-key/secret-key 只在内存中加密为 AES-GCM 信封（AAD 绑定凭据标识与修订）后立即清零，绝不进入响应、日志、审计、快照或命令行。provider 只接受 OSS/S3/COS/OBS。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/StorageCredentialWrite" }, "responses": { "201": { "$ref": "#/components/responses/StorageCredentialItemCreated" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/storage-credentials/{storageCredentialId}:rotate": {
+      "parameters": [{ "$ref": "#/components/parameters/StorageCredentialId" }],
+      "post": { "operationId": "rotateStorageCredential", "tags": ["StorageCredentials"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "x-idempotency": "REQUIRED", "description": "同时轮换 access-key 与 secret-key 并递增修订；旧修订标记 SUPERSEDED，已冻结任务快照只保留引用标识。越权或不存在凭据一律 404。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/StorageCredentialWrite" }, "responses": { "200": { "$ref": "#/components/responses/StorageCredentialItem" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/storage-credentials/{storageCredentialId}": {
+      "parameters": [{ "$ref": "#/components/parameters/StorageCredentialId" }],
+      "delete": { "operationId": "deleteStorageCredential", "tags": ["StorageCredentials"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "description": "物理删除主体拥有的凭据及其全部加密信封修订；已提交任务的历史快照只保留引用标识。越权或不存在凭据一律 404，不泄露存在性。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/StorageCredentialDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/enrollments:exchange": {
       "post": { "operationId": "exchangeAgentEnrollment", "tags": ["AgentEnrollment"], "security": [], "x-secret-inputs": ["enrollmentMaterial", "machineCredential"], "requestBody": { "$ref": "#/components/requestBodies/EnrollmentExchange" }, "responses": { "200": { "$ref": "#/components/responses/AgentEnrollmentAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
@@ -238,7 +267,8 @@
       "EligibleFor": { "name": "eligibleFor", "in": "query", "required": false, "schema": { "type": "string", "enum": ["OBDUMPER_EXPORT", "DATA_SOURCE_CONNECTION_TEST"] } },
       "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 4096 } },
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 200 } },
-      "IfMatch": { "name": "If-Match", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^\\\"rev-[1-9][0-9]*\\\"$" } }
+      "IfMatch": { "name": "If-Match", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^\\\"rev-[1-9][0-9]*\\\"$" } },
+      "StorageCredentialId": { "name": "storageCredentialId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/OpaqueId" } }
     },
     "requestBodies": {
       "EmptyAction": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 } } } },
@@ -259,7 +289,10 @@
       "AgentDataSourceConnectionTestLeaseAcknowledgement": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestLeaseAcknowledgement" } } } },
       "AgentDataSourceConnectionTestSecretSlotResolve": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestSecretSlotResolve" } } } },
       "AgentDataSourceConnectionTestCompletion": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestCompletion" } } } },
-      "AgentEnvelope": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentEnvelope" } } } }
+      "AgentEnvelope": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentEnvelope" } } } },
+      "StorageCredentialWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageCredentialWrite" } } } },
+      "TaskDerivationWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskDerivationRequest" } } } },
+      "TemplateDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemplateDraftRequest" } } } }
     },
     "responses": {
       "Ok": { "description": "Authorized, non-cacheable resource response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceEnvelope" } } } },
@@ -295,6 +328,14 @@
       "NoWork": { "description": "No eligible work is currently available.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } } },
       "EventStream": { "description": "Persisted log events after double secret redaction. Authorized task readers retain non-secret operational context; each log event has an opaque reliable cursor as its SSE id, and heartbeats contain no log content.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "text/event-stream": { "schema": { "type": "string" } } }, "x-heartbeat-required": true },
       "Download": { "description": "Synchronous task-authorized log download after double secret redaction, retaining non-secret operational context; limited to 100000 records and 100 MiB.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/x-ndjson": { "schema": { "type": "string", "format": "binary" } } } },
+      "StorageCredentialList": { "description": "当前主体拥有的对象存储凭据安全投影；绝不含密钥材料。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageCredentialListEnvelope" } } } },
+      "StorageCredentialItemCreated": { "description": "凭据已创建并以加密信封持久化；replayed 表示幂等键重放返回既有资源。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageCredentialItemEnvelope" } } } },
+      "StorageCredentialItem": { "description": "凭据轮换后的安全投影；密钥明文绝不返回。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageCredentialItemEnvelope" } } } },
+      "StorageCredentialDeletion": { "description": "凭据及其全部加密信封修订已物理删除；历史任务快照只保留引用标识。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageCredentialDeletionEnvelope" } } } },
+      "TaskDerivedDraftCreated": { "description": "EX-I8：从失败任务重建的派生草稿；replayed 表示幂等重放。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskDerivedDraftEnvelope" } } } },
+      "TaskCheckpointResumeCreated": { "description": "EX-I8：检查点继续任务（继承原快照并追加 --retry）；replayed 表示幂等重放。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCheckpointResumeEnvelope" } } } },
+      "TemplateSaved": { "description": "EX-I8：从成功任务保存的导出配置模板（不含配置原文与凭据）。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemplateSavedEnvelope" } } } },
+      "TemplateDraftCreated": { "description": "EX-I8：由模板创建的可编辑 v6 草稿。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemplateDraftCreatedEnvelope" } } } },
       "Error": { "description": "Stable safe error. Unauthorized objects use 404 semantics.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
     },
     "headers": {
@@ -843,36 +884,99 @@
           "logPath": { "type": "string", "maxLength": 4096 },
           "skipCheckDir": { "type": "boolean" },
           "targetPlatform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
-          "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+          "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+          "outputKind": { "type": "string", "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "EX-I6 输出类型；LOCAL 或缺省保持冻结六项，对象存储输出必须携带 storageTarget 且检查清单切换为存储形态。" },
+          "storageTarget": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider", "uri", "endpoint", "tmpPath"],
+            "description": "EX-I6 受控对象存储目标段：URI 不含密钥参数；endpoint 可空（空表示无法确定探测目标，网络检查回报 UNKNOWN）；tmpPath 为 --tmp-path 本机临时分块目录（可空）。",
+            "properties": {
+              "provider": { "type": "string", "enum": ["OSS", "S3", "COS", "OBS"] },
+              "uri": { "type": "string", "minLength": 1, "maxLength": 4096 },
+              "endpoint": { "type": "string", "maxLength": 253 },
+              "tmpPath": { "type": "string", "maxLength": 4096 }
+            }
+          }
         }
       },
       "AgentPrecheckCheckSet": {
-        "type": "array",
-        "minItems": 6,
-        "maxItems": 6,
-        "prefixItems": [
-          { "const": "DATABASE_CONNECTIVITY" },
-          { "const": "OBJECT_ACCESS" },
-          { "const": "TOOL_ENVIRONMENT" },
-          { "const": "OUTPUT_PATH" },
-          { "const": "OUTPUT_EMPTY" },
-          { "const": "AVAILABLE_SPACE" }
-        ],
-        "items": false
+        "description": "检查清单按输出类型二选一：本地输出为冻结六项；对象存储输出裁剪本地目录项并追加两项存储层检查（EX-I6）。",
+        "oneOf": [
+          {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "prefixItems": [
+              { "const": "DATABASE_CONNECTIVITY" },
+              { "const": "OBJECT_ACCESS" },
+              { "const": "TOOL_ENVIRONMENT" },
+              { "const": "OUTPUT_PATH" },
+              { "const": "OUTPUT_EMPTY" },
+              { "const": "AVAILABLE_SPACE" }
+            ],
+            "items": false
+          },
+          {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "prefixItems": [
+              { "const": "DATABASE_CONNECTIVITY" },
+              { "const": "OBJECT_ACCESS" },
+              { "const": "TOOL_ENVIRONMENT" },
+              { "const": "AVAILABLE_SPACE" },
+              { "const": "STORAGE_CONNECTIVITY" },
+              { "const": "STORAGE_AUTH" }
+            ],
+            "items": false
+          }
+        ]
       },
       "AgentPrecheckResults": {
-        "type": "array",
-        "minItems": 6,
-        "maxItems": 6,
-        "prefixItems": [
-          { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectivityResult" },
-          { "$ref": "#/components/schemas/AgentPrecheckObjectAccessResult" },
-          { "$ref": "#/components/schemas/AgentPrecheckToolEnvironmentResult" },
-          { "$ref": "#/components/schemas/AgentPrecheckOutputPathResult" },
-          { "$ref": "#/components/schemas/AgentPrecheckOutputEmptyResult" },
-          { "$ref": "#/components/schemas/AgentPrecheckAvailableSpaceResult" }
-        ],
-        "items": false
+        "description": "预检查结果按输出类型二选一：本地六项形态或对象存储六项形态（EX-I6 存储专用预检查）。",
+        "oneOf": [
+          {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "prefixItems": [
+              { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectivityResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckObjectAccessResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckToolEnvironmentResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckOutputPathResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckOutputEmptyResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckAvailableSpaceResult" }
+            ],
+            "items": false
+          },
+          {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "prefixItems": [
+              { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectivityResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckObjectAccessResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckToolEnvironmentResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckAvailableSpaceResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckStorageConnectivityResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckStorageAuthResult" }
+            ],
+            "items": false
+          }
+        ]
+      },
+      "AgentPrecheckStorageConnectivityResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "STORAGE_CONNECTIVITY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "STORAGE_ENDPOINT_REACHABLE", "STORAGE_ENDPOINT_UNREACHABLE", "STORAGE_CONNECTIVITY_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckStorageAuthResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "STORAGE_AUTH" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "STORAGE_CREDENTIAL_VERIFIED", "STORAGE_CREDENTIAL_REJECTED", "STORAGE_AUTH_UNAVAILABLE"] } }
       },
       "AgentPrecheckDatabaseConnectivityResult": {
         "type": "object",
@@ -1002,7 +1106,9 @@
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
           "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
-          "submittedAt": { "type": "string", "format": "date-time" }
+          "submittedAt": { "type": "string", "format": "date-time" },
+          "parentTaskId": { "$ref": "#/components/schemas/OpaqueId", "description": "EX-I8：派生任务的来源任务标识；原始任务缺省。与 derivationKind 成对出现。" },
+          "derivationKind": { "type": "string", "enum": ["REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH", "CHECKPOINT_RESUME"], "description": "EX-I8：派生方式；原始任务缺省。与 parentTaskId 成对出现。" }
         }
       },
       "TaskOverviewReadEnvelope": {
@@ -1066,7 +1172,33 @@
           "progressEvidence": { "const": "UNAVAILABLE" },
           "startedAt": { "type": "string", "format": "date-time" },
           "finishedAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "resultSummary": {
+            "$ref": "#/components/schemas/ExecutionResultSummary",
+            "description": "EX-I8：Agent 观察到的文件/字节/检查点事实摘要；任务未执行或未上报时缺省。只含相对路径与大小，不含内容、校验和或秘密。"
+          }
+        }
+      },
+      "ExecutionResultSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["result", "fileCount", "totalBytes", "files", "checkpointPresent", "observedAt"],
+        "properties": {
+          "result": { "type": "string", "enum": ["VERIFIED", "FAILED"] },
+          "fileCount": { "type": "integer", "minimum": 0 },
+          "totalBytes": { "type": "integer", "minimum": 0 },
+          "files": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/ExecutionResultFile" } },
+          "checkpointPresent": { "type": "boolean", "description": "输出目录下存在可读 dump.ckpt 的事实；失败任务的检查点继续资格由控制面另按冻结快照判定。" },
+          "observedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ExecutionResultFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "size"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 512, "description": "相对输出目录的结果文件路径；禁止绝对前缀、回退段与控制字符。" },
+          "size": { "type": "integer", "minimum": 0 }
         }
       },
       "TaskExecutionReadEnvelope": {
@@ -1439,6 +1571,125 @@
           "displayName": { "type": "string", "minLength": 1, "maxLength": 256 }
         },
         "description": "模板重命名专用请求体；配置内容、capabilityVersion 和来源任务不可变，不接受重复提交。"
+      },
+      "StorageCredentialWrite": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["displayName", "provider", "accessKey", "secretKey"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "provider": { "type": "string", "enum": ["OSS", "S3", "COS", "OBS"] },
+          "accessKey": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true, "description": "对象存储 access-key；只在请求体内存中加密为信封，绝不进入 URI、argv、日志、审计、响应或快照。" },
+          "secretKey": { "type": "string", "minLength": 1, "maxLength": 4096, "writeOnly": true, "description": "对象存储 secret-key；与 access-key 分别加密为独立信封（AAD 绑定凭据标识、修订与秘密类型），绝不进入 URI、argv、日志、审计、响应或快照。" }
+        },
+        "description": "对象存储凭据写请求体；密钥以 writeOnly 声明，响应与错误不得回显。"
+      },
+      "StorageCredentialListItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "displayName", "provider", "currentRevision", "revision", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "displayName": { "type": "string" },
+          "provider": { "type": "string", "enum": ["OSS", "S3", "COS", "OBS"] },
+          "currentRevision": { "type": "integer", "minimum": 1 },
+          "revision": { "type": "integer", "minimum": 1 },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "description": "对象存储凭据安全投影：只含显示字段与修订号，绝不包含 access-key/secret-key 明文或信封材料。"
+      },
+      "StorageCredentialListEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "items"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/StorageCredentialListItem" } }
+        }
+      },
+      "StorageCredentialItemEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "item": { "$ref": "#/components/schemas/StorageCredentialListItem" },
+          "replayed": { "type": "boolean", "description": "仅创建响应出现：幂等键重放返回既有资源时为 true。" }
+        }
+      },
+      "StorageCredentialDeletionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "deleted"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "deleted": { "type": "boolean", "const": true }
+        }
+      },
+      "TaskDerivationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["derivation"],
+        "properties": {
+          "derivation": { "type": "string", "enum": ["REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH"], "description": "EX-I8 派生草稿方式：基于原配置新建可修改参数；从头重新执行提交时由服务端强制参数不可变。" }
+        }
+      },
+      "TaskDerivedDraftEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "draftId", "sourceTaskId", "derivation", "replayed"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "draftId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sourceTaskId": { "$ref": "#/components/schemas/OpaqueId" },
+          "derivation": { "type": "string", "enum": ["REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH"] },
+          "replayed": { "type": "boolean" }
+        }
+      },
+      "TaskCheckpointResumeEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "id", "parentTaskId", "derivationKind", "replayed", "realExecutionEnabled"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "parentTaskId": { "$ref": "#/components/schemas/OpaqueId" },
+          "derivationKind": { "type": "string", "const": "CHECKPOINT_RESUME" },
+          "replayed": { "type": "boolean" },
+          "realExecutionEnabled": { "type": "boolean" }
+        }
+      },
+      "TemplateDraftRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dataSourceId", "nodeId"],
+        "properties": {
+          "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" }
+        },
+        "description": "由模板创建草稿时重新选择数据源与执行节点；模板不复制凭据、预检查或风险确认。"
+      },
+      "TemplateSavedEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "id", "sourceTaskId", "replayed"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "sourceTaskId": { "$ref": "#/components/schemas/OpaqueId" },
+          "replayed": { "type": "boolean" }
+        }
+      },
+      "TemplateDraftCreatedEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "draftId", "templateId", "replayed"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "draftId": { "$ref": "#/components/schemas/OpaqueId" },
+          "templateId": { "$ref": "#/components/schemas/OpaqueId" },
+          "replayed": { "type": "boolean" }
+        }
       },
       "ErrorEnvelope": {
         "type": "object",
