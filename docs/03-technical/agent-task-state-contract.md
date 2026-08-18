@@ -123,13 +123,13 @@ AD-R09 补充以下固定操作，但不改变正式任务的 `ClaimExecution` �
 |---|---|---|---:|
 | `ClaimNextPrecheck` | Agent → 控制面 | 服务端原子选择并领取明确绑定本节点的下一条 `EXPORT_PREFLIGHT` | 是；严格 `EXPORT_PREFLIGHT_CLAIM_NEXT` 信封不接受 precheckId 或 leaseId，同 requestId/同摘要返回原 binding、bindingDigest、checkSet 和租约；没有工作返回 `204 No Content`，不写回执或租约 |
 | `AcknowledgePrecheckLease` | Agent → 控制面 | 确认草稿 revision、指纹、检查清单和短租约 | 是；严格 `EXPORT_PREFLIGHT_ACKNOWLEDGE_LEASE` 信封，必须回送 leaseId、epoch 和 bindingDigest |
-| `ResolvePrecheckSecretSlots` | Agent → 控制面 | 在有效预检查租约内解析固定数据库凭据槽位 | 是；不缓存明文 |
+| `ResolvePrecheckSecretSlots` | Agent → 控制面 | 在有效预检查租约内解析固定 `DATABASE_CONNECTION`，或在 `STORAGE_AUTH` 阶段解析冻结的 `STORAGE_CREDENTIAL` | 是；两个槽位必须使用独立 requestId/摘要/回执，均不缓存明文 |
 | `CompletePrecheck` | Agent → 控制面 | 返回结构化检查项、脱敏证据摘要和完整性 | 是；严格 `EXPORT_PREFLIGHT_COMPLETE` 信封，只提交按固定顺序的六项结果，不提交独立 `succeeded` |
 
 - 预检查只执行登记的数据库连接、对象存在/可读取、工具/Java、允许根目录、路径可写/非空和空间检查；`OBJECT_ACCESS` 先使用固定 JDBC `DatabaseMetaData.getTables` 确认对象元数据可见，再以同一连接对已冻结单表执行固定 `SELECT 1 FROM <安全引用的库或 Schema>.<安全引用的表> WHERE 1 = 0`。该语句不读取业务行；MySQL/Oracle 的命名空间位置和引用字符只能由冻结数据源的兼容模式决定，不能由浏览器或 Agent 自由输入 SQL。连接已建立后，元数据或零行读取被数据库拒绝统一投影为 `FAILED/OBJECT_NOT_ACCESSIBLE`，不区分权限不足、对象不存在或不可见；只有连接中断、超时、探针运行时异常或安全转义无法确认时才投影为 `UNKNOWN/OBJECT_ACCESS_UNAVAILABLE`，且两者都不得携带 SQLState、错误号或异常原文；
-- Agent 在租约确认且有效后，必须先按本机执行顺序完成 `TOOL_ENVIRONMENT`、`OUTPUT_PATH`、`OUTPUT_EMPTY`、`AVAILABLE_SPACE`。仅当四项均为 `PASSED` 时，才允许调用 `ResolvePrecheckSecretSlots` 并执行 `DATABASE_CONNECTIVITY`、`OBJECT_ACCESS`；任一为 `FAILED` 或 `UNKNOWN` 时，不得请求数据库槽位或启动 JDBC，后二项分别以 `UNKNOWN/DATABASE_CONNECTION_UNAVAILABLE`、`UNKNOWN/OBJECT_ACCESS_UNAVAILABLE` 收口。完成报告仍按固定六项契约顺序序列化，不随执行顺序改变；
+- 本地输出的 Agent 在租约确认且有效后，必须先按本机执行顺序完成 `TOOL_ENVIRONMENT`、`OUTPUT_PATH`、`OUTPUT_EMPTY`、`AVAILABLE_SPACE`。仅当四项均为 `PASSED` 时，才允许调用 `DATABASE_CONNECTION` 并执行 `DATABASE_CONNECTIVITY`、`OBJECT_ACCESS`；任一为 `FAILED` 或 `UNKNOWN` 时，不得请求数据库槽位或启动 JDBC，后二项分别以 `UNKNOWN/DATABASE_CONNECTION_UNAVAILABLE`、`UNKNOWN/OBJECT_ACCESS_UNAVAILABLE` 收口。对象存储输出仅先完成 `TOOL_ENVIRONMENT`、`AVAILABLE_SPACE`，再执行数据库/对象检查；二者均通过后才可执行无秘密 `STORAGE_CONNECTIVITY`，且仅当其通过、草稿冻结了存储凭据引用并且探测器显式声明需要凭据时，才可调用独立 `STORAGE_CREDENTIAL` 槽位执行 `STORAGE_AUTH`。任一前置不通过时不得解析存储凭据，相关存储检查以固定 UNKNOWN 收口。完成报告仍按固定六项契约顺序序列化，不随执行顺序改变；
 - 不接受任意 SQL、Shell、自由命令、任意文件路径或 OBDUMPER 启动请求；
-- 预检查短租约由控制面时间控制，结果绑定 precheckId、lease/epoch、Agent、草稿 revision、配置指纹、credential revision 和节点事实版本；
+- 预检查短租约由控制面时间控制，结果绑定 precheckId、lease/epoch、Agent、草稿 revision、配置指纹、credential revision 和节点事实版本；对象存储凭据探测还绑定可选的 storageCredentialId/revision，并将其纳入 bindingDigest；
 - 预检查不创建 taskId、executionId 或 execution event，不生成正式输出，也不改变任务状态；
 - 首条切片 Agent 有活动 execution 时不领取预检查，避免检查争用正式执行的唯一容量；
 - 失联或租约过期的预检查结果标为未知/过期，不能据此提交任务，也不自动改派后合并两个结果。

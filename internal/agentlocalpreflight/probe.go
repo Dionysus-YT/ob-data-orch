@@ -109,6 +109,9 @@ type Probe struct {
 	AvailableBytes        func(string) (uint64, error)
 	StorageConnectivity   StorageConnectivityProber
 	StorageAuth           StorageAuthProber
+	// StorageCredentials 只在明确启用凭据探测的 STORAGE_AUTH 检查中短时解析。
+	// 默认失败关闭探测器不会调用它，避免尚未获授权的实现接触存储秘密。
+	StorageCredentials agentpreflight.StorageCredentialResolver
 }
 
 // Probe 只接受既定检查。任何本机事实缺失、路径漂移或依赖异常都以稳定 UNKNOWN 结果失败关闭。

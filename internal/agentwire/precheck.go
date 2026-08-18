@@ -85,7 +85,7 @@ type PrecheckCompletion struct {
 	Report        agentpreflight.Report
 }
 
-// PrecheckSecretSlotRequest 是 Agent 在已确认预检查租约中解析数据库连接槽位的最小输入。
+// PrecheckSecretSlotRequest 是 Agent 在已确认预检查租约中解析固定秘密槽位的最小输入。
 // 槽位值不出现在该请求中；控制面只依据绑定的 Agent、租约、epoch 和摘要重新读取当前材料。
 type PrecheckSecretSlotRequest struct {
 	BootID        string
@@ -274,20 +274,29 @@ type precheckLeaseAcknowledgementResponsePayload struct {
 	RealExecutionEnabled *bool `json:"realExecutionEnabled"`
 }
 
+type precheckDatabaseConnectionPayload struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username []byte `json:"username"`
+	Password []byte `json:"password"`
+}
+
+type precheckStorageCredentialPayload struct {
+	Provider  string `json:"provider"`
+	AccessKey []byte `json:"accessKey"`
+	SecretKey []byte `json:"secretKey"`
+}
+
 type precheckSecretSlotResponsePayload struct {
-	AgentRequestID string `json:"agentRequestId"`
-	PrecheckID     string `json:"precheckId"`
-	LeaseID        string `json:"leaseId"`
-	LeaseEpoch     int64  `json:"leaseEpoch"`
-	BindingDigest  string `json:"bindingDigest"`
-	Slot           string `json:"slot"`
-	Connection     struct {
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		Username []byte `json:"username"`
-		Password []byte `json:"password"`
-	} `json:"connection"`
-	RealExecutionEnabled *bool `json:"realExecutionEnabled"`
+	AgentRequestID       string                             `json:"agentRequestId"`
+	PrecheckID           string                             `json:"precheckId"`
+	LeaseID              string                             `json:"leaseId"`
+	LeaseEpoch           int64                              `json:"leaseEpoch"`
+	BindingDigest        string                             `json:"bindingDigest"`
+	Slot                 string                             `json:"slot"`
+	Connection           *precheckDatabaseConnectionPayload `json:"connection,omitempty"`
+	StorageCredential    *precheckStorageCredentialPayload  `json:"storageCredential,omitempty"`
+	RealExecutionEnabled *bool                              `json:"realExecutionEnabled"`
 }
 
 type precheckCompletionResponsePayload struct {
@@ -377,6 +386,34 @@ func (s *StateStore) ResolvePrecheckDatabaseConnection(ctx context.Context, inpu
 		return DatabaseConnectionSlot{}, ErrIdentityUnavailable
 	}
 	return client.resolvePrecheckDatabaseConnection(ctx, &state, requestID, input)
+}
+
+// ResolvePrecheckStorageCredential 只在已确认预检查租约的 STORAGE_AUTH 阶段取得对象存储凭据槽位。
+// StateStore 不缓存或持久化响应中的 access-key/secret-key；调用方必须在探测后立即清零。
+func (s *StateStore) ResolvePrecheckStorageCredential(ctx context.Context, input PrecheckSecretSlotRequest) (StorageCredentialSlot, error) {
+	state, found, err := s.loadState()
+	if err != nil {
+		return StorageCredentialSlot{}, err
+	}
+	if !found {
+		return StorageCredentialSlot{}, ErrIdentityUnavailable
+	}
+	defer state.destroy()
+	if state.pendingEnrollment() {
+		return StorageCredentialSlot{}, ErrEnrollmentPending
+	}
+	if !validPrecheckSecretSlotRequest(input) {
+		return StorageCredentialSlot{}, ErrProtocolRejected
+	}
+	client, err := newHTTPSClient(state.ControlPlaneURL, state.CAFile)
+	if err != nil {
+		return StorageCredentialSlot{}, ErrIdentityUnavailable
+	}
+	requestID, err := newOpaqueID()
+	if err != nil {
+		return StorageCredentialSlot{}, ErrIdentityUnavailable
+	}
+	return client.resolvePrecheckStorageCredential(ctx, &state, requestID, input)
 }
 
 // CompletePrecheck 上报一个已确认租约的完整固定检查报告。
@@ -503,7 +540,7 @@ func (c *httpsClient) resolvePrecheckDatabaseConnection(ctx context.Context, sta
 	var payload precheckSecretSlotResponsePayload
 	if err := decodeStrictJSON(envelope.Payload, &payload); err != nil || payload.AgentRequestID != requestID || payload.PrecheckID != input.PrecheckID ||
 		payload.LeaseID != input.LeaseID || payload.LeaseEpoch != input.LeaseEpoch || payload.BindingDigest != input.BindingDigest ||
-		payload.Slot != "DATABASE_CONNECTION" || payload.RealExecutionEnabled == nil {
+		payload.Slot != "DATABASE_CONNECTION" || payload.Connection == nil || payload.StorageCredential != nil || payload.RealExecutionEnabled == nil {
 		payload.destroy()
 		return DatabaseConnectionSlot{}, ErrProtocolRejected
 	}
@@ -520,6 +557,61 @@ func (c *httpsClient) resolvePrecheckDatabaseConnection(ctx context.Context, sta
 		return DatabaseConnectionSlot{}, ErrProtocolRejected
 	}
 	return connection, nil
+}
+
+func (c *httpsClient) resolvePrecheckStorageCredential(ctx context.Context, state *identityState, requestID string, input PrecheckSecretSlotRequest) (StorageCredentialSlot, error) {
+	request := precheckSecretSlotRequest{
+		ProtocolVersion: state.ProtocolVersion,
+		AgentID:         state.AgentID,
+		NodeID:          state.NodeID,
+		BootID:          input.BootID,
+		RequestID:       requestID,
+		SentAt:          input.SentAt.UTC().Format(time.RFC3339Nano),
+		PayloadType:     "EXPORT_PREFLIGHT_RESOLVE_SECRET_SLOTS",
+		Payload: precheckSecretSlotRequestPayload{
+			LeaseID:       input.LeaseID,
+			LeaseEpoch:    input.LeaseEpoch,
+			BindingDigest: input.BindingDigest,
+			Slot:          "STORAGE_CREDENTIAL",
+		},
+	}
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return StorageCredentialSlot{}, ErrProtocolRejected
+	}
+	defer credential.Zero(requestBody)
+	endpoint := "/agent/v1/prechecks/" + input.PrecheckID + "/secret-slots:resolve"
+	responseBody, status, err := c.postWithRetry(ctx, endpoint, requestBody, state.MachineCredential)
+	if err != nil {
+		return StorageCredentialSlot{}, err
+	}
+	defer credential.Zero(responseBody)
+	if status != http.StatusOK {
+		return StorageCredentialSlot{}, precheckHTTPError(status)
+	}
+	envelope, err := decodeResponseEnvelope(responseBody, "PRECHECK_SECRET_SLOTS_RESOLVED")
+	if err != nil {
+		return StorageCredentialSlot{}, ErrProtocolRejected
+	}
+	var payload precheckSecretSlotResponsePayload
+	if err := decodeStrictJSON(envelope.Payload, &payload); err != nil || payload.AgentRequestID != requestID || payload.PrecheckID != input.PrecheckID ||
+		payload.LeaseID != input.LeaseID || payload.LeaseEpoch != input.LeaseEpoch || payload.BindingDigest != input.BindingDigest ||
+		payload.Slot != "STORAGE_CREDENTIAL" || payload.Connection != nil || payload.StorageCredential == nil || payload.RealExecutionEnabled == nil {
+		payload.destroy()
+		return StorageCredentialSlot{}, ErrProtocolRejected
+	}
+	storageCredential := StorageCredentialSlot{
+		Provider:  payload.StorageCredential.Provider,
+		AccessKey: payload.StorageCredential.AccessKey,
+		SecretKey: payload.StorageCredential.SecretKey,
+	}
+	payload.StorageCredential.AccessKey = nil
+	payload.StorageCredential.SecretKey = nil
+	if !validStorageCredentialSlot(storageCredential) {
+		storageCredential.Destroy()
+		return StorageCredentialSlot{}, ErrProtocolRejected
+	}
+	return storageCredential, nil
 }
 
 func (c *httpsClient) acknowledgePrecheckLease(ctx context.Context, state *identityState, requestID string, input PrecheckLeaseAcknowledgement) error {
@@ -640,10 +732,20 @@ func (p *precheckSecretSlotResponsePayload) destroy() {
 	if p == nil {
 		return
 	}
-	credential.Zero(p.Connection.Username)
-	credential.Zero(p.Connection.Password)
-	p.Connection.Username = nil
-	p.Connection.Password = nil
+	if p.Connection != nil {
+		credential.Zero(p.Connection.Username)
+		credential.Zero(p.Connection.Password)
+		p.Connection.Username = nil
+		p.Connection.Password = nil
+		p.Connection = nil
+	}
+	if p.StorageCredential != nil {
+		credential.Zero(p.StorageCredential.AccessKey)
+		credential.Zero(p.StorageCredential.SecretKey)
+		p.StorageCredential.AccessKey = nil
+		p.StorageCredential.SecretKey = nil
+		p.StorageCredential = nil
+	}
 }
 
 func precheckResultPayloads(results []agentpreflight.Result) []precheckResultPayload {

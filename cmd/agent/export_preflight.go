@@ -70,6 +70,8 @@ func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platfo
 			Runtime:               agentlocalpreflight.ToolRuntimeValidator{JavaPath: runtimeConfig.JavaPath, ToolHome: runtimeConfig.ToolHome, Environment: runtimeConfig.Environment, TargetPlatform: platform},
 			MinimumAvailableBytes: exportPreflightMinimumAvailableBytes,
 			AvailableBytes:        agentlocalpreflight.AvailableBytes,
+			// 默认探测器不会请求该解析器；只有后续明确启用的 STORAGE_AUTH 实现才能在对应检查阶段使用它。
+			StorageCredentials: resolver,
 			// 凭据有效性探测固定失败关闭：真实探测归 EX-V1，本切片绝不解析或发送真实凭据。
 			StorageAuth: agentlocalpreflight.UnavailableStorageAuthProber{},
 		}

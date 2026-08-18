@@ -1908,21 +1908,43 @@ func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (Prech
 			ConfigFingerprint: input.ConfigFingerprint, DataSourceID: input.DataSourceID,
 			CredentialID: input.CredentialID, CredentialRevision: input.CredentialRevision,
 			NodeID: input.NodeID, NodeFactsRevision: nodeFactsRevision, BindingAgentID: bindingAgentID, ValidUntil: input.ValidUntil,
+			// EX-V1：对象存储草稿在预检查创建时冻结存储凭据引用，供 STORAGE_AUTH 探测短时解析；本地输出为空。
+			StorageCredentialID: input.StorageCredentialID, StorageCredentialRevision: input.StorageCredentialRevision,
 		}
 		bindingDigest, err := precheckBindingDigest(binding)
 		if err != nil {
 			return err
+		}
+		if binding.StorageCredentialID != "" {
+			var provider string
+			err := tx.QueryRowContext(ctx, `
+                SELECT provider
+                FROM storage_credentials
+                WHERE storage_credential_id = ? AND owner_subject_id = ? AND current_revision = ?
+            `, binding.StorageCredentialID, input.CreatorSubjectID, binding.StorageCredentialRevision).Scan(&provider)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrPrecheckInvalid
+			}
+			if err != nil {
+				return fmt.Errorf("read precheck storage credential binding: %w", err)
+			}
+			executionContext, err := readPrecheckExecutionContext(ctx, tx, binding)
+			if err != nil || !oneOf(executionContext.OutputKind, "OSS", "S3", "COS", "OBS") || executionContext.OutputKind != provider {
+				return ErrPrecheckInvalid
+			}
 		}
 		insert, err := tx.ExecContext(ctx, `
             INSERT INTO precheck_runs(
                 precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
                 credential_id, credential_revision, node_id, agent_id, status, lease_id,
                 lease_epoch, lease_expires_at, result_json, integrity_status, valid_until,
-				created_at, completed_at, node_facts_revision, binding_digest, binding_agent_id
+				created_at, completed_at, node_facts_revision, binding_digest, binding_agent_id,
+				storage_credential_id, storage_credential_revision
             )
             SELECT ?, d.draft_id, d.revision, d.config_fingerprint, d.data_source_id,
                    ds.credential_id, ds.current_credential_revision, d.node_id, NULL, 'PENDING', NULL,
-				   NULL, NULL, NULL, 'UNKNOWN', ?, ?, NULL, ?, ?, ?
+				   NULL, NULL, NULL, 'UNKNOWN', ?, ?, NULL, ?, ?, ?,
+				   ?, ?
             FROM export_drafts d JOIN data_sources ds ON ds.data_source_id = d.data_source_id
             WHERE d.draft_id = ? AND d.revision = ? AND d.config_fingerprint = ?
               AND d.data_source_id = ? AND d.node_id = ?
@@ -1930,6 +1952,7 @@ func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (Prech
               AND ds.state = 'ENABLED' AND ds.last_test_status = 'SUCCEEDED'
               AND ds.last_test_source = 'AGENT_JDBC'
 		`, input.PrecheckID, utcText(input.ValidUntil), utcText(input.CreatedAt), nodeFactsRevision, bindingDigest, bindingAgentID,
+			nullableString(input.StorageCredentialID), nullableInt64(input.StorageCredentialRevision),
 			input.DraftID, input.DraftRevision, input.ConfigFingerprint, input.DataSourceID, input.NodeID,
 			input.CredentialID, input.CredentialRevision)
 		if err != nil {
@@ -1960,16 +1983,20 @@ func (s *Store) GetPrecheckRun(ctx context.Context, precheckID string) (Precheck
 	}
 	var run PrecheckRun
 	var validUntil, createdAt, resultJSON string
+	var storageCredentialID sql.NullString
+	var storageCredentialRevision sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
         SELECT precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
                credential_id, credential_revision, node_id, node_facts_revision,
-               COALESCE(binding_agent_id, ''), COALESCE(binding_digest, ''), status, integrity_status, COALESCE(result_json, ''), valid_until, created_at
+               COALESCE(binding_agent_id, ''), COALESCE(binding_digest, ''), status, integrity_status, COALESCE(result_json, ''), valid_until, created_at,
+               storage_credential_id, storage_credential_revision
         FROM precheck_runs
         WHERE precheck_id = ?
     `, precheckID).Scan(
 		&run.PrecheckID, &run.DraftID, &run.DraftRevision, &run.ConfigFingerprint, &run.DataSourceID,
 		&run.CredentialID, &run.CredentialRevision, &run.NodeID, &run.NodeFactsRevision,
 		&run.BindingAgentID, &run.BindingDigest, &run.Status, &run.IntegrityStatus, &resultJSON, &validUntil, &createdAt,
+		&storageCredentialID, &storageCredentialRevision,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PrecheckRun{}, ErrDataSourceNotFound
@@ -1977,6 +2004,7 @@ func (s *Store) GetPrecheckRun(ctx context.Context, precheckID string) (Precheck
 	if err != nil {
 		return PrecheckRun{}, fmt.Errorf("read precheck run: %w", err)
 	}
+	run.StorageCredentialID, run.StorageCredentialRevision = storageCredentialID.String, storageCredentialRevision.Int64
 	if run.ValidUntil, err = time.Parse(time.RFC3339Nano, validUntil); err != nil {
 		return PrecheckRun{}, fmt.Errorf("parse precheck expiry: %w", err)
 	}
@@ -2337,6 +2365,132 @@ func (s *Store) ResolvePrecheckDatabaseConnection(ctx context.Context, input Pre
 	return connection, nil
 }
 
+// ResolvePrecheckStorageCredential 在有效、已确认预检查租约内解析对象存储凭据信封（EX-V1）。
+// 它为 STORAGE_CREDENTIAL 独立写入无秘密请求回执和审计意图；本地输出或未绑定凭据的预检查
+// 不允许调用该槽位，避免返回空结构被误解释为凭据检查已经通过。
+func (s *Store) ResolvePrecheckStorageCredential(ctx context.Context, input PrecheckSecretResolutionRequest) (EncryptedExecutionStorageCredential, error) {
+	if err := validatePrecheckSecretResolutionRequest(input); err != nil {
+		return EncryptedExecutionStorageCredential{}, err
+	}
+	var storageCredential EncryptedExecutionStorageCredential
+	var outcomeErr error
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		if _, err := expirePrechecksTx(ctx, tx, input.Now); err != nil {
+			return err
+		}
+		receipt, found, err := readPrecheckSecretResolutionReceipt(ctx, tx, input.AgentID, input.RequestID)
+		if err != nil {
+			return err
+		}
+		if found && !samePrecheckSecretResolutionReceipt(receipt, input) {
+			return ErrIdempotencyConflict
+		}
+		run, err := readStoredPrecheck(ctx, tx, input.PrecheckID)
+		if err != nil {
+			return err
+		}
+		if run.Status == "EXPIRED" {
+			outcomeErr = ErrPrecheckLeaseExpired
+			return nil
+		}
+		if run.Status != "LEASED" || run.AgentID != input.AgentID || run.LeaseID != input.LeaseID ||
+			run.LeaseEpoch != input.LeaseEpoch || run.Binding.BindingDigest != input.BindingDigest {
+			return ErrPrecheckLeaseRejected
+		}
+		if !run.Binding.ValidUntil.After(input.Now) || !run.LeaseExpiresAt.After(input.Now) {
+			if err := markPrecheckExpiredTx(ctx, tx, run.Binding.PrecheckID, input.Now); err != nil {
+				return err
+			}
+			outcomeErr = ErrPrecheckLeaseExpired
+			return nil
+		}
+		if err := validateCurrentPrecheckBinding(ctx, tx, input.AgentID, run.Binding); err != nil {
+			return err
+		}
+		acknowledged, err := hasPrecheckAcknowledgementReceipt(ctx, tx, input.AgentID, run)
+		if err != nil {
+			return err
+		}
+		if !acknowledged {
+			return ErrPrecheckLeaseRejected
+		}
+		if run.Binding.StorageCredentialID == "" || run.Binding.StorageCredentialRevision < 1 {
+			return ErrPrecheckLeaseRejected
+		}
+		var provider, ownerSubjectID, dataSourceID, nodeID string
+		var accessKeyCredentialID, accessKeyKeyID, secretKeyCredentialID, secretKeyKeyID string
+		var accessKeyNonce, accessKeyCiphertext, secretKeyNonce, secretKeyCiphertext []byte
+		err = tx.QueryRowContext(ctx, `
+            SELECT sc.provider, p.storage_credential_revision, d.owner_subject_id, p.data_source_id, p.node_id,
+                   ak.credential_id, ak.key_id, ak.nonce, ak.ciphertext,
+                   sk.credential_id, sk.key_id, sk.nonce, sk.ciphertext
+            FROM precheck_runs AS p
+            JOIN export_drafts AS d
+              ON d.draft_id = p.draft_id AND d.revision = p.draft_revision
+             AND d.config_fingerprint = p.config_fingerprint AND d.data_source_id = p.data_source_id
+             AND d.node_id = p.node_id
+            JOIN storage_credentials AS sc
+              ON sc.storage_credential_id = p.storage_credential_id
+             AND sc.owner_subject_id = d.owner_subject_id
+            JOIN storage_credential_revisions AS ak
+              ON ak.storage_credential_id = sc.storage_credential_id
+             AND ak.revision = p.storage_credential_revision
+             AND ak.secret_type = 'STORAGE_ACCESS_KEY' AND ak.status IN ('ACTIVE', 'SUPERSEDED')
+            JOIN storage_credential_revisions AS sk
+              ON sk.storage_credential_id = sc.storage_credential_id
+             AND sk.revision = p.storage_credential_revision
+             AND sk.secret_type = 'STORAGE_SECRET_KEY' AND sk.status IN ('ACTIVE', 'SUPERSEDED')
+            WHERE p.precheck_id = ?
+        `, input.PrecheckID).Scan(
+			&provider, &storageCredential.Revision, &ownerSubjectID, &dataSourceID, &nodeID,
+			&accessKeyCredentialID, &accessKeyKeyID, &accessKeyNonce, &accessKeyCiphertext,
+			&secretKeyCredentialID, &secretKeyKeyID, &secretKeyNonce, &secretKeyCiphertext,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPrecheckLeaseRejected
+		}
+		if err != nil {
+			return fmt.Errorf("read precheck storage credential: %w", err)
+		}
+		storageCredential = EncryptedExecutionStorageCredential{
+			StorageCredentialID: run.Binding.StorageCredentialID, Provider: provider, Revision: storageCredential.Revision,
+			OwnerSubjectID: ownerSubjectID, DataSourceID: dataSourceID, NodeID: nodeID,
+			AccessKeyCredentialID: accessKeyCredentialID, AccessKeyKeyID: accessKeyKeyID, AccessKeyNonce: accessKeyNonce, AccessKeyCiphertext: accessKeyCiphertext,
+			SecretKeyCredentialID: secretKeyCredentialID, SecretKeyKeyID: secretKeyKeyID, SecretKeyNonce: secretKeyNonce, SecretKeyCiphertext: secretKeyCiphertext,
+		}
+		executionContext, err := readPrecheckExecutionContext(ctx, tx, run.Binding)
+		if err != nil || !oneOf(executionContext.OutputKind, "OSS", "S3", "COS", "OBS") || executionContext.OutputKind != provider ||
+			ownerSubjectID == "" || dataSourceID != run.Binding.DataSourceID || nodeID != run.Binding.NodeID {
+			return ErrPrecheckLeaseRejected
+		}
+		if found {
+			return nil
+		}
+		if err := insertPrecheckSecretResolutionReceipt(ctx, tx, precheckSecretResolutionReceipt{
+			AgentID: input.AgentID, RequestID: input.RequestID, RequestDigest: input.RequestDigest,
+			PrecheckID: input.PrecheckID, LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch,
+			BindingDigest: input.BindingDigest, Status: "AUTHORIZED", CreatedAt: input.Now,
+		}); err != nil {
+			storageCredential.Destroy()
+			return err
+		}
+		if err := insertPrecheckSecretResolutionAudit(ctx, tx, input.AgentID, input.PrecheckID, input.RequestID, "EXPORT_PRECHECK_SECRET_RESOLVE_REQUESTED", "SUCCEEDED", input.Now); err != nil {
+			storageCredential.Destroy()
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		storageCredential.Destroy()
+		return EncryptedExecutionStorageCredential{}, err
+	}
+	if outcomeErr != nil {
+		storageCredential.Destroy()
+		return EncryptedExecutionStorageCredential{}, outcomeErr
+	}
+	return storageCredential, nil
+}
+
 // FinishPrecheckSecretResolution 记录短时解密的安全结果，并在成功写出前重验当前绑定。
 // 它不接收或保存任何明文；同一 requestId 的重试只会重新从密文取得材料，不会缓存先前响应。
 func (s *Store) FinishPrecheckSecretResolution(ctx context.Context, input PrecheckSecretResolutionOutcome) error {
@@ -2646,11 +2800,13 @@ func readStoredPrecheck(ctx context.Context, queryer interface {
 	var bindingDigest, bindingAgentID, leaseID, agentID sql.NullString
 	var leaseEpoch sql.NullInt64
 	var validUntil, leaseExpiresAt, completedAt sql.NullString
+	var storageCredentialID sql.NullString
+	var storageCredentialRevision sql.NullInt64
 	err := queryer.QueryRowContext(ctx, `
         SELECT precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
                credential_id, credential_revision, node_id, node_facts_revision,
                binding_digest, binding_agent_id, agent_id, status, lease_id, lease_epoch, lease_expires_at,
-               integrity_status, valid_until, completed_at
+               integrity_status, valid_until, completed_at, storage_credential_id, storage_credential_revision
         FROM precheck_runs
         WHERE precheck_id = ?
     `, precheckID).Scan(
@@ -2658,7 +2814,7 @@ func readStoredPrecheck(ctx context.Context, queryer interface {
 		&run.Binding.ConfigFingerprint, &run.Binding.DataSourceID, &run.Binding.CredentialID,
 		&run.Binding.CredentialRevision, &run.Binding.NodeID, &run.Binding.NodeFactsRevision,
 		&bindingDigest, &bindingAgentID, &agentID, &run.Status, &leaseID, &leaseEpoch, &leaseExpiresAt,
-		&run.IntegrityStatus, &validUntil, &completedAt,
+		&run.IntegrityStatus, &validUntil, &completedAt, &storageCredentialID, &storageCredentialRevision,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedPrecheck{}, ErrPrecheckLeaseRejected
@@ -2668,6 +2824,8 @@ func readStoredPrecheck(ctx context.Context, queryer interface {
 	}
 	run.Binding.BindingDigest, run.Binding.BindingAgentID = bindingDigest.String, bindingAgentID.String
 	run.AgentID, run.LeaseID, run.LeaseEpoch = agentID.String, leaseID.String, leaseEpoch.Int64
+	// EX-V1：预检查冻结的对象存储凭据引用；空值表示本地输出或未绑定凭据的草稿。
+	run.Binding.StorageCredentialID, run.Binding.StorageCredentialRevision = storageCredentialID.String, storageCredentialRevision.Int64
 	var parseErr error
 	if validUntil.Valid {
 		run.Binding.ValidUntil, parseErr = time.Parse(time.RFC3339Nano, validUntil.String)
@@ -3409,12 +3567,16 @@ func precheckBindingDigest(binding PrecheckBinding) (string, error) {
 		NodeID             string `json:"nodeId"`
 		NodeFactsRevision  int64  `json:"nodeFactsRevision"`
 		ValidUntil         string `json:"validUntil"`
+		// EX-V1：存储凭据引用进入绑定摘要，防止草稿绑定的存储凭据被替换后摘要不变。
+		StorageCredentialID       string `json:"storageCredentialId"`
+		StorageCredentialRevision int64  `json:"storageCredentialRevision"`
 	}{
 		BindingAgentID: binding.BindingAgentID, PrecheckID: binding.PrecheckID, DraftID: binding.DraftID,
 		DraftRevision: binding.DraftRevision, ConfigFingerprint: binding.ConfigFingerprint,
 		DataSourceID: binding.DataSourceID, CredentialID: binding.CredentialID,
 		CredentialRevision: binding.CredentialRevision, NodeID: binding.NodeID,
 		NodeFactsRevision: binding.NodeFactsRevision, ValidUntil: utcText(binding.ValidUntil),
+		StorageCredentialID: binding.StorageCredentialID, StorageCredentialRevision: binding.StorageCredentialRevision,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode precheck binding digest: %w", err)
@@ -5818,6 +5980,10 @@ func validatePrecheckCreate(input PrecheckCreate) error {
 	if input.PrecheckID == "" || input.DraftID == "" || input.DraftRevision < 1 || input.DataSourceID == "" || input.CredentialID == "" || input.CredentialRevision < 1 || input.NodeID == "" || input.CreatorSubjectID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.ValidUntil.IsZero() || !input.ValidUntil.After(input.CreatedAt) {
 		return errors.New("precheck create identity is invalid")
 	}
+	if (input.StorageCredentialID == "") != (input.StorageCredentialRevision == 0) ||
+		(input.StorageCredentialID != "" && (!validAgentOpaqueValue(input.StorageCredentialID, 256) || input.StorageCredentialRevision < 1)) {
+		return errors.New("precheck storage credential binding is invalid")
+	}
 	if !isSHA256(input.ConfigFingerprint) || !isSHA256(input.RequestDigest) {
 		return errors.New("precheck create fingerprint is invalid")
 	}
@@ -5832,7 +5998,9 @@ func validatePrecheckBinding(binding PrecheckBinding) error {
 		!validAgentOpaqueValue(binding.DataSourceID, 256) || !validAgentOpaqueValue(binding.CredentialID, 256) ||
 		binding.CredentialRevision < 1 || !validAgentOpaqueValue(binding.NodeID, 256) ||
 		binding.NodeFactsRevision < 1 || !validAgentOpaqueValue(binding.BindingAgentID, 256) ||
-		!isSHA256(binding.BindingDigest) || binding.ValidUntil.IsZero() {
+		!isSHA256(binding.BindingDigest) || binding.ValidUntil.IsZero() ||
+		(binding.StorageCredentialID == "") != (binding.StorageCredentialRevision == 0) ||
+		(binding.StorageCredentialID != "" && (!validAgentOpaqueValue(binding.StorageCredentialID, 256) || binding.StorageCredentialRevision < 1)) {
 		return errors.New("precheck binding is invalid")
 	}
 	return nil

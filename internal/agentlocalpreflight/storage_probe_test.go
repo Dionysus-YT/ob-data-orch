@@ -50,6 +50,20 @@ func (p *recordingAuthProber) ProbeAuth(context.Context, string, []byte, []byte,
 	return p.verified, p.err
 }
 
+func (*recordingAuthProber) RequiresStorageCredentials() bool { return true }
+
+type recordingStorageCredentialResolver struct {
+	credential agentpreflight.StorageCredential
+	calls      int
+}
+
+func (r *recordingStorageCredentialResolver) ResolveStorageCredential(context.Context, agentstate.PrecheckBinding) (agentpreflight.StorageCredential, error) {
+	r.calls++
+	return agentpreflight.StorageCredential{
+		Provider: r.credential.Provider, AccessKey: append([]byte(nil), r.credential.AccessKey...), SecretKey: append([]byte(nil), r.credential.SecretKey...),
+	}, nil
+}
+
 func TestParseStorageEndpoint(t *testing.T) {
 	t.Parallel()
 	if host, port, ok := parseStorageEndpoint("oss-cn-hangzhou.aliyuncs.com"); !ok || host != "oss-cn-hangzhou.aliyuncs.com" || port != "443" {
@@ -107,9 +121,13 @@ func TestStorageAuthResult(t *testing.T) {
 		t.Fatalf("未装配结果 = %#v, %v", result, err)
 	}
 	// EX-V1 前的固定失败关闭实现：绝不返回 PASSED/FAILED 或解析真实凭据。
-	result, err = (Probe{StorageAuth: UnavailableStorageAuthProber{}}).storageAuthResult(context.Background(), storageRequest(""))
+	defaultResolver := &recordingStorageCredentialResolver{credential: agentpreflight.StorageCredential{Provider: "OSS", AccessKey: []byte("synthetic-access"), SecretKey: []byte("synthetic-secret")}}
+	result, err = (Probe{StorageAuth: UnavailableStorageAuthProber{}, StorageCredentials: defaultResolver}).storageAuthResult(context.Background(), storageRequest(""))
 	if err != nil || result.Status != agentpreflight.StatusUnknown || result.EvidenceCode != "STORAGE_AUTH_UNAVAILABLE" {
 		t.Fatalf("默认凭据探测结果 = %#v, %v", result, err)
+	}
+	if defaultResolver.calls != 0 {
+		t.Fatalf("默认失败关闭探测器解析凭据 %d 次", defaultResolver.calls)
 	}
 	// 探测接口本身受控投影：verified → PASSED，拒绝 → FAILED，异常 → UNKNOWN。
 	for name, want := range map[string]struct {
@@ -121,9 +139,13 @@ func TestStorageAuthResult(t *testing.T) {
 		"凭据被拒": {&recordingAuthProber{}, agentpreflight.StatusFailed, "STORAGE_CREDENTIAL_REJECTED"},
 		"探测异常": {&recordingAuthProber{err: errors.New("synthetic-secret-not-allowed")}, agentpreflight.StatusUnknown, "STORAGE_AUTH_UNAVAILABLE"},
 	} {
-		result, err := (Probe{StorageAuth: want.prober}).storageAuthResult(context.Background(), storageRequest(""))
+		resolver := &recordingStorageCredentialResolver{credential: agentpreflight.StorageCredential{Provider: "OSS", AccessKey: []byte("synthetic-access"), SecretKey: []byte("synthetic-secret")}}
+		result, err := (Probe{StorageAuth: want.prober, StorageCredentials: resolver}).storageAuthResult(context.Background(), storageRequest(""))
 		if err != nil || result.Status != want.status || result.EvidenceCode != want.code {
 			t.Fatalf("%s 结果 = %#v, %v", name, result, err)
+		}
+		if resolver.calls != 1 {
+			t.Fatalf("%s 凭据解析次数 = %d，期望 1", name, resolver.calls)
 		}
 	}
 }

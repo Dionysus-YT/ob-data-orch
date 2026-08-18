@@ -42,6 +42,7 @@ type Protocol interface {
 	ClaimNextPrecheck(context.Context, agentwire.PrecheckClaimNext) (agentwire.PrecheckGrant, bool, error)
 	AcknowledgePrecheckLease(context.Context, agentwire.PrecheckLeaseAcknowledgement) error
 	ResolvePrecheckDatabaseConnection(context.Context, agentwire.PrecheckSecretSlotRequest) (agentwire.DatabaseConnectionSlot, error)
+	ResolvePrecheckStorageCredential(context.Context, agentwire.PrecheckSecretSlotRequest) (agentwire.StorageCredentialSlot, error)
 	CompletePrecheck(context.Context, agentwire.PrecheckCompletion) (agentwire.PrecheckState, error)
 }
 
@@ -49,6 +50,7 @@ type Protocol interface {
 // Probe 不可借此请求其他预检查、租约或数据源的秘密。
 type SecretResolver interface {
 	ResolveDatabaseConnection(context.Context, agentstate.PrecheckBinding) (agentjdbc.Connection, error)
+	ResolveStorageCredential(context.Context, agentstate.PrecheckBinding) (agentpreflight.StorageCredential, error)
 }
 
 // ProbeFactory 在租约确认后才创建固定检查 Probe。
@@ -123,7 +125,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		active:   true,
 	}
 	// 槽位初始保持关闭，即使工厂错误地提前调用解析器也不会发起控制面请求。
-	// 只有固定包装器进入数据库检查的调用范围时才附加内部许可；resolver 自身保证一次运行最多解析一次，并会在 RunNext 返回时立即失效。
+	// 只有固定包装器进入相应检查的调用范围时才附加内部许可；resolver 分别限制数据库和存储槽位各解析一次，并会在 RunNext 返回时立即失效。
 	defer resolver.close()
 	probe := secretGatedProbe{delegate: w.ProbeFactory(resolver), resolver: resolver}
 	request := requestForGrant(identity.AgentID, grant)
@@ -332,20 +334,23 @@ type leaseSecretResolver struct {
 	bootID   string
 	grant    agentwire.PrecheckGrant
 
-	mu     sync.Mutex
-	active bool
-	permit *secretResolvePermit
-	used   bool
+	mu           sync.Mutex
+	active       bool
+	permit       *secretResolvePermit
+	databaseUsed bool
+	storageUsed  bool
 }
 
-// secretResolvePermit 只由 Worker 在数据库检查的同步调用范围内创建。
+// secretResolvePermit 只由 Worker 在固定秘密相关检查的同步调用范围内创建。
 // ProbeFactory 没有此令牌，因此不能在本机前置检查前或其后自行解析槽位。
-type secretResolvePermit struct{}
+type secretResolvePermit struct {
+	check agentpreflight.CheckID
+}
 
 type secretResolvePermitContextKey struct{}
 
-// secretGatedProbe 只在固定数据库检查开始时放行本次租约的槽位解析器。
-// 本机前置检查使用同一个 Probe，但不能借由保留的解析器提前触发控制面秘密操作。
+// secretGatedProbe 只在固定数据库或存储认证检查开始时放行本次租约的对应槽位解析器。
+// 本机前置检查、对象检查和存储连通性检查不能借由保留的解析器提前触发控制面秘密操作。
 type secretGatedProbe struct {
 	delegate agentpreflight.Probe
 	resolver *leaseSecretResolver
@@ -355,8 +360,8 @@ func (p secretGatedProbe) Probe(ctx context.Context, check agentpreflight.CheckI
 	if ctx == nil || p.delegate == nil || p.resolver == nil {
 		return agentpreflight.Result{}, agentpreflight.ErrInvalidRequest
 	}
-	if check == agentpreflight.CheckDatabaseConnectivity {
-		permit := &secretResolvePermit{}
+	if check == agentpreflight.CheckDatabaseConnectivity || check == agentpreflight.CheckStorageAuth {
+		permit := &secretResolvePermit{check: check}
 		p.resolver.allow(permit)
 		defer p.resolver.disallow(permit)
 		ctx = context.WithValue(ctx, secretResolvePermitContextKey{}, permit)
@@ -387,11 +392,11 @@ func (r *leaseSecretResolver) ResolveDatabaseConnection(ctx context.Context, bin
 		return agentjdbc.Connection{}, ErrSecretResolution
 	}
 	permit, _ := ctx.Value(secretResolvePermitContextKey{}).(*secretResolvePermit)
-	if !r.active || permit == nil || r.permit != permit || r.used || !sameBinding(binding, r.grant.Binding) || !r.clock().UTC().Before(r.grant.ExpiresAt) {
+	if !r.active || permit == nil || r.permit != permit || permit.check != agentpreflight.CheckDatabaseConnectivity || r.databaseUsed || !sameBinding(binding, r.grant.Binding) || !r.clock().UTC().Before(r.grant.ExpiresAt) {
 		return agentjdbc.Connection{}, ErrSecretResolution
 	}
 	// 在发起网络请求前先占用唯一槽位，失败也不允许重试解析，避免扩大秘密暴露次数。
-	r.used = true
+	r.databaseUsed = true
 	slot, err := r.protocol.ResolvePrecheckDatabaseConnection(ctx, agentwire.PrecheckSecretSlotRequest{
 		BootID:        r.bootID,
 		PrecheckID:    r.grant.PrecheckID,
@@ -416,6 +421,44 @@ func (r *leaseSecretResolver) ResolveDatabaseConnection(ctx context.Context, bin
 	return connection, nil
 }
 
+// ResolveStorageCredential 只在 STORAGE_AUTH 的同步调用范围内解析一次当前预检查冻结的存储凭据。
+// 存储连通性、数据库和对象检查均不能调用它；返回的字节所有权转移给认证探测器，并由其立即清零。
+func (r *leaseSecretResolver) ResolveStorageCredential(ctx context.Context, binding agentstate.PrecheckBinding) (agentpreflight.StorageCredential, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ctx == nil {
+		return agentpreflight.StorageCredential{}, ErrSecretResolution
+	}
+	permit, _ := ctx.Value(secretResolvePermitContextKey{}).(*secretResolvePermit)
+	if !r.active || permit == nil || r.permit != permit || permit.check != agentpreflight.CheckStorageAuth || r.storageUsed ||
+		!r.grant.Context.OutputKind.IsStorageOutput() || r.grant.Context.StorageTarget == nil || !sameBinding(binding, r.grant.Binding) || !r.clock().UTC().Before(r.grant.ExpiresAt) {
+		return agentpreflight.StorageCredential{}, ErrSecretResolution
+	}
+	// 在发起网络请求前先占用唯一存储槽位，失败也不重复解析，避免扩大密钥暴露次数。
+	r.storageUsed = true
+	slot, err := r.protocol.ResolvePrecheckStorageCredential(ctx, agentwire.PrecheckSecretSlotRequest{
+		BootID:        r.bootID,
+		PrecheckID:    r.grant.PrecheckID,
+		LeaseID:       r.grant.LeaseID,
+		LeaseEpoch:    r.grant.LeaseEpoch,
+		BindingDigest: r.grant.BindingDigest,
+		SentAt:        r.clock().UTC(),
+	})
+	if err != nil || !validStorageCredentialSlot(slot) || slot.Provider != r.grant.Context.StorageTarget.Provider {
+		slot.Destroy()
+		return agentpreflight.StorageCredential{}, ErrSecretResolution
+	}
+	storageCredential := agentpreflight.StorageCredential{
+		Provider:  slot.Provider,
+		AccessKey: slot.AccessKey,
+		SecretKey: slot.SecretKey,
+	}
+	// 所有权转移给 STORAGE_AUTH 探测器；slot.Destroy 不能清零同一底层字节切片。
+	slot.AccessKey = nil
+	slot.SecretKey = nil
+	return storageCredential, nil
+}
+
 func (r *leaseSecretResolver) close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -437,6 +480,16 @@ func validConnectionSlot(slot agentwire.DatabaseConnectionSlot) bool {
 		}
 	}
 	return !containsForbiddenSecretByte(slot.Username) && !containsForbiddenSecretByte(slot.Password)
+}
+
+// validStorageCredentialSlot 只接受已知提供方与不含控制字符的完整密钥对。
+// Worker 在交给本机认证探测器前复核一次，避免协议层校验漂移时扩大秘密消费范围。
+func validStorageCredentialSlot(slot agentwire.StorageCredentialSlot) bool {
+	if slot.Provider != "OSS" && slot.Provider != "S3" && slot.Provider != "COS" && slot.Provider != "OBS" ||
+		len(slot.AccessKey) == 0 || len(slot.AccessKey) > 4096 || len(slot.SecretKey) == 0 || len(slot.SecretKey) > 4096 {
+		return false
+	}
+	return !containsForbiddenSecretByte(slot.AccessKey) && !containsForbiddenSecretByte(slot.SecretKey)
 }
 
 func containsForbiddenSecretByte(value []byte) bool {

@@ -188,13 +188,13 @@ Agent 认证
 
 ### 9.1 提交前预检查秘密槽位补充
 
-AD-R09 确认的 `EXPORT_PREFLIGHT` 可以在提交前解析当前数据源密码，但必须与正式执行隔离：
+AD-R09 确认的 `EXPORT_PREFLIGHT` 可以在提交前解析当前数据源密码；对象存储输出在满足更窄的前置条件时可解析冻结的存储凭据。两类能力都必须与正式执行隔离：
 
 - 同时校验 precheckId、precheckLeaseId/epoch、nodeId、agentId、草稿 revision、配置指纹、credentialId/revision 和固定检查用途；
-- 只返回数据库认证所需的类型化槽位，不返回 sys、对象存储或未来任务秘密；
-- Agent Worker 必须先完成无秘密的工具环境、输出路径、目录空性和可用空间检查；仅当四项均为 `PASSED` 时才可解析数据库槽位并启动固定 JDBC 探针。任一前置项为 `FAILED` 或 `UNKNOWN` 时，不得接触凭据，数据库/对象检查以固定 `UNKNOWN` 结果收口；
+- `DATABASE_CONNECTION` 只返回数据库认证所需的类型化槽位，不返回 sys 或其他未来任务秘密；`STORAGE_CREDENTIAL` 只返回成对 access-key/secret-key，且只能用于当前对象存储输出的 `STORAGE_AUTH`。两个槽位必须独立请求、独立 requestId/摘要/回执，不能在一次响应中混合或复用；
+- 本地输出的 Agent Worker 必须先完成无秘密的工具环境、输出路径、目录空性和可用空间检查；仅当四项均为 `PASSED` 时才可解析数据库槽位并启动固定 JDBC 探针。对象存储输出只先完成工具环境和临时目录空间检查，再完成数据库/对象检查与无秘密 `STORAGE_CONNECTIVITY`；仅当这些前置均为 `PASSED`、草稿已冻结存储凭据引用且认证探测器显式声明需要凭据时，才可解析存储槽位。任一前置项为 `FAILED` 或 `UNKNOWN` 时，不得接触对应凭据，相关检查以固定 `UNKNOWN` 结果收口；
 - 预检查只在内存中建立有限超时数据库连接，不生成 OBDUMPER 安全文件，也不启动 OBDUMPER；允许由固定 Java JDBC 连接探针完成连接、基础元信息和已冻结单表的零行读取验证。探针先用 JDBC 元数据定位对象，再由冻结的 MySQL/Oracle 兼容模式逐段安全引用库或 Schema 与表，固定执行 `SELECT 1 ... WHERE 1 = 0`；不得接受任意 SQL、URL、驱动、主类或环境秘密；
-- 同一 requestId 在有效短租约内可以重试，但控制面和 Agent 均不缓存或持久化明文响应；
+- 同一槽位的 requestId 在有效短租约内可以重试，但控制面和 Agent 均不缓存或持久化明文响应；默认失败关闭的认证探测器不得解析存储凭据。当前尚未启用任何云厂商签名请求，真实凭据探测仍需 EX-V1 的端点、凭据与网络授权；
 - 完成、失败、失联或租约过期后立即释放内存槽位；预检查凭据不能复用于正式 execution；
 - 正式任务领取后必须按 execution 租约重新解析已冻结 credential revision，不能沿用预检查连接或秘密；
 - 数据源禁用、凭据撤销、权限变化、草稿/指纹变化或节点不匹配时拒绝解析并使预检查失效；

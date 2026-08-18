@@ -2854,6 +2854,114 @@ func TestResolveExecutionStorageCredentialReturnsEnvelopeIDs(t *testing.T) {
 	}
 }
 
+// TestPrecheckStorageCredentialFrozenAndResolved 验证 EX-V1 预检查存储凭据链路：
+// 创建时冻结引用（写入 precheck_runs），已确认租约内解析返回加密信封（AAD 用信封自身 credentialId），
+// 未绑定凭据与越权租约均失败关闭。
+func TestPrecheckStorageCredentialFrozenAndResolved(t *testing.T) {
+	t.Parallel()
+	s, _ := openTestStore(t)
+	seedBaseFixture(t, s)
+	ctx := context.Background()
+	now := testTime.Add(time.Minute)
+	// 未绑定存储凭据的预检查：不得请求 STORAGE_CREDENTIAL 槽位。
+	local := createClaimablePrecheck(t, s, "precheck-storage-local-1")
+	localGrant, err := s.ClaimPrecheck(ctx, PrecheckClaim{
+		AgentID: "agent-1", NodeID: "node-1", PrecheckID: "precheck-storage-local-1", LeaseID: "lease-precheck-local-1",
+		RequestID: "claim-precheck-local-1", RequestDigest: strings.Repeat("c", 64), LeaseTTL: 2 * time.Minute, Now: now,
+	})
+	if err != nil {
+		t.Fatalf("ClaimPrecheck(local) = %v", err)
+	}
+	if _, err := s.AcknowledgePrecheck(ctx, PrecheckAcknowledgement{
+		AgentID: "agent-1", PrecheckID: local.PrecheckID, LeaseID: localGrant.LeaseID, LeaseEpoch: localGrant.LeaseEpoch,
+		BindingDigest: localGrant.Binding.BindingDigest, RequestID: "ack-precheck-local-1", RequestDigest: strings.Repeat("d", 64), Now: now.Add(30 * time.Second),
+	}); err != nil {
+		t.Fatalf("AcknowledgePrecheck(local) = %v", err)
+	}
+	_, err = s.ResolvePrecheckStorageCredential(ctx, PrecheckSecretResolutionRequest{
+		AgentID: "agent-1", PrecheckID: local.PrecheckID, LeaseID: localGrant.LeaseID, LeaseEpoch: localGrant.LeaseEpoch,
+		BindingDigest: localGrant.Binding.BindingDigest, RequestID: "resolve-precheck-local-1", RequestDigest: strings.Repeat("e", 64), Now: now.Add(time.Minute),
+	})
+	if !errors.Is(err, ErrPrecheckLeaseRejected) {
+		t.Fatalf("local ResolvePrecheckStorageCredential() error = %v, want ErrPrecheckLeaseRejected", err)
+	}
+	if _, err := s.CompleteAgentPrecheck(ctx, AgentPrecheckCompletion{
+		AgentID: "agent-1", PrecheckID: local.PrecheckID, LeaseID: localGrant.LeaseID, LeaseEpoch: localGrant.LeaseEpoch,
+		BindingDigest: localGrant.Binding.BindingDigest, RequestID: "complete-precheck-local-1", RequestDigest: strings.Repeat("0", 64),
+		Results: passedPrecheckResults(), Now: now.Add(90 * time.Second),
+	}); err != nil {
+		t.Fatalf("CompleteAgentPrecheck(local) = %v", err)
+	}
+	if _, err := s.CreateStorageCredential(ctx, StorageCredentialCreate{
+		StorageCredentialID: "storage-precheck-1", OwnerSubjectID: "subject-1", DisplayName: "预检查槽位 OSS 凭据", Provider: "OSS",
+		AccessKey: EncryptedStorageSecret{CredentialID: "precheck-envelope-access-1", Revision: 1, KeyID: "key-1", Nonce: []byte{31}, Ciphertext: []byte{32}},
+		SecretKey: EncryptedStorageSecret{CredentialID: "precheck-envelope-secret-1", Revision: 1, KeyID: "key-1", Nonce: []byte{33}, Ciphertext: []byte{34}},
+		RequestID: "req-precheck-storage", IdempotencyKey: "idem-precheck-storage", RequestDigest: testFingerprint, CreatedAt: testTime,
+	}); err != nil {
+		t.Fatalf("CreateStorageCredential(): %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+        INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at)
+        VALUES ('draft-storage-secret-1', 'subject-1', 'source-1', 'node-1', 1, '4.3.5-RELEASE', 'obdumper-4.3.5-slice-v7', 'export-odp-full-csv-v1', 'v6', ?, ?, '{}', ?, ?)
+    `, storageDraftConfigJSON, testFingerprint, utcText(testTime), utcText(testTime)); err != nil {
+		t.Fatalf("创建合成对象存储草稿: %v", err)
+	}
+	input := PrecheckCreate{PrecheckRun: PrecheckRun{
+		PrecheckID: "precheck-storage-1", DraftID: "draft-storage-secret-1", DraftRevision: 1, ConfigFingerprint: testFingerprint,
+		DataSourceID: "source-1", CredentialID: "credential-1", CredentialRevision: 1, NodeID: "node-1",
+		CreatedAt: testTime, ValidUntil: testTime.Add(10 * time.Minute),
+		// EX-V1：对象存储草稿预检查冻结存储凭据引用。
+		StorageCredentialID: "storage-precheck-1", StorageCredentialRevision: 1,
+	}, CreatorSubjectID: "subject-1", RequestID: "request-precheck-storage-1", IdempotencyKey: "idempotency-precheck-storage-1", RequestDigest: strings.Repeat("f", 64)}
+	if _, err := s.CreatePrecheck(ctx, input); err != nil {
+		t.Fatalf("CreatePrecheck(storage): %v", err)
+	}
+	run, err := s.GetPrecheckRun(ctx, "precheck-storage-1")
+	if err != nil || run.StorageCredentialID != "storage-precheck-1" || run.StorageCredentialRevision != 1 {
+		t.Fatalf("冻结的预检查引用 = %#v, %v", run, err)
+	}
+	grant, err := s.ClaimPrecheck(ctx, PrecheckClaim{
+		AgentID: "agent-1", NodeID: "node-1", PrecheckID: "precheck-storage-1", LeaseID: "lease-precheck-storage-1",
+		RequestID: "claim-precheck-storage-1", RequestDigest: strings.Repeat("0", 64), LeaseTTL: 2 * time.Minute, Now: now,
+	})
+	if err != nil {
+		t.Fatalf("ClaimPrecheck(storage) = %v", err)
+	}
+	if _, err := s.AcknowledgePrecheck(ctx, PrecheckAcknowledgement{
+		AgentID: "agent-1", PrecheckID: "precheck-storage-1", LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "ack-precheck-storage-1", RequestDigest: strings.Repeat("a", 64), Now: now.Add(30 * time.Second),
+	}); err != nil {
+		t.Fatalf("AcknowledgePrecheck(storage) = %v", err)
+	}
+	resolved, err := s.ResolvePrecheckStorageCredential(ctx, PrecheckSecretResolutionRequest{
+		AgentID: "agent-1", PrecheckID: "precheck-storage-1", LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "resolve-precheck-storage-1", RequestDigest: strings.Repeat("b", 64), Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("ResolvePrecheckStorageCredential() = %v", err)
+	}
+	defer resolved.Destroy()
+	if resolved.StorageCredentialID != "storage-precheck-1" || resolved.Provider != "OSS" || resolved.Revision != 1 ||
+		resolved.OwnerSubjectID != "subject-1" || resolved.DataSourceID != "source-1" || resolved.NodeID != "node-1" ||
+		resolved.AccessKeyCredentialID != "precheck-envelope-access-1" || resolved.SecretKeyCredentialID != "precheck-envelope-secret-1" {
+		t.Fatalf("ResolvePrecheckStorageCredential() = %#v", resolved)
+	}
+	if err := s.FinishPrecheckSecretResolution(ctx, PrecheckSecretResolutionOutcome{
+		AgentID: "agent-1", PrecheckID: "precheck-storage-1", LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "resolve-precheck-storage-1", RequestDigest: strings.Repeat("b", 64),
+		Succeeded: true, Now: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("FinishPrecheckSecretResolution(storage) = %v", err)
+	}
+	// 越权租约（非本 Agent 领取）必须失败关闭。
+	if _, err := s.ResolvePrecheckStorageCredential(ctx, PrecheckSecretResolutionRequest{
+		AgentID: "agent-other", PrecheckID: "precheck-storage-1", LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "resolve-precheck-foreign-1", RequestDigest: strings.Repeat("f", 64), Now: now.Add(time.Minute),
+	}); !errors.Is(err, ErrPrecheckLeaseRejected) {
+		t.Fatalf("foreign resolve error = %v, want ErrPrecheckLeaseRejected", err)
+	}
+}
+
 func seedBaseFixture(t *testing.T, store *Store) {
 	t.Helper()
 	ctx := context.Background()

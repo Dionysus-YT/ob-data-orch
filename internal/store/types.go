@@ -308,13 +308,16 @@ func (c *EncryptedExecutionDatabaseConnection) Destroy() {
 	c.NodeID = ""
 }
 
-// EncryptedExecutionStorageCredential 是对象存储任务执行时解析的存储凭据信封投影。
+// EncryptedExecutionStorageCredential 是对象存储任务执行或 STORAGE_AUTH 解析的存储凭据信封投影。
 // 只承载加密信封与安全标识，绝不包含 access-key/secret-key 明文。
-// 本地输出任务解析结果为空值（StorageCredentialID 为空），Agent 调用方据此跳过存储注入。
+// OwnerSubjectID、DataSourceID 与 NodeID 仅供控制面解密前复验对象范围，绝不进入 Agent 响应。
 type EncryptedExecutionStorageCredential struct {
 	StorageCredentialID string
 	Provider            string
 	Revision            int64
+	OwnerSubjectID      string
+	DataSourceID        string
+	NodeID              string
 	// AccessKeyCredentialID/SecretKeyCredentialID 是加密信封自身的 credentialId（AAD 绑定项）。
 	// 解密时必须使用它们而不是 StorageCredentialID，否则 AES-GCM 附加数据校验必然失败。
 	AccessKeyCredentialID string
@@ -339,6 +342,9 @@ func (c *EncryptedExecutionStorageCredential) Destroy() {
 	}
 	c.AccessKeyNonce, c.AccessKeyCiphertext, c.SecretKeyNonce, c.SecretKeyCiphertext = nil, nil, nil, nil
 	c.AccessKeyKeyID, c.SecretKeyKeyID = "", ""
+	c.StorageCredentialID, c.Provider, c.Revision = "", "", 0
+	c.OwnerSubjectID, c.DataSourceID, c.NodeID = "", "", ""
+	c.AccessKeyCredentialID, c.SecretKeyCredentialID = "", ""
 }
 
 // DataSourceSummary 是列表与详情 API 可返回的非敏感数据源投影。
@@ -1072,6 +1078,10 @@ type PrecheckRun struct {
 	Results            []PrecheckCheckResult
 	ValidUntil         time.Time
 	CreatedAt          time.Time
+	// StorageCredentialID/StorageCredentialRevision 是 EX-V1 存储凭据探测预检查
+	// 冻结的对象存储凭据引用（对象存储输出草稿绑定凭据时非空，否则为空）。
+	StorageCredentialID       string
+	StorageCredentialRevision int64
 }
 
 // PrecheckCreate 只创建固定 EXPORT_PREFLIGHT 绑定；它不含 Shell、SQL、路径浏览或秘密明文。
@@ -1104,6 +1114,10 @@ type PrecheckBinding struct {
 	BindingAgentID     string
 	BindingDigest      string
 	ValidUntil         time.Time
+	// StorageCredentialID/StorageCredentialRevision 是 EX-V1 预检查冻结的
+	// 对象存储凭据引用；本地输出或未绑定凭据的草稿保持为空。
+	StorageCredentialID       string
+	StorageCredentialRevision int64
 }
 
 // PrecheckClaim 是受认证 Agent 对固定预检查短租约的领取请求。

@@ -655,7 +655,7 @@ EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 
 **EX-I6 存储层实施（2026-08-14）**：对象存储输出任务的预检查使用“存储形态清单”——`DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → AVAILABLE_SPACE → STORAGE_CONNECTIVITY → STORAGE_AUTH`（裁剪不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY；AVAILABLE_SPACE 转向 `--tmp-path` 卷，未指定时 UNKNOWN）。本地输出保持冻结六项不变。两项存储检查由 Agent 探测：
 
 - STORAGE_CONNECTIVITY：受控 TCP 端点可达性探测，仅在显式运行开关（`OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE=true`）开启时装配；Agent 二进制直接启动时默认 UNKNOWN。本机 MVP/Agent 包启动器固定开启该开关，运行启动器即视为对该 Agent 生命周期内受控 provider endpoint TCP 建连的持续授权，关闭开关或停止进程即撤销；探针不发送凭据或业务数据，该授权不扩展到 STORAGE_AUTH、工具执行或数据库操作。
-- STORAGE_AUTH：凭据有效性探测接口与失败关闭默认实现已就位，真实探测（四类云厂商签名协议）归 EX-V1；默认 UNKNOWN。
+- STORAGE_AUTH：凭据有效性探测接口与失败关闭默认实现已就位。预检查创建会冻结已校验的存储凭据引用；只有在数据库/对象检查和 STORAGE_CONNECTIVITY 均通过后，且探测器显式声明需要凭据时，才可经独立 `STORAGE_CREDENTIAL` 槽位短时解析该引用。默认探测器不解析凭据并返回 UNKNOWN；真实四类云厂商签名探测归 EX-V1。
 
 任务提交门禁由结果驱动：对象存储输出要求两项存储检查均 PASSED（`STORAGE_PRECHECK_REQUIRED`），未启用探测时保持 UNKNOWN 并失败关闭。旧 `STORAGE_PRECHECK_UNAVAILABLE` 功能门禁已移除；STORAGE_AUTH 真实凭据取证仍须另行授权。
 
@@ -708,7 +708,7 @@ EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 
 |---|---|---|
 | DATABASE_CONNECTION | 数据库密码 | ENABLED |
 | SYS_DATABASE_CONNECTION | sys 密码（DDL 场景） | ENABLED（DDL 切片） |
-| STORAGE_CREDENTIAL | 对象存储凭据（OSS/S3/COS/OBS） | ENABLED（执行槽位，2026-08-14）；预检查凭据探测归 EX-V1 |
+| STORAGE_CREDENTIAL | 对象存储凭据（OSS/S3/COS/OBS） | ENABLED（执行槽位，2026-08-14；预检查受控槽位准备已实现，真实凭据探测归 EX-V1） |
 
 每个 SecretSlot 保持当前生命周期：创建时加密 → 短租约解析 → 使用后销毁。
 

@@ -179,12 +179,12 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 |---|---|
 | `POST /agent/v1/prechecks:claim-next` | `ClaimNextPrecheck`，在一个 SQLite 短事务中只领取明确绑定本节点的下一条 `EXPORT_PREFLIGHT`；严格 `agent-v1/EXPORT_PREFLIGHT_CLAIM_NEXT` 信封只允许固定 capability，不接受 precheckId、leaseId、路径、命令、SQL 或秘密；无工作返回 `204 No Content` 且不写回执，成功响应返回冻结 binding、bindingDigest、六项 checkSet 和 `realExecutionEnabled=false` |
 | `POST /agent/v1/prechecks/{precheckId}:acknowledge-lease` | 严格 `agent-v1/EXPORT_PREFLIGHT_ACKNOWLEDGE_LEASE` 信封；确认 leaseId、leaseEpoch 和 bindingDigest，不重新发送或修改 binding |
-| `POST /agent/v1/prechecks/{precheckId}/secret-slots:resolve` | 只解析该检查绑定的数据库凭据 revision |
+| `POST /agent/v1/prechecks/{precheckId}/secret-slots:resolve` | 只解析已确认租约的固定 `DATABASE_CONNECTION`，或仅在对象存储输出的 `STORAGE_AUTH` 阶段解析冻结的 `STORAGE_CREDENTIAL`；两个槽位分别使用 requestId/摘要/回执，响应 `no-store` 且只短时存在于 Agent 内存 |
 | `POST /agent/v1/prechecks/{precheckId}:complete` | 严格 `agent-v1/EXPORT_PREFLIGHT_COMPLETE` 信封；按固定顺序提交六项 `{check,status,evidenceCode}`，不接收独立 `succeeded`、任意文件、SQL、路径或命令 |
 
 预检查和正式执行分别领取；Agent 同时只运行一个执行工作，预检查是否占用空闲容量由固定规则决定。控制面不主动连接 Agent，不增加入站端口。
 
-`0007` 的 `agent_precheck_receipts` 为每个 Agent 的 claim、acknowledge、complete 保存请求摘要、租约和安全状态投影。相同 `agentId + requestId + 请求摘要` 在控制面重启后必须返回原确认；同一 `agentId + requestId` 而摘要不同必须失败关闭，不能覆盖或新建租约。`precheck_runs` 持有当前租约、冻结 binding、bindingDigest 和节点事实版本；acknowledge 只增加回执确认，不能把 `LEASED` 改写为成功。租约到期一律使用控制面时钟：迟到的 acknowledge 或 complete 不能改变通过状态，迟到 complete 只能得到/记录 `EXPIRED` 的安全结论，并与该 Agent 请求的 `EXPORT_PRECHECK_COMPLETION_EXPIRED` 审计事实同事务持久化。
+`0007` 的 `agent_precheck_receipts` 为每个 Agent 的 claim、acknowledge、complete 保存请求摘要、租约和安全状态投影。相同 `agentId + requestId + 请求摘要` 在控制面重启后必须返回原确认；同一 `agentId + requestId` 而摘要不同必须失败关闭，不能覆盖或新建租约。`precheck_runs` 持有当前租约、冻结 binding、bindingDigest、节点事实版本，以及 `0019` 增加的可选 `storage_credential_id/revision`；后者只冻结引用，不保存密钥明文，且仅对象存储输出草稿绑定凭据时存在。`agent_precheck_secret_resolution_receipts` 对数据库和存储槽位分别记录 requestId/摘要/授权结果，不能把两个槽位合并为一次秘密响应。acknowledge 只增加回执确认，不能把 `LEASED` 改写为成功。租约到期一律使用控制面时钟：迟到的 acknowledge 或 complete 不能改变通过状态，迟到 complete 只能得到/记录 `EXPIRED` 的安全结论，并与该 Agent 请求的 `EXPORT_PRECHECK_COMPLETION_EXPIRED` 审计事实同事务持久化。
 
 六项结果的 `evidenceCode` 不是自由文本或正则格式字段：所有检查在 G2 合成验证中只允许 `SYNTHETIC_OK`；`DATABASE_CONNECTIVITY` 另只允许 `DATABASE_CONNECTED`、`DATABASE_CONNECTION_FAILED`、`DATABASE_CONNECTION_UNAVAILABLE` 且必须与状态匹配。`OBJECT_ACCESS` 的通过语义固定为“对冻结单表完成 JDBC 元数据定位与零行读取”，不持久化对象名称、查询文本、结果行或数据库错误。新增固定检查或证据码必须同步修改共享契约、OpenAPI 和负例测试；任何路径、SQL、命令、日志、错误原文或其编码形式均拒绝持久化。
 

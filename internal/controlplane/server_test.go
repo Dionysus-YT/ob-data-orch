@@ -1103,6 +1103,11 @@ func TestExportDraftV6DetectsInconsistentStoredConfiguration(t *testing.T) {
 // newGeneralizedFlowHandler 装配同时持有冻结与泛化生成器的测试处理器。
 // prechecks 使用接口以便在门禁测试中注入真实 SQLite 仓储链。
 func newGeneralizedFlowHandler(t *testing.T, drafts *recordingDraftStore, prechecks ExportPrecheckStore, tasks *recordingTaskStore) http.Handler {
+	return newGeneralizedFlowHandlerWithStorageCredentials(t, drafts, prechecks, tasks, nil)
+}
+
+// newGeneralizedFlowHandlerWithStorageCredentials 为对象存储引用测试额外装配受控凭据读取边界。
+func newGeneralizedFlowHandlerWithStorageCredentials(t *testing.T, drafts *recordingDraftStore, prechecks ExportPrecheckStore, tasks *recordingTaskStore, storageCredentials StorageCredentialStore) http.Handler {
 	t.Helper()
 	generator, err := commandgen.NewDefault()
 	if err != nil {
@@ -1119,7 +1124,7 @@ func newGeneralizedFlowHandler(t *testing.T, drafts *recordingDraftStore, preche
 	return NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
 		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
 		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Tasks: tasks,
-		Generator: generator, GeneralizedGenerator: generalized, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
+		StorageCredentials: storageCredentials, Generator: generator, GeneralizedGenerator: generalized, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
 	})
 }
 
@@ -1866,6 +1871,34 @@ func TestExportDraftV6ObjectStorageFlow(t *testing.T) {
 	}
 }
 
+func TestObjectStoragePrecheckFreezesAuthorizedStorageCredential(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	storageCredentials := newRecordingStorageCredentialStore()
+	storageCredentials.credentials["storage-precheck-1"] = store.StorageCredential{
+		StorageCredentialID: "storage-precheck-1", OwnerSubjectID: "synthetic-subject", Provider: "OSS", CurrentRevision: 1, Revision: 1,
+	}
+	handler := newGeneralizedFlowHandlerWithStorageCredentials(t, drafts, prechecks, tasks, storageCredentials)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"OSS","filePath":"oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com","tmpPath":"/E:/workespace/ob-data-orch/tmp/synthetic-staging","storageCredential":{"storageCredentialId":"storage-precheck-1","revision":1}}}}`
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	create.Header.Set("Idempotency-Key", "synthetic-storage-credential-precheck-draft-key")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create response=%d body=%s", created.Code, created.Body.String())
+	}
+	precheck := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:precheck", nil)
+	precheck.Header.Set("If-Match", `"rev-1"`)
+	precheck.Header.Set("Idempotency-Key", "synthetic-storage-credential-precheck-key")
+	prechecked := httptest.NewRecorder()
+	handler.ServeHTTP(prechecked, precheck)
+	if prechecked.Code != http.StatusAccepted || prechecks.created.StorageCredentialID != "storage-precheck-1" || prechecks.created.StorageCredentialRevision != 1 {
+		t.Fatalf("precheck response=%d binding=%#v body=%s", prechecked.Code, prechecks.created, prechecked.Body.String())
+	}
+}
+
 // TestExportDraftV6ObjectStorageFailClosed 验证对象存储 URI 越界在服务端失败关闭：
 // 密钥参数进 URI、未知 scheme、未知参数、缺 bucket、scheme 与输出类型不符均拒绝。
 func TestExportDraftV6ObjectStorageFailClosed(t *testing.T) {
@@ -2500,6 +2533,52 @@ func TestAgentPrecheckSecretSlotEndpointFailsClosedWithoutPrecheckDependencies(t
 	}
 }
 
+func TestAgentPrecheckStorageSecretSlotRevalidatesAndReturnsOnlyStoragePayload(t *testing.T) {
+	t.Parallel()
+	secrets := &recordingPrecheckSecretStore{storage: store.EncryptedExecutionStorageCredential{
+		StorageCredentialID: "storage-credential-1", Provider: "OSS", Revision: 1,
+		OwnerSubjectID: "subject-1", DataSourceID: "source-allowed", NodeID: "node-1",
+		AccessKeyCredentialID: "access-envelope-1", AccessKeyKeyID: "key-1", AccessKeyNonce: []byte{1}, AccessKeyCiphertext: []byte{2},
+		SecretKeyCredentialID: "secret-envelope-1", SecretKeyKeyID: "key-1", SecretKeyNonce: []byte{3}, SecretKeyCiphertext: []byte{4},
+	}}
+	decryptor := &recordingPrecheckStorageDecryptor{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Authorizer: sliceAuthorizer{},
+		AgentProtocol: &recordingAgentProtocol{identity: store.AgentIdentity{
+			AgentID: "agent-1", NodeID: "node-1", ProtocolVersion: "agent-v1",
+		}},
+		AgentPrechecks:  unreachableAgentPrecheckStore{},
+		PrecheckSecrets: secrets,
+		Decryptor:       decryptor,
+		PrecheckTTL:     time.Minute,
+	})
+	requestBody := fmt.Sprintf(`{"protocolVersion":"agent-v1","agentId":"agent-1","nodeId":"node-1","bootId":"boot-1","requestId":"precheck-storage-secret-request","sentAt":"2026-01-02T03:04:05Z","payloadType":"EXPORT_PREFLIGHT_RESOLVE_SECRET_SLOTS","payload":{"leaseId":"lease-1","leaseEpoch":1,"bindingDigest":"%s","slot":"STORAGE_CREDENTIAL"}}`, strings.Repeat("a", 64))
+	request := httptest.NewRequest(http.MethodPost, "/agent/v1/prechecks/precheck-1/secret-slots:resolve", strings.NewReader(requestBody))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"slot":"STORAGE_CREDENTIAL"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"storageCredential"`)) || bytes.Contains(response.Body.Bytes(), []byte(`"connection"`)) {
+		t.Fatalf("storage secret response=%d headers=%#v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	for _, forbidden := range []string{"subject-1", "source-allowed", "node-1", "storage-credential-1"} {
+		if bytes.Contains(response.Body.Bytes(), []byte(forbidden)) {
+			t.Fatalf("storage secret response exposed protected binding %q: %s", forbidden, response.Body.String())
+		}
+	}
+	if len(decryptor.envelopes) != 2 ||
+		decryptor.envelopes[0].Reference != (credential.Reference{CredentialID: "access-envelope-1", Revision: 1, SecretType: credential.StorageAccessKey, DataSourceID: "storage-credential-1"}) ||
+		decryptor.envelopes[1].Reference != (credential.Reference{CredentialID: "secret-envelope-1", Revision: 1, SecretType: credential.StorageSecretKey, DataSourceID: "storage-credential-1"}) {
+		t.Fatalf("storage decrypt references = %#v", decryptor.envelopes)
+	}
+	if len(secrets.finished) != 1 || !secrets.finished[0].Succeeded {
+		t.Fatalf("FinishPrecheckSecretResolution() = %#v, want one successful outcome", secrets.finished)
+	}
+}
+
 func TestAgentPrecheckSecretSlotRevalidatesFrozenOwnerPermissionsBeforeDecrypt(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -2924,11 +3003,16 @@ func (s *recordingClaimNextPrecheckStore) CompleteAgentPrecheck(context.Context,
 
 type recordingPrecheckSecretStore struct {
 	connection store.EncryptedPrecheckDatabaseConnection
+	storage    store.EncryptedExecutionStorageCredential
 	finished   []store.PrecheckSecretResolutionOutcome
 }
 
 func (s *recordingPrecheckSecretStore) ResolvePrecheckDatabaseConnection(_ context.Context, _ store.PrecheckSecretResolutionRequest) (store.EncryptedPrecheckDatabaseConnection, error) {
 	return s.connection, nil
+}
+
+func (s *recordingPrecheckSecretStore) ResolvePrecheckStorageCredential(_ context.Context, _ store.PrecheckSecretResolutionRequest) (store.EncryptedExecutionStorageCredential, error) {
+	return s.storage, nil
 }
 
 func (s *recordingPrecheckSecretStore) FinishPrecheckSecretResolution(_ context.Context, input store.PrecheckSecretResolutionOutcome) error {
@@ -2941,6 +3025,20 @@ type countingPrecheckDecryptor struct{ calls int }
 func (d *countingPrecheckDecryptor) Decrypt(credential.Envelope) ([]byte, error) {
 	d.calls++
 	return nil, errors.New("synthetic decryptor must not be called")
+}
+
+type recordingPrecheckStorageDecryptor struct{ envelopes []credential.Envelope }
+
+func (d *recordingPrecheckStorageDecryptor) Decrypt(envelope credential.Envelope) ([]byte, error) {
+	d.envelopes = append(d.envelopes, envelope)
+	switch envelope.Reference.SecretType {
+	case credential.StorageAccessKey:
+		return []byte("synthetic-access-key"), nil
+	case credential.StorageSecretKey:
+		return []byte("synthetic-secret-key"), nil
+	default:
+		return nil, errors.New("synthetic storage secret type is invalid")
+	}
 }
 
 type precheckPermissionCall struct {

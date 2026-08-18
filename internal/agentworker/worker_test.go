@@ -75,6 +75,64 @@ func TestRunNextAcknowledgesBeforeSecretResolutionAndCompletes(t *testing.T) {
 	}
 }
 
+func TestRunNextResolvesStorageCredentialOnlyDuringStorageAuth(t *testing.T) {
+	t.Parallel()
+	clock := newTestClock(time.Date(2026, time.July, 27, 9, 0, 0, 0, time.UTC))
+	grant := testGrant(clock.Now())
+	grant.CheckSet = agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindOSS)
+	grant.Context.OutputKind = agentpreflight.OutputKindOSS
+	grant.Context.OutputPath = "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com"
+	grant.Context.StorageTarget = &agentwire.PrecheckStorageTarget{
+		Provider: "OSS", URI: grant.Context.OutputPath, Endpoint: "oss-cn-hangzhou.aliyuncs.com", TmpPath: "/E:/approved-output/tmp",
+	}
+	protocol := &protocolStub{
+		grant: grant,
+		slot: agentwire.DatabaseConnectionSlot{
+			Host: "odp.internal.test", Port: 2883, Username: []byte("synthetic-user"), Password: []byte("synthetic-password"),
+		},
+		storageSlot: agentwire.StorageCredentialSlot{Provider: "OSS", AccessKey: []byte("synthetic-access"), SecretKey: []byte("synthetic-secret")},
+	}
+	worker := testWorker(protocol, clock, func(resolver SecretResolver) agentpreflight.Probe {
+		return probeFunc(func(ctx context.Context, check agentpreflight.CheckID, request agentpreflight.Request) (agentpreflight.Result, error) {
+			switch check {
+			case agentpreflight.CheckDatabaseConnectivity:
+				connection, err := resolver.ResolveDatabaseConnection(ctx, request.Binding)
+				if err != nil {
+					return agentpreflight.Result{}, err
+				}
+				defer credential.Zero(connection.Username)
+				defer credential.Zero(connection.Password)
+				return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "DATABASE_CONNECTED"}, nil
+			case agentpreflight.CheckStorageConnectivity:
+				return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_ENDPOINT_REACHABLE"}, nil
+			case agentpreflight.CheckStorageAuth:
+				storageCredential, err := resolver.ResolveStorageCredential(ctx, request.Binding)
+				if err != nil {
+					return agentpreflight.Result{}, err
+				}
+				defer storageCredential.Destroy()
+				return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_CREDENTIAL_VERIFIED"}, nil
+			default:
+				return syntheticPassed(check), nil
+			}
+		})
+	})
+
+	outcome, err := runClaimed(context.Background(), worker)
+	if err != nil || outcome.State != agentwire.PrecheckSucceeded || !outcome.Report.Succeeded {
+		t.Fatalf("RunNext() = %#v, %v", outcome, err)
+	}
+	if want := []string{"claim", "acknowledge", "resolve", "resolve-storage", "complete"}; !sameStrings(protocol.callNames(), want) {
+		t.Fatalf("protocol calls = %v, want %v", protocol.callNames(), want)
+	}
+	if protocol.storageResolveRequest.PrecheckID != grant.PrecheckID || protocol.storageResolveRequest.LeaseID != grant.LeaseID || protocol.storageResolveRequest.BindingDigest != grant.BindingDigest {
+		t.Fatalf("storage resolve request = %#v, want current precheck lease binding", protocol.storageResolveRequest)
+	}
+	if !allZero(protocol.storageSlot.AccessKey) || !allZero(protocol.storageSlot.SecretKey) {
+		t.Fatal("短时存储凭据字节在探测后未清零")
+	}
+}
+
 func TestRunNextDoesNotResolveSecretWhenLocalPrecheckFails(t *testing.T) {
 	t.Parallel()
 	clock := newTestClock(time.Date(2026, time.July, 27, 9, 0, 0, 0, time.UTC))
@@ -467,13 +525,16 @@ func (passedProbe) Probe(_ context.Context, check agentpreflight.CheckID, _ agen
 type protocolStub struct {
 	mu sync.Mutex
 
-	grant          agentwire.PrecheckGrant
-	slot           agentwire.DatabaseConnectionSlot
-	acknowledgeErr error
-	completeErr    error
+	grant             agentwire.PrecheckGrant
+	slot              agentwire.DatabaseConnectionSlot
+	storageSlot       agentwire.StorageCredentialSlot
+	acknowledgeErr    error
+	storageResolveErr error
+	completeErr       error
 
-	resolveRequest agentwire.PrecheckSecretSlotRequest
-	calls          []string
+	resolveRequest        agentwire.PrecheckSecretSlotRequest
+	storageResolveRequest agentwire.PrecheckSecretSlotRequest
+	calls                 []string
 
 	claimStarted chan struct{}
 	claimRelease chan struct{}
@@ -516,6 +577,14 @@ func (p *protocolStub) ResolvePrecheckDatabaseConnection(_ context.Context, requ
 	p.calls = append(p.calls, "resolve")
 	p.resolveRequest = request
 	return p.slot, nil
+}
+
+func (p *protocolStub) ResolvePrecheckStorageCredential(_ context.Context, request agentwire.PrecheckSecretSlotRequest) (agentwire.StorageCredentialSlot, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, "resolve-storage")
+	p.storageResolveRequest = request
+	return p.storageSlot, p.storageResolveErr
 }
 
 func (p *protocolStub) CompletePrecheck(_ context.Context, input agentwire.PrecheckCompletion) (agentwire.PrecheckState, error) {

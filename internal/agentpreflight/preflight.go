@@ -109,6 +109,34 @@ type StorageTarget struct {
 	TmpPath  string
 }
 
+// StorageCredential 是仅供 STORAGE_AUTH 在内存中使用的短时对象存储凭据。
+// 它不进入预检查请求、报告、日志、状态文件或任务快照；调用方使用完毕必须调用 Destroy。
+type StorageCredential struct {
+	Provider  string
+	AccessKey []byte
+	SecretKey []byte
+}
+
+// Destroy 尽力清除短时对象存储凭据字节，避免其继续被后续 Agent 逻辑持有。
+func (c *StorageCredential) Destroy() {
+	if c == nil {
+		return
+	}
+	for _, value := range [][]byte{c.AccessKey, c.SecretKey} {
+		for index := range value {
+			value[index] = 0
+		}
+	}
+	c.AccessKey = nil
+	c.SecretKey = nil
+}
+
+// StorageCredentialResolver 把对象存储凭据解析限制在当前预检查绑定的短租约内。
+// 具体实现必须拒绝过期、绑定漂移或非 STORAGE_AUTH 调用，不能缓存或持久化明文。
+type StorageCredentialResolver interface {
+	ResolveStorageCredential(context.Context, agentstate.PrecheckBinding) (StorageCredential, error)
+}
+
 // Request 是不可变预检查租约在 Agent 本地的非敏感投影。
 // 其中不包含密码、SQL、Shell 文本、工具 argv 或可执行文件路径。
 // Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
@@ -193,14 +221,27 @@ func Run(ctx context.Context, request Request, probe Probe) (Report, error) {
 			results[check] = result
 		}
 		if request.OutputKind.IsStorageOutput() {
-			// EX-I6：存储探测仅在本机与数据库前置全部通过后执行；
-			// 未授权或不可用时返回受控 UNKNOWN，提交门禁按结果失败关闭。
-			for _, check := range storageCheckOrder() {
-				result, err := probeResult(ctx, probe, check, request)
+			// 存储探测只能建立在数据库连接和对象访问均已通过的事实上。
+			// 连接或对象检查未通过时，不能再连接端点、更不能解析存储凭据。
+			if results[CheckDatabaseConnectivity].Status != StatusPassed || results[CheckObjectAccess].Status != StatusPassed {
+				for _, check := range storageCheckOrder() {
+					results[check] = unavailableStorageResult(check)
+				}
+			} else {
+				connectivity, err := probeResult(ctx, probe, CheckStorageConnectivity, request)
 				if err != nil {
 					return Report{}, err
 				}
-				results[check] = result
+				results[CheckStorageConnectivity] = connectivity
+				if connectivity.Status != StatusPassed {
+					results[CheckStorageAuth] = unavailableStorageResult(CheckStorageAuth)
+				} else {
+					auth, err := probeResult(ctx, probe, CheckStorageAuth, request)
+					if err != nil {
+						return Report{}, err
+					}
+					results[CheckStorageAuth] = auth
+				}
 			}
 		}
 	} else {

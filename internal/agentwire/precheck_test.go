@@ -393,6 +393,58 @@ func TestResolvePrecheckDatabaseConnectionBindsResponseToCurrentLease(t *testing
 	}
 }
 
+func TestResolvePrecheckStorageCredentialUsesDedicatedSlot(t *testing.T) {
+	var enrolled enrollmentExchangeRequest
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/agent/v1/enrollments:exchange":
+			if err := json.NewDecoder(request.Body).Decode(&enrolled); err != nil {
+				t.Fatalf("解析关联请求失败: %v", err)
+			}
+			writeProtocolResponse(t, writer, "ENROLLED", map[string]any{
+				"agentId": enrolled.AgentID, "nodeId": enrolled.NodeID, "protocolVersion": Version,
+				"replayed": false, "realExecutionEnabled": false,
+			})
+		case "/agent/v1/prechecks/precheck-1/secret-slots:resolve":
+			var resolved precheckSecretSlotRequest
+			if err := json.NewDecoder(request.Body).Decode(&resolved); err != nil {
+				t.Fatalf("解析存储秘密槽位请求失败: %v", err)
+			}
+			if resolved.Payload.Slot != "STORAGE_CREDENTIAL" || request.Header.Get("Authorization") != "Bearer "+enrolled.MachineCredential {
+				t.Fatal("存储秘密槽位请求未使用受控槽位或机器凭据")
+			}
+			writeProtocolResponse(t, writer, "PRECHECK_SECRET_SLOTS_RESOLVED", map[string]any{
+				"agentRequestId": resolved.RequestID, "precheckId": "precheck-1", "leaseId": "lease-1", "leaseEpoch": 1,
+				"bindingDigest": precheckBindingDigest, "slot": "STORAGE_CREDENTIAL",
+				"storageCredential": map[string]any{
+					"provider": "OSS", "accessKey": []byte("synthetic-access"), "secretKey": []byte("synthetic-secret"),
+				},
+				"realExecutionEnabled": false,
+			})
+		default:
+			t.Fatalf("意外 Agent 请求路径: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store := prepareTLSEnrollment(t, server)
+	if err := store.EnsureEnrollment(context.Background()); err != nil {
+		t.Fatalf("EnsureEnrollment() error = %v", err)
+	}
+	storageCredential, err := store.ResolvePrecheckStorageCredential(context.Background(), PrecheckSecretSlotRequest{
+		BootID: "boot-1", PrecheckID: "precheck-1", LeaseID: "lease-1", LeaseEpoch: 1,
+		BindingDigest: precheckBindingDigest, SentAt: time.Date(2026, 7, 27, 1, 2, 3, 0, time.UTC),
+	})
+	if err != nil || storageCredential.Provider != "OSS" || string(storageCredential.AccessKey) != "synthetic-access" || string(storageCredential.SecretKey) != "synthetic-secret" {
+		storageCredential.Destroy()
+		t.Fatalf("ResolvePrecheckStorageCredential() = %#v, %v", storageCredential, err)
+	}
+	storageCredential.Destroy()
+	if storageCredential.AccessKey != nil || storageCredential.SecretKey != nil {
+		t.Fatal("存储凭据槽位销毁后仍保留凭据缓冲区")
+	}
+}
+
 const precheckBindingDigest = "1ba7902c43683fd0c978e6f9402f98626e643f2031dc50458e4db7502513b1da"
 
 func precheckClaimResponse(precheckID, leaseID string) map[string]any {

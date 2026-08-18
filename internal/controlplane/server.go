@@ -229,6 +229,7 @@ type AgentPrecheckStore interface {
 // HTTP 层只传递已认证的机器身份和受控租约字段，绝不读取 SQLite 密文或明文密码。
 type AgentPrecheckSecretStore interface {
 	ResolvePrecheckDatabaseConnection(context.Context, store.PrecheckSecretResolutionRequest) (store.EncryptedPrecheckDatabaseConnection, error)
+	ResolvePrecheckStorageCredential(context.Context, store.PrecheckSecretResolutionRequest) (store.EncryptedExecutionStorageCredential, error)
 	FinishPrecheckSecretResolution(context.Context, store.PrecheckSecretResolutionOutcome) error
 }
 
@@ -2455,6 +2456,38 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
+	// EX-V1：对象存储草稿在预检查创建时冻结已验证的存储凭据引用。
+	// 未绑定凭据的对象存储输出仍可走受控连通性检查，但 STORAGE_AUTH 保持失败关闭。
+	var storageCredentialID string
+	var storageCredentialRevision int64
+	if normalized.StorageCredential != nil {
+		if s.storageCredentials == nil {
+			writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置对象存储凭据", false)
+			return
+		}
+		reference, err := s.storageCredentials.GetStorageCredentialReference(r.Context(), normalized.StorageCredential.StorageCredentialID)
+		if err != nil {
+			if errors.Is(err, store.ErrStorageCredentialNotFound) {
+				notFound(w, r)
+				return
+			}
+			writeError(w, http.StatusServiceUnavailable, "STORAGE_CREDENTIAL_QUERY_FAILED", "对象存储凭据查询失败", true)
+			return
+		}
+		if reference.OwnerSubjectID != principal.ID {
+			notFound(w, r)
+			return
+		}
+		if reference.Provider != normalized.OutputKind {
+			writeError(w, http.StatusUnprocessableEntity, "STORAGE_CREDENTIAL_PROVIDER_MISMATCH", "存储凭据提供方与输出类型不一致", false)
+			return
+		}
+		if reference.Revision != normalized.StorageCredential.Revision {
+			writeError(w, http.StatusUnprocessableEntity, "STORAGE_CREDENTIAL_REVISION_STALE", "存储凭据已轮换，请重新保存草稿", false)
+			return
+		}
+		storageCredentialID, storageCredentialRevision = reference.StorageCredentialID, reference.Revision
+	}
 	// EX-I6（2026-08-14）：对象存储草稿允许发起预检查。存储层检查（网络可达性/凭据有效性）
 	// 由 Agent 按受控上下文执行；未授权探测默认 UNKNOWN，提交门禁按结果失败关闭。
 	credentialReference, err := s.credentials.GetDataSourceCredentialReference(r.Context(), draft.DataSourceID)
@@ -2479,6 +2512,7 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		PrecheckID: precheckID, DraftID: draft.DraftID, DraftRevision: draft.Revision, ConfigFingerprint: preview.ConfigFingerprint,
 		DataSourceID: draft.DataSourceID, CredentialID: credentialReference.CredentialID, CredentialRevision: credentialReference.Revision,
 		NodeID: draft.NodeID, CreatedAt: now, ValidUntil: now.Add(s.precheckTTL),
+		StorageCredentialID: storageCredentialID, StorageCredentialRevision: storageCredentialRevision,
 	}, CreatorSubjectID: principal.ID, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: precheckDigest(draft, preview.ConfigFingerprint)})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
@@ -4210,7 +4244,7 @@ type agentPrecheckAcknowledgementPayload struct {
 	BindingDigest string `json:"bindingDigest"`
 }
 
-// agentPrecheckSecretResolveRequest 只允许 Agent 在已确认租约中请求唯一的数据库连接槽位。
+// agentPrecheckSecretResolveRequest 只允许 Agent 在已确认租约中请求固定数据库或存储秘密槽位。
 // 请求体不含凭据引用、用户名、密码、路径、SQL 或命令，所有实际绑定均由控制面重读。
 type agentPrecheckSecretResolveRequest struct {
 	agentPrecheckEnvelope
@@ -4642,7 +4676,7 @@ func (s *Server) acknowledgeAuthenticatedPrecheck(w http.ResponseWriter, r *http
 	writeAgentPrecheckResponse(w, "PRECHECK_LEASE_ACKNOWLEDGED", map[string]any{"realExecutionEnabled": false})
 }
 
-// resolveAuthenticatedPrecheckSecret 在已确认短租约中返回唯一的数据库连接槽位。
+// resolveAuthenticatedPrecheckSecret 在已确认短租约中返回受控数据库或存储秘密槽位。
 // 槽位仅以短时字节在 HTTPS 响应中存在；本函数不缓存明文，也不会把它写入审计、错误或 SQLite。
 func (s *Server) resolveAuthenticatedPrecheckSecret(w http.ResponseWriter, r *http.Request, precheckID string) {
 	machine, ok := s.authenticatedPrecheckAgent(w, r)
@@ -4660,8 +4694,12 @@ func (s *Server) resolveAuthenticatedPrecheckSecret(w http.ResponseWriter, r *ht
 	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_RESOLVE_SECRET_SLOTS") ||
 		!validAgentPrecheckPathID(precheckID) || !validAgentPrecheckOpaque(request.Payload.LeaseID) ||
 		request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) ||
-		request.Payload.Slot != "DATABASE_CONNECTION" {
+		(request.Payload.Slot != "DATABASE_CONNECTION" && request.Payload.Slot != "STORAGE_CREDENTIAL") {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	if request.Payload.Slot == "STORAGE_CREDENTIAL" {
+		s.resolveAuthenticatedPrecheckStorageCredential(w, r, precheckID, machine, request)
 		return
 	}
 	now := time.Now().UTC()
@@ -4729,6 +4767,97 @@ func (s *Server) resolveAuthenticatedPrecheckSecret(w http.ResponseWriter, r *ht
 		"slot":           "DATABASE_CONNECTION",
 		"connection": map[string]any{
 			"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext,
+		},
+		"realExecutionEnabled": false,
+	})
+}
+
+// resolveAuthenticatedPrecheckStorageCredential 只在受控 STORAGE_AUTH 阶段返回对象存储密钥对。
+// 它独立于数据库槽位创建请求回执；每个槽位只解密自己的信封，并在响应写出前重新验证所有者、数据源与节点范围。
+func (s *Server) resolveAuthenticatedPrecheckStorageCredential(w http.ResponseWriter, r *http.Request, precheckID string, machine store.AgentIdentity, request agentPrecheckSecretResolveRequest) {
+	now := time.Now().UTC()
+	requestDigest := agentPrecheckRequestDigest("RESOLVE_SECRET", request.agentPrecheckEnvelope, precheckID, request.Payload)
+	encrypted, err := s.precheckSecrets.ResolvePrecheckStorageCredential(r.Context(), store.PrecheckSecretResolutionRequest{
+		AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID,
+		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest,
+		RequestID: request.RequestID, RequestDigest: requestDigest, Now: now,
+	})
+	if err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	defer encrypted.Destroy()
+	finish := func(succeeded bool) error {
+		return s.precheckSecrets.FinishPrecheckSecretResolution(r.Context(), store.PrecheckSecretResolutionOutcome{
+			AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID,
+			LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest,
+			RequestID: request.RequestID, RequestDigest: requestDigest, Succeeded: succeeded, Now: time.Now().UTC(),
+		})
+	}
+	owner := identity.Principal{Type: identity.BrowserPrincipal, ID: encrypted.OwnerSubjectID}
+	dataSourceAuthorizationErr := identity.Can(r.Context(), s.authorizer, owner, identity.ScopeDataSourceRead, encrypted.DataSourceID)
+	nodeAuthorizationErr := identity.Can(r.Context(), s.authorizer, owner, identity.ScopeNodeUse, encrypted.NodeID)
+	if identity.Validate(owner, identity.BrowserPrincipal) != nil || dataSourceAuthorizationErr != nil || nodeAuthorizationErr != nil {
+		if finishErr := finish(false); finishErr != nil {
+			writeAgentPrecheckStoreError(w, finishErr)
+			return
+		}
+		writeAgentPrecheckStoreError(w, store.ErrPrecheckLeaseRejected)
+		return
+	}
+	accessKey, decryptErr := s.decryptor.Decrypt(credential.Envelope{
+		FormatVersion: credential.FormatVersion,
+		KeyID:         encrypted.AccessKeyKeyID,
+		Reference: credential.Reference{
+			CredentialID: encrypted.AccessKeyCredentialID,
+			Revision:     encrypted.Revision,
+			SecretType:   credential.StorageAccessKey,
+			DataSourceID: encrypted.StorageCredentialID,
+		},
+		Nonce: encrypted.AccessKeyNonce, Ciphertext: encrypted.AccessKeyCiphertext,
+	})
+	if decryptErr != nil {
+		if finishErr := finish(false); finishErr != nil {
+			writeAgentPrecheckStoreError(w, finishErr)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SECRET_RESOLUTION_UNAVAILABLE", "预检查秘密槽位暂时不可用", true)
+		return
+	}
+	defer credential.Zero(accessKey)
+	secretKey, decryptErr := s.decryptor.Decrypt(credential.Envelope{
+		FormatVersion: credential.FormatVersion,
+		KeyID:         encrypted.SecretKeyKeyID,
+		Reference: credential.Reference{
+			CredentialID: encrypted.SecretKeyCredentialID,
+			Revision:     encrypted.Revision,
+			SecretType:   credential.StorageSecretKey,
+			DataSourceID: encrypted.StorageCredentialID,
+		},
+		Nonce: encrypted.SecretKeyNonce, Ciphertext: encrypted.SecretKeyCiphertext,
+	})
+	if decryptErr != nil {
+		if finishErr := finish(false); finishErr != nil {
+			writeAgentPrecheckStoreError(w, finishErr)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SECRET_RESOLUTION_UNAVAILABLE", "预检查秘密槽位暂时不可用", true)
+		return
+	}
+	defer credential.Zero(secretKey)
+	if err := finish(true); err != nil {
+		writeAgentPrecheckStoreError(w, err)
+		return
+	}
+	writeAgentPrecheckResponse(w, "PRECHECK_SECRET_SLOTS_RESOLVED", map[string]any{
+		"agentRequestId": request.RequestID,
+		"precheckId":     precheckID,
+		"leaseId":        request.Payload.LeaseID,
+		"leaseEpoch":     request.Payload.LeaseEpoch,
+		"bindingDigest":  request.Payload.BindingDigest,
+		"slot":           "STORAGE_CREDENTIAL",
+		"storageCredential": map[string]any{
+			"provider": encrypted.Provider, "accessKey": accessKey, "secretKey": secretKey,
 		},
 		"realExecutionEnabled": false,
 	})

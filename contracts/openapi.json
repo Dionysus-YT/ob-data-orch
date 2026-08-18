@@ -224,7 +224,7 @@
     },
     "/agent/v1/prechecks/{precheckId}/secret-slots:resolve": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
-      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "description": "仅受认证 Agent 可在已确认的固定 EXPORT_PREFLIGHT 租约中解析唯一数据库连接槽位。响应只能短时进入 Agent 内存，不得进入状态文件、日志、审计、浏览器或任务快照；该合成协议不开放真实执行。", "x-secret-response": "AGENT_MEMORY_ONLY_NO_STORE", "x-real-execution": "DISABLED_UNTIL_G3_VALIDATION", "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckSecretSlotResolve" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckSecretSlotResolved" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "description": "仅受认证 Agent 可在已确认的固定 EXPORT_PREFLIGHT 租约中解析 DATABASE_CONNECTION，或仅在对象存储输出的 STORAGE_AUTH 阶段解析 STORAGE_CREDENTIAL。每个槽位使用独立请求标识与回执；响应只能短时进入 Agent 内存，不得进入状态文件、日志、审计、浏览器或任务快照；该协议不开放工具启动或真实执行。", "x-secret-response": "AGENT_MEMORY_ONLY_NO_STORE", "x-real-execution": "DISABLED_UNTIL_G3_VALIDATION", "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckSecretSlotResolve" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckSecretSlotResolved" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/prechecks/{precheckId}:complete": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
@@ -319,7 +319,7 @@
       "AgentHeartbeatAccepted": { "description": "Strict Agent heartbeat accepted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentHeartbeatResponseEnvelope" } } } },
       "AgentPrecheckClaimed": { "description": "Fixed EXPORT_PREFLIGHT lease was issued with immutable binding and check set; no real execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckClaimResponseEnvelope" } } } },
       "AgentPrecheckLeaseAcknowledged": { "description": "Agent acknowledged the fixed precheck lease; no real execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckLeaseAcknowledgedResponseEnvelope" } } } },
-      "AgentPrecheckSecretSlotResolved": { "description": "Agent-only, no-store database connection slot response for one verified precheck lease. It does not authorize an execution or a tool start.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckSecretSlotResponseEnvelope" } } } },
+      "AgentPrecheckSecretSlotResolved": { "description": "Agent-only, no-store database or storage credential slot response for one verified precheck lease. It does not authorize an execution or a tool start.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckSecretSlotResponseEnvelope" } } } },
       "AgentPrecheckCompleted": { "description": "Fixed precheck results were accepted as SUCCEEDED or FAILED; no real execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentPrecheckCompletedResponseEnvelope" } } } },
       "AgentDataSourceConnectionTestClaimed": { "description": "A fixed node-bound connection-test lease was issued. No export execution is enabled.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestClaimResponseEnvelope" } } } },
       "AgentDataSourceConnectionTestLeaseAcknowledged": { "description": "The Agent acknowledged the immutable connection-test lease.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestLeaseAcknowledgedResponseEnvelope" } } } },
@@ -830,7 +830,7 @@
           "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
           "leaseEpoch": { "type": "integer", "minimum": 1 },
           "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
-          "slot": { "const": "DATABASE_CONNECTION" }
+          "slot": { "enum": ["DATABASE_CONNECTION", "STORAGE_CREDENTIAL"] }
         }
       },
       "AgentPrecheckCompletion": {
@@ -1381,18 +1381,38 @@
           "serverTime": { "type": "string", "format": "date-time" },
           "status": { "const": "PRECHECK_SECRET_SLOTS_RESOLVED" },
           "payload": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled"],
-            "properties": {
-              "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
-              "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
-              "leaseEpoch": { "type": "integer", "minimum": 1 },
-              "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
-              "slot": { "const": "DATABASE_CONNECTION" },
-              "connection": { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectionSlot" },
-              "realExecutionEnabled": { "const": false }
-            }
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["agentRequestId", "precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled"],
+                "properties": {
+                  "agentRequestId": { "$ref": "#/components/schemas/OpaqueId" },
+                  "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+                  "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+                  "leaseEpoch": { "type": "integer", "minimum": 1 },
+                  "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+                  "slot": { "const": "DATABASE_CONNECTION" },
+                  "connection": { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectionSlot" },
+                  "realExecutionEnabled": { "const": false }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["agentRequestId", "precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "storageCredential", "realExecutionEnabled"],
+                "properties": {
+                  "agentRequestId": { "$ref": "#/components/schemas/OpaqueId" },
+                  "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+                  "leaseId": { "$ref": "#/components/schemas/OpaqueId" },
+                  "leaseEpoch": { "type": "integer", "minimum": 1 },
+                  "bindingDigest": { "$ref": "#/components/schemas/SHA256Digest" },
+                  "slot": { "const": "STORAGE_CREDENTIAL" },
+                  "storageCredential": { "$ref": "#/components/schemas/AgentPrecheckStorageCredentialSlot" },
+                  "realExecutionEnabled": { "const": false }
+                }
+              }
+            ]
           }
         }
       },
@@ -1405,6 +1425,16 @@
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
           "username": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
           "password": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前请求的短时内存中使用；不得持久化、回显、记录或用作后续 execution 凭据。" }
+        }
+      },
+      "AgentPrecheckStorageCredentialSlot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "accessKey", "secretKey"],
+        "properties": {
+          "provider": { "enum": ["OSS", "S3", "COS", "OBS"] },
+          "accessKey": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
+          "secretKey": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前 STORAGE_AUTH 请求的短时内存中使用；不得持久化、回显、记录或用于工具启动以外的用途。" }
         }
       },
       "AgentPrecheckCompletedResponseEnvelope": {

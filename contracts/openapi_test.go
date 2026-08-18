@@ -708,8 +708,8 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		}
 	}
 	secretResolvePayload := object(t, schemas, "AgentPrecheckSecretSlotResolvePayload")
-	if object(t, object(t, secretResolvePayload, "properties"), "slot")["const"] != "DATABASE_CONNECTION" {
-		t.Fatal("precheck secret resolution must be limited to DATABASE_CONNECTION")
+	if !reflect.DeepEqual(object(t, object(t, secretResolvePayload, "properties"), "slot")["enum"], []any{"DATABASE_CONNECTION", "STORAGE_CREDENTIAL"}) {
+		t.Fatal("precheck secret resolution must be limited to the two fixed secret slots")
 	}
 	completionPayload := object(t, schemas, "AgentPrecheckCompletionPayload")
 	assertRequiredProperties(t, completionPayload, "results")
@@ -825,15 +825,24 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		t.Fatal("precheck secret response must have PRECHECK_SECRET_SLOTS_RESOLVED status")
 	}
 	secretResponsePayload := object(t, object(t, secretResponse, "properties"), "payload")
-	if secretResponsePayload["additionalProperties"] != false {
-		t.Fatal("precheck secret response payload must reject unknown fields")
+	secretSlotVariants, ok := secretResponsePayload["oneOf"].([]any)
+	if !ok || len(secretSlotVariants) != 2 {
+		t.Fatal("precheck secret response must have exactly database and storage slot variants")
 	}
-	assertRequiredProperties(t, secretResponsePayload, "precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled")
-	if object(t, object(t, secretResponsePayload, "properties"), "slot")["const"] != "DATABASE_CONNECTION" {
-		t.Fatal("precheck secret response must only return DATABASE_CONNECTION")
+	databaseSlotPayload, storageSlotPayload := variantObject(t, secretSlotVariants[0]), variantObject(t, secretSlotVariants[1])
+	if databaseSlotPayload["additionalProperties"] != false || storageSlotPayload["additionalProperties"] != false {
+		t.Fatal("precheck secret slot response variants must reject unknown fields")
 	}
-	if fmt.Sprint(object(t, object(t, secretResponsePayload, "properties"), "bindingDigest")["$ref"]) != "#/components/schemas/SHA256Digest" {
-		t.Fatal("precheck secret response must bind the returned slot to a SHA-256 digest")
+	assertRequiredProperties(t, databaseSlotPayload, "agentRequestId", "precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "connection", "realExecutionEnabled")
+	assertRequiredProperties(t, storageSlotPayload, "agentRequestId", "precheckId", "leaseId", "leaseEpoch", "bindingDigest", "slot", "storageCredential", "realExecutionEnabled")
+	if object(t, object(t, databaseSlotPayload, "properties"), "slot")["const"] != "DATABASE_CONNECTION" ||
+		object(t, object(t, storageSlotPayload, "properties"), "slot")["const"] != "STORAGE_CREDENTIAL" {
+		t.Fatal("precheck secret response variants must fix their respective slots")
+	}
+	for _, payload := range []map[string]any{databaseSlotPayload, storageSlotPayload} {
+		if fmt.Sprint(object(t, object(t, payload, "properties"), "bindingDigest")["$ref"]) != "#/components/schemas/SHA256Digest" {
+			t.Fatal("precheck secret response must bind the returned slot to a SHA-256 digest")
+		}
 	}
 	connection := object(t, schemas, "AgentPrecheckDatabaseConnectionSlot")
 	if connection["additionalProperties"] != false {
@@ -848,6 +857,15 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		if _, found := password[forbidden]; found {
 			t.Fatalf("precheck database password must not expose %s", forbidden)
 		}
+	}
+	storageCredential := object(t, schemas, "AgentPrecheckStorageCredentialSlot")
+	if storageCredential["additionalProperties"] != false {
+		t.Fatal("precheck storage credential slot must reject unknown fields")
+	}
+	assertRequiredProperties(t, storageCredential, "provider", "accessKey", "secretKey")
+	storageSecretKey := object(t, object(t, storageCredential, "properties"), "secretKey")
+	if storageSecretKey["x-agent-memory-only"] != true || storageSecretKey["contentEncoding"] != "base64" {
+		t.Fatal("precheck storage secret key must be an Agent-only short-lived byte value")
 	}
 	assertPrecheckResponseExecutionDisabled(t, secretResponse)
 	completedResponse := object(t, schemas, "AgentPrecheckCompletedResponseEnvelope")
@@ -1154,6 +1172,22 @@ func assertFixedPrecheckArray(t *testing.T, schema map[string]any, expected []st
 func assertPrecheckResponseExecutionDisabled(t *testing.T, response map[string]any) {
 	t.Helper()
 	payload := object(t, object(t, response, "properties"), "payload")
+	if variants, ok := payload["oneOf"].([]any); ok {
+		if len(variants) == 0 {
+			t.Fatal("precheck response payload must declare a non-empty variant set")
+		}
+		for _, rawVariant := range variants {
+			variant := variantObject(t, rawVariant)
+			if variant["additionalProperties"] != false {
+				t.Fatal("precheck response payload variant must reject unknown fields")
+			}
+			assertRequiredProperties(t, variant, "realExecutionEnabled")
+			if object(t, object(t, variant, "properties"), "realExecutionEnabled")["const"] != false {
+				t.Fatal("precheck response must keep real execution disabled")
+			}
+		}
+		return
+	}
 	if payload["additionalProperties"] != false {
 		t.Fatal("precheck response payload must reject unknown fields")
 	}

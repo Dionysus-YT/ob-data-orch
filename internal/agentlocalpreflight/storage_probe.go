@@ -26,6 +26,13 @@ type StorageAuthProber interface {
 	ProbeAuth(ctx context.Context, provider string, accessKey, secretKey []byte, target agentpreflight.StorageTarget) (bool, error)
 }
 
+// CredentialStorageAuthProber 由明确需要对象存储凭据的探测器实现。
+// 未实现该接口的 StorageAuthProber 不会触发秘密解析，避免测试夹具或默认失败关闭实现意外接触凭据。
+type CredentialStorageAuthProber interface {
+	StorageAuthProber
+	RequiresStorageCredentials() bool
+}
+
 var (
 	// ErrStorageConnectivityUnavailable 表示本机无法对存储端点给出可验证结论。
 	ErrStorageConnectivityUnavailable = errors.New("存储端点连通性不可用")
@@ -110,13 +117,24 @@ func (p Probe) storageConnectivityResult(ctx context.Context, request agentprefl
 	}
 }
 
-// storageAuthResult 复核凭据有效性探测结论；探测未授权或失败一律投影为 UNKNOWN 失败关闭。
+// storageAuthResult 复核凭据有效性探测结论；只有显式声明需要凭据的探测器才能取得短时槽位。
+// 探测未授权、槽位不可用或任何失败一律投影为 UNKNOWN 失败关闭。
 func (p Probe) storageAuthResult(ctx context.Context, request agentpreflight.Request) (agentpreflight.Result, error) {
 	check := agentpreflight.CheckStorageAuth
 	if p.StorageAuth == nil || request.StorageTarget == nil {
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"}, nil
 	}
-	verified, err := p.StorageAuth.ProbeAuth(ctx, request.StorageTarget.Provider, nil, nil, *request.StorageTarget)
+	credentialProber, ok := p.StorageAuth.(CredentialStorageAuthProber)
+	if !ok || !credentialProber.RequiresStorageCredentials() || p.StorageCredentials == nil {
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"}, nil
+	}
+	storageCredential, err := p.StorageCredentials.ResolveStorageCredential(ctx, request.Binding)
+	if err != nil || storageCredential.Provider != request.StorageTarget.Provider {
+		storageCredential.Destroy()
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"}, nil
+	}
+	defer storageCredential.Destroy()
+	verified, err := credentialProber.ProbeAuth(ctx, storageCredential.Provider, storageCredential.AccessKey, storageCredential.SecretKey, *request.StorageTarget)
 	if err != nil {
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"}, nil
 	}
