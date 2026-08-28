@@ -1,0 +1,36 @@
+:root {
+  --bg: oklch(98% 0.005 250);
+  --surface: oklch(100% 0 0);
+  --fg: oklch(22% 0.02 240);
+  --muted: oklch(50% 0.018 240);
+  --border: oklch(90% 0.008 240);
+  --accent: oklch(58% 0.16 145);
+  --info: oklch(50% 0.12 250);
+  --success: oklch(45% 0.1 155);
+  --warning: oklch(48% 0.1 75);
+  --danger: oklch(48% 0.16 28);
+  --surface-subtle: color-mix(in oklch, var(--fg) 4%, var(--surface));
+  --fg-secondary: color-mix(in oklch, var(--fg) 74%, var(--surface));
+  --border-strong: color-mix(in oklch, var(--fg) 18%, var(--surface));
+  --accent-hover: color-mix(in oklch, var(--accent) 82%, var(--fg));
+  --info-bg: color-mix(in oklch, var(--info) 9%, var(--surface));
+  --success-bg: color-mix(in oklch, var(--success) 9%, var(--surface));
+  --warning-bg: color-mix(in oklch, var(--warning) 9%, var(--surface));
+  --danger-bg: color-mix(in oklch, var(--danger) 8%, var(--surface));
+  --info-border: color-mix(in oklch, var(--info) 30%, var(--surface));
+  --success-border: color-mix(in oklch, var(--success) 30%, var(--surface));
+  --warning-border: color-mix(in oklch, var(--warning) 30%, var(--surface));
+  --danger-border: color-mix(in oklch, var(--danger) 28%, var(--surface));
+  --overlay: color-mix(in oklch, var(--fg) 78%, transparent);
+  --shadow-overlay: color-mix(in oklch, var(--fg) 13%, transparent);
+  --font-display: 'Segoe UI Variable Display', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+  --font-ui: 'Segoe UI Variable Text', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+  --font-mono: 'Cascadia Mono', 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  --sidebar: 224px;
+  --header: 52px;
+  --radius-control: 6px;
+  --radius-surface: 6px;
+  --radius-overlay: 10px;
+  --wizard-blue: oklch(52% 0.18 250);
+  --wizard-line: color-mix(in oklch, var(--info) 22%, var(--surface));
+}

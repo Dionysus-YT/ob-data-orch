@@ -1,0 +1,57 @@
+<script setup lang="ts">
+import { computed, reactive, ref } from 'vue'
+import { fixtureDataSources, fixtureNodes } from '../data/fixtures'
+import type { WizardDraft } from '../types'
+import AppIcon from '../components/AppIcon.vue'
+import DemoNote from '../components/DemoNote.vue'
+import PageHeader from '../components/PageHeader.vue'
+import StatusBadge from '../components/StatusBadge.vue'
+
+const emit = defineEmits<{ openTask: [taskId: string]; notify: [message: string] }>()
+const stepNames = ['选择数据源', '选择导出内容', '选择导出对象', '选择数据格式', '执行与输出', '预检查与命令']
+const step = ref(1)
+const maxReached = ref(1)
+const precheck = ref<'idle' | 'running' | 'passed' | 'failed'>('idle')
+const error = ref('')
+const advancedOpen = ref(false)
+const draft = reactive<WizardDraft>({ sourceId: 'ui-fixture-data-source-07', content: 'STRUCTURE_AND_DATA', scope: 'SELECTED', objectNames: 'orders', format: 'CSV', outputPath: '/E:/exports/orders-20260822', logPath: '/E:/obdumper-logs', skipCheckDir: false, confirmed: false })
+const sources = computed(() => fixtureDataSources.filter((source) => source.state === 'ENABLED'))
+const selectedSource = computed(() => sources.value.find((source) => source.id === draft.sourceId) ?? sources.value[0])
+const selectedNode = computed(() => fixtureNodes.find((node) => node.schedule === 'schedulable') ?? fixtureNodes[0])
+const summaryContent = computed(() => ({ STRUCTURE_AND_DATA: '结构和数据', DATA_ONLY: '仅数据', STRUCTURE_ONLY: '仅结构' })[draft.content])
+const command = computed(() => `obdumper --host ${selectedSource.value?.host ?? '192.0.2.70'} --port ${selectedSource.value?.port ?? 2883} --user ${selectedSource.value?.tenant ?? 'orders'} --password ****** --database ${selectedSource.value?.database || 'fixture_orders'} --table ${draft.objectNames || 'orders'} --${draft.format.toLowerCase()} --file-path ${draft.outputPath}`)
+const canSubmit = computed(() => precheck.value === 'passed' && draft.confirmed)
+
+function markChanged(): void { if (precheck.value !== 'idle') precheck.value = 'idle'; draft.confirmed = false; error.value = '' }
+function chooseStep(target: number): void { if (target <= maxReached.value) { step.value = target; error.value = '' } }
+function validateCurrentStep(): boolean {
+  if (step.value === 1 && !draft.sourceId) error.value = '请选择一个已启用的数据源。'
+  else if (step.value === 3 && !draft.objectNames.trim()) error.value = '请填写至少一个导出对象名称。'
+  else if (step.value === 5 && !/^\/[A-Za-z]:\//.test(draft.outputPath)) error.value = 'Windows 节点请使用 /E:/exports 形式的完整绝对路径。'
+  else { error.value = ''; return true }
+  return false
+}
+function next(): void { if (!validateCurrentStep()) return; if (step.value < 6) { step.value += 1; maxReached.value = Math.max(maxReached.value, step.value) } }
+function previous(): void { if (step.value > 1) { step.value -= 1; error.value = '' } }
+function runPrecheck(): void { if (!validateCurrentStep()) { precheck.value = 'failed'; return }; precheck.value = 'running'; window.setTimeout(() => { precheck.value = 'passed'; error.value = '' }, 560) }
+async function copyCommand(): Promise<void> { try { await navigator.clipboard?.writeText(command.value) } catch { } emit('notify', '已复制脱敏命令。') }
+function submit(): void { if (!canSubmit.value) return; emit('notify', '提交仅模拟本地界面状态，不会启动工具或连接数据库。'); emit('openTask', 'demo-task-042') }
+</script>
+
+<template>
+  <div class="page wizard-page">
+    <PageHeader title="新建导出任务" description="按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。" data-id="wizard-title"><template #actions><span class="draft-state"><span class="status-dot" aria-hidden="true" />本地配置已保存</span></template></PageHeader>
+    <section class="wizard-shell" data-od-id="export-wizard-shell"><nav class="wizard-stepper" aria-label="导出任务步骤"><button v-for="(name, index) in stepNames" :key="name" class="step-button" :class="{ 'is-current': step === index + 1, 'is-complete': index + 1 < step }" type="button" :disabled="index + 1 > maxReached" @click="chooseStep(index + 1)"><span>{{ index + 1 }}</span><strong>{{ name }}</strong></button></nav>
+      <div class="wizard-layout"><main class="wizard-main"><DemoNote text="该向导只操作安全合成配置；不会解析真实凭据、启动工具或访问数据库。" />
+        <section v-if="step === 1" class="wizard-step"><header><h2>选择数据源</h2><p>只有已启用的数据源可进入导出草稿；连接状态仍保留为独立事实。</p></header><div class="source-list"><label v-for="source in sources" :key="source.id" class="source-option" :class="{ 'is-selected': draft.sourceId === source.id }"><input v-model="draft.sourceId" type="radio" :value="source.id" @change="markChanged" /><span class="radio-mark" /><span><strong>{{ source.name }}</strong><small class="mono">{{ source.host }}:{{ source.port }} · {{ source.cluster }} / {{ source.tenant }}</small></span><StatusBadge :label="source.testStatus === 'SUCCEEDED' ? '连接成功' : source.testStatus === 'INVALIDATED' ? '连接已失效' : '未测试'" :tone="source.testStatus === 'SUCCEEDED' ? 'success' : source.testStatus === 'INVALIDATED' ? 'warning' : 'neutral'" /></label></div></section>
+        <section v-else-if="step === 2" class="wizard-step"><header><h2>选择导出内容</h2><p>内容类型会约束可用格式和后续对象表达，不额外扩大官方 OBDUMPER 能力。</p></header><div class="choice-grid"><label v-for="choice in [{ value: 'STRUCTURE_AND_DATA', title: '结构和数据', detail: '导出对象定义及数据行' }, { value: 'DATA_ONLY', title: '仅数据', detail: '保持现有对象结构不变' }, { value: 'STRUCTURE_ONLY', title: '仅结构', detail: '仅输出 DDL 定义' }]" :key="choice.value" class="choice-card" :class="{ 'is-selected': draft.content === choice.value }"><input v-model="draft.content" type="radio" :value="choice.value" @change="markChanged" /><strong>{{ choice.title }}</strong><small>{{ choice.detail }}</small></label></div><div class="advanced-section"><button type="button" class="advanced-toggle" :aria-expanded="advancedOpen" @click="advancedOpen = !advancedOpen">高级筛选<AppIcon :name="advancedOpen ? 'chevron-down' : 'chevron-right'" /></button><div v-if="advancedOpen" class="advanced-content"><label class="field"><span>WHERE 筛选条件</span><input placeholder="仅作为 OBDUMPER 官方高级筛选参数" @input="markChanged" /><small>不会转化为任意 SQL 编辑器或远程命令。</small></label></div></div></section>
+        <section v-else-if="step === 3" class="wizard-step"><header><h2>选择导出对象</h2><p>当前提交路径保持单一官方对象类型；多类型组合仍受产品契约门控。</p></header><div class="object-selection-panel"><section><span class="field-label">对象类型</span><button class="object-type-option is-selected" type="button"><AppIcon name="database" /><span><strong>TABLE</strong><small>当前可提交的对象类型</small></span><StatusBadge label="可用" tone="success" /></button></section><section><label class="field"><span>对象名称 *</span><textarea v-model="draft.objectNames" rows="5" placeholder="一行一个对象名称" @input="markChanged" /><small>示例：orders。隐藏主键、对象存储和附加对象信息不会进入可提交配置。</small></label><label class="field"><span>范围</span><select v-model="draft.scope" @change="markChanged"><option value="SELECTED">选择的对象</option><option value="DATABASE">整个数据库</option></select></label></section></div></section>
+        <section v-else-if="step === 4" class="wizard-step"><header><h2>选择数据格式</h2><p>格式选择只呈现已确认的官方能力；当前向导不把未验证参数暴露为提交入口。</p></header><div class="choice-grid"><label v-for="choice in [{ value: 'CSV', title: 'CSV', detail: '可读、可交付的数据文件' }, { value: 'CUT', title: 'CUT', detail: '受控的官方文本格式' }, { value: 'DDL', title: 'DDL', detail: '结构导出输出' }]" :key="choice.value" class="choice-card" :class="{ 'is-selected': draft.format === choice.value, 'is-disabled': choice.value === 'DDL' && draft.content !== 'STRUCTURE_ONLY' }"><input v-model="draft.format" type="radio" :value="choice.value" :disabled="choice.value === 'DDL' && draft.content !== 'STRUCTURE_ONLY'" @change="markChanged" /><strong>{{ choice.title }}</strong><small>{{ choice.value === 'DDL' && draft.content !== 'STRUCTURE_ONLY' ? '仅结构导出时可用' : choice.detail }}</small></label></div><div v-if="draft.format === 'CSV'" class="field-grid wizard-fields"><label class="field"><span>字段分隔符</span><input value="," @input="markChanged" /></label><label class="field"><span>空值字符串</span><input value="\\N" @input="markChanged" /></label></div></section>
+        <section v-else-if="step === 5" class="wizard-step"><header><h2>执行与输出配置</h2><p>先选择执行节点和本地绝对路径；目录事实始终由匹配平台的 Agent 在预检查中确认。</p></header><section class="execution-node-strip"><AppIcon name="server" :size="24" /><div><strong>{{ selectedNode?.id }} · {{ selectedNode?.platform }}</strong><p>已授权 · 已启用 · 在线，工具、目录与空间需要在预检查中再次确认。</p></div><StatusBadge label="可选" tone="success" /></section><div class="field-grid wizard-fields"><label class="field"><span>数据输出目录 <small class="mono">-f / --file-path</small></span><input v-model="draft.outputPath" @input="markChanged" /><small :class="{ 'field-error': error }">完整绝对路径；平台不会追加子目录或转换路径。</small></label><label class="field"><span>日志目录 <small class="mono">--log-path</small></span><input v-model="draft.logPath" @input="markChanged" /></label></div><label class="directory-policy"><span><AppIcon name="alert" />目录非空处理</span><span>默认检查输出目录为空。勾选“跳过检查”才会生成 <code>--skip-check-dir</code>，并可能覆盖同名文件。</span><input v-model="draft.skipCheckDir" type="checkbox" @change="markChanged" /><strong>跳过检查</strong></label></section>
+        <section v-else class="wizard-step"><header><h2>预检查与命令</h2><p>提交前检查固定门禁并核对脱敏命令；任何配置修改都会使本页结果失效。</p></header><div class="precheck-summary" :class="`is-${precheck}`"><StatusBadge :label="precheck === 'passed' ? '预检查通过' : precheck === 'running' ? '正在预检查' : precheck === 'failed' ? '预检查失败' : '尚未预检查'" :tone="precheck === 'passed' ? 'success' : precheck === 'running' ? 'info' : precheck === 'failed' ? 'danger' : 'warning'" /><button class="btn" type="button" :disabled="precheck === 'running'" :aria-busy="precheck === 'running'" @click="runPrecheck"><AppIcon name="refresh" />{{ precheck === 'running' ? '正在检查' : '运行预检查' }}</button></div><ul class="precheck-list"><li v-for="item in ['数据源已选择', '对象表达式有效', '执行节点满足调度门禁', '输出路径为完整绝对路径', '目录非空策略已明确', '命令已脱敏']" :key="item"><AppIcon :name="precheck === 'passed' ? 'check' : 'clock'" /><span>{{ item }}</span><small>{{ precheck === 'passed' ? '通过' : '待检查' }}</small></li></ul><section class="command-block"><div><h3>脱敏命令预览</h3><button class="text-link" type="button" @click="copyCommand"><AppIcon name="copy" />复制</button></div><pre>{{ command }}</pre></section><label class="confirm-check"><input v-model="draft.confirmed" type="checkbox" :disabled="precheck !== 'passed'" /><span>我已核对所选数据源、节点、输出目录和脱敏命令。</span></label></section>
+        <p v-if="error" class="feedback feedback-danger" role="alert">{{ error }}</p>
+      </main><aside class="summary-rail"><h2>配置总览</h2><dl><div><dt>数据源</dt><dd>{{ selectedSource?.name ?? '尚未选择' }}</dd></div><div><dt>内容</dt><dd>{{ summaryContent }}</dd></div><div><dt>对象</dt><dd class="mono">{{ draft.objectNames || '尚未填写' }}</dd></div><div><dt>格式</dt><dd class="mono">{{ draft.format }}</dd></div><div><dt>节点</dt><dd class="mono">{{ selectedNode?.id }}</dd></div><div><dt>输出目录</dt><dd class="mono">{{ draft.outputPath }}</dd></div></dl><div class="rail-note">任何配置修改都会使预检查结果失效。</div><p class="advanced-hint">对象存储、附加对象信息与隐藏主键仍处于证据门控，不会进入可提交配置。</p></aside></div>
+      <footer class="wizard-footer"><button class="btn" type="button" :disabled="step === 1" @click="previous">上一步</button><span class="footer-state" aria-live="polite">步骤 {{ step }} / 6</span><button v-if="step < 6" class="btn btn-primary" type="button" @click="next">下一步</button><button v-else class="btn btn-primary" type="button" :disabled="!canSubmit" @click="submit">模拟提交任务</button></footer>
+    </section>
+  </div>
+</template>
