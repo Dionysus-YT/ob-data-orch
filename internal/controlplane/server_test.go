@@ -1408,6 +1408,38 @@ func TestExportDraftV6Batch2ParametersFlow(t *testing.T) {
 	}
 }
 
+// TestExportDraftAcceptsOrdinaryQuerySQL 验证 --query-sql 作为普通高级筛选可创建草稿。
+func TestExportDraftAcceptsOrdinaryQuerySQL(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"querySql":"select 1"}}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	request.Header.Set("Idempotency-Key", "synthetic-query-sql-ordinary-key-000")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || drafts.created.DraftID == "" {
+		t.Fatalf("query-sql ordinary response=%d draft=%#v body=%s", response.Code, drafts.created, response.Body.String())
+	}
+}
+
+// TestNormalizeExportConfigV6AllowsOrdinaryQuerySQL 验证归一化层保留普通查询筛选并交由统一生成器处理。
+func TestNormalizeExportConfigV6AllowsOrdinaryQuerySQL(t *testing.T) {
+	config := &store.ExportConfig{
+		ObjectScope:      store.ObjectScope{Database: "synthetic_db", ScopeKind: "SPECIFIED", ObjectTypes: []string{"TABLE"}, Expressions: []store.ObjectExpression{{Name: "synthetic_table"}}},
+		ContentSelection: store.ContentSelection{ContentKind: "DATA_ONLY"},
+		DataFormat:       store.DataFormat{FormatKind: "CSV"},
+		OutputConfig:     store.OutputConfig{OutputKind: "LOCAL", FilePath: "/E:/tmp/out"},
+		FilterConfig:     store.FilterConfig{QuerySql: "select 1"},
+	}
+	normalized, err := normalizeExportConfigV6(config, "source-allowed", "node-1")
+	if err != nil || normalized.QuerySql != "select 1" {
+		t.Fatalf("query-sql normalized=%#v err=%v", normalized, err)
+	}
+}
+
 // TestExportDraftV7TimestampFormatsRequireMySQL 验证当前仅有 MySQL 行为证据的格式参数
 // 不会在 Oracle 兼容模式下被错误发射。
 func TestExportDraftV7TimestampFormatsRequireMySQL(t *testing.T) {
@@ -1472,6 +1504,7 @@ func TestExportDraftV6RemainingParametersFailClosed(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	cases := map[string]string{
 		"查询与条件互斥":            `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"querySql":"select * from synthetic_table","where":"id > 0"}}}`,
+		"查询文件引用":             `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"querySql":"file:///E:/tmp/query.sql"}}}`,
 		"全部范围携带条件筛选":         `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"ALL"},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"where":"id > 0"}}}`,
 		"一致性快照与闪回组合":         `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"snapshot":true,"flashbackScn":100}}}`,
 		"数据内容携带紧凑 Schema":    `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"compactSchema":true}}}`,
@@ -1649,12 +1682,12 @@ func TestExportDraftV6CUTFlow(t *testing.T) {
 	prechecks := &recordingPrecheckStore{}
 	tasks := &recordingTaskStore{}
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
-	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CUT","cutOptions":{"trailDelimiter":true,"removeNewline":true},"csvOptions":{"escapeCharacter":"\\","lineSeparator":"\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"zstd","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true},"filterConfig":{"querySql":"select 1","includeColumnNames":["col_a","col_b"]},"performanceConfig":{"thread":4,"pageSize":1000,"jvmMemory":"4G"}}}`
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CUT","cutOptions":{"trailDelimiter":true,"removeNewline":true},"csvOptions":{"escapeCharacter":"\\","lineSeparator":"\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"zstd","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true},"filterConfig":{"includeColumnNames":["col_a","col_b"]},"performanceConfig":{"thread":4,"pageSize":1000,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-cut")
 	if drafts.created.CapabilityVersion != "export-odp-cut-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("cut draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
-	for _, token := range []string{`"--cut"`, `"--trail-delimiter"`, `"--remove-newline"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--query-sql"`, `"select 1"`, `"--include-column-names"`, `"col_a,col_b"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--mem"`, `"4G"`} {
+	for _, token := range []string{`"--cut"`, `"--trail-delimiter"`, `"--remove-newline"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--include-column-names"`, `"col_a,col_b"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--mem"`, `"4G"`} {
 		if !strings.Contains(previewBody, token) {
 			t.Fatalf("cut preview missing %s: %s", token, previewBody)
 		}
@@ -1704,12 +1737,12 @@ func TestExportDraftV6POSFlow(t *testing.T) {
 	prechecks := &recordingPrecheckStore{}
 	tasks := &recordingTaskStore{}
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
-	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","controlFilePath":"/E:/workespace/ob-data-orch/tmp/synthetic-controls","compress":true,"compressionAlgo":"zstd","noNestedDir":true},"filterConfig":{"querySql":"select 1"},"performanceConfig":{"thread":4,"jvmMemory":"4G"}}}`
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","controlFilePath":"/E:/workespace/ob-data-orch/tmp/synthetic-controls","compress":true,"compressionAlgo":"zstd","noNestedDir":true},"performanceConfig":{"thread":4,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-pos")
 	if drafts.created.CapabilityVersion != "export-odp-pos-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("pos draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
-	for _, token := range []string{`"--pos"`, `"--ctl-path"`, `"/E:/workespace/ob-data-orch/tmp/synthetic-controls"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--query-sql"`, `"select 1"`, `"--thread"`, `"4"`, `"--mem"`, `"4G"`} {
+	for _, token := range []string{`"--pos"`, `"--ctl-path"`, `"/E:/workespace/ob-data-orch/tmp/synthetic-controls"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--thread"`, `"4"`, `"--mem"`, `"4G"`} {
 		if !strings.Contains(previewBody, token) {
 			t.Fatalf("pos preview missing %s: %s", token, previewBody)
 		}

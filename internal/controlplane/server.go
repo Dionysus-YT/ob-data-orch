@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"ob-data-orch/internal/buildinfo"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/exportdomain"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/logstream"
@@ -47,6 +47,7 @@ type Server struct {
 	drafts                         ExportDraftStore
 	prechecks                      ExportPrecheckStore
 	tasks                          ExportTaskStore
+	cancellations                  TaskCancellationStore
 	executions                     AgentExecutionStore
 	logs                           *syntheticLogStore
 	nodes                          ExecutionNodeReader
@@ -275,6 +276,11 @@ type ExportTaskStore interface {
 	CountAuthorizedTaskSummaries(context.Context, string) (int, error)
 }
 
+// TaskCancellationStore 是任务取消的事务边界；浏览器不能直接修改执行状态。
+type TaskCancellationStore interface {
+	RequestTaskCancellation(context.Context, store.TaskCancellationRequest) (store.TaskCancellationResult, error)
+}
+
 // AgentExecutionStore 持久化已由内存协调器接受的领取和事件事实。
 // 适配器不得让 Agent 直接写入任务状态或任意事件负载。
 type AgentExecutionStore interface {
@@ -293,6 +299,7 @@ type AuthenticatedAgentExecutionStore interface {
 	// 本地输出任务返回空结构（StorageCredentialID 为空）。
 	ResolveExecutionStorageCredential(context.Context, store.ExecutionSecretResolutionRequest) (store.EncryptedExecutionStorageCredential, error)
 	FinishExecutionSecretResolution(context.Context, store.ExecutionSecretResolutionOutcome) error
+	PollExecutionControl(context.Context, store.ExecutionControlPoll) (store.ExecutionControl, error)
 	AppendAuthenticatedExecutionEvent(context.Context, string, store.ExecutionEvent) (string, error)
 }
 
@@ -627,6 +634,7 @@ type Dependencies struct {
 	Drafts          ExportDraftStore
 	Prechecks       ExportPrecheckStore
 	Tasks           ExportTaskStore
+	Cancellations   TaskCancellationStore
 	Executions      AgentExecutionStore
 	LogLedger       *logstream.BatchLedger
 	// PersistentLogs 仅保存已二次脱敏且已 fsync 的当前任务日志段；为空时保持既有合成内存投影。
@@ -687,7 +695,12 @@ func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies)
 	if requestIDGenerator == nil {
 		requestIDGenerator = identifier.NewUUIDV4
 	}
-	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, deleter: dependencies.Deleter, connectionTests: dependencies.ConnectionTests, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger, dependencies.PersistentLogs), nodes: dependencies.Nodes, nodeManagement: dependencies.NodeManagement, nodeEnvironment: dependencies.NodeEnvironment, nodeDeleter: dependencies.NodeDeleter, nodeCandidates: dependencies.NodeCandidates, agentProtocol: dependencies.AgentProtocol, agentEnvironmentChecks: dependencies.AgentEnvironmentChecks, agentPrechecks: dependencies.AgentPrechecks, precheckSecrets: dependencies.PrecheckSecrets, agentConnectionTests: dependencies.AgentConnectionTests, connectionTestSecrets: dependencies.ConnectionTestSecrets, agentJDBCConnectionTestEnabled: dependencies.AgentJDBCConnectionTestEnabled, realExecutionEnabled: dependencies.RealExecutionEnabled, generator: dependencies.Generator, generalGenerator: dependencies.GeneralizedGenerator, precheckTTL: dependencies.PrecheckTTL, connectionTestTTL: dependencies.ConnectionTestTTL, enrollmentTTL: dependencies.EnrollmentTTL, heartbeatTTL: dependencies.HeartbeatTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, decryptor: dependencies.Decryptor, storageCredentials: dependencies.StorageCredentials, templates: dependencies.Templates, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID, requestIDGenerator: requestIDGenerator}
+	server := &Server{build: build, provider: dependencies.Identity, authorizer: dependencies.Authorizer, roles: dependencies.Roles, dataSource: dependencies.DataSources, creator: dependencies.Creator, stateChanger: dependencies.StateChanger, deleter: dependencies.Deleter, connectionTests: dependencies.ConnectionTests, updater: dependencies.Updater, credentials: dependencies.CredentialRefs, drafts: dependencies.Drafts, prechecks: dependencies.Prechecks, tasks: dependencies.Tasks, cancellations: dependencies.Cancellations, executions: dependencies.Executions, logs: newSyntheticLogStore(dependencies.LogLedger, dependencies.PersistentLogs), nodes: dependencies.Nodes, nodeManagement: dependencies.NodeManagement, nodeEnvironment: dependencies.NodeEnvironment, nodeDeleter: dependencies.NodeDeleter, nodeCandidates: dependencies.NodeCandidates, agentProtocol: dependencies.AgentProtocol, agentEnvironmentChecks: dependencies.AgentEnvironmentChecks, agentPrechecks: dependencies.AgentPrechecks, precheckSecrets: dependencies.PrecheckSecrets, agentConnectionTests: dependencies.AgentConnectionTests, connectionTestSecrets: dependencies.ConnectionTestSecrets, agentJDBCConnectionTestEnabled: dependencies.AgentJDBCConnectionTestEnabled, realExecutionEnabled: dependencies.RealExecutionEnabled, generator: dependencies.Generator, generalGenerator: dependencies.GeneralizedGenerator, precheckTTL: dependencies.PrecheckTTL, connectionTestTTL: dependencies.ConnectionTestTTL, enrollmentTTL: dependencies.EnrollmentTTL, heartbeatTTL: dependencies.HeartbeatTTL, coordinator: dependencies.Coordinator, encryptor: dependencies.Encryptor, decryptor: dependencies.Decryptor, storageCredentials: dependencies.StorageCredentials, templates: dependencies.Templates, csrf: dependencies.CSRF, keyID: dependencies.CredentialKeyID, requestIDGenerator: requestIDGenerator}
+	if server.cancellations == nil {
+		if cancellationStore, ok := dependencies.Tasks.(TaskCancellationStore); ok {
+			server.cancellations = cancellationStore
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -869,6 +882,13 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/tasks/") {
 		suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
+		if strings.HasSuffix(suffix, ":cancel") {
+			taskID := strings.TrimSuffix(suffix, ":cancel")
+			if validTaskPathID(taskID) {
+				s.cancelTask(w, r, principal, taskID)
+				return
+			}
+		}
 		if strings.HasSuffix(suffix, ":rebuild-draft") {
 			taskID := strings.TrimSuffix(suffix, ":rebuild-draft")
 			if validTaskPathID(taskID) {
@@ -1090,134 +1110,23 @@ type storedDraftConfigV6 struct {
 	Config        *store.ExportConfig `json:"config"`
 }
 
-// normalizedExportDraft 是 v5 或 v6 草稿归一化后统一的命令生成输入。
-// EX-I2 起支持全部/指定对象与 DDL 内容；EX-I3 增加 CSV 序列化、压缩、文件布局、筛选与资源选项；
-// EX-I4 增加 CUT/SQL 数据格式及其专属序列化选项。
-// 单表 CSV 且未设置任何选项时仍路由到冻结 v5 生成路径。
-type normalizedExportDraft struct {
-	DataSourceID  string
-	NodeID        string
-	Database      string
-	ScopeKind     string // ALL | SPECIFIED
-	ObjectType    string // TABLE | VIEW；ALL 范围时为空
-	Objects       []string
-	ExcludeTables []string
-	ContentKind   string // DATA_ONLY | DDL_ONLY | DDL_AND_DATA
-	Format        string // CSV | CUT | SQL；仅 DDL 时为空
-	FilePath      string
-	LogPath       string
-	SkipCheckDir  bool
-	// EX-I3/EX-I4 选项：格式序列化、压缩、文件布局、筛选与资源参数。
-	CsvOptions      store.CsvOptions
-	CutOptions      store.CutOptions
-	Compress        bool
-	CompressionAlgo string
-	// EX-I7 压缩等级（2026-08-10）：--compression-level，官方按算法分范围（zstd 1-22、zlib -1~9；gzip/snappy 不支持）。
-	CompressionLevel      *int64
-	NoNestedDir           bool
-	MaxFileSize           *int64
-	RetainEmptyFiles      bool
-	QuerySql              string
-	IncludeColumns        []string
-	ExcludeColumns        []string
-	ExcludeVirtualColumns bool
-	FlashbackScn          *int64
-	FlashbackTimestamp    string
-	Thread                *int
-	PageSize              *int
-	ParallelMacro         *int
-	FetchSize             *int
-	JvmMemory             string
-	// EX-I7 文件拆分（2026-08-10）：--block-size（数字 MB 或数字+MB/ROW 后缀），显式传值已受控实测。
-	BlockSize string
-	// EX-I4 POS 定版（2026-08-07 实测）：控制文件目录（--ctl-path），仅 POS 格式有效。
-	ControlFilePath string
-	// EX-I6 对象存储（2026-08-07）：Multipart 本地临时分块目录（--tmp-path）。
-	TmpPath string
-	// EX-I6 对象存储（2026-08-07）：输出目标类型（LOCAL/OSS/S3/COS/OBS），传递给生成器做路径分流校验。
-	OutputKind string
-	// EX-I7 DDL 行为（2026-08-10）：前置 DROP、保留 Schema 与紧凑 Schema，仅在 DDL 内容时活动。
-	DropObject    bool
-	RetainSchema  bool
-	CompactSchema bool
-	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：条件筛选与一致性快照。
-	// 备库弱读缺少副本/权限预检查，保存点续跑缺少 EX-I8 恢复链路，继续失败关闭。
-	Where    string
-	Snapshot bool
-	// EX-I7 剩余参数第二批（2026-08-13 受控实测定版）：仅分区筛选与类型排除已启用。
-	Partition        string
-	ExcludeDataTypes []string
-	// EX-I7 剩余参数第二批：仅 MySQL 的 DATE/DATETIME 值格式已启用，且只在 CSV/CUT 数据内容活动。
-	TimestampFormats store.TimestampFormatConfig
-	// EX-I6 存储凭据槽位（2026-08-14）：对象存储输出绑定的凭据引用（LOCAL 不携带）。
-	StorageCredential *store.StorageCredentialBinding
-}
+// normalizedExportDraft 保留控制面旧名称，实际模型归属 exportdomain，避免 HTTP 适配层重新定义领域事实。
+type normalizedExportDraft = exportdomain.Draft
 
 // maxExportObjectExpressions 限制单个草稿的对象、排除表、分区和类型列表数量，
 // 防止无限条目进入命令、预检查探测与快照。
 const maxExportObjectExpressions = 100
 
-// isFrozenSingleTableCSV 判断归一结果是否仍属于首条切片的冻结形状，
-// 是则继续使用 v5 元数据与 export-odp-single-table-csv-v1 生成，保证指纹与 argv 不变。
-// 任一已启用泛化选项被设置都会离开冻结形状，新草稿改走现行 v7 泛化生成器；
-// EX-I6 起对象存储输出与 --tmp-path 也不走冻结路径（v5 仅本地输出；空 OutputKind 兼容旧调用按本地处理）。
-func (n normalizedExportDraft) isFrozenSingleTableCSV() bool {
-	return (n.OutputKind == "" || n.OutputKind == "LOCAL") && n.TmpPath == "" && n.ScopeKind == "SPECIFIED" && n.ObjectType == "TABLE" && len(n.Objects) == 1 && len(n.ExcludeTables) == 0 && n.ContentKind == "DATA_ONLY" && n.Format == "CSV" && n.hasZeroOptions()
-}
-
-// hasZeroOptions 判断全部已启用泛化选项均为零值。
-func (n normalizedExportDraft) hasZeroOptions() bool {
-	return n.CsvOptions == (store.CsvOptions{}) && n.CutOptions == (store.CutOptions{}) && !n.Compress && n.CompressionAlgo == "" && n.CompressionLevel == nil &&
-		!n.NoNestedDir && n.MaxFileSize == nil && !n.RetainEmptyFiles &&
-		n.QuerySql == "" && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
-		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
-		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
-		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot &&
-		// EX-I7 剩余参数第二批（2026-08-13）：携带任一已启用参数即离开冻结形状走 v7 泛化生成器。
-		n.Partition == "" && len(n.ExcludeDataTypes) == 0 &&
-		n.TimestampFormats == (store.TimestampFormatConfig{})
-}
-
 // draftCapability 按归一结果推导泛化能力版本。
 // EX-I4：DATA_ONLY 按数据格式返回对应能力；CUT/SQL 无 DDL 组合能力，DDL 内容仍只走 CSV。
 func draftCapability(n normalizedExportDraft) string {
-	switch n.ContentKind {
-	case "DDL_ONLY":
-		return "export-odp-ddl-v1"
-	case "DDL_AND_DATA":
-		return "export-odp-ddl-csv-v1"
-	default:
-		switch n.Format {
-		case "CUT":
-			return "export-odp-cut-v1"
-		case "SQL":
-			return "export-odp-sql-v1"
-		case "POS":
-			// EX-I4 POS 定版（2026-08-07 实测）：独立 --pos + --ctl-path 能力切片。
-			return "export-odp-pos-v1"
-		case "PARQUET":
-			return "export-odp-parquet-v1"
-		case "ORC":
-			return "export-odp-orc-v1"
-		case "AVRO":
-			return "export-odp-avro-v1"
-		default:
-			return "export-odp-full-csv-v1"
-		}
-	}
+	return exportdomain.CapabilityFor(n.ContentKind, n.Format)
 }
 
 // draftDisplayFormat 返回快照与摘要投影使用的格式标识。
 // DDL_ONLY 无数据格式；DDL_AND_DATA 固定为 CSV 组合；DATA_ONLY 按实际数据格式投影。
 func draftDisplayFormat(contentKind, format string) string {
-	switch contentKind {
-	case "DDL_ONLY":
-		return "DDL"
-	case "DDL_AND_DATA":
-		return "DDL_CSV"
-	default:
-		return format
-	}
+	return exportdomain.DisplayFormat(contentKind, format)
 }
 
 // validateExportObjectName 校验单个对象名称：非空、长度受限、无通配符与分隔符、无控制字符且无首尾空白。
@@ -1282,90 +1191,15 @@ func normalizeExportDraftRequest(request exportDraftWriteRequest) (normalizedExp
 // 多库 schema 前缀、通配符、门禁对象类型与任何尚未验证的选项均失败关闭。
 // 参数元数据版本由草稿单独冻结，不能从 configVersion 推断为历史 v6 或当前 v7。
 func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID string) (normalizedExportDraft, error) {
-	scope := config.ObjectScope
+	selection, err := exportdomain.NormalizeSelection(config, maxExportObjectExpressions, validateExportObjectName)
+	if err != nil {
+		return normalizedExportDraft{}, err
+	}
 	normalized := normalizedExportDraft{
 		DataSourceID: dataSourceID, NodeID: nodeID,
-		Database: scope.Database, ContentKind: config.ContentSelection.ContentKind,
-	}
-	if scope.Database == "" || len(scope.Database) > 512 {
-		return normalizedExportDraft{}, errors.New("v6 object scope requires a database")
-	}
-	switch scope.ScopeKind {
-	case "ALL":
-		if len(scope.ObjectTypes) != 0 || len(scope.Expressions) != 0 {
-			return normalizedExportDraft{}, errors.New("v6 ALL scope must not carry object types or expressions")
-		}
-		normalized.ScopeKind = "ALL"
-	case "SPECIFIED":
-		if len(scope.ObjectTypes) != 1 || (scope.ObjectTypes[0] != "TABLE" && scope.ObjectTypes[0] != "VIEW") {
-			return normalizedExportDraft{}, errors.New("v6 object scope must specify exactly one supported object type")
-		}
-		if len(scope.Expressions) == 0 || len(scope.Expressions) > maxExportObjectExpressions {
-			return normalizedExportDraft{}, errors.New("v6 object expressions must number between 1 and 100")
-		}
-		normalized.ScopeKind = "SPECIFIED"
-		normalized.ObjectType = scope.ObjectTypes[0]
-		for index, expression := range scope.Expressions {
-			// schema 前缀只允许缺省或与范围数据库一致；跨库表达式（EX-F012）未取证，失败关闭。
-			if expression.Schema != "" && expression.Schema != scope.Database {
-				return normalizedExportDraft{}, errors.New("v6 multi-database schema prefix is not enabled")
-			}
-			if err := validateExportObjectName(expression.Name); err != nil {
-				return normalizedExportDraft{}, errors.New("v6 object expression name is invalid")
-			}
-			// RawInput 一律由服务端生成规范值；浏览器自由文本不得进入草稿、快照或 SQLite。
-			if expression.Schema != "" {
-				config.ObjectScope.Expressions[index].RawInput = expression.Schema + "." + expression.Name
-			} else {
-				config.ObjectScope.Expressions[index].RawInput = expression.Name
-			}
-			normalized.Objects = append(normalized.Objects, expression.Name)
-		}
-	default:
-		return normalizedExportDraft{}, errors.New("v6 object scope kind is unsupported")
-	}
-	if len(scope.ExcludeTables) != 0 {
-		if normalized.ObjectType == "VIEW" {
-			return normalizedExportDraft{}, errors.New("v6 exclude tables require table scope")
-		}
-		if len(scope.ExcludeTables) > maxExportObjectExpressions {
-			return normalizedExportDraft{}, errors.New("v6 exclude tables exceed the limit")
-		}
-		for _, name := range scope.ExcludeTables {
-			if err := validateExportObjectName(name); err != nil {
-				return normalizedExportDraft{}, errors.New("v6 exclude table name is invalid")
-			}
-		}
-		normalized.ExcludeTables = append([]string(nil), scope.ExcludeTables...)
-	}
-	switch normalized.ContentKind {
-	case "DATA_ONLY":
-		if normalized.ObjectType == "VIEW" {
-			return normalizedExportDraft{}, errors.New("v6 views cannot export data")
-		}
-		// EX-I4/EX-I5：数据格式单选 CSV/CUT/POS/SQL/PARQUET/ORC/AVRO；
-		// POS 映射已实测定版（2026-08-07），结构化格式按官方格式表接入。
-		switch config.DataFormat.FormatKind {
-		case "CSV", "CUT", "POS", "SQL", "PARQUET", "ORC", "AVRO":
-			normalized.Format = config.DataFormat.FormatKind
-		default:
-			return normalizedExportDraft{}, errors.New("v6 data format is unsupported")
-		}
-	case "DDL_ONLY":
-		if config.DataFormat.FormatKind != "" && config.DataFormat.FormatKind != "CSV" {
-			return normalizedExportDraft{}, errors.New("v6 ddl-only content must not declare a data format")
-		}
-	case "DDL_AND_DATA":
-		if normalized.ObjectType == "VIEW" {
-			return normalizedExportDraft{}, errors.New("v6 views cannot export data")
-		}
-		// EX-I4：能力版本体系没有 DDL+CUT/SQL 组合能力，DDL 内容固定 CSV。
-		normalized.Format = "CSV"
-		if config.DataFormat.FormatKind != "CSV" {
-			return normalizedExportDraft{}, errors.New("v6 ddl-and-data content requires csv format")
-		}
-	default:
-		return normalizedExportDraft{}, errors.New("v6 content selection is unsupported")
+		Database: selection.Database, ScopeKind: selection.ScopeKind, ObjectType: selection.ObjectType,
+		Objects: selection.Objects, ExcludeTables: selection.ExcludeTables,
+		ContentKind: selection.ContentKind, Format: selection.Format,
 	}
 	output := config.OutputConfig
 	// EX-I6 对象存储（2026-08-07）：输出类型接受 LOCAL 与受控对象存储（OSS/S3/COS/OBS）。
@@ -1381,7 +1215,7 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 			return normalizedExportDraft{}, errors.New("v6 storage credential requires object storage output")
 		}
 	case "OSS", "S3", "COS", "OBS":
-		if err := validateControlledStorageURI(output.OutputKind, output.FilePath); err != nil {
+		if err := exportdomain.ValidateControlledStorageURI(output.OutputKind, output.FilePath); err != nil {
 			return normalizedExportDraft{}, err
 		}
 		// EX-I6 存储凭据槽位：引用可缺省（依赖 Hadoop 标准配置链）；携带时只接受完整标识与正修订。
@@ -1492,18 +1326,17 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	if filter.EnableHiddenPk != nil && *filter.EnableHiddenPk {
 		return normalizedExportDraft{}, errors.New("v6 enable hidden pk requires table structure, version and permission prechecks")
 	}
+	// query-sql 是普通高级筛选，不是通用 SQL 执行入口；它仍须在服务端保持官方已确认的互斥约束。
 	if normalized.QuerySql != "" {
-		if len(normalized.QuerySql) > 64<<10 || strings.ContainsRune(normalized.QuerySql, '\x00') {
+		if len(normalized.QuerySql) > 64<<10 || strings.ContainsRune(normalized.QuerySql, '\x00') || strings.Contains(strings.ToLower(normalized.QuerySql), "file://") {
 			return normalizedExportDraft{}, errors.New("v6 query sql is invalid")
 		}
 		if normalized.FlashbackScn != nil || normalized.FlashbackTimestamp != "" {
 			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with flashback options")
 		}
-		// 官方约束：--query-sql 与 --where 不能搭配（--where 只能配合 --table）。
 		if normalized.Where != "" {
 			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with where option")
 		}
-		// EX-F072：--partition 与 --query-sql 互斥（官方约束）。
 		if normalized.Partition != "" {
 			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with partition option")
 		}
@@ -1673,33 +1506,6 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		normalized.TimestampFormats = timestampFormats
 	}
 	return normalized, nil
-}
-
-// storageSchemeValues 是 V1.0 受控对象存储 scheme 白名单；不接受任意 URI。
-var storageSchemeValues = []string{"oss", "s3", "cos", "obs"}
-
-// validateControlledStorageURI 校验对象存储输出 URI（EX-I6，2026-08-07）：
-// scheme 必须与输出类型一致且在白名单内；bucket（authority）非空；路径以 / 开头；
-// query 参数只允许 endpoint/region/storage-class；拒绝 access-key/secret-key 等任何密钥参数，
-// 存储凭据必须走执行槽位（Agent 侧 HADOOP_CONF_DIR/core-site.xml），不进入 URI、argv、日志或快照。
-func validateControlledStorageURI(outputKind, uri string) error {
-	if uri == "" || len(uri) > 4096 || strings.ContainsRune(uri, 0) || strings.ContainsAny(uri, "\r\n") {
-		return errors.New("v6 storage uri is invalid")
-	}
-	parsed, err := url.Parse(uri)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || !strings.HasPrefix(parsed.Path, "/") {
-		return errors.New("v6 storage uri must be scheme://bucket/path")
-	}
-	scheme := strings.ToLower(parsed.Scheme)
-	if !containsString(storageSchemeValues, scheme) || !strings.EqualFold(scheme, outputKind) {
-		return errors.New("v6 storage uri scheme is unsupported")
-	}
-	for key := range parsed.Query() {
-		if key != "endpoint" && key != "region" && key != "storage-class" {
-			return errors.New("v6 storage uri has unsupported parameters")
-		}
-	}
-	return nil
 }
 
 // validateSharedTextOptions 校验 CUT/SQL 与 CSV 共享的文本序列化选项：
@@ -2410,7 +2216,8 @@ func (s *Server) previewExportDraft(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "command": preview.RedactedCommand, "argvTemplate": browserPreviewArgv(preview.ArgvTemplate), "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary})
+	response := map[string]any{"requestId": requestID(w), "command": preview.RedactedCommand, "argvTemplate": browserPreviewArgv(preview.ArgvTemplate), "configFingerprint": preview.ConfigFingerprint, "tokenEvidence": preview.TokenEvidence, "secretSourceSummary": preview.SecretSourceSummary}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // createExportPrecheck 固定当前草稿与凭据版本，之后的 Agent 只能领取该绑定。
@@ -2674,7 +2481,7 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	}
 	requestBase := commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, OutputKind: input.OutputKind}
 	// 冻结单表 CSV 形状继续使用 v5 元数据与已验证能力，保证指纹与 argv 逐字节不变。
-	if input.isFrozenSingleTableCSV() && (metadataVersion == "" || metadataVersion == exportMetadataV5) {
+	if input.IsFrozenSingleTableCSV() && (metadataVersion == "" || metadataVersion == exportMetadataV5) {
 		fields := append(append([]commandgen.FieldInput(nil), connectionFields...),
 			commandgen.FieldInput{Name: "--table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Objects[0]}},
 			commandgen.FieldInput{Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}},
@@ -2694,231 +2501,11 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if s.generalGenerator == nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errGeneralizedGeneratorUnavailable
 	}
-	fields := append([]commandgen.FieldInput(nil), connectionFields...)
-	switch input.ScopeKind {
-	case "ALL":
-		fields = append(fields, commandgen.FieldInput{Name: "--all", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	case "SPECIFIED":
-		objectParameter := "--table"
-		if input.ObjectType == "VIEW" {
-			objectParameter = "--view"
-		}
-		fields = append(fields, commandgen.FieldInput{Name: objectParameter, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.Objects, ",")}})
-	default:
-		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft scope is unsupported")
+	generalizedFields, err := exportdomain.BuildGeneralizedFields(input)
+	if err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
-	if len(input.ExcludeTables) != 0 {
-		fields = append(fields, commandgen.FieldInput{Name: "--exclude-table", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.ExcludeTables, ",")}})
-	}
-	switch input.ContentKind {
-	case "DATA_ONLY":
-		// EX-I4/EX-I5：数据格式单选，控制面按归一化结果提供对应格式标志。
-		formatParameter := "--csv"
-		switch input.Format {
-		case "CUT":
-			formatParameter = "--cut"
-		case "SQL":
-			formatParameter = "--sql"
-		case "POS":
-			formatParameter = "--pos"
-		case "PARQUET":
-			formatParameter = "--par"
-		case "ORC":
-			formatParameter = "--orc"
-		case "AVRO":
-			formatParameter = "--avro"
-		}
-		fields = append(fields, commandgen.FieldInput{Name: formatParameter, Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	case "DDL_ONLY":
-		fields = append(fields, commandgen.FieldInput{Name: "--ddl", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	case "DDL_AND_DATA":
-		fields = append(fields,
-			commandgen.FieldInput{Name: "--ddl", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}},
-			commandgen.FieldInput{Name: "--csv", Source: commandgen.SourceFormat, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}},
-		)
-	default:
-		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export draft content kind is unsupported")
-	}
-	// EX-I7 DDL 行为（2026-08-10）：前置 DROP 与保留 Schema 仅随 DDL 内容发射（归一化已保证非 DDL 内容携带即失败关闭）。
-	if input.DropObject {
-		fields = append(fields, commandgen.FieldInput{Name: "--drop-object", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	if input.RetainSchema {
-		fields = append(fields, commandgen.FieldInput{Name: "--retain-schema", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	// EX-I7 紧凑 Schema（2026-08-11 受控实测定版）：仅随 DDL 内容发射（归一化已保证非 DDL 内容携带即失败关闭）。
-	if input.CompactSchema {
-		fields = append(fields, commandgen.FieldInput{Name: "--compact-schema", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	fields = append(fields, commandgen.FieldInput{Name: "--file-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.FilePath}})
-	if input.LogPath != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--log-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.LogPath}})
-	}
-	if input.ControlFilePath != "" {
-		// EX-I4 POS 定版：控制文件目录（--ctl-path）只随 POS 格式发射（归一化已保证）。
-		fields = append(fields, commandgen.FieldInput{Name: "--ctl-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.ControlFilePath}})
-	}
-	if input.TmpPath != "" {
-		// EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
-		fields = append(fields, commandgen.FieldInput{Name: "--tmp-path", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.TmpPath}})
-	}
-	fields = append(fields, commandgen.FieldInput{Name: "--skip-check-dir", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: input.SkipCheckDir}})
-	// EX-I4：序列化选项按格式适用性发射；越界字段已在归一化阶段失败关闭。
-	switch input.Format {
-	case "CSV":
-		csv := input.CsvOptions
-		if csv.SkipHeader {
-			fields = append(fields, commandgen.FieldInput{Name: "--skip-header", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-		}
-		for _, option := range []struct {
-			name  string
-			value string
-		}{
-			{"--column-separator", csv.ColumnSeparator},
-			{"--column-quote", csv.ColumnQuote},
-			{"--column-quote-mode", csv.ColumnQuoteMode},
-			{"--escape-character", csv.EscapeCharacter},
-			{"--line-separator", csv.LineSeparator},
-			{"--null-string", csv.NullString},
-			{"--file-encoding", csv.FileEncoding},
-		} {
-			if option.value != "" {
-				fields = append(fields, commandgen.FieldInput{Name: option.name, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: option.value}})
-			}
-		}
-		if csv.WithTrim {
-			fields = append(fields, commandgen.FieldInput{Name: "--with-trim", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-		}
-	case "CUT":
-		csv := input.CsvOptions
-		for _, option := range []struct {
-			name  string
-			value string
-		}{
-			{"--column-splitter", csv.ColumnSplitter},
-			{"--escape-character", csv.EscapeCharacter},
-			{"--line-separator", csv.LineSeparator},
-			{"--null-string", csv.NullString},
-			{"--file-encoding", csv.FileEncoding},
-		} {
-			if option.value != "" {
-				fields = append(fields, commandgen.FieldInput{Name: option.name, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: option.value}})
-			}
-		}
-		if csv.WithTrim {
-			fields = append(fields, commandgen.FieldInput{Name: "--with-trim", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-		}
-		if input.CutOptions.TrailDelimiter {
-			fields = append(fields, commandgen.FieldInput{Name: "--trail-delimiter", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-		}
-		if input.CutOptions.RemoveNewline {
-			fields = append(fields, commandgen.FieldInput{Name: "--remove-newline", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-		}
-	case "SQL":
-		csv := input.CsvOptions
-		for _, option := range []struct {
-			name  string
-			value string
-		}{
-			{"--line-separator", csv.LineSeparator},
-			{"--file-encoding", csv.FileEncoding},
-		} {
-			if option.value != "" {
-				fields = append(fields, commandgen.FieldInput{Name: option.name, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: option.value}})
-			}
-		}
-	case "POS":
-		// EX-I4 POS 定版：首版无序列化选项，只有 --pos 与 --ctl-path；越界已在归一化失败关闭。
-	case "PARQUET", "ORC", "AVRO":
-		// EX-I5 结构化格式：只发射官方格式表列出的文件编码；越界已在归一化失败关闭。
-		if csv := input.CsvOptions; csv.FileEncoding != "" {
-			fields = append(fields, commandgen.FieldInput{Name: "--file-encoding", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: csv.FileEncoding}})
-		}
-	}
-	if input.NoNestedDir {
-		fields = append(fields, commandgen.FieldInput{Name: "--no-nested-dir", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	if input.MaxFileSize != nil {
-		fields = append(fields, commandgen.FieldInput{Name: "--max-file-size", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: *input.MaxFileSize}})
-	}
-	if input.RetainEmptyFiles {
-		fields = append(fields, commandgen.FieldInput{Name: "--retain-empty-files", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	if input.Compress {
-		fields = append(fields, commandgen.FieldInput{Name: "--compress", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	if input.CompressionAlgo != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--compression-algo", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.CompressionAlgo}})
-	}
-	// EX-I7 压缩等级（2026-08-10）：显式传值时发射（归一化已按算法范围校验）。
-	if input.CompressionLevel != nil {
-		fields = append(fields, commandgen.FieldInput{Name: "--compression-level", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: *input.CompressionLevel}})
-	}
-	if input.QuerySql != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--query-sql", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.QuerySql}})
-	}
-	// EX-I7 条件筛选（2026-08-11 受控实测定版）：--where 显式传值时发射（与 --query-sql 互斥已校验）。
-	if input.Where != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--where", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Where}})
-	}
-	// EX-I7 一致性（2026-08-11 受控实测定版）：--snapshot 一致性快照为无值开关。
-	if input.Snapshot {
-		fields = append(fields, commandgen.FieldInput{Name: "--snapshot", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	// EX-I7 剩余参数第二批（2026-08-13 受控实测定版）：分区筛选按分区导出生效，类型排除按列类型生效。
-	if input.Partition != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--partition", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Partition}})
-	}
-	if len(input.ExcludeDataTypes) != 0 {
-		fields = append(fields, commandgen.FieldInput{Name: "--exclude-data-types", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.ExcludeDataTypes, ",")}})
-	}
-	// EX-I7 时间值格式第二批：仅发射已观察到 MySQL 输出效果的 DATE/DATETIME 值格式。
-	for _, option := range []struct {
-		name  string
-		value string
-	}{
-		{"--date-value-format", input.TimestampFormats.DateValueFormat},
-		{"--datetime-value-format", input.TimestampFormats.DateTimeValueFormat},
-	} {
-		if option.value != "" {
-			fields = append(fields, commandgen.FieldInput{Name: option.name, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: option.value}})
-		}
-	}
-	if len(input.IncludeColumns) != 0 {
-		fields = append(fields, commandgen.FieldInput{Name: "--include-column-names", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.IncludeColumns, ",")}})
-	}
-	if len(input.ExcludeColumns) != 0 {
-		fields = append(fields, commandgen.FieldInput{Name: "--exclude-column-names", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: strings.Join(input.ExcludeColumns, ",")}})
-	}
-	if input.ExcludeVirtualColumns {
-		fields = append(fields, commandgen.FieldInput{Name: "--exclude-virtual-columns", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true}})
-	}
-	if input.FlashbackScn != nil {
-		fields = append(fields, commandgen.FieldInput{Name: "--flashback-scn", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: *input.FlashbackScn}})
-	}
-	if input.FlashbackTimestamp != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--flashback-timestamp", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.FlashbackTimestamp}})
-	}
-	for _, option := range []struct {
-		name  string
-		value *int
-	}{
-		{"--thread", input.Thread},
-		{"--page-size", input.PageSize},
-		{"--parallel-macro", input.ParallelMacro},
-		{"--fetch-size", input.FetchSize},
-	} {
-		if option.value != nil {
-			fields = append(fields, commandgen.FieldInput{Name: option.name, Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(*option.value)}})
-		}
-	}
-	if input.JvmMemory != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--mem", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.JvmMemory}})
-	}
-	// EX-I7 文件拆分（2026-08-10）：--block-size 显式传值时发射（归一化已按可读格式能力校验）。
-	if input.BlockSize != "" {
-		fields = append(fields, commandgen.FieldInput{Name: "--block-size", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.BlockSize}})
-	}
+	fields := append(append([]commandgen.FieldInput(nil), connectionFields...), generalizedFields...)
 	switch metadataVersion {
 	case "", exportMetadataV7:
 		requestBase.MetadataVersion = exportMetadataV7
@@ -3179,9 +2766,17 @@ func dataSourceConnectionTestCreateDigest(dataSourceID string, revision int64, n
 	return hex.EncodeToString(digest[:])
 }
 
-// exportTaskSubmitRequest 只接收已创建预检查的标识，不能从浏览器接收命令或任务快照。
+// exportTaskSubmitRequest 只接收已创建预检查的标识；历史确认字段仅为旧客户端兼容。
 type exportTaskSubmitRequest struct {
-	PrecheckID string `json:"precheckId"`
+	PrecheckID                   string                              `json:"precheckId"`
+	SensitiveCommandConfirmation *legacySensitiveCommandConfirmation `json:"sensitiveCommandConfirmation,omitempty"`
+}
+
+// legacySensitiveCommandConfirmation 只承接已弃用字段，绝不影响 query-sql 的普通任务授权与提交。
+type legacySensitiveCommandConfirmation struct {
+	Capability      string `json:"capability"`
+	RiskFingerprint string `json:"riskFingerprint"`
+	Confirmed       bool   `json:"confirmed"`
 }
 
 // submitExportDraft 将已通过的预检查与当前草稿重新核对后冻结为任务。
@@ -3406,7 +3001,7 @@ func validTaskPathID(value string) bool {
 	return value != "" && !strings.Contains(value, "/") && !strings.Contains(value, ":")
 }
 
-// taskSnapshotResponse 只返回当前切片可安全解释的冻结配置事实。
+// taskSnapshotResponse 只返回已实现导出格式可安全解释的冻结配置事实。
 // 输出和日志路径、凭据引用、完整原始快照均不下发，后续字段必须先完成专项脱敏规则。
 // 派生关系字段在本切片始终为空，待 EX-I8 实现后才会输出。
 type taskSnapshotResponse struct {
@@ -3438,15 +3033,42 @@ type taskCommandEvidenceResponse struct {
 // 阶段、进度和结果解析尚无可靠映射时必须显式标为 UNAVAILABLE。
 // EX-I8：ResultSummary 只投影 Agent 观察到的文件/字节/检查点事实，不含路径原文、内容或秘密。
 type taskExecutionResponse struct {
-	State                  string                     `json:"state"`
-	ExecutionID            string                     `json:"executionId,omitempty"`
-	ReconciliationRequired bool                       `json:"reconciliationRequired"`
-	StageEvidence          string                     `json:"stageEvidence"`
-	ProgressEvidence       string                     `json:"progressEvidence"`
-	StartedAt              string                     `json:"startedAt,omitempty"`
-	FinishedAt             string                     `json:"finishedAt,omitempty"`
-	UpdatedAt              string                     `json:"updatedAt"`
-	ResultSummary          *taskResultSummaryResponse `json:"resultSummary,omitempty"`
+	State                  string                      `json:"state"`
+	ExecutionID            string                      `json:"executionId,omitempty"`
+	ReconciliationRequired bool                        `json:"reconciliationRequired"`
+	StageEvidence          string                      `json:"stageEvidence"`
+	ProgressEvidence       string                      `json:"progressEvidence"`
+	StartedAt              string                      `json:"startedAt,omitempty"`
+	FinishedAt             string                      `json:"finishedAt,omitempty"`
+	UpdatedAt              string                      `json:"updatedAt"`
+	ExitCode               *int                        `json:"exitCode,omitempty"`
+	ElapsedMilliseconds    *int64                      `json:"elapsedMs,omitempty"`
+	ErrorCode              string                      `json:"errorCode,omitempty"`
+	ErrorSummary           string                      `json:"errorSummary,omitempty"`
+	CancelAvailable        bool                        `json:"cancelAvailable"`
+	CancelRequested        bool                        `json:"cancelRequested"`
+	CancelDeadline         string                      `json:"cancelDeadline,omitempty"`
+	PlannedActualMatch     string                      `json:"plannedActualMatch,omitempty"`
+	OutputLocation         *taskOutputLocationResponse `json:"outputLocation,omitempty"`
+	ResultSummary          *taskResultSummaryResponse  `json:"resultSummary,omitempty"`
+}
+
+// taskCancellationResponse 是取消请求的最小无秘密回执。
+type taskCancellationResponse struct {
+	TaskID                string `json:"taskId"`
+	ExecutionID           string `json:"executionId,omitempty"`
+	State                 string `json:"state"`
+	CancellationRequestID string `json:"cancellationRequestId,omitempty"`
+	CancellationDeadline  string `json:"cancellationDeadline,omitempty"`
+	CancelRequested       bool   `json:"cancelRequested"`
+	Replayed              bool   `json:"replayed"`
+}
+
+// taskOutputLocationResponse 是任务输出位置的授权投影；Value 只在创建者范围内返回。
+type taskOutputLocationResponse struct {
+	Kind      string `json:"kind"`
+	Value     string `json:"value,omitempty"`
+	Redaction string `json:"redaction"`
 }
 
 // taskResultSummaryResponse 是任务级结果摘要的安全投影。
@@ -3478,6 +3100,41 @@ func newTaskResultSummaryResponse(summary *store.ExecutionResultSummary) *taskRe
 		Result: summary.Result, FileCount: summary.FileCount, TotalBytes: summary.TotalBytes, Files: files,
 		CheckpointPresent: summary.CheckpointPresent, ObservedAt: summary.ObservedAt.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+// executionErrorSummary 把固定错误码转换为稳定中文摘要，绝不把工具原始错误写入响应。
+func executionErrorSummary(code string) string {
+	switch code {
+	case store.ExecutionErrorStartRejected:
+		return "Agent 未能启动受控 OBDUMPER 进程。"
+	case store.ExecutionErrorProcessExitNonZero:
+		return "受控 OBDUMPER 进程返回了非零退出码。"
+	case store.ExecutionErrorProcessWaitFailed:
+		return "进程回收或脱敏输出采集未完成。"
+	case store.ExecutionErrorToolFailed:
+		return "OBDUMPER 已报告失败终态。"
+	case store.ExecutionErrorResultVerification:
+		return "进程已结束，但输出结果未通过平台核验。"
+	case store.ExecutionErrorEvidenceUnavailable:
+		return "执行证据不完整，需要人工核对。"
+	case store.ExecutionErrorCancelledByRequest:
+		return "任务已按用户请求取消。"
+	case store.ExecutionErrorCancelTimeout:
+		return "取消请求在规定时间内未完成，需要人工核对。"
+	case store.ExecutionErrorCancelFailed:
+		return "受控进程树未能完成终止，需要人工核对。"
+	default:
+		return ""
+	}
+}
+
+// executionElapsedMilliseconds 只在开始和结束时间都可信时返回耗时，未知时保持缺省。
+func executionElapsedMilliseconds(startedAt, finishedAt time.Time) *int64 {
+	if startedAt.IsZero() || finishedAt.IsZero() || finishedAt.Before(startedAt) {
+		return nil
+	}
+	value := finishedAt.Sub(startedAt).Milliseconds()
+	return &value
 }
 
 // loadAuthorizedTaskSummary 对每个任务只读投影重新执行服务端范围校验。
@@ -3573,12 +3230,83 @@ func (s *Server) getTaskExecution(w http.ResponseWriter, r *http.Request, princi
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskExecutionResponse{
+	response := taskExecutionResponse{
 		State: summary.State, ExecutionID: summary.ExecutionID, ReconciliationRequired: summary.ReconciliationRequired,
 		StageEvidence: "UNAVAILABLE", ProgressEvidence: "UNAVAILABLE", StartedAt: optionalTaskTime(summary.StartedAt),
 		FinishedAt: optionalTaskTime(summary.FinishedAt), UpdatedAt: summary.UpdatedAt.Format(time.RFC3339Nano),
-		ResultSummary: newTaskResultSummaryResponse(summary.ResultSummary),
-	}})
+		ElapsedMilliseconds: executionElapsedMilliseconds(summary.StartedAt, summary.FinishedAt),
+		ResultSummary:       newTaskResultSummaryResponse(summary.ResultSummary),
+		CancelAvailable:     s.realExecutionEnabled && !summary.ReconciliationRequired && (summary.State == "WAITING_SCHEDULE" || summary.State == "STARTING" || summary.State == "RUNNING"),
+		CancelRequested:     summary.CancellationRequested || summary.State == "CANCELLING",
+	}
+	if !summary.CancellationDeadline.IsZero() {
+		response.CancelDeadline = summary.CancellationDeadline.Format(time.RFC3339Nano)
+	}
+	if summary.ProcessEvidence != nil {
+		response.ExitCode = summary.ProcessEvidence.ExitCode
+		response.PlannedActualMatch = summary.ProcessEvidence.PlannedActualMatch
+		response.ErrorCode = summary.ProcessEvidence.ErrorCode
+		response.ErrorSummary = executionErrorSummary(summary.ProcessEvidence.ErrorCode)
+	}
+	if response.ErrorCode == "" && summary.State == "FAILED" {
+		response.ErrorCode = store.ExecutionErrorEvidenceUnavailable
+		response.ErrorSummary = executionErrorSummary(response.ErrorCode)
+	}
+	if summary.OutputLocation != nil {
+		response.OutputLocation = &taskOutputLocationResponse{Kind: summary.OutputLocation.Kind, Value: summary.OutputLocation.Value, Redaction: summary.OutputLocation.Redaction}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": response})
+}
+
+// cancelTask 创建一次可重放、自动失效的取消意图；真实进程终止由 Agent 在租约内完成。
+func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
+	if s.cancellations == nil || !s.realExecutionEnabled || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "CANCEL_NOT_CONFIGURED", "当前环境未配置真实执行取消能力", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) < 16 || len(key) > 200 {
+		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "幂等键格式无效", false)
+		return
+	}
+	executionID, err := identifier.NewUUIDV4()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "REQUEST_ID_UNAVAILABLE", "请求标识暂时不可用", true)
+		return
+	}
+	digestBytes := sha256.Sum256([]byte("CANCEL_EXPORT_TASK|" + taskID))
+	now := time.Now().UTC()
+	result, err := s.cancellations.RequestTaskCancellation(r.Context(), store.TaskCancellationRequest{
+		TaskID: taskID, SubjectID: principal.ID, RequestID: requestID(w), IdempotencyKey: key,
+		RequestDigest: hex.EncodeToString(digestBytes[:]), ExecutionID: executionID, Now: now, Deadline: now.Add(30 * time.Second),
+	})
+	switch {
+	case errors.Is(err, store.ErrDataSourceNotFound):
+		notFound(w, r)
+		return
+	case errors.Is(err, store.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键对应的请求内容不一致", false)
+		return
+	case errors.Is(err, store.ErrEventRejected):
+		writeError(w, http.StatusConflict, "TASK_CANCELLATION_REJECTED", "任务当前状态不允许取消", false)
+		return
+	case err != nil:
+		writeError(w, http.StatusServiceUnavailable, "TASK_CANCELLATION_UNAVAILABLE", "取消请求暂时不可用", true)
+		return
+	}
+	response := taskCancellationResponse{TaskID: result.TaskID, ExecutionID: result.ExecutionID, State: result.State, CancellationRequestID: result.CancellationRequestID, CancelRequested: result.CancelRequested, Replayed: result.Replayed}
+	if !result.CancellationDeadline.IsZero() {
+		response.CancellationDeadline = result.CancellationDeadline.Format(time.RFC3339Nano)
+	}
+	status := http.StatusOK
+	if result.State == "CANCELLING" {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, map[string]any{"requestId": requestID(w), "item": response})
 }
 
 // taskDerivationRequest 是派生草稿操作的请求体：只接受两种受控派生方式。
@@ -5243,6 +4971,9 @@ func (s *Server) agentEntry(w http.ResponseWriter, r *http.Request) {
 						return
 					case "renew-lease":
 						s.renewAuthenticatedExecution(w, r, executionID)
+						return
+					case "poll-control":
+						s.pollAuthenticatedExecutionControl(w, r, executionID)
 						return
 					case "resolve-secret-slots":
 						s.resolveAuthenticatedExecutionSecret(w, r, executionID)

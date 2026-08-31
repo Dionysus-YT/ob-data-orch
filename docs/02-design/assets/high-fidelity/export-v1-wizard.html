@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OB Data Orch · Export V1 高保真设计</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root { --bg:#f6f7f8; --surface:#fff; --subtle:#f2f4f6; --line:#dfe3e8; --line-strong:#c8ced6; --text:#20242a; --muted:#525a64; --quiet:#747d87; --blue:#2567b9; --blue-soft:#eaf1f8; --success:#18734a; --success-bg:#edf7f1; --success-line:#bcdcc9; --warning:#835a16; --warning-bg:#fff7e8; --warning-line:#e5ce9e; --danger:#a62c24; --danger-bg:#fff1ef; --danger-line:#e5b5b0; --radius:4px; --surface-radius:6px; --shadow:0 8px 24px rgba(29,38,50,.12); }
+    * { box-sizing:border-box; }
+    body { margin:0; min-width:1280px; color:var(--text); background:var(--bg); font:13px/20px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif; }
+    button,input,select,textarea { font:inherit; }
+    button { cursor:pointer; }
+    .app { min-height:100vh; }
+    .sidebar { position:fixed; inset:0 auto 0 0; width:216px; padding:16px 12px; background:#fff; border-right:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:10px; height:32px; margin:0 8px 24px; color:var(--text); font-size:15px; font-weight:600; }
+    .brand-mark { display:grid; width:28px; height:28px; place-items:center; border-radius:4px; background:var(--blue); color:#fff; font-size:11px; letter-spacing:.4px; }
+    .nav-group { margin:0 0 20px; }
+    .nav-group p { margin:0 8px 6px; color:var(--quiet); font-size:12px; font-weight:600; }
+    .nav-item { display:flex; align-items:center; gap:10px; height:38px; padding:0 10px; color:var(--muted); text-decoration:none; border-left:2px solid transparent; }
+    .nav-item.active { padding-left:8px; color:var(--text); border-left-color:var(--blue); background:var(--subtle); font-weight:600; }
+    .page { min-width:0; margin-left:216px; }
+    .topbar { display:flex; align-items:center; justify-content:flex-end; height:48px; padding:0 32px; border-bottom:1px solid var(--line); background:#fff; color:var(--muted); }
+    .topbar-actions { display:flex; align-items:center; gap:12px; }
+    .topbar-divider { width:1px; height:18px; background:var(--line); }
+    .avatar { display:grid; width:24px; height:24px; place-items:center; border-radius:50%; background:#dbe7f4; color:#295580; font-size:12px; font-weight:600; }
+    .canvas { padding:24px 32px 32px; max-width:1680px; margin:0 auto; }
+    .page-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:20px; }
+    h1 { margin:0; font-size:22px; line-height:30px; font-weight:600; }
+    h2 { margin:0; font-size:15px; line-height:22px; font-weight:600; }
+    h3 { margin:0; font-size:13px; line-height:20px; font-weight:600; }
+    p { margin:0; }
+    .page-heading p { margin-top:4px; color:var(--muted); }
+    .draft-state { display:flex; align-items:center; gap:6px; margin-top:4px; color:var(--quiet); font-size:12px; white-space:nowrap; }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--success); }
+    .wizard { overflow:hidden; border:1px solid var(--line); border-radius:var(--surface-radius); background:var(--surface); }
+    .stepper { display:grid; grid-template-columns:repeat(6,1fr); border-bottom:1px solid var(--line); background:#fff; }
+    .step { display:flex; align-items:center; gap:9px; min-height:58px; padding:10px 14px; border:0; border-bottom:2px solid transparent; color:var(--quiet); background:#fff; text-align:left; }
+    .step.current { color:var(--text); border-bottom-color:var(--blue); background:#fbfdff; font-weight:600; }
+    .step.done { color:var(--muted); }
+    .step.future { cursor:default; }
+    .step-index { display:grid; flex:none; width:22px; height:22px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; color:var(--quiet); font-size:12px; font-weight:600; }
+    .step.current .step-index { border-color:var(--blue); color:var(--blue); background:var(--blue-soft); }
+    .step.done .step-index { border-color:var(--success-line); color:var(--success); background:var(--success-bg); }
+    .step-name { line-height:18px; }
+    .wizard-body { display:grid; grid-template-columns:minmax(0,1fr) 272px; min-height:600px; }
+    .form-area { padding:24px; border-right:1px solid var(--line); }
+    .summary { padding:20px; background:#fbfcfd; }
+    .summary h2 { margin-bottom:16px; }
+    .summary dl { margin:0; }
+    .summary-row { padding:11px 0; border-top:1px solid var(--line); }
+    .summary-row:first-child { border-top:0; padding-top:0; }
+    dt { color:var(--quiet); font-size:12px; }
+    dd { margin:3px 0 0; color:var(--text); }
+    .summary-note { margin-top:16px; padding-top:16px; border-top:1px solid var(--line); color:var(--quiet); font-size:12px; }
+    .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:20px; }
+    .section-head p { margin-top:4px; color:var(--muted); }
+    .section-divider { margin:22px 0; border:0; border-top:1px solid var(--line); }
+    .field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    .field-grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .field.full { grid-column:1/-1; }
+    .field label,.field-label { display:flex; justify-content:space-between; gap:8px; margin-bottom:6px; color:var(--muted); font-weight:500; }
+    .field label small,.field-help,.meta { color:var(--quiet); font-size:12px; font-weight:400; }
+    .control { width:100%; height:34px; padding:6px 9px; border:1px solid var(--line-strong); border-radius:var(--radius); color:var(--text); background:#fff; outline:none; }
+    textarea.control { min-height:72px; height:auto; resize:vertical; }
+    .control:focus { border-color:var(--blue); box-shadow:0 0 0 2px rgba(37,103,185,.16); }
+    .control[readonly],.readonly { color:var(--muted); background:var(--subtle); }
+    .field-help { margin-top:5px; }
+    .data-source-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    .data-source-table th { height:38px; padding:0 10px; border-bottom:1px solid var(--line-strong); color:var(--quiet); background:var(--subtle); text-align:left; font-size:12px; font-weight:500; }
+    .data-source-table td { height:54px; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:middle; }
+    .data-source-table tr.selected td { background:#f7fbff; }
+    .data-source-table tr.selected td:first-child { box-shadow:inset 2px 0 0 var(--blue); }
+    .sub { display:block; margin-top:2px; color:var(--quiet); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .radio-cell { width:30px; }
+    .radio { width:16px; height:16px; accent-color:var(--blue); }
+    .tag { display:inline-flex; align-items:center; min-height:22px; padding:1px 7px; border:1px solid var(--line); border-radius:4px; color:var(--muted); background:var(--subtle); font-size:12px; white-space:nowrap; }
+    .tag.success { border-color:var(--success-line); color:var(--success); background:var(--success-bg); }
+    .tag.warning { border-color:var(--warning-line); color:var(--warning); background:var(--warning-bg); }
+    .tag.danger { border-color:var(--danger-line); color:var(--danger); background:var(--danger-bg); }
+    .tag.blue { border-color:#c9dcec; color:#225c99; background:var(--blue-soft); }
+    .choice-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+    .choice { min-height:128px; padding:16px; border:1px solid var(--line-strong); border-radius:var(--surface-radius); background:#fff; text-align:left; }
+    .choice.selected { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); background:#fbfdff; }
+    .choice .choice-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .choice p { margin-top:9px; color:var(--muted); }
+    .choice code { display:block; margin-top:10px; color:var(--quiet); font-size:12px; }
+    .advanced { margin-top:18px; border-top:1px solid var(--line); }
+    .advanced summary { display:flex; align-items:center; justify-content:space-between; height:46px; color:var(--text); cursor:pointer; font-weight:500; }
+    .advanced-body { padding:0 0 18px; }
+    .advanced-group { padding:14px 0; border-top:1px solid var(--line); }
+    .advanced-group:first-child { border-top:0; }
+    .advanced-group > p { margin-top:3px; color:var(--quiet); font-size:12px; }
+    .check-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 16px; margin-top:12px; }
+    .check-row { display:flex; align-items:flex-start; gap:8px; color:var(--muted); }
+    .check-row input { margin:2px 0 0; accent-color:var(--blue); }
+    .check-row small { display:block; color:var(--quiet); font-size:12px; }
+    .notice { display:flex; gap:10px; align-items:flex-start; margin:16px 0; padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius); color:var(--muted); background:#fbfcfd; }
+    .notice.warning { border-color:var(--warning-line); color:var(--warning); background:var(--warning-bg); }
+    .notice.danger { border-color:var(--danger-line); color:var(--danger); background:var(--danger-bg); }
+    .notice.success { border-color:var(--success-line); color:var(--success); background:var(--success-bg); }
+    .picker { display:flex; align-items:center; min-height:34px; padding:4px 8px; border:1px solid var(--line-strong); border-radius:var(--radius); background:#fff; }
+    .picker-tags { display:flex; flex:1; flex-wrap:wrap; gap:4px; }
+    .picker-tag { display:inline-flex; align-items:center; gap:4px; padding:1px 6px; border-radius:3px; color:#225c99; background:var(--blue-soft); font-size:12px; }
+    .object-panel { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:12px; padding:14px; border:1px solid var(--line-strong); border-radius:var(--surface-radius); background:#fff; }
+    .object-list { margin:8px 0 0; padding:0; list-style:none; }
+    .object-list li { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+    .object-list li:first-child { border-top:0; }
+    .disabled-text { color:var(--quiet); }
+    .alert-line { display:flex; align-items:center; gap:8px; margin-top:12px; padding:8px 10px; border-left:2px solid var(--danger); color:var(--danger); background:var(--danger-bg); font-size:12px; }
+    .path-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .node-option { display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--blue); border-radius:var(--surface-radius); background:#fbfdff; }
+    .node-option i { color:var(--blue); }
+    .node-option p { color:var(--muted); font-size:12px; }
+    .review-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .review-block { padding:14px 0; border-top:1px solid var(--line); }
+    .review-block:first-child,.review-grid + .review-block { border-top:0; }
+    .review-key { color:var(--quiet); font-size:12px; }
+    .review-value { margin-top:3px; color:var(--text); }
+    .precheck { border:1px solid var(--line); border-radius:var(--surface-radius); overflow:hidden; }
+    .precheck-row { display:grid; grid-template-columns:22px minmax(0,1fr) auto; align-items:center; gap:10px; min-height:47px; padding:8px 12px; border-top:1px solid var(--line); }
+    .precheck-row:first-child { border-top:0; }
+    .precheck-row small { display:block; color:var(--quiet); font-size:12px; }
+    .status-icon { color:var(--success); }
+    .status-icon.warn { color:var(--warning); }
+    .status-icon.fail { color:var(--danger); }
+    .command { margin-top:16px; padding:14px; border:1px solid #303a46; border-radius:var(--surface-radius); color:#e6eef8; background:#202830; font:12px/20px ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
+    .cmd-key { color:#9dc6ff; } .cmd-value { color:#e6eef8; } .cmd-dim { color:#a6b1bd; }
+    .wizard-footer { display:flex; align-items:center; min-height:68px; gap:10px; padding:16px 24px; border-top:1px solid var(--line); background:#fff; }
+    .footer-note { flex:1; color:var(--quiet); font-size:12px; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; height:34px; padding:0 13px; border:1px solid var(--line-strong); border-radius:var(--radius); color:var(--text); background:#fff; font-weight:500; white-space:nowrap; }
+    .btn.primary { border-color:var(--blue); color:#fff; background:var(--blue); }
+    .btn.danger { border-color:var(--danger); color:#fff; background:var(--danger); }
+    .btn[disabled] { cursor:not-allowed; opacity:.48; }
+    .screen { display:none; }
+    .screen.active { display:block; }
+    .task-layout { display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:16px; }
+    .task-column { background:#fff; border:1px solid var(--line); border-radius:var(--surface-radius); }
+    .task-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 20px; border-bottom:1px solid var(--line); }
+    .task-id { margin-top:3px; color:var(--quiet); font-size:12px; }
+    .fact-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0; }
+    .fact { padding:14px 20px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+    .fact:nth-child(3n) { border-right:0; }
+    .fact small { display:block; color:var(--quiet); }
+    .fact strong { display:block; margin-top:4px; font-weight:500; }
+    .task-section { padding:18px 20px; border-bottom:1px solid var(--line); }
+    .task-section:last-child { border-bottom:0; }
+    .task-section-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+    .log { max-height:208px; overflow:hidden; border-top:1px solid var(--line); }
+    .log-row { display:grid; grid-template-columns:132px 72px minmax(0,1fr); gap:10px; padding:8px 0; border-bottom:1px solid var(--line); color:var(--muted); font:12px/18px ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .log-row span:first-child { color:var(--quiet); }
+    .empty { display:grid; min-height:280px; place-content:center; justify-items:center; color:var(--muted); text-align:center; }
+    .empty i { margin-bottom:12px; color:var(--quiet); }
+    .design-switcher { position:fixed; z-index:5; right:20px; bottom:18px; display:flex; align-items:center; gap:4px; padding:5px; border:1px solid var(--line-strong); border-radius:6px; background:rgba(255,255,255,.96); box-shadow:var(--shadow); }
+    .design-switcher label { padding:0 6px; color:var(--quiet); font-size:12px; }
+    .design-switcher select { height:28px; border:0; color:var(--text); background:transparent; outline:0; font-size:12px; }
+    .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">OB</span><span>OB Data Orch</span></div>
+      <section class="nav-group"><p>运行概览</p><a class="nav-item" href="#"><i data-lucide="house"></i>首页</a></section>
+      <section class="nav-group"><p>任务配置</p><a class="nav-item" href="#"><i data-lucide="database"></i>数据源管理</a><a class="nav-item active" href="#"><i data-lucide="arrow-up-from-line"></i>导出任务</a><a class="nav-item" href="#"><i data-lucide="arrow-down-to-line"></i>普通导入</a><a class="nav-item" href="#"><i data-lucide="zap"></i>旁路导入</a></section>
+      <section class="nav-group"><p>运行与支撑</p><a class="nav-item" href="#"><i data-lucide="list-todo"></i>任务中心</a><a class="nav-item" href="#"><i data-lucide="layout-template"></i>模板中心</a><a class="nav-item" href="#"><i data-lucide="server"></i>执行节点</a><a class="nav-item" href="#"><i data-lucide="scroll-text"></i>日志中心</a></section>
+      <section class="nav-group"><p>平台设置</p><a class="nav-item" href="#"><i data-lucide="settings"></i>系统设置</a></section>
+    </aside>
+    <main class="page">
+      <header class="topbar"><div class="topbar-actions"><button class="btn" style="height:28px;padding:0 8px"><i data-lucide="circle-help" size="15"></i><span class="visually-hidden">帮助</span></button><span class="topbar-divider"></span><span class="avatar">管</span><span>管理员</span></div></header>
+      <div class="canvas">
+        <section class="page-heading"><div><h1 id="screen-title">新建导出任务</h1><p id="screen-subtitle">按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。</p></div><div class="draft-state"><span class="dot"></span><span>本地配置已保存</span></div></section>
+
+        <section class="wizard" id="wizard">
+          <nav class="stepper" aria-label="导出任务步骤">
+            <button class="step current" data-step="1"><span class="step-index">1</span><span class="step-name">选择数据源</span></button>
+            <button class="step future" data-step="2"><span class="step-index">2</span><span class="step-name">选择导出内容</span></button>
+            <button class="step future" data-step="3"><span class="step-index">3</span><span class="step-name">选择导出对象</span></button>
+            <button class="step future" data-step="4"><span class="step-index">4</span><span class="step-name">选择数据格式</span></button>
+            <button class="step future" data-step="5"><span class="step-index">5</span><span class="step-name">执行与输出</span></button>
+            <button class="step future" data-step="6"><span class="step-index">6</span><span class="step-name">预检查与命令</span></button>
+          </nav>
+
+          <div class="screen active" data-screen="source">
+            <div class="wizard-body"><div class="form-area">
+              <div class="section-head"><div><h2>选择已有数据源</h2><p>只显示你有权使用、已启用且至少一次连接测试成功的数据源。</p></div><button class="btn"><i data-lucide="refresh-cw" size="15"></i>刷新</button></div>
+              <div class="field-grid"><div class="field"><label>按名称搜索</label><input class="control" value="订单" aria-label="按名称搜索"></div><div class="field"><label>环境</label><select class="control"><option>全部环境</option><option>测试</option><option>预生产</option><option>生产</option></select></div></div>
+              <hr class="section-divider">
+              <table class="data-source-table"><thead><tr><th class="radio-cell"></th><th style="width:29%">数据源</th><th>连接事实</th><th style="width:16%">兼容模式</th><th style="width:17%">最近测试</th></tr></thead><tbody>
+                <tr class="selected"><td><input class="radio" type="radio" checked aria-label="选择订单分析库"></td><td><strong>订单分析库</strong><span class="sub">测试 · 已启用</span></td><td>ob-proxy-test:2883 / analytics<span class="sub">业务用户：export_user</span></td><td><span class="tag blue">Oracle</span></td><td><span class="tag success">连接可用</span><span class="sub">今天 09:42</span></td></tr>
+                <tr><td><input class="radio" type="radio" aria-label="选择客户中心库"></td><td><strong>客户中心库</strong><span class="sub">预生产 · 已启用</span></td><td>ob-proxy-stage:2883 / crm<span class="sub">业务用户：export_user</span></td><td><span class="tag">MySQL</span></td><td><span class="tag success">连接可用</span><span class="sub">昨天 17:18</span></td></tr>
+              </tbody></table>
+              <div class="notice"><i data-lucide="lock-keyhole" size="16"></i><div>连接地址、租户、用户名和密码由已管理数据源派生。密码不会进入页面、草稿快照、命令预览或日志。</div></div>
+              <div class="field-grid"><div class="field"><label>普通连接串 <small>只读</small></label><input class="control readonly" readonly value="export_user@analytics_tenant#obcluster@ob-proxy-test:2883/analytics"></div><div class="field"><label>凭据 <small>只读</small></label><input class="control readonly" readonly value="托管凭据 EX-CRED-018 · 可用"></div></div>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>数据源</dt><dd>订单分析库<br>analytics · Oracle</dd></div><div class="summary-row"><dt>导出内容</dt><dd>尚未选择</dd></div><div class="summary-row"><dt>对象范围</dt><dd>尚未配置</dd></div><div class="summary-row"><dt>数据格式</dt><dd>尚未选择</dd></div><div class="summary-row"><dt>执行节点</dt><dd>尚未选择</dd></div></dl><p class="summary-note">当前只确认连接事实；对象、权限、路径和空间在后续步骤与预检查阶段校验。</p></aside></div>
+            <footer class="wizard-footer"><button class="btn" disabled>上一步</button><span class="footer-note">下一步前必须选定一条已测试数据源。</span><button class="btn primary">下一步<i data-lucide="arrow-right" size="15"></i></button></footer>
+          </div>
+
+          <div class="screen" data-screen="source-empty">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>选择已有数据源</h2><p>只显示当前授权范围中可用于新建导出任务的数据源。</p></div></div><div class="empty"><i data-lucide="database-zap" size="36"></i><h2>没有可用数据源</h2><p style="margin-top:6px">当前没有同时满足“已启用、连接测试成功、已授权”的数据源。</p><div style="display:flex;gap:8px;margin-top:18px"><button class="btn primary"><i data-lucide="plus" size="15"></i>新增数据源</button><button class="btn">刷新</button></div></div></div><aside class="summary"><h2>配置总览</h2><p class="summary-note" style="margin-top:0;padding-top:0;border-top:0">创建数据源后仍需完成连接测试；连接成功并启用后才可在这里选择。</p></aside></div><footer class="wizard-footer"><button class="btn" disabled>上一步</button><span class="footer-note">无可用数据源时不允许进入后续配置。</span><button class="btn primary" disabled>下一步<i data-lucide="arrow-right" size="15"></i></button></footer>
+          </div>
+
+          <div class="screen" data-screen="content">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>选择导出内容</h2><p>内容决定后续对象、格式和高级参数是否适用。</p></div><span class="tag blue">常用配置</span></div>
+              <div class="choice-grid"><button class="choice selected"><div class="choice-top"><strong>结构和数据</strong><span class="tag success">推荐</span></div><p>导出所选对象定义，并导出表数据。</p><code>--ddl + --csv / --cut / --sql</code></button><button class="choice"><div class="choice-top"><strong>仅数据</strong></div><p>只导出表对象的数据；其他对象不适用。</p><code>--csv / --cut / --sql</code></button><button class="choice"><div class="choice-top"><strong>仅结构</strong></div><p>只导出对象定义，不生成数据文件。</p><code>--ddl</code></button></div>
+              <div class="notice warning"><i data-lucide="info" size="16"></i><div>视图只能导出定义，不能导出视图数据。选择“仅数据”后，步骤 3 会保留这些对象类型但禁用并说明原因。</div></div>
+              <details class="advanced"><summary><span>高级设置 <span class="meta">· DDL 与对象处理</span></span><i data-lucide="chevron-down" size="16"></i></summary><div class="advanced-body"><div class="advanced-group"><h3>DDL 行为</h3><p>只在包含结构的任务中生效。</p><div class="check-grid"><label class="check-row"><input type="checkbox"><span>定义前追加 DROP 语句<small>--drop-object</small></span></label><label class="check-row"><input type="checkbox"><span>为表和同义词保留 Schema<small>--retain-schema</small></span></label><label class="check-row"><input type="checkbox" disabled><span class="disabled-text">序列策略<small>--sequence-policy · 待受控验证</small></span></label><label class="check-row"><input type="checkbox" disabled><span class="disabled-text">附加对象信息<small>--add-extra-message · 需 SYS 预检查</small></span></label></div></div></div></details>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>数据源</dt><dd>订单分析库<br>analytics · Oracle</dd></div><div class="summary-row"><dt>导出内容</dt><dd>结构和数据</dd></div><div class="summary-row"><dt>对象范围</dt><dd>尚未配置</dd></div><div class="summary-row"><dt>数据格式</dt><dd>待下一步选择</dd></div></dl><p class="summary-note">切换为仅结构后，格式步骤保留位置但变为“不适用”，数据筛选和文件参数不会生成。</p></aside></div><footer class="wizard-footer"><button class="btn">上一步</button><span class="footer-note">内容决定后续字段的活动状态。</span><button class="btn primary">下一步<i data-lucide="arrow-right" size="15"></i></button></footer>
+          </div>
+
+          <div class="screen" data-screen="objects">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>选择导出对象</h2><p>范围与对象表达式共同决定 OBDUMPER 接收的对象参数。</p></div><span class="tag blue">已选 2 类对象</span></div>
+              <div class="field-grid"><div class="field"><label>导出范围</label><select class="control"><option>指定对象</option><option>全部支持对象（--all）</option></select><p class="field-help">“全部”和具体对象严格互斥，避免配置被 --all 掩盖。</p></div><div class="field"><label>对象类型 <small>可搜索多选</small></label><div class="picker"><div class="picker-tags"><span class="picker-tag">表 <i data-lucide="x" size="12"></i></span><span class="picker-tag">视图 <i data-lucide="x" size="12"></i></span></div><i data-lucide="chevron-down" size="16"></i></div></div></div>
+              <div class="object-panel"><section><h3>已选择对象类型</h3><ul class="object-list"><li><span><strong>表</strong><span class="sub">--table · 可导出 DDL 和数据</span></span><span class="tag success">可用</span></li><li><span><strong>视图</strong><span class="sub">--view · 仅导出定义</span></span><span class="tag">仅 DDL</span></li></ul></section><section><h3>对象表达式</h3><div class="field" style="margin-top:8px"><label>表 <code>--table</code></label><input class="control" value="orders_*"><p class="field-help">未带 Schema 前缀时使用默认数据库 analytics。</p></div><div class="field" style="margin-top:12px"><label>视图 <code>--view</code></label><input class="control" value="v_order_summary"></div></section></div>
+              <div class="field" style="margin-top:16px"><label>排除指定表 <small>次级常用项 · --exclude-table</small></label><input class="control" value="tmp_*,archive_*"></div>
+              <details class="advanced"><summary><span>高级设置 <span class="meta">· 数据筛选、列与类型筛选、一致性</span></span><i data-lucide="chevron-down" size="16"></i></summary><div class="advanced-body"><div class="advanced-group"><h3>数据筛选</h3><div class="field-grid" style="margin-top:12px"><div class="field full"><label>条件筛选 <code>--where</code></label><textarea class="control">created_at &gt; '2026-08-01'</textarea></div><div class="field"><label>分区筛选 <code>--partition</code></label><input class="control" value="p202608"></div><div class="field"><label>自定义查询 <code>--query-sql</code></label><input class="control" placeholder="普通高级筛选参数"></div></div><div class="alert-line"><i data-lucide="triangle-alert" size="15"></i>自定义查询与 WHERE、分区、Flashback 互斥。发生冲突时保留现有草稿值并阻断提交，不能静默删除。</div></div></div></details>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>数据源</dt><dd>订单分析库<br>analytics · Oracle</dd></div><div class="summary-row"><dt>导出内容</dt><dd>结构和数据</dd></div><div class="summary-row"><dt>对象范围</dt><dd>指定对象<br>表、视图</dd></div><div class="summary-row"><dt>数据格式</dt><dd>待下一步选择</dd></div></dl><p class="summary-note">Oracle 专属、版本未确认或权限未证实的对象类型应可见但禁用，不能伪装成可选。</p></aside></div><footer class="wizard-footer"><button class="btn">上一步</button><span class="footer-note">指定对象至少需要一种合法对象类型与表达式。</span><button class="btn primary">下一步<i data-lucide="arrow-right" size="15"></i></button></footer>
+          </div>
+
+          <div class="screen" data-screen="format">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>选择数据格式</h2><p>当前普通 V1 新建只开放 CSV、CUT、SQL；同一任务只能选择一种数据格式。</p></div></div>
+              <div class="choice-grid"><button class="choice selected"><div class="choice-top"><strong>CSV</strong><span class="tag success">推荐</span></div><p>标准 CSV 数据文件，适合通用交换与复核。</p><code>--csv</code></button><button class="choice"><div class="choice-top"><strong>CUT</strong><span class="tag">支持</span></div><p>使用字符串列切分符的文本数据文件。</p><code>--cut</code></button><button class="choice"><div class="choice-top"><strong>Insert SQL</strong><span class="tag">支持</span></div><p>生成可回放的 INSERT 语句数据文件。</p><code>--sql</code></button></div>
+              <hr class="section-divider"><h3>CSV 常用格式参数</h3><div class="field-grid three" style="margin-top:12px"><div class="field"><label>文件编码 <code>--file-encoding</code></label><select class="control"><option>UTF-8 · 官方默认</option><option>GBK</option></select></div><div class="field"><label>列分隔符 <code>--column-separator</code></label><input class="control" value=","></div><div class="field"><label>行分隔符 <code>--line-separator</code></label><select class="control"><option>跟随执行节点平台</option><option>LF (\\n)</option><option>CRLF (\\r\\n)</option></select></div></div>
+              <details class="advanced"><summary><span>高级设置 <span class="meta">· 格式序列化、日期时间、压缩</span></span><i data-lucide="chevron-down" size="16"></i></summary><div class="advanced-body"><div class="advanced-group"><h3>CSV 序列化</h3><div class="check-grid"><label class="check-row"><input type="checkbox"><span>忽略字段头<small>--skip-header</small></span></label><label class="check-row"><input type="checkbox"><span>去除字段首尾空白<small>--with-trim</small></span></label><label class="check-row"><input type="checkbox"><span>压缩导出文件<small>--compress</small></span></label></div></div><div class="advanced-group"><h3>兼容模式和证据门控</h3><p>MySQL 的 DATE/DATETIME 值格式按已验证范围启用；Oracle NLS/TZ/LTZ 等字段保持可见、禁用并标记待受控验证。</p></div></div></details>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>数据源</dt><dd>订单分析库<br>analytics · Oracle</dd></div><div class="summary-row"><dt>导出内容</dt><dd>结构和数据</dd></div><div class="summary-row"><dt>对象范围</dt><dd>指定对象 · 2 类</dd></div><div class="summary-row"><dt>数据格式</dt><dd>CSV · UTF-8</dd></div></dl><p class="summary-note">POS、Parquet、ORC、Avro 仅支持历史任务读取，不出现在普通新建入口。</p></aside></div><footer class="wizard-footer"><button class="btn">上一步</button><span class="footer-note">切换格式只让当前格式适用的参数进入最终命令。</span><button class="btn primary">下一步<i data-lucide="arrow-right" size="15"></i></button></footer>
+          </div>
+
+          <div class="screen" data-screen="output">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>执行与输出配置</h2><p>先选择执行节点和本地绝对路径；目录事实始终由 Agent 在预检查中确认。</p></div><span class="tag blue">本地输出</span></div>
+              <div class="node-option"><i data-lucide="server" size="18"></i><div><strong>win-agent-01 · Windows AMD64</strong><p>已授权 · 已启用。在线、工具、目录可写性与空间需在预检查中再次确认。</p></div><span class="tag success" style="margin-left:auto">可选</span></div>
+              <div class="path-row" style="margin-top:16px"><div class="field"><label>数据输出目录 <code>-f / --file-path</code></label><input class="control" value="/E:/exports/orders-20260822"><p class="field-help">完整绝对路径，平台不追加子目录或转换路径。</p></div><div class="field"><label>日志目录 <small>可选 · --log-path</small></label><input class="control" value="/E:/obdumper-logs"></div></div>
+              <div class="notice warning"><i data-lucide="shield-alert" size="16"></i><div><strong>目录非空处理</strong><br>默认检查输出目录为空。勾选“跳过检查”才生成 <code>--skip-check-dir</code>，并可能覆盖同名文件。</div><label class="check-row" style="margin-left:auto;white-space:nowrap"><input type="checkbox">跳过检查</label></div>
+              <details class="advanced"><summary><span>高级设置 <span class="meta">· 文件布局与生成、性能与资源、门控存储</span></span><i data-lucide="chevron-down" size="16"></i></summary><div class="advanced-body"><div class="advanced-group"><h3>文件布局与生成</h3><div class="field-grid three" style="margin-top:12px"><div class="field"><label>单文件上限 <code>--max-file-size</code></label><input class="control" placeholder="Byte，留空继承默认"></div><div class="field"><label>文件拆分 <code>--block-size</code></label><input class="control" placeholder="例如 1024 或 256ROW"></div><div class="field"><label>并发数 <code>--thread</code></label><input class="control" placeholder="留空继承官方默认"></div></div></div><div class="advanced-group"><h3>对象存储</h3><p><span class="tag warning">证据门控</span> OSS/S3/COS/OBS 需真实凭据认证和远端结果证据。在门禁闭合前不可选择、不可提交，也不允许任意 URI 输入。</p></div></div></details>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>数据源</dt><dd>订单分析库<br>analytics · Oracle</dd></div><div class="summary-row"><dt>导出内容</dt><dd>结构和数据</dd></div><div class="summary-row"><dt>对象范围</dt><dd>指定对象 · 2 类</dd></div><div class="summary-row"><dt>数据格式</dt><dd>CSV · UTF-8</dd></div><div class="summary-row"><dt>节点与目录</dt><dd>win-agent-01<br>/E:/exports/orders-20260822</dd></div></dl><p class="summary-note">保存草稿后将由控制面生成命令预览；此操作不连接数据库，也不启动 OBDUMPER。</p></aside></div><footer class="wizard-footer"><button class="btn">上一步</button><span class="footer-note">保存草稿后进入预检查与最终命令确认。</span><button class="btn primary">保存并查看命令<i data-lucide="arrow-right" size="15"></i></button></footer>
+          </div>
+
+          <div class="screen" data-screen="review">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>预检查与完整命令</h2><p>草稿 rev-4 已冻结；预检查通过后才可提交，任何修改都会使检查和命令失效。</p></div><span class="tag success">预检查已通过</span></div>
+              <section><div class="task-section-header"><h3>任务配置摘要</h3><button class="btn">返回修改</button></div><div class="review-grid"><div class="review-block"><span class="review-key">数据源</span><div class="review-value">订单分析库 · analytics · Oracle</div></div><div class="review-block"><span class="review-key">对象与内容</span><div class="review-value">表 orders_*、视图 v_order_summary · 结构和数据</div></div><div class="review-block"><span class="review-key">数据格式</span><div class="review-value">CSV · UTF-8 · 列分隔符 ,</div></div><div class="review-block"><span class="review-key">节点与输出</span><div class="review-value">win-agent-01 · /E:/exports/orders-20260822</div></div></div></section>
+              <hr class="section-divider"><div class="task-section-header"><h3>预检查结果</h3><button class="btn">重新执行预检查</button></div><div class="precheck"><div class="precheck-row"><i class="status-icon" data-lucide="circle-check" size="17"></i><div><strong>数据源连接与对象访问</strong><small>已验证当前对象范围可读</small></div><span class="tag success">通过</span></div><div class="precheck-row"><i class="status-icon" data-lucide="circle-check" size="17"></i><div><strong>工具与节点运行时</strong><small>OBDUMPER 4.3.5、Java 8 和节点事实匹配</small></div><span class="tag success">通过</span></div><div class="precheck-row"><i class="status-icon" data-lucide="circle-check" size="17"></i><div><strong>输出与日志目录</strong><small>路径可写、目录为空、可用空间满足最小要求</small></div><span class="tag success">通过</span></div></div>
+              <hr class="section-divider"><div class="task-section-header"><h3>完整脱敏命令</h3><button class="btn"><i data-lucide="copy" size="15"></i>复制命令</button></div><pre class="command"><span class="cmd-key">obdumper</span> <span class="cmd-value">-h ob-proxy-test -P 2883 -u export_user@analytics_tenant#obcluster</span>
+<span class="cmd-dim">  # 对象与内容</span>
+  <span class="cmd-value">-D analytics --table 'orders_*' --view 'v_order_summary' --ddl --csv</span>
+<span class="cmd-dim">  # 格式与输出</span>
+  <span class="cmd-value">--file-encoding UTF-8 --column-separator ',' -f /E:/exports/orders-20260822 --log-path /E:/obdumper-logs</span>
+<span class="cmd-dim">  # 密码永不进入 argv；只以安全文件在 Agent 进程内短时解析</span></pre>
+              <div class="notice"><i data-lucide="shield-check" size="16"></i><div>我确认将在订单分析库、win-agent-01 和当前输出目录上启动这项导出任务。提交后 Agent 才会领取冻结任务并启动 OBDUMPER。</div><input class="radio" type="checkbox" checked aria-label="确认提交"></div>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>草稿</dt><dd>rev-4 · 已冻结</dd></div><div class="summary-row"><dt>预检查</dt><dd><span class="tag success">通过</span></dd></div><div class="summary-row"><dt>命令指纹</dt><dd>e5f6…17a9</dd></div><div class="summary-row"><dt>提交效果</dt><dd>创建任务并等待 Agent 领取</dd></div></dl><p class="summary-note">预检查不会启动工具或创建导出文件。提交后才发生真实执行。</p></aside></div><footer class="wizard-footer"><button class="btn">上一步</button><span class="footer-note">预检查与命令均对应当前草稿 revision。</span><button class="btn primary"><i data-lucide="play" size="15"></i>提交并启动导出</button></footer>
+          </div>
+
+          <div class="screen" data-screen="review-failed">
+            <div class="wizard-body"><div class="form-area"><div class="section-head"><div><h2>预检查与完整命令</h2><p>草稿 rev-4 未被修改；当前检查未通过，提交保持禁用。</p></div><span class="tag danger">预检查未通过</span></div>
+              <div class="notice danger"><i data-lucide="circle-x" size="17"></i><div><strong>输出目录不能用于本次导出</strong><br>Agent 已确认目录中存在文件。未勾选跳过空目录检查时，平台不会提交任务。</div><button class="btn" style="margin-left:auto">返回步骤 5 修改</button></div>
+              <div class="precheck"><div class="precheck-row"><i class="status-icon" data-lucide="circle-check" size="17"></i><div><strong>数据源连接与对象访问</strong><small>已通过</small></div><span class="tag success">通过</span></div><div class="precheck-row"><i class="status-icon" data-lucide="circle-check" size="17"></i><div><strong>工具与节点运行时</strong><small>已通过</small></div><span class="tag success">通过</span></div><div class="precheck-row"><i class="status-icon fail" data-lucide="circle-x" size="17"></i><div><strong>输出目录空性</strong><small>原因码：OUTPUT_DIRECTORY_NOT_EMPTY</small></div><span class="tag danger">失败</span></div><div class="precheck-row"><i class="status-icon warn" data-lucide="clock-3" size="17"></i><div><strong>可用空间</strong><small>未在阻断项修复前继续检查</small></div><span class="tag warning">未完成</span></div></div>
+              <hr class="section-divider"><div class="task-section-header"><h3>完整脱敏命令</h3><button class="btn" disabled><i data-lucide="copy" size="15"></i>复制命令</button></div><pre class="command" style="opacity:.64">obdumper ... --csv -f /E:/exports/orders-20260822 --log-path /E:/obdumper-logs</pre><p class="field-help">命令预览对应未修改的草稿，但当前不可提交。修改路径或目录策略后必须重新生成命令并执行预检查。</p>
+            </div><aside class="summary"><h2>配置总览</h2><dl><div class="summary-row"><dt>草稿</dt><dd>rev-4 · 未提交</dd></div><div class="summary-row"><dt>阻断项</dt><dd>输出目录空性</dd></div><div class="summary-row"><dt>恢复入口</dt><dd>步骤 5 · 执行与输出</dd></div></dl><p class="summary-note">错误解释只展示安全投影，不泄露节点内部路径、原始凭据或执行载荷。</p></aside></div><footer class="wizard-footer"><button class="btn">上一步</button><span class="footer-note">请修正阻断项后重新执行预检查。</span><button class="btn primary" disabled>提交并启动导出</button></footer>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="running">
+          <div class="task-layout"><article class="task-column"><div class="task-head"><div><h1 style="font-size:18px">导出任务</h1><p class="task-id">task-exp-20260822-0007 · 已提交 2 分 14 秒</p></div><span class="tag blue"><i data-lucide="loader-circle" size="13" style="margin-right:4px"></i>运行中</span></div><div class="fact-grid"><div class="fact"><small>执行状态</small><strong>Agent 已领取 · 正在运行</strong></div><div class="fact"><small>执行节点</small><strong>win-agent-01</strong></div><div class="fact"><small>阶段与进度</small><strong>暂无可靠工具映射</strong></div><div class="fact"><small>配置指纹</small><strong>e5f6…17a9</strong></div><div class="fact"><small>输出位置</small><strong>/E:/exports/orders-20260822</strong></div><div class="fact"><small>最后核对</small><strong>刚刚</strong></div></div><section class="task-section"><div class="task-section-header"><div><h2>执行日志</h2><p class="field-help">仅显示已完成双层脱敏的持久日志；断线后从最后可靠游标继续。</p></div><button class="btn">立即刷新</button></div><div class="log"><div class="log-row"><span>10:18:41</span><span>INFO</span><span>已领取执行租约，开始受控 OBDUMPER 进程。</span></div><div class="log-row"><span>10:18:44</span><span>INFO</span><span>正在读取 table orders_2026_08。</span></div><div class="log-row"><span>10:19:02</span><span>INFO</span><span>输出目录已由预检查确认，日志流持续连接。</span></div></div></section><section class="task-section"><div class="task-section-header"><h2>计划命令（默认脱敏）</h2><button class="btn"><i data-lucide="copy" size="15"></i>复制命令</button></div><pre class="command">obdumper -h ob-proxy-test -P 2883 -u export_user@analytics_tenant#obcluster
+  -D analytics --table 'orders_*' --view 'v_order_summary' --ddl --csv
+  -f /E:/exports/orders-20260822</pre></section></article><aside class="task-column"><section class="task-section"><h2>运行操作</h2><p class="field-help" style="margin:5px 0 14px">取消会请求同一 Agent 终止受控进程树，不会删除已有输出或日志。</p><button class="btn danger"><i data-lucide="ban" size="15"></i>取消执行</button></section><section class="task-section"><h2>冻结配置</h2><dl style="margin-top:12px"><div class="summary-row"><dt>数据源</dt><dd>订单分析库</dd></div><div class="summary-row"><dt>对象</dt><dd>表、视图</dd></div><div class="summary-row"><dt>格式</dt><dd>CSV</dd></div><div class="summary-row"><dt>预检查</dt><dd>precheck-0042</dd></div></dl></section></aside></div>
+        </section>
+
+        <section class="screen" data-screen="success">
+          <div class="task-layout"><article class="task-column"><div class="task-head"><div><h1 style="font-size:18px">导出任务</h1><p class="task-id">task-exp-20260822-0007 · 结束于今天 10:24</p></div><span class="tag success"><i data-lucide="circle-check" size="13" style="margin-right:4px"></i>已完成</span></div><section class="task-section"><div class="notice success"><i data-lucide="badge-check" size="18"></i><div><strong>执行结果已核验</strong><br>平台仅显示 Agent 已上报的结果事实；没有事实时不会推测文件数、字节数或清单。</div></div><div class="fact-grid" style="margin:0 -20px"><div class="fact"><small>结果文件</small><strong>12 个 · 3.8 GiB</strong></div><div class="fact"><small>检查点</small><strong>未发现 dump.ckpt</strong></div><div class="fact"><small>计划与实际参数</small><strong>与冻结计划一致</strong></div></div></section><section class="task-section"><div class="task-section-header"><h2>结果文件清单</h2><span class="tag success">已核验</span></div><table class="data-source-table"><thead><tr><th>相对输出目录</th><th style="width:22%">大小</th><th style="width:22%">观察时间</th></tr></thead><tbody><tr><td><code>orders_2026_08_00001.csv</code></td><td>356.2 MiB</td><td>10:23:52</td></tr><tr><td><code>orders_2026_08_00002.csv</code></td><td>348.7 MiB</td><td>10:23:54</td></tr><tr><td><code>v_order_summary.sql</code></td><td>1.4 KiB</td><td>10:24:03</td></tr></tbody></table></section><section class="task-section"><div class="task-section-header"><h2>执行日志</h2><button class="btn">查看全部日志</button></div><p class="field-help">日志、命令和配置读取始终遵循同一脱敏边界。</p></section></article><aside class="task-column"><section class="task-section"><h2>成功任务操作</h2><p class="field-help" style="margin:5px 0 14px">模板只复制非敏感配置，不复制凭据、节点、预检查、日志或结果。</p><label class="field-label">模板名称</label><input class="control" value="订单分析月度导出"><button class="btn primary" style="margin-top:10px"><i data-lucide="save" size="15"></i>保存为模板</button></section><section class="task-section"><h2>任务事实</h2><dl style="margin-top:12px"><div class="summary-row"><dt>执行节点</dt><dd>win-agent-01</dd></div><div class="summary-row"><dt>耗时</dt><dd>5 分 22 秒</dd></div><div class="summary-row"><dt>配置指纹</dt><dd>e5f6…17a9</dd></div></dl></section></aside></div>
+        </section>
+
+        <section class="screen" data-screen="failed">
+          <div class="task-layout"><article class="task-column"><div class="task-head"><div><h1 style="font-size:18px">导出任务</h1><p class="task-id">task-exp-20260822-0008 · 失败于今天 10:25</p></div><span class="tag danger"><i data-lucide="circle-x" size="13" style="margin-right:4px"></i>失败</span></div><section class="task-section"><div class="notice danger"><i data-lucide="triangle-alert" size="18"></i><div><strong>工具返回失败终态</strong><br>错误摘要来自已脱敏的执行事实。请查看日志定位原因；平台不会把包装脚本退出码单独解释为成功或失败。</div></div><div class="task-section-header" style="margin-top:18px"><h2>失败恢复</h2><span class="tag warning">检查点可用</span></div><div class="choice-grid"><button class="choice"><strong>基于原配置新建</strong><p>创建可编辑草稿，可修改参数并重新预检查。</p><code>保留来源关系</code></button><button class="choice"><strong>从头重新执行</strong><p>参数不可修改，创建新的冻结任务。</p><code>不复用预检查</code></button><button class="choice selected"><strong>从检查点继续</strong><p>仅失败终态、可读 dump.ckpt 和原检查通过时可用。</p><code>追加 --retry</code></button></div></section><section class="task-section"><div class="task-section-header"><h2>执行日志</h2><button class="btn">查看全部日志</button></div><div class="log"><div class="log-row"><span>10:25:04</span><span>ERROR</span><span>工具报告目标目录空间不足；结果事实判定失败。</span></div><div class="log-row"><span>10:25:05</span><span>INFO</span><span>受控进程已退出，正在封存脱敏日志。</span></div></div></section></article><aside class="task-column"><section class="task-section"><h2>继续资格</h2><dl style="margin-top:12px"><div class="summary-row"><dt>失败终态</dt><dd><span class="tag success">满足</span></dd></div><div class="summary-row"><dt>原预检查</dt><dd><span class="tag success">满足</span></dd></div><div class="summary-row"><dt>dump.ckpt</dt><dd><span class="tag success">Agent 已确认可读</span></dd></div></dl><button class="btn primary" style="margin-top:14px">从检查点继续</button></section><section class="task-section"><h2>冻结配置</h2><p class="field-help" style="margin-top:5px">继续操作不允许修改参数；需要调整路径、范围或性能时请使用“基于原配置新建”。</p></section></aside></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="design-switcher"><label for="screen-picker">高保真设计图</label><select id="screen-picker"><option value="source">E01 数据源</option><option value="source-empty">E01 无可用数据源</option><option value="content">E02 导出内容</option><option value="objects">E03 导出对象</option><option value="format">E04 数据格式</option><option value="output">E05 执行与输出</option><option value="review">E06 确认通过</option><option value="review-failed">E06 预检查失败</option><option value="running">E07 任务运行</option><option value="success">E08 任务成功</option><option value="failed">E09 任务失败</option></select></div>
+  <script>
+    const picker = document.getElementById('screen-picker');
+    const screens = Array.from(document.querySelectorAll('.screen'));
+    const steps = Array.from(document.querySelectorAll('.step'));
+    const titles = { source:['新建导出任务','按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。'], 'source-empty':['新建导出任务','当前没有可进入导出向导的数据源。'], content:['新建导出任务','按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。'], objects:['新建导出任务','按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。'], format:['新建导出任务','按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。'], output:['新建导出任务','按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。'], review:['新建导出任务','按 OBDUMPER 4.3.5 已验证能力配置任务，提交前始终展示脱敏命令。'], 'review-failed':['新建导出任务','预检查失败时不允许提交，必须回到产生问题的步骤修复。'], running:['任务详情','执行状态、日志和结果只显示服务端已确认的安全事实。'], success:['任务详情','执行成功后显示已核验的结果事实，并可保存非敏感模板。'], failed:['任务详情','失败恢复始终创建新草稿或新任务，保留来源关系。'] };
+    const stepMap = { source:1, 'source-empty':1, content:2, objects:3, format:4, output:5, review:6, 'review-failed':6 };
+    function activate(name) {
+      screens.forEach(item => item.classList.toggle('active', item.dataset.screen === name));
+      const index = stepMap[name];
+      document.getElementById('wizard').style.display = index ? '' : 'none';
+      steps.forEach((item, i) => { item.className = 'step ' + (index === i + 1 ? 'current' : (index && i + 1 < index ? 'done' : 'future')); });
+      document.getElementById('screen-title').textContent = titles[name][0];
+      document.getElementById('screen-subtitle').textContent = titles[name][1];
+      picker.value = name;
+      if (window.lucide) window.lucide.createIcons();
+      history.replaceState({}, '', '#' + name);
+    }
+    picker.addEventListener('change', event => activate(event.target.value));
+    window.addEventListener('hashchange', () => {
+      const next = location.hash.slice(1);
+      if (titles[next]) activate(next);
+    });
+    const initial = location.hash.slice(1);
+    activate(titles[initial] ? initial : 'source');
+  </script>
+</body>
+</html>

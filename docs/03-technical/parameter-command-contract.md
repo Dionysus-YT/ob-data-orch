@@ -1,11 +1,22 @@
 # 参数元数据与确定性命令生成契约
 
-> 文档状态：首条纵向切片专项契约已确认  
-> 适用范围：OBDUMPER 4.3.5，私有 ODP、单表 CSV 导出
+> 文档状态：历史首条纵向切片专项契约；当前 Export v1 以[通用导出技术契约](export-general-contract.md)和[导出模块 Canonical](../02-design/export-module.md)为准
+> 适用范围：OBDUMPER 4.3.5，私有 ODP、单表 CSV 导出历史证据
 > 对应门禁：VS-P0-08、VS-P0-09  
 > 评审结论：PC-R01～PC-R15 已于 2026-07-21 确认  
 > 实现状态：参数元数据 `v4` 与确定性生成器已通过隔离契约测试；Agent、安全文件全链路与真实执行仍阻断
-> 更新日期：2026-07-30
+> 更新日期：2026-08-22
+
+## 0. Export V1 现役补充
+
+本文件主体保留首条单表 CSV 切片的历史契约。2026-08-22 起，Export 新建任务的参数归属和活动规则以[导出模块 Canonical](../02-design/export-module.md)、[通用导出技术契约](export-general-contract.md)和新的未发布元数据版本为准：
+
+- v5～v7 已发布资源与旧任务快照不可原地修改；新的页面可见性、来源策略和互斥修订必须发布为 v8 或更高版本。
+- 普通新建只投影 CSV、CUT、SQL；POS、Parquet、ORC、Avro 仍可被旧版本解析，但不因前端隐藏而从历史枚举或命令回放中删除。
+- `--query-sql` 是 `USER` 来源、`NORMAL` 敏感性、`NONE` 确认规则的普通高级参数；不得再由 `CAP_SENSITIVE_COMMAND` 或提交级风险指纹决定是否发射。
+- `--retain-empty-files` 对 CSV/CUT/SQL 的数据内容活动，对 DDL_ONLY 不活动；不得把 where/partition 误写成它的显示前置条件。命令名统一使用复数形式。
+- `--character-set`、`--logical-database`、`--session-config` 不接受任务表单的 `USER` 来源，只能由数据源、节点或安全策略派生；无可靠派生事实时保持未设置或阻断，不允许用户自由回填。
+- 前端即时禁用只改善交互；服务端必须按同一元数据重新计算活动状态、互斥、兼容模式和支持状态，任何冲突均不得进入命令或提交快照。
 
 ## 1. 目的与边界
 
@@ -32,8 +43,8 @@
 
 主要追踪入口：
 
-- [导出字段与条件矩阵](../02-design/export-field-rules.md)
-- [OBDUMPER 4.3.5 导出参数映射基线](../02-design/export-parameter-mapping.md)
+- [导出模块 Canonical](../02-design/export-module.md)
+- [通用导出技术契约](export-general-contract.md)
 - [首条纵向切片](first-vertical-slice.md)
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)
 - [技术架构首版](architecture.md)

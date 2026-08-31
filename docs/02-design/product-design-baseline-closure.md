@@ -6,6 +6,8 @@
 > 更新日期：2026-07-20
 
 > 后续状态（2026-08-13）：本文保留当时的产品语义与静态低保真收口结论。数据源管理此后已形成真实可运行的 [UI Reference Page](ui-reference-page-data-source.md) 和 [Design System v0.1](design-system-v0.1.md)；其他页面不得据此被描述为已经完成同等级迁移。
+>
+> 后续状态（2026-08-26）：新模块和发生实质视觉改造的存量模块改以 [前端设计基线：Operator Signal](frontend-design-baseline.md) 为目标；Design System v0.1 继续保留为历史实现证据，不证明存量页面已经迁移。
 
 ## 1. 收口结论
 

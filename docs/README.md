@@ -6,6 +6,10 @@
 
 项目已完成总体需求讨论稿整理、十一个模块的产品/字段规则确认、产品设计语义基线收口，以及数据源、导出公共链路、普通导入、旁路导入、任务中心全状态、模板复用、高风险权限操作、执行节点、日志中心、系统设置和首页静态低保真评审。数据源管理的真实实现现已冻结为第一版 UI Reference Page，并形成最小 [Design System v0.1](02-design/design-system-v0.1.md) 与长期 DEV-only UI Regression Fixture；该冻结只代表已验证的前端视觉与交互基线，不外推其他业务页面已经迁移。首条切片架构、技术路线和最小实现契约已经确认，DR-R01～DR-R18 进一步确认 G1 工程骨架与 G2 隔离组件准入。开发顺序、阶段、门禁、页面功能接入与真实验证状态统一以[开发任务地图](03-technical/development-task-map.md)为准。任何 G2 结果均不得描述为真实导出或产品可用。
 
+2026-08-22 已完成 Export V1 六步向导与参数分层重新定版：普通新建采用“数据源 → 内容 → 对象 → 格式 → 输出 → 确认”，只展示 CSV/CUT/SQL；`--query-sql` 改为普通高级参数，`--retain-empty-files` 适用于三种数据格式的数据内容。当前下一工作项是运行时与参数元数据 v8 对齐，目标契约不等于现有页面和服务端已经完成迁移。
+
+2026-08-26 已确认 [前端设计基线：Operator Signal](02-design/frontend-design-baseline.md)，作为后续模块和实质视觉改造的全局目标。Design System v0.1 继续保留数据源参考页的历史实现证据；存量页面未完成迁移前不得描述为已经对齐新基线。
+
 ## 文档导航
 
 ### 产品基线
@@ -19,7 +23,8 @@
 - [信息架构](02-design/information-architecture.md)：导航、页面职责、模块关系和跳转关系。
 - [用户流程](02-design/user-flow.md)：导出、普通导入、旁路导入三条创建流程及共用任务追踪/失败处理流程。
 - [全局交互规范](02-design/interaction-spec.md)：向导、校验、命令预览、任务与日志的通用交互规则。
-- [Design System v0.1](02-design/design-system-v0.1.md)：数据源真实页面验证后的 Foundations、公共组件、桌面模式、边界和版本规则。
+- [前端设计基线：Operator Signal](02-design/frontend-design-baseline.md)：后续模块的全局视觉、Product Shell、组件语义、真实数据和验收基线。
+- [Design System v0.1](02-design/design-system-v0.1.md)：数据源真实页面曾验证的历史 Foundations、公共组件和桌面模式。
 - [数据源管理 UI Reference Page](02-design/ui-reference-page-data-source.md)：参考页路由、11 列业务边界、冻结范围及 1280/1440/1920 验收基线。
 - [数据源 UI Regression Fixture](02-design/ui-regression-fixture-data-source.md)：16 行 DEV-only 合成输入、显式启用、无真实业务副作用和长期维护规则。
 - [产品设计基线收口评审](02-design/product-design-baseline-closure.md)：汇总已确认基线、官方验证门禁、低保真范围、技术设计输入和开发准入条件。
@@ -28,10 +33,27 @@
 - [首页字段与条件矩阵](02-design/home-field-rules.md)：75 个首页快照、指标、趋势、节点、任务、异常和页面状态字段，HM-FR01～HM-FR15 已确认。
 - [首页低保真基线](02-design/home-low-fidelity.md)：已确认的正常快照、部分失败与过期、真实空状态和无权限页面，以及 HM-LF-R01～HM-LF-R18。
 - [数据源管理评审稿](02-design/data-source-management.md)：首个可评审模块，限定在连接信息管理与基础连接测试。
-- [导出模块评审稿](02-design/export-module.md)：OBDUMPER 六步向导、参数约束和已确认的 EX-R01～EX-R17 产品规则。
-- [导出参数映射基线](02-design/export-parameter-mapping.md)：基于 OceanBase 官网与实际 `--help` 的 109 个长参数含义、分类、产品处置和来源。
-- [导出字段与条件矩阵](02-design/export-field-rules.md)：87 个页面字段的显示、必填、默认继承、清值、命令和预检查失效规则。
+- [导出模块评审稿](02-design/export-module.md)：Export v1 产品与交互 Canonical，覆盖六步向导、ODC Reference Matrix、Format Matrix、发布态、取消和任务结果。
+- [通用导出技术契约](03-technical/export-general-contract.md)：Export v1 的领域模型、参数/命令、Agent 信封、结果证据和取消协议。
+- [Export 历史研究归档](archive/export/)：109 参数映射、87 字段矩阵、支持矩阵和早期低保真，仅用于追溯，不作为当前事实源。
 - [导出参数受控验证计划](02-design/export-controlled-validation.md)：冲突参数的隔离环境、安全边界、P0/P1/P2 用例、证据和回写标准。
+
+### Export 文档治理
+
+Export 长期现役入口控制为五份：产品范围、架构、Export 产品/交互、Export 技术契约、Export 受控验证；[开发任务地图](03-technical/development-task-map.md)另作为全项目开发顺序和门禁的唯一权威。以下 inventory 记录每个 Export 文档的处置，不以文件存在或历史路径继续制造第二事实源。
+
+| 文件 | 用途 | 状态 | 重复/冲突 | 唯一知识与处置 | 目标入口 |
+|---|---|---|---|---|---|
+| `docs/01-product/product-scope.md` | 产品边界与 V1 范围 | CANONICAL | 与旧 PRD 有历史重叠 | 保留当前范围、发布态和安全边界 | 产品范围 |
+| `docs/03-technical/architecture.md` | 系统分层与控制面/Agent 边界 | CANONICAL | 与首条切片历史架构有重叠 | 保留当前架构；旧实现说明只作追溯 | 技术架构 |
+| `docs/02-design/export-module.md` | Export v1 产品、UX、ODC/格式矩阵、任务结果 | CANONICAL | 吸收旧字段、低保真和支持矩阵 | 保留当前产品事实和交互规则 | Export 产品/交互 |
+| `docs/03-technical/export-general-contract.md` | 领域模型、参数、命令、Agent、结果和取消 | CANONICAL | 与旧参数映射有重叠 | 保留可执行契约；旧参数研究归档 | Export 技术契约 |
+| `docs/02-design/export-controlled-validation.md` | Golden Path、格式证据和 EX-V1 门禁 | CANONICAL | 与旧受控验证记录有过程性重叠 | 保留证据判定和回写规则；现场记录仍留 evidence | Export 验证 |
+| `docs/03-technical/development-task-map.md` | 全局开发顺序、Workstream 和阶段门禁 | CANONICAL（流程） | 与历史 DEV/WI 记录有顺序冲突 | 以当前表格为准，历史记录只追溯 | 开发顺序 |
+| `docs/03-technical/ex-d0-implementation-inventory.md` | EX-D0 基线盘点与兼容冻结 | HISTORICAL BASELINE | 已被当前 Canonical 的状态段覆盖 | 保留源码追溯和历史冻结，不作为发布声明 | 任务地图/Canonical |
+| `docs/02-design/export-field-rules.md`、`export-parameter-mapping.md`、`export-v1-support-matrix.md`、`export-low-fidelity.md` | 早期字段、参数、支持矩阵和低保真 | ARCHIVE REDIRECT | 内容已合并，原路径仅为兼容指针 | 不再单独维护；唯一历史内容在 `docs/archive/export/` | Export Canonical |
+| `docs/archive/export/` | 研究、决策演变和临时计划 | ARCHIVE | 不参与当前开发上下文 | 保留唯一历史知识，不证明当前能力 | 无 |
+| `HANDOFF.md` | 2026-08-14 交接快照 | HISTORICAL SNAPSHOT | 运行态/PID/授权声明可能过期 | 仅追溯；当前事实必须回查 Canonical 与现场 | 无 |
 - [普通导入模块评审稿](02-design/normal-import-module.md)：OBLOADER 六步向导、普通/旁路边界、完整参数承载方式和已确认的 NI-R01～NI-R18 产品规则。
 - [普通导入参数映射基线](02-design/normal-import-parameter-mapping.md)：实际 `--help` 的 103 个长参数含义、分类、普通导入处置和官方来源。
 - [普通导入字段与条件矩阵](02-design/normal-import-field-rules.md)：91 个页面字段/操作的显示、派生、默认、清值、风险和检查失效规则。
@@ -89,22 +111,23 @@
 | 文档 | 状态 | 说明 |
 |---|---|---|
 | 总体 PRD | 待产品评审 | 保留原始需求内容，目标工具版本为 V4.3.5 |
-| 产品范围 | V1.0 范围基线已收口 | 从 PRD 和 44 项已确认决策提炼，官方行为仍以受控验证结果为准 |
+| 产品范围 | V1.0 范围基线已收口 | 从 PRD 和现行已确认决策提炼，官方行为仍以受控验证结果为准 |
 | 关键决策 | 已确认并持续维护 | 收录 PRD 与模块专项评审中经明确确认的结论 |
 | 全局产品设计基础文档 | 产品设计语义基线已收口 | 信息架构、用户流程、全局交互及已规划静态低保真范围均已形成基线 |
-| Design System v0.1 | 已冻结 | 只纳管数据源真实页面验证过的 Foundations、公共组件和桌面交互模式，不等同于完整 UI Framework |
+| 前端设计基线：Operator Signal | 已确认 | 后续模块和实质视觉改造的全局目标；不替代模块 Canonical、字段规则、安全契约或真实能力证据 |
+| Design System v0.1 | 历史冻结 | 只保留数据源真实页面验证过的实现事实，不再作为新模块目标基线 |
 | 数据源管理 UI Reference Page | 已冻结 | `/data-sources` 是第一版参考页；11 列为数据源业务规则，视觉密度和交互模式供后续页面复用 |
 | 数据源 UI Regression Fixture | 长期保留 | 16 行 DEV-only、显式参数启用的合成输入；不写业务数据，不是自动 Screenshot Diff |
-| 产品设计基线收口评审 | 收口结论已确认 | CL-01～CL-08 已确认；累计 44 项决策、205 条产品规则、820 个字段/操作、137 条条件规则和 83 个 P0 用例 |
+| 产品设计基线收口评审 | 历史收口结论已确认 | CL-01～CL-08 的历史统计保留；后续增量决策以 `decisions.md` 和对应模块 Canonical 为准 |
 | 核心流程低保真基线 | 首条核心链路已确认 | 数据源、导出步骤 5～6、任务详情与日志已形成静态低保真；LF-R01～LF-R07 已确认 |
 | 首页模块评审稿 | 产品、字段与低保真规则已确认 | HM-R01～HM-R20、HM-FR01～HM-FR15、HM-LF-R01～HM-LF-R18 已确认；刷新、聚合和响应式实现仍待技术设计 |
 | 首页字段与条件矩阵 | 字段规则已确认 | 已覆盖 HM-F001～HM-F075；HM-FR01～HM-FR15 已确认 |
 | 首页低保真基线 | 关键页面状态已确认 | 正常快照、部分失败与过期、真实空状态和无权限已覆盖；HM-LF-R01～HM-LF-R18 已确认 |
 | 数据源管理评审稿 | 产品决策已确认 | DS-R01～DS-R11 已确认；当前切片固定私有 ODP，其租户/集群精确字段条件仍待官方参数映射 |
-| 导出模块评审稿 | 产品决策已确认 | EX-R01～EX-R17 已确认；POS、block-size 等官方冲突项仍待实测 |
-| 导出参数映射与约束矩阵 | 进行中 | 109 个参数的名称、含义、分类、产品处置和来源已核查；冲突项及页面级条件矩阵待实测 |
-| 导出字段与条件矩阵 | 字段规则已确认 | 已覆盖 EX-F001～EX-F087；EX-FR01～EX-FR10 已确认，官方冲突项待实测 |
-| 导出参数受控验证计划 | 待执行 | 已形成20个P0、10个P1和5个P2用例；需要非生产测试环境与授权 |
+| 导出模块评审稿 | Export v1 Canonical 已重新定版 | 六步顺序、CSV/CUT/SQL 普通入口、对象下拉、单一高级设置、query-sql 普通授权、取消和任务结果以本文档与开发任务地图为准；运行时迁移仍待 CONS-05 |
+| 通用导出技术契约 | Export v1 技术 Canonical 已收口 | 领域模型、命令/Agent 信封、结果证据和取消协议已同步源码与 OpenAPI；真实工具/远端证据仍按 EX-V1 |
+| Export 历史研究归档 | 仅追溯 | 109 参数、87 字段、早期支持矩阵与低保真保留历史来源，不再作为当前事实源 |
+| 导出参数受控验证计划 | 合成基线已完成，真实证据待授权 | 已回写现有 CSV/POS/DDL 工具证据并完成 Phase 2 合成回归；取消已有协议级负例，CUT/SQL/结构化格式及 EX-V1 产品链路证据仍需授权环境与证据映射 |
 | 普通导入模块评审稿 | 产品决策已确认 | NI-R01～NI-R18 已确认；help-only 与行为边界仍待受控验证 |
 | 普通导入参数映射基线 | 参数名称已核查 | 实际 help 的 103 个长参数已逐项覆盖；旁路、废弃、导出侧与 help-only 项已分类 |
 | 普通导入字段与条件矩阵 | 字段规则已确认 | 已覆盖 NI-F001～NI-F091；NI-FR01～NI-FR10 已确认，待验证项状态不变 |
@@ -146,7 +169,7 @@
 4. [信息架构](02-design/information-architecture.md)
 5. [用户流程](02-design/user-flow.md)
 6. [全局交互规范](02-design/interaction-spec.md)
-   - 开发或评审新前端页面时，继续阅读 [Design System v0.1](02-design/design-system-v0.1.md)、[数据源管理 UI Reference Page](02-design/ui-reference-page-data-source.md)和[数据源 UI Regression Fixture](02-design/ui-regression-fixture-data-source.md)。
+   - 开发或评审新前端页面时，继续阅读 [前端设计基线：Operator Signal](02-design/frontend-design-baseline.md)、对应模块 Canonical/字段规则/低高保真；涉及历史数据源参考时再读取 [Design System v0.1](02-design/design-system-v0.1.md)、[数据源管理 UI Reference Page](02-design/ui-reference-page-data-source.md)和[数据源 UI Regression Fixture](02-design/ui-regression-fixture-data-source.md)。
 7. [产品设计基线收口评审](02-design/product-design-baseline-closure.md)
 8. [核心流程低保真基线](02-design/core-flow-low-fidelity.md)
 9. [首页模块评审稿](02-design/home-module.md)
@@ -154,8 +177,8 @@
 11. [首页低保真基线](02-design/home-low-fidelity.md)
 12. [数据源管理评审稿](02-design/data-source-management.md)
 13. [导出模块评审稿](02-design/export-module.md)
-14. [导出参数映射基线](02-design/export-parameter-mapping.md)
-15. [导出字段与条件矩阵](02-design/export-field-rules.md)
+14. [通用导出技术契约](03-technical/export-general-contract.md)
+15. [Export 历史研究归档](archive/export/)
 16. [导出参数受控验证计划](02-design/export-controlled-validation.md)
 17. [普通导入模块评审稿](02-design/normal-import-module.md)
 18. [普通导入参数映射基线](02-design/normal-import-parameter-mapping.md)
@@ -204,7 +227,7 @@
 - 已确认产品结论通过决策记录管理；未确认内容不得写成确定能力。
 - 官方工具能力以 V4.3.5 官方资料及实际工具 `--help` 为准。
 - 模块评审通过后应更新文档状态和版本，避免页面、接口与数据模型反复联动修改。
-- 新页面实现前必须先读取 Design System v0.1，并区分 Direct Reuse、Extension Candidate 和 Business-specific；不得把单页业务字段强行抽象为公共系统。
-- 对已冻结 Token、公共组件或 Reference Page 模式的修改必须说明不足、影响页面、迁移范围和版本判断；普通业务变更不得静默改写全局视觉规则。
-- Design System v0.1 不触发全站迁移；其他页面只能在各自真实业务改造时逐步接入。
+- 新页面实现前必须先读取前端设计基线及对应模块 Canonical，并区分公共视觉、业务模式和模块专属规则；不得把单页字段强行抽象为公共系统。
+- 对根 Token、Product Shell、公共组件或已确认模式的修改必须说明不足、影响页面、迁移范围和回归视口；普通业务变更不得静默改写全局视觉规则。
+- Operator Signal 不触发一次性全站迁移；存量页面只能在各自真实业务改造时逐步接入，并单独记录代码与浏览器验收状态。
 - 技术设计从首条纵向切片的真实门禁出发，不预先创建全部模块的空接口和数据表文档。

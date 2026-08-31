@@ -214,7 +214,7 @@ OpenAPI 覆盖所有已实现端点的请求/响应结构定义。契约测试�
 
 **参数值状态机**：每个字段在一次规范化中落入 UNSET / EXPLICIT / DERIVED / INACTIVE / BLOCKED 之一。
 
-**差距**：109 个长参数（见 `docs/02-design/export-parameter-mapping.md`）中仅 18 个已定义；无 DDL 行为、CUT/POS/SQL/Parquet/ORC/Avro 格式、对象存储、性能与资源、筛选与一致性、日期时间格式参数。
+**差距（历史盘点）**：当时 109 个长参数（现存 `docs/archive/export/research/`）中仅 18 个已定义；当时无 DDL 行为、CUT/POS/SQL/Parquet/ORC/Avro 格式、对象存储、性能与资源、筛选与一致性、日期时间格式参数。当前实现状态以 Export Canonical 与开发任务地图为准。
 
 **源码追溯**：`internal/parammeta/catalog.go`、`internal/parammeta/resources/obdumper-4.3.5-slice-v1.json`（v1 基础）、v5 修订（代码内 revision manifest）、`docs/03-technical/parameter-command-contract.md`
 
@@ -243,7 +243,7 @@ OpenAPI 覆盖所有已实现端点的请求/响应结构定义。契约测试�
 | `normalizedFields` | 每个参数的规范化结果 |
 | `tokenEvidence` | 每个令牌的产品字段、参数、来源和 argv 位置范围 |
 
-**差距**：仅支持 CSV 单表命令模板；无 DDL 命令、多对象表达式、多格式命令模板、`--query-sql`（保持 BLOCKED）。
+**现状**：冻结 v5 单表 CSV 路径与 v6 泛化命令路径并存；v6 已覆盖受控 DDL、多对象表达式、CSV/CUT/SQL 及普通 `--query-sql`。历史格式和未取得真实证据的能力仍须按现役支持矩阵门控，不能据此扩大正式支持声明。
 
 **源码追溯**：`internal/commandgen/generator.go`（433 行）、`internal/commandgen/types.go`（140 行）、`internal/commandgen/render.go`
 
@@ -515,7 +515,7 @@ DATABASE_CONNECTIVITY、OBJECT_ACCESS、TOOL_ENVIRONMENT、OUTPUT_PATH、OUTPUT_
 | 检查点继续 | EX-I8 | dump.ckpt 解析和新的继续任务创建 |
 | 派生任务 | EX-I8 | 基于原配置新建、从头执行 |
 | 模板复用 | EX-I8 | 从成功任务保存模板、从模板创建草稿 |
-| `--query-sql` 决策 | EX-D1 | 与"不得提供任意 SQL"安全边界的契约冲突，未解决前保持 BLOCKED |
+| `--query-sql` 决策 | EX-R07 | 直接文本作为普通高级筛选；禁止 SQL 编辑器、文件浏览和 `file://`，并与 where/partition/flashback 互斥 |
 
 ### 3.4 必须保留的安全边界
 

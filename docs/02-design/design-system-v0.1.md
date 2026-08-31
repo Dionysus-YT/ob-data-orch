@@ -1,6 +1,8 @@
 # OB Data Orch Design System v0.1
 
-> 状态：已冻结
+> 状态：历史冻结；2026-08-26 起不再作为新模块目标基线
+>
+> 后继基线：[前端设计基线：Operator Signal](frontend-design-baseline.md)
 >
 > 产品定位：Database Operations Workbench / 数据库运维工作台
 >
@@ -13,6 +15,8 @@
 ## 1. 目的与适用边界
 
 Design System v0.1 只固化已经在真实数据源业务页面中实现并完成 1280px、1440px、1920px 桌面验证的基础规则。它为后续页面提供最小公共视觉语言，不替代业务模块文档、字段规则、API、安全契约或任务状态契约，也不是完整 UI Framework。
+
+2026-08-26 起，本文继续保存数据源参考页曾经验证过的实现事实，不回写新 Token 或新 Product Shell。新模块和发生实质视觉改造的存量模块以 [前端设计基线：Operator Signal](frontend-design-baseline.md) 为准；未迁移页面可以保留本文外观，但不得把旧规则复制到新实现。
 
 后续页面开发必须先区分：
 

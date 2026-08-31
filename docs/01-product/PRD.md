@@ -9,6 +9,8 @@
 
 > 现行范围注记（2026-07-22）：当前工程切片只使用私有 ODP 连接；本文中任何“直连 OBServer 或 ODP”的历史表述不再作为当前实现选项。云 ODP、ODP Sharding 和未确认的集群参数映射不自动纳入。原始需求保留，现行决策见[关键产品决策](decisions.md#dec-045-当前连接范围仅使用私有-odp)。
 
+> Export 现行注记（2026-08-22）：第 7 章保留原始需求讨论，不再作为六步顺序和参数呈现的实现依据。现行顺序、普通新建格式、对象下拉、高级设置、`--query-sql` 与 `--retain-empty-files` 规则见 [DEC-046](decisions.md#dec-046-export-v1-六步向导与参数分层定版) 和 [Export Canonical](../02-design/export-module.md)。
+
 ---
 
 ## 0. 文档说明

@@ -5,11 +5,69 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"ob-data-orch/internal/agentlogqueue"
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/outputpath"
 )
+
+// TestWorker启动前取消不解析秘密也不启动工具验证领取后的最小取消闭环。
+func TestWorker启动前取消不解析秘密也不启动工具(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	protocol := &executionWorkerTestProtocol{
+		grant: agentwire.ExecutionGrant{
+			TaskID:         "task-cancel-before-start",
+			ExecutionID:    "execution-cancel-before-start",
+			LeaseID:        "lease-cancel-before-start",
+			LeaseEpoch:     1,
+			ExpiresAt:      now.Add(time.Minute),
+			EnvelopeDigest: strings.Repeat("a", 64),
+			Argv:           []string{"--file-path", "/E:/exports/cancel-before-start"},
+		},
+		control: agentwire.ExecutionControl{
+			CancelRequested:       true,
+			CancellationRequestID: "cancel-request-before-start",
+			CancellationDeadline:  now.Add(30 * time.Second),
+		},
+	}
+	worker := &Worker{
+		Protocol: protocol,
+		Runtime: Runtime{
+			TargetPlatform: outputpath.PlatformWindowsAMD64,
+			JavaPath:       `C:\Java\bin\java.exe`,
+			ToolHome:       `C:\OBDUMPER`,
+			WorkspaceRoot:  `C:\OBDataOrch\workspace`,
+			Environment:    []string{"PATH=C:\\Windows\\System32"},
+			AllowedRoots:   []string{`C:\exports`},
+		},
+		Clock:  func() time.Time { return now },
+		BootID: "boot-cancel-before-start",
+	}
+
+	outcome, found, err := worker.RunNext(context.Background())
+	if err != nil || !found {
+		t.Fatalf("启动前取消结果 = outcome=%#v found=%v err=%v", outcome, found, err)
+	}
+	if outcome.TaskID != protocol.grant.TaskID || outcome.ExecutionID != protocol.grant.ExecutionID {
+		t.Fatalf("启动前取消结果身份不一致: %#v", outcome)
+	}
+	if protocol.acknowledgements != 1 || protocol.polls != 1 {
+		t.Fatalf("取消前协议顺序错误: acknowledgements=%d polls=%d", protocol.acknowledgements, protocol.polls)
+	}
+	if protocol.secretResolutions != 0 {
+		t.Fatalf("启动前取消不应解析数据库秘密: %d", protocol.secretResolutions)
+	}
+	if len(protocol.events) != 1 || protocol.events[0].EventType != "PROCESS_CANCELLED" || protocol.events[0].EventSeq != 3 {
+		t.Fatalf("启动前取消事件错误: %#v", protocol.events)
+	}
+	evidence := protocol.events[0].Evidence
+	if evidence["noProcess"] != true || evidence["treeObserved"] != true || evidence["terminationCode"] != "NOT_STARTED" {
+		t.Fatalf("启动前取消证据不完整: %#v", evidence)
+	}
+}
 
 func Test日志上传器在入队前后只暴露安全位置(t *testing.T) {
 	t.Parallel()
@@ -210,6 +268,51 @@ func (o queueTestObserver) AfterConfirmation(ctx context.Context, position LogQu
 	return o.confirmed(ctx, position)
 }
 
+type executionWorkerTestProtocol struct {
+	grant             agentwire.ExecutionGrant
+	control           agentwire.ExecutionControl
+	acknowledgements  int
+	polls             int
+	secretResolutions int
+	events            []agentwire.ExecutionEvent
+}
+
+func (p *executionWorkerTestProtocol) ClaimNextExecution(context.Context, agentwire.ExecutionClaimNext) (agentwire.ExecutionGrant, bool, error) {
+	return p.grant, true, nil
+}
+
+func (p *executionWorkerTestProtocol) AcknowledgeExecutionLease(context.Context, agentwire.ExecutionLeaseAcknowledgement) error {
+	p.acknowledgements++
+	return nil
+}
+
+func (p *executionWorkerTestProtocol) RenewExecutionLease(context.Context, agentwire.ExecutionLeaseRenewal) error {
+	return nil
+}
+
+func (p *executionWorkerTestProtocol) PollExecutionControl(context.Context, agentwire.ExecutionControlPoll) (agentwire.ExecutionControl, error) {
+	p.polls++
+	return p.control, nil
+}
+
+func (p *executionWorkerTestProtocol) ResolveExecutionDatabaseConnection(context.Context, agentwire.ExecutionSecretSlotRequest) (agentwire.DatabaseConnectionSlot, error) {
+	p.secretResolutions++
+	return agentwire.DatabaseConnectionSlot{}, errors.New("启动前取消不应解析秘密")
+}
+
+func (p *executionWorkerTestProtocol) AppendExecutionEvent(_ context.Context, event agentwire.ExecutionEvent) error {
+	p.events = append(p.events, event)
+	return nil
+}
+
+func (p *executionWorkerTestProtocol) AppendExecutionLog(context.Context, agentwire.ExecutionLogBatch) error {
+	return nil
+}
+
+func (p *executionWorkerTestProtocol) AppendExecutionLogGap(context.Context, agentwire.ExecutionLogGap) error {
+	return nil
+}
+
 type queueTestProtocol struct {
 	batches      []agentwire.ExecutionLogBatch
 	appendErrors []error
@@ -225,6 +328,10 @@ func (p *queueTestProtocol) AcknowledgeExecutionLease(context.Context, agentwire
 
 func (p *queueTestProtocol) RenewExecutionLease(context.Context, agentwire.ExecutionLeaseRenewal) error {
 	return nil
+}
+
+func (p *queueTestProtocol) PollExecutionControl(context.Context, agentwire.ExecutionControlPoll) (agentwire.ExecutionControl, error) {
+	return agentwire.ExecutionControl{}, nil
 }
 
 func (p *queueTestProtocol) ResolveExecutionDatabaseConnection(context.Context, agentwire.ExecutionSecretSlotRequest) (agentwire.DatabaseConnectionSlot, error) {

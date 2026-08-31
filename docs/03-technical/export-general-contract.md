@@ -1,8 +1,9 @@
 # 通用导出模块技术契约
 
-> 文档状态：EX-D2 技术契约产出
+> 文档状态：Export v1 技术 Canonical（EX-D2 产出持续维护）
 > 创建日期：2026-08-05
-> 依据：[开发任务地图](development-task-map.md) 第 5.2 节、[V1.0 支持矩阵](../02-design/export-v1-support-matrix.md)
+> 最近更新：2026-08-22
+> 依据：[开发任务地图](development-task-map.md) 第 5.2 节、[导出模块 Canonical](../02-design/export-module.md)
 > 关联契约：[API/SQLite](api-sqlite-data-contract.md)、[参数/命令](parameter-command-contract.md)、[Agent/状态](agent-task-state-contract.md)、[工具启动](tool-launch-isolation-contract.md)、[凭据/安全](credential-access-security-contract.md)、[日志/证据](log-collection-evidence-contract.md)
 > 安全说明：不记录真实端点、身份、密码、密钥、完整命令或工具原始输出
 
@@ -16,6 +17,18 @@
 - Go 类型定义（`internal/store/types.go`）
 - OpenAPI schema（`contracts/openapi.json`）
 
+### 0.1 2026-08-22 目标契约修订
+
+本节是已确认的下一运行时版本目标，优先级高于本文中与之冲突的历史实施记录。v5～v7 参数元数据、既有任务快照和运行证据保持不可变；当前代码尚未全部对齐，开发任务地图必须持续标记该差距，不能把本节写成已经交付。
+
+1. 新建向导顺序固定为 `SOURCE → CONTENT → OBJECT → FORMAT → OUTPUT → REVIEW`。页面字段所在步骤是产品呈现策略，不改变领域配置的稳定字段名。
+2. 普通 V1 新建格式集合固定为 `CSV | CUT | SQL`。`POS | PARQUET | ORC | AVRO` 继续属于可解析的历史/门控能力，不能通过缩小枚举破坏旧草稿和任务。
+3. host、port、组合用户名、密码引用、字符集、逻辑库和会话配置只能来自 `DATA_SOURCE`、`NODE` 或 `SECURITY` 派生事实；浏览器任务表单不得提交同名可编辑字段。
+4. `filterConfig.querySql` 的敏感性为 `NORMAL`，使用普通导出任务授权，不要求 `CAP_SENSITIVE_COMMAND`、平台敏感开关、风险指纹或提交级二次确认。服务端仍须拒绝 `file://`，并复验它与 where、partition、flashback SCN、flashback timestamp 的互斥关系。
+5. `outputConfig.retainEmptyFiles` 对 `DATA_ONLY`、`DDL_AND_DATA` 的 CSV/CUT/SQL 活动，对 `DDL_ONLY` 不活动；它不依赖 where 或 partition 才能配置。CSV 与 skipHeader 同时决定空文件是否保留表头。
+6. MySQL/Oracle 不适用项由同一参数元数据投影为“可见但禁用 + 原因”；浏览器提示不是可信校验，服务端规范化仍按兼容模式、数据库版本、权限和证据状态失败关闭。
+7. 每个业务步骤最多一个高级设置容器；分类只用于页面组织和错误定位，不进入命令指纹。第 1 步没有任务级高级字段，第 6 步没有可编辑字段。
+
 ---
 
 ## 1. 通用导出领域模型
@@ -24,7 +37,7 @@
 
 1. **不以页面 JSON 或命令字符串充当领域模型**：导出配置、规范化结果和提交快照各有独立的结构化类型，不等同于前端表单或 CLI argv。
 2. **版本化不可变**：提交快照一旦冻结不得被外部数据回写；参数元数据版本发布后不得原地改写。
-3. **安全边界不降级**：泛化不扩大 Agent 能力、不引入任意命令/SQL/URI、不降低秘密处理标准。
+3. **安全边界不降级**：泛化不扩大 Agent 能力、不引入任意命令、通用 SQL 执行通道或任意 URI；OBDUMPER 官方 `--query-sql` 只能经类型化字段和唯一命令生成器进入固定导出信封。
 4. **向后兼容**：现有 CSV 单表草稿、快照和任务在结构泛化后仍可正确读取和执行。
 5. **能力切片驱动**：通过 capabilityVersion 区分不同导出能力，每个切片有独立的参数子集、预检查集和结果模型。
 
@@ -88,6 +101,8 @@ DataFormat {
 }
 ```
 
+`formatKind` 枚举用于历史兼容和能力版本解析；普通 V1 新建入口只允许 CSV、CUT、SQL。旧格式不得因页面收缩而改写为未知值或丢失快照。
+
 各 Options 结构映射到对应参数的 EX-F 字段，每个可选字段携带 `fieldState`（UNSET/EXPLICIT/DERIVED/INACTIVE/BLOCKED）。
 
 **OutputConfig（输出配置）**
@@ -102,7 +117,7 @@ OutputConfig {
   ctlPath:         string?        // 控制文件目录
   tmpPath:         string?        // 对象存储临时目录
   maxFileSize:     int64?         // 字节
-  retainEmptyFiles: bool
+  retainEmptyFiles: bool           // CSV/CUT/SQL 数据导出可用；DDL_ONLY 不活动
   storageCredential: StorageCredentialRef?  // 对象存储凭据引用
 }
 ```
@@ -480,7 +495,7 @@ type PerformanceConfig struct {
 }
 
 type FilterConfig struct {
-    QuerySql           string   `json:"querySql,omitempty"`
+    QuerySql           string   `json:"querySql,omitempty"` // 普通高级参数；不使用敏感命令 capability，拒绝 file:// 并复验互斥
     Where              string   `json:"where,omitempty"`
     Partition          string   `json:"partition,omitempty"`
     IncludeColumnNames []string `json:"includeColumnNames,omitempty"`
@@ -569,7 +584,7 @@ type ExportConfigTemplate struct {
 
 **现行分类体系**（9 类）：
 
-> 元数据 `category` 是命令发射顺序的技术标识（与 `order` 配合驱动 plannedArgv 排序），不是产品分类。产品与文档按 OBDUMPER 官方选项分类组织（基础选项：连接/功能/其他；高级选项：功能/性能/其他，见 [参数映射基线](../02-design/export-parameter-mapping.md) 第 3 节）。
+> 元数据 `category` 是命令发射顺序的技术标识（与 `order` 配合驱动 plannedArgv 排序），不是产品分类。产品与文档按 OBDUMPER 官方选项分类组织（基础选项：连接/功能/其他；高级选项：功能/性能/其他）；109 参数研究与分类表保留在 `docs/archive/export/research/`。
 
 | 序号 | 分类标识 | 含义 |
 |---|---|---|
@@ -786,11 +801,13 @@ ManifestObject {
 
 **EX-I8 实施收敛（2026-08-14，合成验证）**：
 
-- Agent 在成功与失败路径都上报 `dump.ckpt` 存在性事实（失败路径作为失败终态后的迟到事实，由同一租约与连续序号接受）；控制面合并为 `result_summary_json`（`result/fileCount/totalBytes/files/checkpointPresent/observedAt`），任务详情投影受限结果摘要。
+- Agent 在成功与失败路径都上报 `dump.ckpt` 存在性事实（失败路径作为失败终态后的迟到事实，由同一租约与连续序号接受）；控制面合并为 `result_summary_json`（`result/fileCount/totalBytes/files/checkpointPresent/observedAt`），任务详情投影受限结果摘要。进程证据另以 `process_evidence_json` 保存直接 Java 退出码、固定错误码和 planned/actual argv SHA-256 摘要比较；耗时由可信 `started_at/finished_at` 派生，输出位置按主体权限返回完整值或仅类型。
 - 派生任务模型：迁移 0018 增加 `tasks.derivation_kind`（REBUILD_FROM_CONFIG/RERUN_FROM_SCRATCH/CHECKPOINT_RESUME）与 `export_drafts.source_task_id/source_derivation`；`parent_task_id` 沿用 0014。
 - 基于原配置新建/从头重新执行：`POST /tasks/{id}:rebuild-draft` 从失败任务冻结快照重建可编辑 v6 草稿；从头执行提交时服务端强制 configFingerprint 与来源任务一致（否则 422 RERUN_CONFIGURATION_CHANGED）。
 - 检查点继续：`POST /tasks/{id}:resume-checkpoint` 资格 = 失败终态 + 结果摘要确认 dump.ckpt 存在 + 原预检查 SUCCEEDED/COMPLETE；新任务继承原快照并追加 `--retry`（服务端固定构造，不新增参数元数据版本），领取执行时复验数据源/凭据/节点/Agent 事实版本但豁免预检查 TTL。
 - 真实 `dump.ckpt` 续跑取证与结果清单的行数/校验和解析归 EX-V1；当前文件清单只含相对路径与字节数。
+- Cancel 已纳入当前执行协议，但只允许受控、有界和可核验的取消意图：浏览器 `POST /api/v1/tasks/{taskId}:cancel` 要求 CSRF、幂等键和任务授权；排队任务短事务投影 `CANCELLED`，运行中任务先进入 `CANCELLING`。Agent 在同一有效租约内以固定 `OBDUMPER_EXPORT_POLL_CONTROL` 信封轮询，控制面校验冻结任务信封摘要后才返回取消事实。
+- Agent 终止受控 Java 进程树并按序上报 `PROCESS_CANCELLED`、`PROCESS_EXITED` 和结果事实。只有树终止已观察且终态证据完整时才投影 `CANCELLED`；取消失败、期限到期、摘要不一致或事件缺口均失败关闭，使用固定 `CANCEL_FAILED`、`CANCEL_TIMEOUT` 或 `EXECUTION_EVIDENCE_UNAVAILABLE`，必要时保留 `reconciliation_required`。浏览器不能直接终止节点进程，也不能提交命令、路径、SQL、秘密或自由原因。
 
 ### 8.4 终态证据
 
@@ -844,7 +861,7 @@ EX-I2 交付收敛：按任务地图权威，EX-I2 一次实现 full-csv、ddl�
 
 EX-I3 交付收敛：25 个 ENABLED 参数一次启用（CSV 序列化 9、压缩 2、文件布局 3、筛选 6、资源 5）。该切片交付时日期时间、--compression-level、--where/--partition/--exclude-data-types 均保持门禁；后续切片的状态变化以任务地图和现行支持矩阵为准。带任一活动选项的单表 CSV 离开冻结 v5 路径并使用对应泛化版本；无选项单表保持字节级不变。
 
-EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v1）已启用并实现。CUT 启用 --cut、--trail-delimiter、--remove-newline（高风险）及与 CSV 共享的转义字符/行分隔符/空串/编码/修剪（FORMAT_IN CSV,CUT）；SQL 启用 --sql 及行分隔符/文件编码（FORMAT_IN CSV,CUT,SQL），共享文本之外的 CSV 专属与筛选/资源参数在 CUT/SQL 能力下按 UNKNOWN_PARAMETER 失败关闭。服务端归一化按格式校验 CsvOptions/CutOptions 越界（422），DDL_AND_DATA 固定 CSV、DDL_ONLY 不得声明数据格式、POS 未定版保持 VALIDATION_GATED。前端向导新增格式单选与 CUT 高级配置面板，按格式收敛请求体。契约测试覆盖正例、互斥、边界与 ORACLE 负例；生成器格式单选在元数据误配置时仍失败关闭。
+EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v1）已启用并实现。CUT 启用 --cut、--trail-delimiter、--remove-newline（高风险）及与 CSV 共享的转义字符/行分隔符/空串/编码/修剪（FORMAT_IN CSV,CUT）；SQL 启用 --sql 及行分隔符/文件编码（FORMAT_IN CSV,CUT,SQL），共享文本之外的 CSV 专属与筛选/资源参数在 CUT/SQL 能力下按 UNKNOWN_PARAMETER 失败关闭。服务端归一化按格式校验 CsvOptions/CutOptions 越界（422），DDL_AND_DATA 固定 CSV、DDL_ONLY 不得声明数据格式；POS 已按独立 `--pos` + `--ctl-path` 定版，自动生成控制文件仍保持后续门控。前端向导新增格式单选与 CUT 高级配置面板，按格式收敛请求体。契约测试覆盖正例、互斥、边界与 ORACLE 负例；生成器格式单选在元数据误配置时仍失败关闭。
 
 ### 9.3 测试约束
 
@@ -853,6 +870,20 @@ EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v
 - 预检查测试使用模拟 Agent 回执，不连接实际端点
 - 安全测试覆盖全部秘密路径（响应/日志/快照/错误消息）
 - 跨平台路径测试覆盖 Windows（盘符 + UNC）和 Linux 绝对路径
+
+### 9.4 事实源分工与重复审计
+
+同一规则在不同层出现时，必须是“输入提示 + 服务端复验”或“事实投影 + 展示”，不能形成可独立改变发布行为的第二实现。当前分工如下：
+
+| 事实面 | 唯一权威 | 允许的下游副本 | 不允许的行为 |
+|---|---|---|---|
+| 官方参数与格式适用性 | `internal/parammeta/resources/` v5～v7 | 前端字段显示、领域适配器和文档引用 | 在 Vue、handler 或测试夹具中另造默认能力矩阵 |
+| 导出范围/内容/格式组合 | `internal/exportdomain/selection.go`、`internal/exportdomain/storage.go` 与服务端归一化 | 前端即时校验可提前提示同一错误 | 仅依赖浏览器校验创建草稿或任务 |
+| 配置快照与提交事实 | `internal/store` 的 `ExportConfig`、`SubmissionSnapshot` 和任务表 | API/OpenAPI 只做白名单投影 | 用草稿表单状态推断已冻结任务 |
+| 执行命令 | `internal/commandgen` 与泛化字段适配器 | 预览和执行共用脱敏/执行形态摘要 | 前端或 handler 拼接另一份 Shell 字符串 |
+| 预检查与安全上下文 | 控制面 + Agent 协议/租约 | 页面只展示状态和稳定摘要 | Agent 决定产品参数、页面绕过预检查或提交门禁 |
+| 任务状态与结果证据 | 控制面 `store` 事件投影 | API/页面只展示授权投影 | 以 Agent 自报状态、父进程退出码或包装脚本单独判成功 |
+| 产品、技术和验证说明 | 本目录列出的五份 Canonical 文档 | `docs/README.md` 提供索引；历史文件只保留短指针 | 以归档计划、旧字段矩阵或 HANDOFF 快照覆盖当前结论 |
 
 ---
 

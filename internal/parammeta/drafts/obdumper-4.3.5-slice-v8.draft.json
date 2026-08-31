@@ -1,0 +1,153 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v8",
+  "draftStatus": "CONTRACT_ONLY_DO_NOT_LOAD",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "inherits": "obdumper-4.3.5-slice-v7.json",
+  "revisionReason": "2026-08-22 Export V1 wizard and parameter-layering rebaseline. Ordinary task creation exposes CSV, CUT and SQL only; query-sql becomes a NORMAL advanced filter without CAP_SENSITIVE_COMMAND or submit confirmation; retain-empty-files applies to CSV/CUT/SQL data content; connection/session values remain derived. Published v5-v7 resources and historical tasks remain immutable.",
+  "sourceDocuments": [
+    "docs/01-product/decisions.md#dec-046-export-v1-六步向导与参数分层定版",
+    "docs/02-design/export-module.md",
+    "docs/03-technical/export-general-contract.md",
+    "docs/03-technical/parameter-command-contract.md",
+    "docs/02-design/export-controlled-validation.md"
+  ],
+  "categoryOrder": [
+    "CONNECTION",
+    "DATABASE_CONNECTION",
+    "OBJECT_SCOPE",
+    "CONTENT_FORMAT",
+    "FORMAT_SERIALIZATION",
+    "OUTPUT_FILE",
+    "DATA_FILTER",
+    "PERFORMANCE",
+    "COMPRESSION"
+  ],
+  "presentationPolicy": {
+    "wizardSteps": ["SOURCE", "CONTENT", "OBJECT", "FORMAT", "OUTPUT", "REVIEW"],
+    "ordinaryCreateFormats": ["CSV", "CUT", "SQL"],
+    "advancedContainer": "ONE_INLINE_ACCORDION_PER_APPLICABLE_STEP",
+    "sourceAdvancedContainer": "NONE",
+    "reviewEditable": false,
+    "unsupportedCompatibilityPresentation": "VISIBLE_DISABLED_WITH_REASON",
+    "desktopWidths": [1280, 1440, 1920],
+    "categoryStepMapping": {
+      "CONNECTION": "SOURCE_DERIVED_READ_ONLY",
+      "DATABASE_CONNECTION": "SOURCE_DERIVED_READ_ONLY",
+      "OBJECT_SCOPE": "OBJECT_COMMON",
+      "CONTENT_FORMAT_DDL": "CONTENT_COMMON_OR_ADVANCED",
+      "CONTENT_FORMAT_DATA": "FORMAT_COMMON",
+      "FORMAT_SERIALIZATION": "FORMAT_COMMON_OR_ADVANCED",
+      "DATA_FILTER": "OBJECT_ADVANCED",
+      "OUTPUT_FILE": "OUTPUT_COMMON_OR_ADVANCED",
+      "PERFORMANCE": "OUTPUT_ADVANCED",
+      "COMPRESSION": "FORMAT_ADVANCED"
+    }
+  },
+  "compatibilityPolicy": {
+    "mysqlAndOracleUnsupportedOptionsRemainVisible": true,
+    "unknownVersionOrPrivilegeState": "VALIDATION_GATED",
+    "viewDataSupported": false,
+    "querySqlFileReferenceSupported": false
+  },
+  "overrides": [
+    {
+      "definitionId": "obdumper.format.csv",
+      "supportState": "ENABLED",
+      "appendEvidence": ["DEC-046"]
+    },
+    {
+      "definitionId": "obdumper.format.cut",
+      "supportState": "ENABLED",
+      "appendEvidence": ["DEC-046"]
+    },
+    {
+      "definitionId": "obdumper.format.sql",
+      "supportState": "ENABLED",
+      "appendEvidence": ["DEC-046"]
+    },
+    {
+      "definitionId": "obdumper.format.pos",
+      "supportState": "LEGACY_READ_ONLY",
+      "appendEvidence": ["DEC-046 ordinary create surface"]
+    },
+    {
+      "definitionId": "obdumper.format.parquet",
+      "supportState": "LEGACY_READ_ONLY",
+      "appendEvidence": ["DEC-046 ordinary create surface"]
+    },
+    {
+      "definitionId": "obdumper.format.orc",
+      "supportState": "LEGACY_READ_ONLY",
+      "appendEvidence": ["DEC-046 ordinary create surface"]
+    },
+    {
+      "definitionId": "obdumper.format.avro",
+      "supportState": "LEGACY_READ_ONLY",
+      "appendEvidence": ["DEC-046 ordinary create surface"]
+    },
+    {
+      "definitionId": "obdumper.filter.query_sql",
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "MEDIUM",
+      "confirmationRule": "NONE",
+      "conflictsWith": [
+        "--where",
+        "--partition",
+        "--flashback-scn",
+        "--flashback-timestamp"
+      ],
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1"
+      ],
+      "appendEvidence": ["DEC-046", "OBDUMPER 4.3.5 options"]
+    },
+    {
+      "definitionId": "obdumper.output.retain_empty_files",
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1"
+      ],
+      "appendEvidence": ["DEC-046", "OBDUMPER 4.3.5 options"]
+    }
+  ],
+  "derivedOnlyParameters": [
+    {
+      "longName": "--character-set",
+      "sourcePolicy": "DATA_SOURCE_OR_NODE",
+      "taskEditable": false
+    },
+    {
+      "longName": "--logical-database",
+      "sourcePolicy": "DATA_SOURCE",
+      "taskEditable": false
+    },
+    {
+      "longName": "--session-config",
+      "sourcePolicy": "NODE_OR_SECURITY",
+      "taskEditable": false
+    }
+  ],
+  "requiresRuntimeChanges": [
+    "Publish a schema-valid immutable v8 resource only after loader and catalog tests accept the new presentation/source policies.",
+    "Move the wizard order to SOURCE-CONTENT-OBJECT-FORMAT-OUTPUT-REVIEW and replace flat object controls with a searchable multi-select.",
+    "Remove query-sql sensitive capability, risk fingerprint and submit-confirmation dependencies while preserving ordinary authorization and validation.",
+    "Restrict ordinary creation to CSV/CUT/SQL without breaking v5-v7 draft, template and task reads.",
+    "Apply retain-empty-files to CSV/CUT/SQL data content and verify CSV header interaction.",
+    "Add 1280/1440/1920 layout and interaction regression coverage."
+  ],
+  "additions": []
+}

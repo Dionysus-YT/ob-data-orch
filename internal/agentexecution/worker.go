@@ -35,6 +35,7 @@ type Protocol interface {
 	ClaimNextExecution(context.Context, agentwire.ExecutionClaimNext) (agentwire.ExecutionGrant, bool, error)
 	AcknowledgeExecutionLease(context.Context, agentwire.ExecutionLeaseAcknowledgement) error
 	RenewExecutionLease(context.Context, agentwire.ExecutionLeaseRenewal) error
+	PollExecutionControl(context.Context, agentwire.ExecutionControlPoll) (agentwire.ExecutionControl, error)
 	ResolveExecutionDatabaseConnection(context.Context, agentwire.ExecutionSecretSlotRequest) (agentwire.DatabaseConnectionSlot, error)
 	AppendExecutionEvent(context.Context, agentwire.ExecutionEvent) error
 	AppendExecutionLog(context.Context, agentwire.ExecutionLogBatch) error
@@ -122,8 +123,23 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	if !validGrant(grant) || !w.now().Before(grant.ExpiresAt) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
+	actualArgvDigest, err := agentwire.ArgvDigest(grant.Argv)
+	if err != nil {
+		_ = w.appendStartRejected(ctx, grant)
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+	}
 	if err := w.Protocol.AcknowledgeExecutionLease(ctx, agentwire.ExecutionLeaseAcknowledgement{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()}); err != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
+	}
+	control, err := w.Protocol.PollExecutionControl(ctx, agentwire.ExecutionControlPoll{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
+	if err != nil {
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
+	}
+	if control.CancelRequested {
+		if err := w.appendEvent(ctx, grant, 3, "PROCESS_CANCELLED", map[string]any{"noProcess": true, "terminationCode": "NOT_STARTED", "treeObserved": true}); err != nil {
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
+		}
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, nil
 	}
 	executionPaths, ok := executionPathsFromArgv(w.Runtime.TargetPlatform, grant.Argv)
 	if !ok || (!executionPaths.StorageOutput && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots)) ||
@@ -204,19 +220,57 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	// 进程已经启动后，必须先等待其退出再清理任务级安全文件；即使事件网络上报失败也不能提前删除仍被 Java 使用的文件。
-	startedErr := w.appendEvent(ctx, grant, 3, "PROCESS_STARTED", map[string]any{"pid": process.Identity().PID, "startedAt": process.Identity().StartedAt.Format(time.RFC3339Nano), "executableDigest": process.Identity().ExecutableDigest, "bootId": process.Identity().BootID})
-	exited, exitCode, waitErr := w.waitWithLeaseRenewal(ctx, grant, process)
+	startedErr := w.appendEvent(ctx, grant, 3, "PROCESS_STARTED", map[string]any{"pid": process.Identity().PID, "startedAt": process.Identity().StartedAt.Format(time.RFC3339Nano), "executableDigest": process.Identity().ExecutableDigest, "bootId": process.Identity().BootID, "argvDigest": actualArgvDigest})
+	exited, exitCode, waitErr, cancelRequested, treeObserved := w.waitWithLeaseRenewal(ctx, grant, process)
 	if startedErr != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, startedErr
 	}
 	if !exited {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionFailed
 	}
-	if err := w.appendEvent(ctx, grant, 4, "PROCESS_EXITED", map[string]any{"exitCode": exitCode}); err != nil {
+	nextSequence := int64(4)
+	if cancelRequested {
+		terminationCode := "CANCEL_FAILED"
+		if treeObserved {
+			terminationCode = "PROCESS_TREE_TERMINATED"
+		}
+		if err := w.appendEvent(ctx, grant, nextSequence, "PROCESS_CANCELLED", map[string]any{"noProcess": false, "terminationCode": terminationCode, "treeObserved": treeObserved}); err != nil {
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
+		}
+		nextSequence++
+	}
+	if err := w.appendEvent(ctx, grant, nextSequence, "PROCESS_EXITED", map[string]any{"exitCode": exitCode}); err != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 	}
+	nextSequence++
+	if cancelRequested {
+		if err := w.appendEvent(ctx, grant, nextSequence, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED", "errorCode": agentwire.ExecutionErrorCancelledByRequest}); err != nil {
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
+		}
+		nextSequence++
+		fileCount, totalBytes, files, _ := executionOutputFacts(executionPaths, localOutputPath)
+		fileEvidence := make([]map[string]any, 0, len(files))
+		for _, file := range files {
+			fileEvidence = append(fileEvidence, map[string]any{"path": file.Path, "size": file.Size})
+		}
+		checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
+		if err := w.appendEvent(ctx, grant, nextSequence, "RESULT_FACTS_OBSERVED", map[string]any{
+			"result": "FAILED", "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
+			"checkpointPresent": checkpoint, "errorCode": agentwire.ExecutionErrorCancelledByRequest,
+		}); err != nil {
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
+		}
+		if !treeObserved {
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
+		}
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, nil
+	}
 	if waitErr != nil || exitCode != 0 {
-		if err := w.appendEvent(ctx, grant, 5, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED"}); err != nil {
+		errorCode := agentwire.ExecutionErrorProcessExitNonZero
+		if waitErr != nil {
+			errorCode = agentwire.ExecutionErrorProcessWaitFailed
+		}
+		if err := w.appendEvent(ctx, grant, 5, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED", "errorCode": errorCode}); err != nil {
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 		}
 		// EX-I8：失败路径同样上报结果事实与 dump.ckpt 存在性（作为失败终态后的迟到事实，
@@ -229,7 +283,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
 		if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", map[string]any{
 			"result": "FAILED", "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
-			"checkpointPresent": checkpoint,
+			"checkpointPresent": checkpoint, "errorCode": errorCode,
 		}); err != nil {
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
 		}
@@ -251,17 +305,21 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	// 结果事实事件会触发任务终态转换与租约释放，检查点事实必须随它一起到达；
 	// 失败任务的检查点继续资格由控制面依据该事实与冻结快照共同判定。
 	checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
-	if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", map[string]any{
+	resultEvidence := map[string]any{
 		"result": result, "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
 		"checkpointPresent": checkpoint,
-	}); err != nil {
+	}
+	if result == "FAILED" {
+		resultEvidence["errorCode"] = agentwire.ExecutionErrorResultVerification
+	}
+	if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", resultEvidence); err != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 	}
 	return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, Succeeded: result == "VERIFIED", FileCount: fileCount, TotalBytes: totalBytes, CheckpointPresent: checkpoint}, true, nil
 }
 
 func (w *Worker) appendStartRejected(ctx context.Context, grant agentwire.ExecutionGrant) error {
-	return w.appendEvent(ctx, grant, 3, "START_REJECTED", map[string]any{"noProcess": true})
+	return w.appendEvent(ctx, grant, 3, "START_REJECTED", map[string]any{"noProcess": true, "errorCode": agentwire.ExecutionErrorStartRejected})
 }
 
 func (w *Worker) appendEvent(ctx context.Context, grant agentwire.ExecutionGrant, sequence int64, eventType string, evidence map[string]any) error {
@@ -274,7 +332,7 @@ func (w *Worker) appendEvent(ctx context.Context, grant agentwire.ExecutionGrant
 
 // waitWithLeaseRenewal 在受控进程存活期间定期续期，避免长导出因初始短租约到期而失去结果归属。
 // 续期失败会在下一周期重试；无论网络状态如何都先回收已启动进程，防止清理安全材料时破坏运行中的 Java。
-func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.ExecutionGrant, process *agentexec.DirectJavaProcess) (bool, int, error) {
+func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.ExecutionGrant, process *agentexec.DirectJavaProcess) (bool, int, error, bool, bool) {
 	type waitResult struct {
 		exited bool
 		code   int
@@ -285,14 +343,30 @@ func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.Execu
 		exited, code, err := process.Wait()
 		completed <- waitResult{exited: exited, code: code, err: err}
 	}()
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	renewTicker := time.NewTicker(30 * time.Second)
+	defer renewTicker.Stop()
+	pollTicker := time.NewTicker(2 * time.Second)
+	defer pollTicker.Stop()
+	cancelRequested := false
+	treeObserved := false
 	for {
 		select {
 		case result := <-completed:
-			return result.exited, result.code, result.err
-		case <-ticker.C:
+			return result.exited, result.code, result.err, cancelRequested, treeObserved
+		case <-renewTicker.C:
 			_ = w.Protocol.RenewExecutionLease(ctx, agentwire.ExecutionLeaseRenewal{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
+		case <-pollTicker.C:
+			if cancelRequested {
+				continue
+			}
+			control, err := w.Protocol.PollExecutionControl(ctx, agentwire.ExecutionControlPoll{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
+			if err != nil || !control.CancelRequested {
+				continue
+			}
+			cancelRequested = true
+			if process.Cancel() == nil {
+				treeObserved = true
+			}
 		case <-ctx.Done():
 			// exec.CommandContext 已绑定同一上下文；仍继续等待，直到子进程已被回收。
 			ctx = context.Background()

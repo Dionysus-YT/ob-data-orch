@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -880,6 +881,25 @@ func TestSubmitTaskIsImmutableAllowsEqualFingerprintAndRollsBackAuditFailure(t *
 	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events", 3)
 }
 
+func TestSubmitTaskWritesOrdinaryTaskAuditForQuerySQL(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	input := validTaskSubmission("task-query-sql")
+	input.RequestID = "request-query-sql"
+	if err := store.SubmitTask(ctx, input); err != nil {
+		t.Fatalf("SubmitTask(query-sql): %v", err)
+	}
+	var action, result string
+	if err := store.db.QueryRowContext(ctx, `SELECT action, result FROM audit_events WHERE audit_event_id = ?`, auditID(input.TaskID, input.RequestID)).Scan(&action, &result); err != nil {
+		t.Fatalf("读取普通任务审计失败: %v", err)
+	}
+	if action != "TASK_SUBMITTED" || result != "SUCCEEDED" {
+		t.Fatalf("普通任务审计投影不符合契约: action=%q result=%q", action, result)
+	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM tasks", 1)
+}
+
 func TestSubmitTaskIdempotentDoesNotCreateSecondTask(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)
@@ -961,6 +981,89 @@ func TestGetTaskSummaryExcludesFrozenSensitiveFields(t *testing.T) {
 	summary, err := store.GetTaskSummary(context.Background(), "task-summary")
 	if err != nil || summary.State != "WAITING_SCHEDULE" || summary.PlannedCommandRedacted == "" || summary.ExecutionID != "" {
 		t.Fatalf("GetTaskSummary() = %#v, %v", summary, err)
+	}
+}
+
+func TestTaskCancellationQueuedIsIdempotentAndScoped(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-cancel-queued")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	digest := sha256.Sum256([]byte("CANCEL_EXPORT_TASK|task-cancel-queued"))
+	request := TaskCancellationRequest{
+		TaskID: "task-cancel-queued", SubjectID: "subject-1", RequestID: "cancel-request-1", IdempotencyKey: "cancel-key-0000001",
+		RequestDigest: hex.EncodeToString(digest[:]), ExecutionID: "execution-cancel-queued", Now: testTime, Deadline: testTime.Add(30 * time.Second),
+	}
+	result, err := store.RequestTaskCancellation(ctx, request)
+	if err != nil || result.State != "CANCELLED" || result.CancelRequested || result.Replayed {
+		t.Fatalf("RequestTaskCancellation() = %#v, %v", result, err)
+	}
+	replay, err := store.RequestTaskCancellation(ctx, request)
+	if err != nil || !replay.Replayed || replay.State != "CANCELLED" {
+		t.Fatalf("RequestTaskCancellation(replay) = %#v, %v", replay, err)
+	}
+	conflict := request
+	conflict.RequestDigest = strings.Repeat("b", 64)
+	if _, err := store.RequestTaskCancellation(ctx, conflict); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("RequestTaskCancellation(conflict) error = %v", err)
+	}
+	summary, err := store.GetAuthorizedTaskSummary(ctx, request.TaskID, request.SubjectID)
+	if err != nil || summary.State != "CANCELLED" || summary.ProcessEvidence == nil || summary.ProcessEvidence.ErrorCode != ExecutionErrorCancelledByRequest {
+		t.Fatalf("cancelled task summary = %#v, %v", summary, err)
+	}
+}
+
+func TestTaskCancellationActiveReturnsControlWithinLease(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-cancel-running")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	claim := validClaim("execution-cancel-running", "lease-cancel-running", "event-cancel-running", "request-cancel-running")
+	claim.TaskID = "task-cancel-running"
+	if err := store.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask(): %v", err)
+	}
+	digest := sha256.Sum256([]byte("CANCEL_EXPORT_TASK|task-cancel-running"))
+	request := TaskCancellationRequest{TaskID: claim.TaskID, SubjectID: "subject-1", RequestID: "cancel-request-running", IdempotencyKey: "cancel-key-running", RequestDigest: hex.EncodeToString(digest[:]), ExecutionID: claim.ExecutionID, Now: testTime, Deadline: testTime.Add(time.Minute)}
+	result, err := store.RequestTaskCancellation(ctx, request)
+	if err != nil || result.State != "CANCELLING" || !result.CancelRequested {
+		t.Fatalf("RequestTaskCancellation(running) = %#v, %v", result, err)
+	}
+	var plannedArgv []string
+	if err := json.Unmarshal([]byte(validTaskSubmission(claim.TaskID).PlannedArgvJSON), &plannedArgv); err != nil {
+		t.Fatalf("解析合成任务参数失败: %v", err)
+	}
+	envelopeDigest, err := executionEnvelopeDigest(claim.TaskID, claim.NodeID, testFingerprint, "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", plannedArgv)
+	if err != nil {
+		t.Fatalf("计算冻结信封摘要失败: %v", err)
+	}
+	control, err := store.PollExecutionControl(ctx, ExecutionControlPoll{AgentID: claim.AgentID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch, EnvelopeDigest: envelopeDigest, Now: testTime.Add(time.Second)})
+	if err != nil || !control.CancelRequested || control.CancellationRequestID != request.RequestID {
+		t.Fatalf("PollExecutionControl() = %#v, %v", control, err)
+	}
+	wrongDigest := control
+	wrongDigest, err = store.PollExecutionControl(ctx, ExecutionControlPoll{AgentID: claim.AgentID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch, EnvelopeDigest: strings.Repeat("b", 64), Now: testTime.Add(2 * time.Second)})
+	if err == nil || !errors.Is(err, ErrEventRejected) || wrongDigest.CancelRequested {
+		t.Fatalf("PollExecutionControl(wrong digest) = %#v, %v", wrongDigest, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_executions SET cancellation_deadline = ? WHERE execution_id = ?`, utcText(testTime.Add(-time.Second)), claim.ExecutionID); err != nil {
+		t.Fatalf("设置取消期限失败: %v", err)
+	}
+	expired, err := store.PollExecutionControl(ctx, ExecutionControlPoll{AgentID: claim.AgentID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch, EnvelopeDigest: envelopeDigest, Now: testTime.Add(2 * time.Minute)})
+	if err != nil || expired.CancelRequested {
+		t.Fatalf("PollExecutionControl(expired) = %#v, %v", expired, err)
+	}
+	var state string
+	var reconciliation int
+	if err := store.db.QueryRowContext(ctx, `SELECT state, reconciliation_required FROM task_executions WHERE execution_id = ?`, claim.ExecutionID).Scan(&state, &reconciliation); err != nil {
+		t.Fatalf("读取取消超时终态失败: %v", err)
+	}
+	if state != "FAILED" || reconciliation != 1 {
+		t.Fatalf("取消超时终态 = %q/%d, want FAILED/1", state, reconciliation)
 	}
 }
 
@@ -2613,7 +2716,9 @@ func TestExecutionResultSummaryMerge(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)
 	ctx := context.Background()
-	if err := store.SubmitTask(ctx, validTaskSubmission("task-result")); err != nil {
+	submission := validTaskSubmission("task-result")
+	submission.SnapshotJSON = `{"filePath":"/E:/tmp/output"}`
+	if err := store.SubmitTask(ctx, submission); err != nil {
 		t.Fatalf("SubmitTask(): %v", err)
 	}
 	claim := validClaim("execution-result", "lease-result", "event-result-claim", "request-result-claim")
@@ -2631,7 +2736,15 @@ func TestExecutionResultSummaryMerge(t *testing.T) {
 		}
 	}
 	appendEvent(2, "event-result-ack", "LEASE_ACKNOWLEDGED", `{}`)
-	appendEvent(3, "event-result-started", "PROCESS_STARTED", `{"pid":42,"startedAt":"2026-07-27T01:00:00Z","executableDigest":"`+strings.Repeat("a", 64)+`","bootId":"boot-1"}`)
+	var plannedArgv []string
+	if err := json.Unmarshal([]byte(submission.PlannedArgvJSON), &plannedArgv); err != nil {
+		t.Fatalf("decode planned argv: %v", err)
+	}
+	argvDigest, err := executionArgvDigest(plannedArgv)
+	if err != nil {
+		t.Fatalf("digest planned argv: %v", err)
+	}
+	appendEvent(3, "event-result-started", "PROCESS_STARTED", `{"pid":42,"startedAt":"2026-07-27T01:00:00Z","executableDigest":"`+strings.Repeat("a", 64)+`","bootId":"boot-1","argvDigest":"`+argvDigest+`"}`)
 	appendEvent(4, "event-result-exited", "PROCESS_EXITED", `{"exitCode":0}`)
 	appendEvent(5, "event-result-terminal", "TOOL_TERMINAL_OBSERVED", `{"terminal":"SUCCEEDED"}`)
 	appendEvent(6, "event-result-facts", "RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":2,"totalBytes":120,"files":[{"path":"data_1.csv","size":100},{"path":"data_2.csv","size":20}],"checkpointPresent":true}`)
@@ -2647,6 +2760,49 @@ func TestExecutionResultSummaryMerge(t *testing.T) {
 	}
 	if summary.ResultSummary.Files[0].Path != "data_1.csv" || summary.ResultSummary.Files[0].Size != 100 {
 		t.Fatalf("结果文件清单 = %#v", summary.ResultSummary.Files)
+	}
+	if summary.ProcessEvidence == nil || summary.ProcessEvidence.ExitCode == nil || *summary.ProcessEvidence.ExitCode != 0 || summary.ProcessEvidence.PlannedActualMatch != "MATCHED" {
+		t.Fatalf("进程证据 = %#v", summary.ProcessEvidence)
+	}
+	if summary.OutputLocation == nil || summary.OutputLocation.Redaction != "FULL" || summary.OutputLocation.Value != "/E:/tmp/output" {
+		t.Fatalf("输出位置投影 = %#v", summary.OutputLocation)
+	}
+}
+
+// TestExecutionPlannedActualMismatchFailsClosed 验证 Agent 传入 argv 摘要与冻结计划不一致时，
+// 控制面不投影成功终态，并保留待核对标记与无秘密一致性证据。
+func TestExecutionPlannedActualMismatchFailsClosed(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	ctx := context.Background()
+	if err := store.SubmitTask(ctx, validTaskSubmission("task-mismatch")); err != nil {
+		t.Fatalf("SubmitTask(): %v", err)
+	}
+	claim := validClaim("execution-mismatch", "lease-mismatch", "event-mismatch-claim", "request-mismatch-claim")
+	claim.TaskID = "task-mismatch"
+	if err := store.ClaimTask(ctx, claim); err != nil {
+		t.Fatalf("ClaimTask(): %v", err)
+	}
+	appendEvent := func(seq int64, eventID, eventType, payload string) {
+		t.Helper()
+		if _, err := store.AppendAuthenticatedExecutionEvent(ctx, "agent-1", ExecutionEvent{
+			EventID: eventID, ExecutionID: claim.ExecutionID, LeaseID: claim.LeaseID, LeaseEpoch: claim.LeaseEpoch,
+			EventSeq: seq, EventType: eventType, PayloadJSON: payload, ReceivedAt: testTime.Add(4 * time.Minute).Add(time.Duration(seq) * time.Second),
+		}); err != nil {
+			t.Fatalf("append %s: %v", eventType, err)
+		}
+	}
+	appendEvent(2, "event-mismatch-ack", "LEASE_ACKNOWLEDGED", `{}`)
+	appendEvent(3, "event-mismatch-started", "PROCESS_STARTED", `{"pid":42,"startedAt":"2026-07-27T01:00:00Z","executableDigest":"`+strings.Repeat("a", 64)+`","bootId":"boot-1","argvDigest":"`+strings.Repeat("b", 64)+`"}`)
+	appendEvent(4, "event-mismatch-exited", "PROCESS_EXITED", `{"exitCode":0}`)
+	appendEvent(5, "event-mismatch-terminal", "TOOL_TERMINAL_OBSERVED", `{"terminal":"SUCCEEDED"}`)
+	appendEvent(6, "event-mismatch-result", "RESULT_FACTS_OBSERVED", `{"result":"VERIFIED","fileCount":1,"totalBytes":10,"files":[{"path":"data.csv","size":10}],"checkpointPresent":false}`)
+	summary, err := store.GetAuthorizedTaskSummary(ctx, "task-mismatch", "subject-1")
+	if err != nil {
+		t.Fatalf("GetAuthorizedTaskSummary(): %v", err)
+	}
+	if summary.State != "FAILED" || !summary.ReconciliationRequired || summary.ProcessEvidence == nil || summary.ProcessEvidence.PlannedActualMatch != "MISMATCHED" {
+		t.Fatalf("planned/actual mismatch projection = %#v", summary)
 	}
 }
 

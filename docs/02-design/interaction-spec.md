@@ -5,7 +5,7 @@
 > 更新日期：2026-08-13
 > 关联低保真：[核心流程低保真基线](core-flow-low-fidelity.md)、[普通导入低保真基线](normal-import-low-fidelity.md)、[旁路导入低保真基线](direct-load-low-fidelity.md)、[任务中心全状态低保真基线](task-center-low-fidelity.md)、[模板中心复用链路低保真基线](template-center-low-fidelity.md)、[权限与安全高风险操作低保真基线](access-control-security-low-fidelity.md)
 
-> 视觉 Foundations、公共组件和桌面页面模式以 [Design System v0.1](design-system-v0.1.md) 为准；本文继续维护跨模块业务交互语义，不复制第二份视觉 Token 事实。
+> 视觉 Foundations、Product Shell、公共组件和页面模式以 [前端设计基线：Operator Signal](frontend-design-baseline.md) 为准；[Design System v0.1](design-system-v0.1.md) 只保留历史实现事实。本文继续维护跨模块业务交互语义，不复制第二份视觉 Token 事实。
 
 ## 1. 向导导航
 

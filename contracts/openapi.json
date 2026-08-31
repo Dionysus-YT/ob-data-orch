@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "OB Data Orch first vertical slice API",
+    "title": "OB Data Orch Export v1 API",
     "version": "0.1.0-dev02",
-    "description": "Structural and security-boundary contract for the private ODP, single-table CSV export slice. It does not make real execution available."
+    "description": "Structural and security-boundary contract for the private ODP and versioned OBDUMPER export slices. It does not make real execution available."
   },
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "x-development-gate": "G2_CONTRACT_ONLY",
@@ -117,7 +117,7 @@
     },
     "/api/v1/export-drafts/{draftId}:submit": {
       "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
-      "post": { "operationId": "submitExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT", "description": "Windows 本机 MVP：仅当冻结草稿绑定的预检查仍完整成功时创建任务。提交本身不接收命令、路径或密码；关联 Agent 领取后才会按固定 OBDUMPER_EXPORT 信封启动工具。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "submitExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT", "description": "Windows 本机 MVP：仅当冻结草稿绑定的预检查仍完整成功时创建任务。目标契约只要求预检查标识；query-sql 使用普通任务授权，不要求敏感 capability、风险指纹或提交级二次确认。过渡期保留旧确认字段的 schema 解析兼容，但它不得成为新 query-sql 的提交条件。请求不接收命令、路径或密码；关联 Agent 领取后才会按固定 OBDUMPER_EXPORT 信封启动工具。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportTaskSubmit" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks": {
       "get": { "operationId": "listTasks", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体创建或通过 TASK_OPERATE_BY_DATA_SOURCE 明确授权的已提交任务。limit 只允许 10、20 或 50，默认 10；totalPages 仅按同一授权范围和当前 limit 派生，不返回全局任务总数。首个 F3 增量没有可靠阶段或百分比证据，因此明确返回 UNAVAILABLE；不返回配置、命令、日志、错误原文、凭据引用或创建者标识。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskPageSize" }], "responses": { "200": { "$ref": "#/components/responses/TaskList" }, "default": { "$ref": "#/components/responses/Error" } } }
@@ -128,7 +128,7 @@
     },
     "/api/v1/tasks/{taskId}/snapshot": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "当前单表 CSV 切片的最小冻结配置事实；不返回完整快照 JSON、凭据引用、输出路径或日志路径。", "responses": { "200": { "$ref": "#/components/responses/TaskSnapshotRead" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "已提交 OBDUMPER 导出任务的最小冻结配置事实；支持已实现格式与 DDL 组合的对象/范围摘要、格式、版本和指纹，不返回完整快照 JSON、凭据引用、输出路径或日志路径。", "responses": { "200": { "$ref": "#/components/responses/TaskSnapshotRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/command-evidence": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
@@ -137,6 +137,10 @@
     "/api/v1/tasks/{taskId}/execution": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
       "get": { "operationId": "getTaskExecution", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "只返回平台已确认的状态和时间事实。阶段、进度、原始执行事件与结果摘要未形成可靠安全投影前不得返回。", "responses": { "200": { "$ref": "#/components/responses/TaskExecutionRead" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}:cancel": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "post": { "operationId": "cancelTask", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT", "description": "提交当前任务的一次性有界取消意图。排队任务直接进入 CANCELLED；已领取任务由同一 Agent 轮询并终止受控进程树。请求不接收命令、路径、秘密或自由原因。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/TaskCancellation" }, "202": { "$ref": "#/components/responses/TaskCancellation" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/logs": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
@@ -190,6 +194,10 @@
     "/agent/v1/executions/{executionId}:renew-lease": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
       "post": { "operationId": "renewExecutionLease", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agent/v1/executions/{executionId}:poll-control": {
+      "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
+      "post": { "operationId": "pollExecutionControl", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "description": "返回同一执行租约绑定的固定取消意图；不返回浏览器请求原文、命令、路径或秘密。", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/executions/{executionId}/secret-slots:resolve": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionId" }],
@@ -276,6 +284,7 @@
       "DataSourceWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceWrite" } } } },
       "DataSourceConnectionTestRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestRequest" } } } },
       "ExportDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportDraftWrite" } } } },
+      "ExportTaskSubmit": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportTaskSubmit" } } } },
       "ExportConfigTemplateWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportConfigTemplateWrite" } } } },
       "ExportConfigTemplateRename": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportConfigTemplateRename" } } } },
       "LogDownload": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LogDownloadRequest" } } } },
@@ -306,6 +315,7 @@
       "TaskSnapshotRead": { "description": "Authorized minimum immutable task snapshot without raw JSON, paths or credential references.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskSnapshotReadEnvelope" } } } },
       "TaskCommandEvidenceRead": { "description": "Authorized password-redacted planned command evidence without executable argv or secret slots.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommandEvidenceReadEnvelope" } } } },
       "TaskExecutionRead": { "description": "Authorized confirmed execution state without raw process or result evidence payloads.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskExecutionReadEnvelope" } } } },
+      "TaskCancellation": { "description": "Authorized fixed cancellation request result; no command, path, secret or free-form reason is returned.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCancellationEnvelope" } } } },
       "Created": { "description": "Resource created.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MutationEnvelope" } } } },
       "Accepted": { "description": "Asynchronous precheck accepted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MutationEnvelope" } } } },
       "PrecheckRead": { "description": "Authorized fixed precheck state with six redacted result codes. A pending lease projects all checks as UNKNOWN and never implies success or real execution.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrecheckReadEnvelope" } } } },
@@ -523,6 +533,28 @@
           }
         ],
         "description": "v5 (default): private ODP, one explicit table, CSV and one node-local absolute output path. v6: generalized export config with object scope, format options and filter config."
+      },
+      "SensitiveCommandConfirmation": {
+        "type": "object",
+        "deprecated": true,
+        "additionalProperties": false,
+        "required": ["capability", "riskFingerprint", "confirmed"],
+        "properties": {
+          "capability": { "const": "CAP_SENSITIVE_COMMAND" },
+          "riskFingerprint": { "$ref": "#/components/schemas/SHA256Digest", "description": "服务端当前命令预览绑定的数据源、凭据修订、节点事实、输出目标和动作风险指纹；不得携带 query-sql 原文。" },
+          "confirmed": { "const": true }
+        },
+        "description": "历史迁移字段。2026-08-22 目标契约不再把 query-sql 归为敏感命令，也不再要求该确认；仅为旧客户端/快照 schema 兼容保留。"
+      },
+      "ExportTaskSubmit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["precheckId"],
+        "properties": {
+          "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sensitiveCommandConfirmation": { "$ref": "#/components/schemas/SensitiveCommandConfirmation", "deprecated": true, "description": "旧客户端兼容字段；不得作为 query-sql 提交条件。" }
+        },
+        "description": "导出提交只要求冻结预检查标识。query-sql 使用普通任务授权；旧敏感确认字段仅为迁移兼容保留。"
       },
       "ExportPrecheckRun": {
         "type": "object",
@@ -1072,7 +1104,7 @@
           "id": { "$ref": "#/components/schemas/OpaqueId" },
           "type": { "const": "OBDUMPER_EXPORT" },
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
-          "objectSummary": { "type": "string", "maxLength": 1025, "description": "从不可变单表导出快照提取的 database.table 摘要；不是完整配置。" },
+          "objectSummary": { "type": "string", "maxLength": 1025, "description": "从不可变导出快照提取的 database.table 或范围摘要；不是完整配置。" },
           "state": { "enum": ["WAITING_SCHEDULE", "STARTING", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"] },
           "stageEvidence": { "const": "UNAVAILABLE", "description": "当前增量没有可靠工具阶段映射，不得由状态或时间推断。" },
           "progressEvidence": { "const": "UNAVAILABLE", "description": "当前增量没有可靠总量与完成量，不返回百分比或 ETA。" },
@@ -1128,7 +1160,7 @@
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
           "precheckId": { "$ref": "#/components/schemas/OpaqueId" },
           "objectSummary": { "type": "string", "maxLength": 1025, "description": "从冻结快照提取的 database.table 或 scope 摘要；不含路径或完整配置。" },
-          "format": { "type": "string", "description": "CSV, CUT, SQL, DDL, or combined format identifier." },
+          "format": { "type": "string", "enum": ["CSV", "CUT", "SQL", "POS", "PARQUET", "ORC", "AVRO", "DDL", "DDL_CSV"], "description": "已实现数据格式与 DDL 组合标识。" },
           "configFingerprint": { "type": "string", "minLength": 1, "maxLength": 256 },
           "toolVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
           "metadataVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -1163,7 +1195,7 @@
       "TaskExecutionRead": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["state", "reconciliationRequired", "stageEvidence", "progressEvidence", "updatedAt"],
+        "required": ["state", "reconciliationRequired", "stageEvidence", "progressEvidence", "updatedAt", "cancelAvailable", "cancelRequested"],
         "properties": {
           "state": { "enum": ["WAITING_SCHEDULE", "STARTING", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"] },
           "executionId": { "$ref": "#/components/schemas/OpaqueId" },
@@ -1173,10 +1205,29 @@
           "startedAt": { "type": "string", "format": "date-time" },
           "finishedAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
+          "exitCode": { "type": "integer", "minimum": -1, "maximum": 255, "description": "受控 OBDUMPER 直接 Java 进程退出码；不可取得时缺省。" },
+          "elapsedMs": { "type": "integer", "minimum": 0, "description": "由可信开始/结束时间派生的耗时；时间不完整时缺省。" },
+          "errorCode": { "type": "string", "enum": ["START_REJECTED", "PROCESS_EXIT_NONZERO", "PROCESS_WAIT_FAILED", "TOOL_FAILED", "RESULT_VERIFICATION_FAILED", "EXECUTION_EVIDENCE_UNAVAILABLE", "CANCELLED_BY_REQUEST", "CANCEL_TIMEOUT", "CANCEL_FAILED"] },
+          "errorSummary": { "type": "string", "maxLength": 256, "description": "由固定错误码生成的稳定摘要，不包含原始日志或工具错误。" },
+          "cancelAvailable": { "type": "boolean", "description": "当前真实执行是否允许提交有界取消请求。" },
+          "cancelRequested": { "type": "boolean", "description": "当前执行是否已有取消意图。" },
+          "cancelDeadline": { "type": "string", "format": "date-time" },
+          "plannedActualMatch": { "type": "string", "enum": ["MATCHED", "MISMATCHED", "UNAVAILABLE"], "description": "冻结计划 argv 与 Agent 实际传入 argv 的摘要比较结果。" },
+          "outputLocation": { "$ref": "#/components/schemas/TaskOutputLocation" },
           "resultSummary": {
             "$ref": "#/components/schemas/ExecutionResultSummary",
             "description": "EX-I8：Agent 观察到的文件/字节/检查点事实摘要；任务未执行或未上报时缺省。只含相对路径与大小，不含内容、校验和或秘密。"
           }
+        }
+      },
+      "TaskOutputLocation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "redaction"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["LOCAL", "OSS", "S3", "COS", "OBS", "UNAVAILABLE"] },
+          "value": { "type": "string", "maxLength": 4096, "description": "仅创建者范围返回完整节点路径或受控存储 URI；其他授权读取者不返回该字段。" },
+          "redaction": { "type": "string", "enum": ["FULL", "KIND_ONLY", "UNAVAILABLE"] }
         }
       },
       "ExecutionResultSummary": {
@@ -1206,6 +1257,26 @@
         "additionalProperties": false,
         "required": ["requestId", "item"],
         "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskExecutionRead" } }
+      },
+      "TaskCancellation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["taskId", "state", "cancelRequested", "replayed"],
+        "properties": {
+          "taskId": { "$ref": "#/components/schemas/OpaqueId" },
+          "executionId": { "$ref": "#/components/schemas/OpaqueId" },
+          "state": { "type": "string", "enum": ["WAITING_SCHEDULE", "STARTING", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"] },
+          "cancellationRequestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "cancellationDeadline": { "type": "string", "format": "date-time" },
+          "cancelRequested": { "type": "boolean" },
+          "replayed": { "type": "boolean" }
+        }
+      },
+      "TaskCancellationEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "item"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskCancellation" } }
       },
       "MutationEnvelope": {
         "type": "object",
@@ -1563,10 +1634,10 @@
         "properties": {
           "objectScope": { "type": "object", "required": ["database", "scopeKind"], "properties": { "database": { "type": "string", "minLength": 1, "maxLength": 512, "description": "对象所在数据库（--database），全部与指定范围均必填；表达式 schema 前缀只允许缺省或与其一致。" }, "scopeKind": { "enum": ["ALL", "SPECIFIED"] }, "objectTypes": { "type": "array", "items": { "type": "string" } }, "expressions": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "schema": { "type": "string" }, "name": { "type": "string" }, "rawInput": { "type": "string", "description": "控制面生成规范值；浏览器提交的自由文本不会被持久化。" } } } }, "excludeTables": { "type": "array", "items": { "type": "string" } } } },
           "contentSelection": { "type": "object", "properties": { "contentKind": { "enum": ["DDL_ONLY", "DATA_ONLY", "DDL_AND_DATA"] } } },
-          "dataFormat": { "type": "object", "additionalProperties": false, "description": "数据格式单选；EX-I4 起运行时启用 CSV/CUT/SQL，POS 于 2026-08-07 受控实测定版后启用（必须搭配 controlFilePath）；EX-I5 起启用 PARQUET/ORC/AVRO（压缩与序列化选项不适用）；其余格式保持 VALIDATION_GATED，控制面对未启用格式失败关闭。", "properties": { "formatKind": { "enum": ["CSV", "CUT", "POS", "SQL", "PARQUET", "ORC", "AVRO"] }, "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }, "cutOptions": { "$ref": "#/components/schemas/CutOptions" }, "timestampFormats": { "type": "object", "additionalProperties": false, "description": "时间格式字段为可解码契约。当前浏览器仅向 MySQL 兼容模式的 CSV/CUT 数据导出提交 dateValueFormat 与 datetimeValueFormat；Oracle 与其余七个字段在兼容性验证完成前保持门禁。所有格式串仅允许 ASCII 空格与受限格式字符。", "properties": { "dateValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "datetimeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampTzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampLtzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsDateFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampTzFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" } } } } },
-          "outputConfig": { "type": "object", "properties": { "outputKind": { "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "输出目标类型；EX-I6 起接受 LOCAL 与受控对象存储（OSS/S3/COS/OBS），对象存储要求受控 URI（scheme/参数白名单，拒绝密钥参数，凭据走执行槽位）。" }, "filePath": { "type": "string" }, "logPath": { "type": "string" }, "skipCheckDir": { "type": "boolean" }, "noNestedDir": { "type": "boolean" }, "maxFileSize": { "type": "integer" }, "retainEmptyFiles": { "type": "boolean" }, "compress": { "type": "boolean", "description": "EX-I3 启用：是否压缩 CSV/CUT/POS/SQL 可读格式输出。" }, "compressionAlgo": { "type": "string", "enum": ["zstd", "zlib", "gzip", "snappy"], "description": "EX-I3 启用：压缩算法，默认 zstd。" }, "controlFilePath": { "type": "string", "description": "EX-I4 POS 控制文件目录（--ctl-path），仅 formatKind 为 POS 时必填且必须为节点绝对路径；其他格式携带即失败关闭。" }, "tmpPath": { "type": "string", "description": "EX-I6 对象存储 Multipart 本地临时分块目录（--tmp-path），必须是安全的节点本地路径形态。" } } },
+          "dataFormat": { "type": "object", "additionalProperties": false, "description": "数据格式单选。普通 V1 新建入口只允许 CSV/CUT/SQL；POS/PARQUET/ORC/AVRO 保留为历史任务解析和后续门控枚举，不得因页面收缩破坏旧快照。", "properties": { "formatKind": { "enum": ["CSV", "CUT", "POS", "SQL", "PARQUET", "ORC", "AVRO"], "description": "普通新建值：CSV、CUT、SQL；其余值仅用于历史或门控能力。" }, "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }, "cutOptions": { "$ref": "#/components/schemas/CutOptions" }, "timestampFormats": { "type": "object", "additionalProperties": false, "description": "时间格式字段为可解码契约。当前浏览器仅向 MySQL 兼容模式的 CSV/CUT 数据导出提交 dateValueFormat 与 datetimeValueFormat；Oracle 与其余七个字段在兼容性验证完成前保持门禁。所有格式串仅允许 ASCII 空格与受限格式字符。", "properties": { "dateValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "datetimeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampTzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampLtzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsDateFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampTzFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" } } } } },
+          "outputConfig": { "type": "object", "properties": { "outputKind": { "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "输出目标类型；普通 V1 以 LOCAL 为主流程，受控对象存储在真实证据完成前保持高级门控。对象存储要求受控 URI（scheme/参数白名单，拒绝密钥参数，凭据走执行槽位）。" }, "filePath": { "type": "string" }, "logPath": { "type": "string" }, "skipCheckDir": { "type": "boolean" }, "noNestedDir": { "type": "boolean" }, "maxFileSize": { "type": "integer" }, "retainEmptyFiles": { "type": "boolean", "description": "--retain-empty-files。对 CSV/CUT/SQL 的 DATA_ONLY 或 DDL_AND_DATA 活动，对 DDL_ONLY 不活动；不要求先配置 where/partition。CSV 与 skipHeader 同时决定空文件是否包含表头。" }, "compress": { "type": "boolean", "description": "普通 V1 对 CSV/CUT/SQL 提供压缩；历史 POS 能力继续按其元数据版本解析。" }, "compressionAlgo": { "type": "string", "enum": ["zstd", "zlib", "gzip", "snappy"], "description": "压缩算法，默认 zstd。" }, "controlFilePath": { "type": "string", "description": "历史 POS 控制文件目录（--ctl-path）；普通 V1 新建入口不提交该字段。" }, "tmpPath": { "type": "string", "description": "对象存储 Multipart 本地临时分块目录（--tmp-path），必须是安全的节点本地路径形态。" } } },
           "performanceConfig": { "type": "object", "properties": { "thread": { "type": "integer" }, "pageSize": { "type": "integer" }, "parallelMacro": { "type": "integer" }, "fetchSize": { "type": "integer" }, "jvmMemory": { "type": "string" }, "retry": { "type": "boolean" } } },
-          "filterConfig": { "type": "object", "properties": { "querySql": { "type": "string" }, "where": { "type": "string" }, "partition": { "type": "string" }, "includeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeDataTypes": { "type": "array", "items": { "type": "string" } }, "excludeVirtualColumns": { "type": "boolean" }, "enableHiddenPk": { "type": "boolean" }, "flashbackScn": { "type": "integer" }, "flashbackTimestamp": { "type": "string" }, "snapshot": { "type": "boolean" }, "weakRead": { "type": "boolean" } } },
+          "filterConfig": { "type": "object", "properties": { "querySql": { "type": "string", "description": "OBDUMPER --query-sql 直接文本。普通高级参数，不属于敏感命令；拒绝 file://，并与 where、partition、flashbackScn、flashbackTimestamp 互斥。" }, "where": { "type": "string" }, "partition": { "type": "string" }, "includeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeDataTypes": { "type": "array", "items": { "type": "string" } }, "excludeVirtualColumns": { "type": "boolean" }, "enableHiddenPk": { "type": "boolean" }, "flashbackScn": { "type": "integer" }, "flashbackTimestamp": { "type": "string" }, "snapshot": { "type": "boolean" }, "weakRead": { "type": "boolean" } } },
           "ddlBehavior": { "type": "object", "properties": { "dropObject": { "type": "boolean" }, "addExtraMessage": { "type": "boolean" }, "retainSchema": { "type": "boolean" }, "compactSchema": { "type": "boolean" }, "sequencePolicy": { "enum": ["RESTART", "PRESERVE"] } } }
         }
       },

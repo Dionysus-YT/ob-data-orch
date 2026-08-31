@@ -2,6 +2,8 @@ package agentwire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -51,6 +53,23 @@ type ExecutionLeaseRenewal struct {
 	SentAt         time.Time
 }
 
+// ExecutionControlPoll 只在当前 execution 租约内查询固定取消意图。
+type ExecutionControlPoll struct {
+	BootID         string
+	ExecutionID    string
+	LeaseID        string
+	LeaseEpoch     int64
+	EnvelopeDigest string
+	SentAt         time.Time
+}
+
+// ExecutionControl 是控制面返回的固定取消事实。
+type ExecutionControl struct {
+	CancelRequested       bool
+	CancellationRequestID string
+	CancellationDeadline  time.Time
+}
+
 // ExecutionSecretSlotRequest 只在已确认的 execution 租约内请求数据库连接槽位。
 type ExecutionSecretSlotRequest struct {
 	BootID         string
@@ -74,6 +93,29 @@ type ExecutionEvent struct {
 	EventType      string
 	Evidence       map[string]any
 	SentAt         time.Time
+}
+
+// 执行事件中的错误码是跨 Agent/控制面的固定枚举，不允许承载原始错误文本。
+const (
+	ExecutionErrorStartRejected      = "START_REJECTED"
+	ExecutionErrorProcessExitNonZero = "PROCESS_EXIT_NONZERO"
+	ExecutionErrorProcessWaitFailed  = "PROCESS_WAIT_FAILED"
+	ExecutionErrorToolFailed         = "TOOL_FAILED"
+	ExecutionErrorResultVerification = "RESULT_VERIFICATION_FAILED"
+	ExecutionErrorCancelledByRequest = "CANCELLED_BY_REQUEST"
+	ExecutionErrorCancelTimeout      = "CANCEL_TIMEOUT"
+	ExecutionErrorCancelFailed       = "CANCEL_FAILED"
+)
+
+// ArgvDigest 只对固定信封中的非秘密 argv 做稳定摘要，供 Agent 与控制面核对
+// planned/actual 关系；摘要不允许反向替代命令内容，也不进入普通日志。
+func ArgvDigest(argv []string) (string, error) {
+	raw, err := json.Marshal(argv)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // ExecutionLogBatch 是已经完成 Agent 第一层脱敏的单个日志批次。
@@ -126,6 +168,17 @@ type executionLeaseRequest struct {
 		LeaseEpoch     int64  `json:"leaseEpoch"`
 		EnvelopeDigest string `json:"envelopeDigest"`
 	} `json:"payload"`
+}
+
+type executionControlPayload struct {
+	ExecutionID           string `json:"executionId"`
+	LeaseID               string `json:"leaseId"`
+	LeaseEpoch            int64  `json:"leaseEpoch"`
+	EnvelopeDigest        string `json:"envelopeDigest"`
+	CancelRequested       bool   `json:"cancelRequested"`
+	CancellationRequestID string `json:"cancellationRequestId,omitempty"`
+	CancellationDeadline  string `json:"cancellationDeadline,omitempty"`
+	RealExecutionEnabled  *bool  `json:"realExecutionEnabled"`
 }
 
 type executionEventRequest struct {
@@ -321,6 +374,47 @@ func (s *StateStore) RenewExecutionLease(ctx context.Context, input ExecutionLea
 		}
 		return nil
 	})
+}
+
+// PollExecutionControl 轮询控制面取消事实；响应必须与当前租约和信封摘要逐项一致。
+func (s *StateStore) PollExecutionControl(ctx context.Context, input ExecutionControlPoll) (ExecutionControl, error) {
+	var control ExecutionControl
+	err := s.withExecutionState(ctx, input.BootID, input.ExecutionID, input.LeaseID, input.LeaseEpoch, input.EnvelopeDigest, input.SentAt, "OBDUMPER_EXPORT_POLL_CONTROL", func(client *httpsClient, state *identityState, requestID string, request executionLeaseRequest) error {
+		body, err := json.Marshal(request)
+		if err != nil {
+			return ErrProtocolRejected
+		}
+		defer credential.Zero(body)
+		response, status, err := client.postWithRetry(ctx, "/agent/v1/executions/"+input.ExecutionID+":poll-control", body, state.MachineCredential)
+		if err != nil {
+			return err
+		}
+		defer credential.Zero(response)
+		if status != http.StatusOK {
+			return executionHTTPError(status)
+		}
+		envelope, err := decodeResponseEnvelope(response, "EXECUTION_CONTROL")
+		if err != nil {
+			return ErrProtocolRejected
+		}
+		var payload executionControlPayload
+		if decodeStrictJSON(envelope.Payload, &payload) != nil || payload.RealExecutionEnabled == nil || !*payload.RealExecutionEnabled || payload.ExecutionID != input.ExecutionID || payload.LeaseID != input.LeaseID || payload.LeaseEpoch != input.LeaseEpoch || payload.EnvelopeDigest != input.EnvelopeDigest {
+			return ErrProtocolRejected
+		}
+		control.CancelRequested = payload.CancelRequested
+		control.CancellationRequestID = payload.CancellationRequestID
+		if payload.CancellationDeadline != "" {
+			control.CancellationDeadline, err = time.Parse(time.RFC3339Nano, payload.CancellationDeadline)
+			if err != nil || !control.CancellationDeadline.After(input.SentAt) {
+				return ErrProtocolRejected
+			}
+		}
+		if control.CancelRequested && control.CancellationRequestID == "" {
+			return ErrProtocolRejected
+		}
+		return nil
+	})
+	return control, err
 }
 
 // ResolveExecutionDatabaseConnection 在有效 execution 租约中取得短时数据库连接槽位。
@@ -638,7 +732,7 @@ func validExecutionEvent(input ExecutionEvent) bool {
 	if !validExecutionLeaseInput(input.BootID, input.ExecutionID, input.LeaseID, input.LeaseEpoch, input.EnvelopeDigest, input.SentAt) || !validOpaqueValue(input.EventID, 256) || input.EventSeq < 3 || input.Evidence == nil {
 		return false
 	}
-	return input.EventType == "START_REJECTED" || input.EventType == "PROCESS_STARTED" || input.EventType == "PROCESS_EXITED" || input.EventType == "TOOL_TERMINAL_OBSERVED" || input.EventType == "RESULT_FACTS_OBSERVED"
+	return input.EventType == "START_REJECTED" || input.EventType == "PROCESS_STARTED" || input.EventType == "PROCESS_CANCELLED" || input.EventType == "PROCESS_EXITED" || input.EventType == "TOOL_TERMINAL_OBSERVED" || input.EventType == "RESULT_FACTS_OBSERVED"
 }
 
 func validExecutionLogConfirmation(confirmation executionLogAcceptedPayload, batch logstream.Batch) bool {

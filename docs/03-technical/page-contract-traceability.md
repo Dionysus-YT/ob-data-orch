@@ -13,7 +13,7 @@
 | `/` 首页 | `home-module`、`home-field-rules`、`home-low-fidelity` | 首页快照契约未进入首条切片 | F0 后另行评审服务端聚合契约 |
 | `/data-sources`、`/:id` | `data-source-management`、`data-source-field-rules`、核心低保真 | 已有数据源列表、读写、测试、启停/归档契约 | F1 |
 | `/nodes`、`/nodes/:id` | `execution-node-module`、`execution-node-field-rules`、执行节点低保真 | 已有节点列表、注册、关联、环境检查、启用及删除/归档契约；归档仅在没有运行任务时撤销 Agent 身份与未使用关联材料，历史事实不级联删除 | F2（节点管理闭环） |
-| `/exports/new` | `export-module`、`export-field-rules`、参数映射、导出低保真 | 已有合格数据源、既有启用节点和固定单表 CSV 草稿创建契约；新节点 G2 闭环固定禁用，预检查、提交、任务与真实执行不继续接入，受节点事实和 G3 门禁阻断 | F2（暂停于节点/真实验证门禁） |
+| `/exports/new` | [Export v1 产品与交互 Canonical](../02-design/export-module.md)、[通用导出技术契约](export-general-contract.md) | 已接入多格式草稿、命令预览、预检查/提交门禁和任务详情；真实执行仍受真实执行开关、节点/Agent 事实与 EX-V1 授权门禁约束 | CONS-03 / EX-V1 |
 | `/imports/normal/new` | 普通导入专项、字段规则、参数映射、低保真 | 无普通导入草稿/命令/预检查浏览器契约 | F6 |
 | `/imports/direct/new` | 旁路导入专项、字段规则、参数映射、低保真 | 无旁路导入草稿/命令/预检查浏览器契约 | F6 |
 | `/tasks`、`/tasks/:id` | 任务中心专项、字段规则、低保真 | 已接入本人或 `TASK_OPERATE_BY_DATA_SOURCE` 范围的主体绑定游标任务列表；默认每页 10 条且只允许 10、20、50 条，页面显示当前页与仅按授权范围计算的总页数，不返回全局任务总数。详情已将概览、最小冻结快照、脱敏计划命令和执行事实拆为独立授权投影。当前任务普通日志批次已接入分段文件、SQLite 偏移索引、最后可靠游标和 SSE；阶段/进度无可靠证据时明确降级，核对中不伪造终态；路径、凭据、实际 argv、原始执行载荷和原始错误仍不下发 | F3.3 进行中：封段、GapNotice 来源身份、跨进程恢复与真实验证未完成 |

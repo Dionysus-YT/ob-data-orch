@@ -151,8 +151,9 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 | `GET /api/v1/tasks/{taskId}/logs` | 日志快照查询 | `cursor` 继续固定水位，`after` 从最后可靠游标增量读取；两者主体/任务绑定且不能并用，不返回段路径、SQLite 行号或总数。正文已双层遮蔽秘密，并保留已确认的非秘密运行上下文 |
 | `GET /api/v1/tasks/{taskId}/logs/stream` | 单活动任务 SSE | 只发送已双层完成秘密遮蔽且已持久化记录；正文保留与查询相同的非秘密运行上下文。每条事件 ID 是最后可靠游标，断线使用 `Last-Event-ID` 或 `after` 续读，不把重连写成采集完整 |
 | `POST /api/v1/tasks/{taskId}/logs:download` | 同步脱敏下载 | 复用筛选和权限；服从 100,000 条/100 MiB 上限并审计 |
+| `POST /api/v1/tasks/{taskId}:cancel` | 提交有界取消意图 | 要求 CSRF、`Idempotency-Key` 和任务创建者/`TASK_OPERATE_BY_DATA_SOURCE` 范围；排队任务立即取消，运行中任务进入 `CANCELLING`，不由浏览器直接终止进程 |
 
-首条切片没有取消、重试、重新执行、检查点继续和任务删除 API。
+首条切片历史契约没有取消、重试、重新执行、检查点继续和任务删除 API；当前 Export v1 仅新增上述单任务取消入口，重试、重新执行、检查点继续和删除仍按各自契约受限。
 
 ## 6. Agent 协议 API
 
@@ -167,6 +168,7 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 | `POST /agent/v1/executions:claim` | `ClaimExecution` 长轮询 |
 | `POST /agent/v1/executions/{executionId}:acknowledge-lease` | `AcknowledgeLease` |
 | `POST /agent/v1/executions/{executionId}:renew-lease` | `RenewLease` |
+| `POST /agent/v1/executions/{executionId}:poll-control` | 在同一有效租约内轮询固定取消意图；校验 execution、Agent、lease epoch、冻结信封摘要和租约有效期 |
 | `POST /agent/v1/executions/{executionId}/secret-slots:resolve` | 有效租约内解析固定秘密槽位，响应 `no-store` |
 | `POST /agent/v1/executions/{executionId}/events:append` | `AppendExecutionEvents` |
 | `POST /agent/v1/executions/{executionId}/logs:append` | LG 日志批次或 GapNotice |

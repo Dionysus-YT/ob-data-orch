@@ -39,6 +39,19 @@ var (
 	ErrIdempotencyConflict                   = errors.New("idempotency key was reused with different request")
 )
 
+// 执行证据错误码只允许固定枚举，不能携带路径、命令、SQL、日志或秘密原文。
+const (
+	ExecutionErrorStartRejected       = "START_REJECTED"
+	ExecutionErrorProcessExitNonZero  = "PROCESS_EXIT_NONZERO"
+	ExecutionErrorProcessWaitFailed   = "PROCESS_WAIT_FAILED"
+	ExecutionErrorToolFailed          = "TOOL_FAILED"
+	ExecutionErrorResultVerification  = "RESULT_VERIFICATION_FAILED"
+	ExecutionErrorEvidenceUnavailable = "EXECUTION_EVIDENCE_UNAVAILABLE"
+	ExecutionErrorCancelledByRequest  = "CANCELLED_BY_REQUEST"
+	ExecutionErrorCancelTimeout       = "CANCEL_TIMEOUT"
+	ExecutionErrorCancelFailed        = "CANCEL_FAILED"
+)
+
 // AuthSubject 是经认证系统确认后可被业务记录引用的最小身份投影。
 // 它不包含会话、令牌、密码或任何可用于重新认证的材料。
 type AuthSubject struct {
@@ -127,8 +140,15 @@ type TaskSummary struct {
 	State                  string
 	ExecutionID            string
 	ReconciliationRequired bool
+	CancellationRequestID  string
+	CancellationDeadline   time.Time
+	CancellationRequested  bool
 	// ResultSummary 是 EX-I8 起 Agent 上报并经控制面合并的任务级结果摘要（可空，未执行或未上报时为空）。
 	ResultSummary *ExecutionResultSummary
+	// ProcessEvidence 是 Agent 上报的最小进程证据投影；不含 argv、路径、日志或工具原文。
+	ProcessEvidence *ExecutionProcessEvidence
+	// OutputLocation 是按当前主体权限裁剪后的输出位置；Value 为空时只表示输出类型。
+	OutputLocation *TaskOutputLocation
 	// ParentTaskID/DerivationKind 是 EX-I8 派生任务关系（原始任务为空）。
 	ParentTaskID   string
 	DerivationKind string
@@ -136,6 +156,24 @@ type TaskSummary struct {
 	StartedAt      time.Time
 	FinishedAt     time.Time
 	UpdatedAt      time.Time
+}
+
+// ExecutionProcessEvidence 是退出码、固定错误码和 planned/actual 摘要一致性的安全投影。
+// 指纹只用于比较冻结参数与 Agent 实际传入的非秘密 argv，不可逆推出命令内容。
+type ExecutionProcessEvidence struct {
+	ExitCode           *int   `json:"exitCode,omitempty"`
+	PlannedArgvDigest  string `json:"plannedArgvDigest,omitempty"`
+	ActualArgvDigest   string `json:"actualArgvDigest,omitempty"`
+	PlannedActualMatch string `json:"plannedActualMatch,omitempty"`
+	ErrorCode          string `json:"errorCode,omitempty"`
+}
+
+// TaskOutputLocation 是任务输出位置的权限投影。
+// FULL 仅允许任务创建者读取 Value；KIND_ONLY 只返回 LOCAL/OSS/S3/COS/OBS 类型。
+type TaskOutputLocation struct {
+	Kind      string `json:"kind"`
+	Value     string `json:"value,omitempty"`
+	Redaction string `json:"redaction"`
 }
 
 // ExecutionResultSummary 是任务级结果摘要的安全投影：
@@ -215,6 +253,46 @@ type ExecutionEvent struct {
 	EventType   string
 	PayloadJSON string
 	ReceivedAt  time.Time
+}
+
+// TaskCancellationRequest 是浏览器提交的固定取消意图；不携带命令、路径、秘密或自由原因。
+type TaskCancellationRequest struct {
+	TaskID         string
+	SubjectID      string
+	RequestID      string
+	IdempotencyKey string
+	RequestDigest  string
+	ExecutionID    string
+	Now            time.Time
+	Deadline       time.Time
+}
+
+// TaskCancellationResult 是取消请求的安全回执，供浏览器和幂等重放共同使用。
+type TaskCancellationResult struct {
+	TaskID                string
+	ExecutionID           string
+	State                 string
+	CancellationRequestID string
+	CancellationDeadline  time.Time
+	CancelRequested       bool
+	Replayed              bool
+}
+
+// ExecutionControlPoll 是 Agent 在同一租约内轮询控制面取消意图的输入。
+type ExecutionControlPoll struct {
+	AgentID        string
+	ExecutionID    string
+	LeaseID        string
+	LeaseEpoch     int64
+	EnvelopeDigest string
+	Now            time.Time
+}
+
+// ExecutionControl 是控制面返回的固定控制事实；Agent 不能据此获得任何用户输入。
+type ExecutionControl struct {
+	CancelRequested       bool
+	CancellationRequestID string
+	CancellationDeadline  time.Time
 }
 
 // ExecutionClaimNext 是受认证 Agent 领取本节点下一条冻结导出任务的最小输入。

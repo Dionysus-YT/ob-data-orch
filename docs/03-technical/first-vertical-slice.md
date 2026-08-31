@@ -123,8 +123,8 @@ VS-P0 不替代现有 EVT-P0、NIV-P0 和 DLV-P0；它从已有计划中抽取�
 | 产品范围 | [产品范围](../01-product/product-scope.md) |
 | 数据源 | [数据源管理评审稿](../02-design/data-source-management.md) |
 | 导出流程 | [导出模块评审稿](../02-design/export-module.md) |
-| 导出字段 | [导出字段与条件矩阵](../02-design/export-field-rules.md) |
-| 参数来源 | [导出参数映射基线](../02-design/export-parameter-mapping.md) |
+| 导出产品与字段 | [Export v1 产品与交互 Canonical](../02-design/export-module.md) |
+| 参数与命令 | [通用导出技术契约](export-general-contract.md) |
 | 原验证计划 | [导出参数受控验证计划](../02-design/export-controlled-validation.md) |
 | 任务事实 | [任务中心与任务详情评审稿](../02-design/task-center-module.md) |
 | 节点事实 | [执行节点管理评审稿](../02-design/execution-node-module.md) |

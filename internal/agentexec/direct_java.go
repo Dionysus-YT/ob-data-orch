@@ -70,6 +70,7 @@ type DirectJavaProcess struct {
 	command    *exec.Cmd
 	identity   ProcessIdentity
 	outputDone <-chan error
+	controller *processTreeController
 }
 
 // StartDirectJava 在写入不可覆盖的启动意图后直接启动包内 Java 主类。
@@ -98,6 +99,14 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	command := exec.CommandContext(ctx, launch.JavaPath, arguments...)
 	command.Dir = launch.ToolHome
 	command.Env = append([]string(nil), launch.Environment...)
+	controller := newProcessTreeController()
+	if controller == nil {
+		return nil, ErrDirectJavaStartFailed
+	}
+	if err := controller.prepare(command); err != nil {
+		_ = controller.close()
+		return nil, ErrDirectJavaStartFailed
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return nil, ErrDirectJavaStartFailed
@@ -107,6 +116,12 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 		return nil, ErrDirectJavaStartFailed
 	}
 	if err := command.Start(); err != nil {
+		_ = controller.close()
+		return nil, ErrDirectJavaStartFailed
+	}
+	if err := controller.attach(command.Process); err != nil {
+		_ = command.Process.Kill()
+		_ = controller.close()
 		return nil, ErrDirectJavaStartFailed
 	}
 	outputDone := make(chan error, 1)
@@ -121,6 +136,7 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 			BootID:           launch.BootID,
 		},
 		outputDone: outputDone,
+		controller: controller,
 	}, nil
 }
 
@@ -226,6 +242,7 @@ func (p *DirectJavaProcess) Wait() (exited bool, exitCode int, err error) {
 	}
 	outputErr := <-p.outputDone
 	err = p.command.Wait()
+	defer p.controller.close()
 	if err == nil {
 		if outputErr != nil {
 			return true, 0, ErrDirectJavaOutputFailed
@@ -240,6 +257,14 @@ func (p *DirectJavaProcess) Wait() (exited bool, exitCode int, err error) {
 		return true, exitError.ExitCode(), nil
 	}
 	return false, 0, ErrDirectJavaWaitFailed
+}
+
+// Cancel 终止受控 Java 进程及其子进程树；调用方必须先取得控制面取消事实。
+func (p *DirectJavaProcess) Cancel() error {
+	if p == nil || p.command == nil || p.controller == nil || p.command.Process == nil {
+		return ErrDirectJavaStartFailed
+	}
+	return p.controller.cancel()
 }
 
 func validateDirectJavaLaunch(workspace credential.Workspace, launch DirectJavaLaunch) error {

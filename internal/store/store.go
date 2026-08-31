@@ -3914,8 +3914,10 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		return TaskSummary{}, ErrDataSourceNotFound
 	}
 	var summary TaskSummary
-	var submittedAt, startedAt, finishedAt, updatedAt string
-	var resultSummaryJSON sql.NullString
+	var submittedAt, startedAt, finishedAt, updatedAt, cancellationRequestedAt, cancellationDeadline string
+	var cancellationRequestID sql.NullString
+	var resultSummaryJSON, processEvidenceJSON sql.NullString
+	var outputKind, outputPath string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
 		       t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
@@ -3925,8 +3927,11 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		       COALESCE(json_extract(t.snapshot_json, '$.format'), ''),
 		       t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
 		       COALESCE(e.execution_id, ''), COALESCE(e.reconciliation_required, 0),
+		       COALESCE(e.cancellation_request_id, ''), COALESCE(e.cancellation_requested_at, ''), COALESCE(e.cancellation_deadline, ''),
 		       t.submitted_at, COALESCE(e.started_at, ''), COALESCE(e.finished_at, ''),
-		       COALESCE(e.updated_at, t.submitted_at), e.result_summary_json,
+		       COALESCE(e.updated_at, t.submitted_at), e.result_summary_json, e.process_evidence_json,
+		       COALESCE(json_extract(t.snapshot_json, '$.config.outputConfig.outputKind'), 'LOCAL'),
+		       COALESCE(json_extract(t.snapshot_json, '$.filePath'), ''),
 		       COALESCE(t.parent_task_id, ''), COALESCE(t.derivation_kind, '')
         FROM tasks t
         LEFT JOIN task_executions e ON e.task_id = t.task_id
@@ -3948,7 +3953,8 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
 		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
-		&submittedAt, &startedAt, &finishedAt, &updatedAt, &resultSummaryJSON,
+		&cancellationRequestID, &cancellationRequestedAt, &cancellationDeadline,
+		&submittedAt, &startedAt, &finishedAt, &updatedAt, &resultSummaryJSON, &processEvidenceJSON, &outputKind, &outputPath,
 		&summary.ParentTaskID, &summary.DerivationKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TaskSummary{}, ErrDataSourceNotFound
@@ -3957,6 +3963,17 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		return TaskSummary{}, fmt.Errorf("read authorized task summary: %w", err)
 	}
 	summary.ResultSummary = parseExecutionResultSummary(resultSummaryJSON)
+	summary.ProcessEvidence = parseExecutionProcessEvidence(processEvidenceJSON.String)
+	summary.CancellationRequestID = cancellationRequestID.String
+	if cancellationRequestedAt != "" {
+		summary.CancellationRequested = true
+	}
+	if cancellationDeadline != "" {
+		if summary.CancellationDeadline, err = parseTaskListTime(cancellationDeadline, false); err != nil {
+			return TaskSummary{}, fmt.Errorf("parse task cancellation deadline: %w", err)
+		}
+	}
+	summary.OutputLocation = projectTaskOutputLocation(outputKind, outputPath, summary.CreatorSubjectID == subjectID)
 	if summary.SubmittedAt, err = parseTaskListTime(submittedAt, true); err != nil {
 		return TaskSummary{}, fmt.Errorf("parse task submission time: %w", err)
 	}
@@ -3970,6 +3987,204 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
 		return TaskSummary{}, fmt.Errorf("parse task update time: %w", err)
 	}
 	return summary, nil
+}
+
+// RequestTaskCancellation 在同一事务内复验任务范围并记录一次有界取消意图。
+// 排队任务直接投影为 CANCELLED；已领取任务先进入 CANCELLING，由 Agent 轮询后终止受控进程。
+func (s *Store) RequestTaskCancellation(ctx context.Context, input TaskCancellationRequest) (TaskCancellationResult, error) {
+	if s == nil || s.db == nil || !validTaskCancellationRequest(input) {
+		return TaskCancellationResult{}, ErrEventRejected
+	}
+	result := TaskCancellationResult{TaskID: input.TaskID}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var existingDigest, existingExecutionID string
+		err := tx.QueryRowContext(ctx, `
+            SELECT request_digest, COALESCE(resource_id, '')
+            FROM request_idempotency
+            WHERE subject_id = ? AND operation = 'CANCEL_EXPORT_TASK' AND idempotency_key = ?
+        `, input.SubjectID, input.IdempotencyKey).Scan(&existingDigest, &existingExecutionID)
+		if err == nil {
+			if existingDigest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			result.Replayed = true
+			result.ExecutionID = existingExecutionID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read task cancellation idempotency: %w", err)
+		}
+
+		var state, taskDataSourceID, currentExecutionID string
+		var reconciliation int
+		var currentRequestID, currentDeadline sql.NullString
+		err = tx.QueryRowContext(ctx, `
+            SELECT COALESCE(e.state, 'WAITING_SCHEDULE'), t.data_source_id,
+                   COALESCE(e.execution_id, ''), COALESCE(e.reconciliation_required, 0),
+                   COALESCE(e.cancellation_request_id, ''), COALESCE(e.cancellation_deadline, '')
+            FROM tasks t
+            LEFT JOIN task_executions e ON e.task_id = t.task_id
+            WHERE t.task_id = ?
+              AND EXISTS (SELECT 1 FROM auth_subjects subject WHERE subject.subject_id = ? AND subject.account_status = 'ACTIVE')
+              AND (t.creator_subject_id = ? OR EXISTS (
+                  SELECT 1 FROM subject_object_scopes task_scope
+                  WHERE task_scope.subject_id = ? AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE'
+                    AND task_scope.object_id = t.data_source_id
+              ))
+        `, input.TaskID, input.SubjectID, input.SubjectID, input.SubjectID).Scan(&state, &taskDataSourceID, &currentExecutionID, &reconciliation, &currentRequestID, &currentDeadline)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrDataSourceNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("read task cancellation target: %w", err)
+		}
+		_ = taskDataSourceID
+		if result.ExecutionID == "" {
+			result.ExecutionID = currentExecutionID
+		}
+		if result.ExecutionID == "" {
+			result.ExecutionID = input.ExecutionID
+		}
+		result.State = state
+		result.CancellationRequestID = currentRequestID.String
+		if currentDeadline.Valid {
+			result.CancellationDeadline, _ = time.Parse(time.RFC3339Nano, currentDeadline.String)
+		}
+		result.CancelRequested = state == "CANCELLING"
+		if result.Replayed || state == "SUCCEEDED" || state == "FAILED" || state == "CANCELLED" || reconciliation != 0 {
+			if result.Replayed {
+				return nil
+			}
+			if err := insertAudit(ctx, tx, "SUBJECT", input.SubjectID, "TASK_CANCELLATION_NOOP", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.Now); err != nil {
+				return err
+			}
+		} else if state == "WAITING_SCHEDULE" {
+			result.State = "CANCELLED"
+			result.CancellationRequestID = input.RequestID
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO task_executions(
+                    execution_id, task_id, node_id, agent_id, state, revision,
+                    reconciliation_required, process_evidence_json, result_summary_json,
+                    cancellation_request_id, cancellation_requested_at, cancellation_deadline, cancellation_reason,
+                    created_at, started_at, finished_at, updated_at
+                )
+                SELECT ?, t.task_id, t.node_id, NULL, 'CANCELLED', 1, 0,
+                       json(?), NULL, ?, ?, ?, 'USER_REQUEST', ?, NULL, ?, ?
+                FROM tasks t WHERE t.task_id = ?
+			`, result.ExecutionID, `{"errorCode":"`+ExecutionErrorCancelledByRequest+`"}`, input.RequestID, utcText(input.Now), utcText(input.Deadline), utcText(input.Now), utcText(input.Now), utcText(input.Now), input.TaskID); err != nil {
+				return fmt.Errorf("create cancelled task execution: %w", err)
+			}
+			if err := insertAudit(ctx, tx, "SUBJECT", input.SubjectID, "TASK_CANCELLED", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.Now); err != nil {
+				return err
+			}
+			result.CancelRequested = false
+		} else if state == "STARTING" || state == "RUNNING" || state == "CANCELLING" {
+			if state != "CANCELLING" {
+				result.State = "CANCELLING"
+				result.CancellationRequestID = input.RequestID
+				result.CancellationDeadline = input.Deadline
+				result.CancelRequested = true
+				if _, err := tx.ExecContext(ctx, `
+                    UPDATE task_executions
+                    SET state = 'CANCELLING', revision = revision + 1,
+                        cancellation_request_id = ?, cancellation_requested_at = ?, cancellation_deadline = ?, cancellation_reason = 'USER_REQUEST', updated_at = ?
+                    WHERE execution_id = ? AND state IN ('STARTING', 'RUNNING')
+                `, input.RequestID, utcText(input.Now), utcText(input.Deadline), utcText(input.Now), currentExecutionID); err != nil {
+					return fmt.Errorf("request task cancellation: %w", err)
+				}
+				if err := insertAudit(ctx, tx, "SUBJECT", input.SubjectID, "TASK_CANCELLATION_REQUESTED", "TASK_EXECUTION", currentExecutionID, "SUCCEEDED", input.RequestID, input.Now); err != nil {
+					return err
+				}
+			}
+			result.CancelRequested = true
+		} else {
+			return ErrEventRejected
+		}
+		if !result.Replayed {
+			status := 202
+			if result.State != "CANCELLING" {
+				status = 200
+			}
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO request_idempotency(
+                    subject_id, operation, idempotency_key, request_digest, result_status,
+                    resource_kind, resource_id, response_json, created_at, expires_at
+                ) VALUES (?, 'CANCEL_EXPORT_TASK', ?, ?, ?, 'TASK_EXECUTION', ?, '{}', ?, ?)
+            `, input.SubjectID, input.IdempotencyKey, input.RequestDigest, status, result.ExecutionID, utcText(input.Now), utcText(input.Now.Add(24*time.Hour))); err != nil {
+				return fmt.Errorf("write task cancellation idempotency: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return TaskCancellationResult{}, err
+	}
+	return result, nil
+}
+
+// PollExecutionControl 只返回当前 Agent、租约和信封摘要绑定的取消意图。
+// 过期取消请求不会继续等待进程，而是失败关闭为需要核对的 FAILED。
+func (s *Store) PollExecutionControl(ctx context.Context, input ExecutionControlPoll) (ExecutionControl, error) {
+	if s == nil || s.db == nil || !validExecutionControlPoll(input) {
+		return ExecutionControl{}, ErrEventRejected
+	}
+	control := ExecutionControl{}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var state, requestID, deadline, taskID, nodeID, plannedArgvJSON, configFingerprint, toolVersion, metadataVersion, capabilityVersion string
+		err := tx.QueryRowContext(ctx, `
+	            SELECT e.state, COALESCE(e.cancellation_request_id, ''), COALESCE(e.cancellation_deadline, ''),
+                   t.task_id, e.node_id, t.planned_argv_json, t.config_fingerprint, t.tool_version,
+                   t.metadata_version, t.capability_version
+	            FROM task_executions e
+	            JOIN tasks t ON t.task_id = e.task_id
+	            JOIN execution_leases l ON l.execution_id = e.execution_id AND l.lease_id = ? AND l.lease_epoch = ?
+	            WHERE e.execution_id = ? AND e.agent_id = ? AND l.agent_id = ?
+	              AND l.status IN ('ISSUED', 'ACKNOWLEDGED', 'ACTIVE') AND l.expires_at > ?
+	        `, input.LeaseID, input.LeaseEpoch, input.ExecutionID, input.AgentID, input.AgentID, utcText(input.Now)).Scan(
+			&state, &requestID, &deadline, &taskID, &nodeID, &plannedArgvJSON, &configFingerprint,
+			&toolVersion, &metadataVersion, &capabilityVersion,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEventRejected
+		}
+		if err != nil {
+			return fmt.Errorf("read execution cancellation control: %w", err)
+		}
+		var plannedArgv []string
+		if json.Unmarshal([]byte(plannedArgvJSON), &plannedArgv) != nil || !validExecutionArgv(plannedArgv) {
+			return ErrEventRejected
+		}
+		expectedDigest, err := executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, plannedArgv)
+		if err != nil || subtle.ConstantTimeCompare([]byte(expectedDigest), []byte(input.EnvelopeDigest)) != 1 {
+			return ErrEventRejected
+		}
+		if state != "CANCELLING" || requestID == "" || deadline == "" {
+			return nil
+		}
+		deadlineAt, err := time.Parse(time.RFC3339Nano, deadline)
+		if err != nil {
+			return ErrEventRejected
+		}
+		if !deadlineAt.After(input.Now) {
+			evidence := `{"errorCode":"` + ExecutionErrorCancelTimeout + `"}`
+			if _, err := tx.ExecContext(ctx, `
+                UPDATE task_executions SET state = 'FAILED', reconciliation_required = 1, process_evidence_json = json(?), finished_at = ?, updated_at = ?
+                WHERE execution_id = ? AND state = 'CANCELLING'
+            `, evidence, utcText(input.Now), utcText(input.Now), input.ExecutionID); err != nil {
+				return fmt.Errorf("project cancellation timeout: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE execution_leases SET status = 'RELEASED', released_at = ? WHERE execution_id = ? AND lease_id = ? AND lease_epoch = ?`, utcText(input.Now), input.ExecutionID, input.LeaseID, input.LeaseEpoch); err != nil {
+				return fmt.Errorf("release cancellation timeout lease: %w", err)
+			}
+			return insertAudit(ctx, tx, "SYSTEM", "control-plane", "TASK_CANCELLATION_TIMEOUT", "TASK_EXECUTION", input.ExecutionID, "FAILED", "cancel-timeout-"+input.ExecutionID, input.Now)
+		}
+		control.CancelRequested = true
+		control.CancellationRequestID = requestID
+		control.CancellationDeadline = deadlineAt
+		return nil
+	})
+	if err != nil {
+		return ExecutionControl{}, err
+	}
+	return control, nil
 }
 
 // GetAuthorizedTaskDerivationSource 只在当前主体拥有任务或具备对应数据源任务范围时
@@ -4815,6 +5030,14 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 			return fmt.Errorf("append authenticated execution event: %w", err)
 		}
 		state = currentState
+		plannedActualMismatch := false
+		if input.EventType != "LEASE_ACKNOWLEDGED" {
+			var err error
+			plannedActualMismatch, err = mergeExecutionProcessEvidenceTx(ctx, tx, input.ExecutionID, input)
+			if err != nil {
+				return err
+			}
+		}
 		switch input.EventType {
 		case "LEASE_ACKNOWLEDGED":
 			if currentState != "STARTING" {
@@ -4836,17 +5059,38 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 			if _, err := tx.ExecContext(ctx, `UPDATE execution_leases SET status = 'ACTIVE' WHERE execution_id = ? AND lease_id = ? AND lease_epoch = ?`, input.ExecutionID, input.LeaseID, input.LeaseEpoch); err != nil {
 				return fmt.Errorf("activate execution lease: %w", err)
 			}
+		case "PROCESS_CANCELLED":
+			var cancelled struct {
+				NoProcess    bool `json:"noProcess"`
+				TreeObserved bool `json:"treeObserved"`
+			}
+			if err := json.Unmarshal([]byte(input.PayloadJSON), &cancelled); err != nil {
+				return fmt.Errorf("decode process cancellation projection: %w", err)
+			}
+			if cancelled.NoProcess && cancelled.TreeObserved {
+				state = "CANCELLED"
+			} else if !cancelled.TreeObserved {
+				state = "FAILED"
+				plannedActualMismatch = true
+			}
 		case "TOOL_TERMINAL_OBSERVED":
-			if executionEventTerminal(input.PayloadJSON) == "FAILED" && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") {
+			if !executionHasConfirmedCancellation(ctx, tx, input.ExecutionID) && executionEventTerminal(input.PayloadJSON) == "FAILED" && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") {
 				state = "FAILED"
 			}
 		case "RESULT_FACTS_OBSERVED":
 			result := executionEventResult(input.PayloadJSON)
-			if result == "FAILED" && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") {
+			if executionHasConfirmedCancellation(ctx, tx, input.ExecutionID) && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") {
+				state = "CANCELLED"
+			} else if result == "FAILED" && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") {
 				state = "FAILED"
 			}
 			if result == "VERIFIED" && executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_EXITED") && executionHasTerminal(ctx, tx, input.ExecutionID, "SUCCEEDED") {
-				state = "SUCCEEDED"
+				if executionPlannedActualMatch(ctx, tx, input.ExecutionID) == "MISMATCHED" {
+					state = "FAILED"
+					plannedActualMismatch = true
+				} else {
+					state = "SUCCEEDED"
+				}
 			}
 			// EX-I8：结果事实（含 dump.ckpt 存在性）合并为任务级结果摘要，
 			// 供详情投影与检查点继续资格判定。
@@ -4854,21 +5098,22 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 				return err
 			}
 		}
-		if state != currentState {
+		if state != currentState || plannedActualMismatch {
 			finishedAt := any(nil)
-			if state == "SUCCEEDED" || state == "FAILED" {
+			if state == "SUCCEEDED" || state == "FAILED" || state == "CANCELLED" {
 				finishedAt = utcText(input.ReceivedAt)
 			}
 			if _, err := tx.ExecContext(ctx, `
                 UPDATE task_executions
-                SET state = ?, revision = revision + 1, finished_at = COALESCE(?, finished_at),
+                SET state = ?, reconciliation_required = CASE WHEN ? THEN 1 ELSE reconciliation_required END,
+                    revision = revision + 1, finished_at = COALESCE(?, finished_at),
                     started_at = CASE WHEN ? = 'RUNNING' THEN COALESCE(started_at, ?) ELSE started_at END,
                     updated_at = ?
                 WHERE execution_id = ?
-            `, state, finishedAt, state, utcText(input.ReceivedAt), utcText(input.ReceivedAt), input.ExecutionID); err != nil {
+            `, state, plannedActualMismatch, finishedAt, state, utcText(input.ReceivedAt), utcText(input.ReceivedAt), input.ExecutionID); err != nil {
 				return fmt.Errorf("project execution state: %w", err)
 			}
-			if state == "SUCCEEDED" || state == "FAILED" {
+			if state == "SUCCEEDED" || state == "FAILED" || state == "CANCELLED" {
 				if _, err := tx.ExecContext(ctx, `UPDATE execution_leases SET status = 'RELEASED', released_at = ? WHERE execution_id = ? AND lease_id = ? AND lease_epoch = ?`, utcText(input.ReceivedAt), input.ExecutionID, input.LeaseID, input.LeaseEpoch); err != nil {
 					return fmt.Errorf("release terminal execution lease: %w", err)
 				}
@@ -5390,14 +5635,51 @@ func validProjectedExecutionEvent(input ExecutionEvent) bool {
 	case "LEASE_ACKNOWLEDGED", "PROCESS_EXITED":
 		return len(payload) == 0 || (input.EventType == "PROCESS_EXITED" && len(payload) == 1 && validExecutionExitCode(payload["exitCode"]))
 	case "START_REJECTED":
-		return len(payload) == 1 && payload["noProcess"] == true
+		if payload["noProcess"] != true {
+			return false
+		}
+		if len(payload) == 1 {
+			return true
+		}
+		return len(payload) == 2 && payload["errorCode"] == ExecutionErrorStartRejected
 	case "PROCESS_STARTED":
-		return len(payload) == 4 && validExecutionPID(payload["pid"]) && validExecutionTime(payload["startedAt"]) && validExecutionDigest(payload["executableDigest"]) && validExecutionOpaque(payload["bootId"])
+		if !validExecutionPID(payload["pid"]) || !validExecutionTime(payload["startedAt"]) || !validExecutionDigest(payload["executableDigest"]) || !validExecutionOpaque(payload["bootId"]) {
+			return false
+		}
+		if len(payload) == 4 {
+			return true
+		}
+		return len(payload) == 5 && validExecutionDigest(payload["argvDigest"])
+	case "PROCESS_CANCELLED":
+		noProcess, noProcessOK := payload["noProcess"].(bool)
+		terminationCode, terminationOK := payload["terminationCode"].(string)
+		treeObserved, treeOK := payload["treeObserved"].(bool)
+		if !noProcessOK || !terminationOK || !treeOK || len(payload) != 3 {
+			return false
+		}
+		if noProcess {
+			return terminationCode == "NOT_STARTED" && treeObserved
+		}
+		return terminationCode == "PROCESS_TREE_TERMINATED" || terminationCode == "CANCEL_FAILED"
 	case "TOOL_TERMINAL_OBSERVED":
-		return len(payload) == 1 && (payload["terminal"] == "SUCCEEDED" || payload["terminal"] == "FAILED")
+		terminal, ok := payload["terminal"].(string)
+		if !ok || (terminal != "SUCCEEDED" && terminal != "FAILED") {
+			return false
+		}
+		if len(payload) == 1 {
+			return true
+		}
+		return terminal == "FAILED" && len(payload) == 2 && validExecutionErrorCode(payload["errorCode"])
 	case "RESULT_FACTS_OBSERVED":
 		_, checkpointPresent := payload["checkpointPresent"].(bool)
-		return len(payload) == 5 && (payload["result"] == "VERIFIED" || payload["result"] == "FAILED") && validExecutionCount(payload["fileCount"]) && validExecutionBytes(payload["totalBytes"]) && validExecutionOutputFiles(payload["files"]) && checkpointPresent
+		result, resultOK := payload["result"].(string)
+		if !resultOK || (result != "VERIFIED" && result != "FAILED") || !validExecutionCount(payload["fileCount"]) || !validExecutionBytes(payload["totalBytes"]) || !validExecutionOutputFiles(payload["files"]) || !checkpointPresent {
+			return false
+		}
+		if len(payload) == 5 {
+			return true
+		}
+		return result == "FAILED" && len(payload) == 6 && validExecutionErrorCode(payload["errorCode"])
 	default:
 		return false
 	}
@@ -5451,6 +5733,18 @@ func validExecutionTime(value any) bool {
 	return err == nil
 }
 func validExecutionDigest(value any) bool { text, ok := value.(string); return ok && isSHA256(text) }
+func validExecutionErrorCode(value any) bool {
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	switch text {
+	case ExecutionErrorStartRejected, ExecutionErrorProcessExitNonZero, ExecutionErrorProcessWaitFailed, ExecutionErrorToolFailed, ExecutionErrorResultVerification, ExecutionErrorEvidenceUnavailable, ExecutionErrorCancelledByRequest, ExecutionErrorCancelTimeout, ExecutionErrorCancelFailed:
+		return true
+	default:
+		return false
+	}
+}
 func validExecutionOpaque(value any) bool {
 	text, ok := value.(string)
 	return ok && validAgentOpaqueValue(text, 256)
@@ -5462,10 +5756,34 @@ func executionHasEvent(ctx context.Context, tx *sql.Tx, executionID, eventType s
 	return err == nil && found == 1
 }
 
+func executionHasConfirmedCancellation(ctx context.Context, tx *sql.Tx, executionID string) bool {
+	var payload string
+	if err := tx.QueryRowContext(ctx, `SELECT payload_json FROM execution_events WHERE execution_id = ? AND event_type = 'PROCESS_CANCELLED' AND accepted = 1 ORDER BY event_seq DESC LIMIT 1`, executionID).Scan(&payload); err != nil {
+		return false
+	}
+	var value struct {
+		TreeObserved bool `json:"treeObserved"`
+	}
+	return json.Unmarshal([]byte(payload), &value) == nil && value.TreeObserved
+}
+
 func executionHasTerminal(ctx context.Context, tx *sql.Tx, executionID, terminal string) bool {
 	var payload string
 	err := tx.QueryRowContext(ctx, `SELECT payload_json FROM execution_events WHERE execution_id = ? AND event_type = 'TOOL_TERMINAL_OBSERVED' ORDER BY event_seq DESC LIMIT 1`, executionID).Scan(&payload)
 	return err == nil && executionEventTerminal(payload) == terminal
+}
+
+// executionPlannedActualMatch 从已持久化的最小进程证据读取命令关系，不解析执行事件原文。
+func executionPlannedActualMatch(ctx context.Context, tx *sql.Tx, executionID string) string {
+	var raw sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT process_evidence_json FROM task_executions WHERE execution_id = ?`, executionID).Scan(&raw); err != nil || !raw.Valid {
+		return "UNAVAILABLE"
+	}
+	evidence := parseExecutionProcessEvidence(raw.String)
+	if evidence == nil || evidence.PlannedActualMatch == "" {
+		return "UNAVAILABLE"
+	}
+	return evidence.PlannedActualMatch
 }
 
 func executionEventTerminal(payload string) string {
@@ -5482,6 +5800,158 @@ func executionEventResult(payload string) string {
 	}
 	_ = json.Unmarshal([]byte(payload), &value)
 	return value.Result
+}
+
+// mergeExecutionProcessEvidenceTx 把进程事件合并为最小安全证据。
+// PROCESS_STARTED 只比较 argv 摘要，不保存实际命令；历史事件缺少摘要时保持 UNAVAILABLE。
+func mergeExecutionProcessEvidenceTx(ctx context.Context, tx *sql.Tx, executionID string, input ExecutionEvent) (bool, error) {
+	var existing sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT process_evidence_json FROM task_executions WHERE execution_id = ?`, executionID).Scan(&existing); err != nil {
+		return false, fmt.Errorf("read execution process evidence: %w", err)
+	}
+	evidence := ExecutionProcessEvidence{}
+	if existing.Valid && existing.String != "" {
+		if parsed := parseExecutionProcessEvidence(existing.String); parsed != nil {
+			evidence = *parsed
+		}
+	}
+	mismatch := false
+	switch input.EventType {
+	case "START_REJECTED":
+		evidence.ErrorCode = ExecutionErrorStartRejected
+	case "PROCESS_STARTED":
+		var payload struct {
+			ArgvDigest string `json:"argvDigest"`
+		}
+		if err := json.Unmarshal([]byte(input.PayloadJSON), &payload); err != nil {
+			return false, fmt.Errorf("decode process start evidence: %w", err)
+		}
+		if payload.ArgvDigest == "" {
+			evidence.PlannedActualMatch = "UNAVAILABLE"
+			break
+		}
+		var argvJSON string
+		if err := tx.QueryRowContext(ctx, `SELECT planned_argv_json FROM tasks WHERE task_id = (SELECT task_id FROM task_executions WHERE execution_id = ?)`, executionID).Scan(&argvJSON); err != nil {
+			return false, fmt.Errorf("read planned argv for evidence: %w", err)
+		}
+		var argv []string
+		if err := json.Unmarshal([]byte(argvJSON), &argv); err != nil || !validExecutionArgv(argv) {
+			return false, ErrEventRejected
+		}
+		plannedDigest, err := executionArgvDigest(argv)
+		if err != nil {
+			return false, fmt.Errorf("digest planned argv: %w", err)
+		}
+		evidence.PlannedArgvDigest = plannedDigest
+		evidence.ActualArgvDigest = payload.ArgvDigest
+		evidence.PlannedActualMatch = "MATCHED"
+		if plannedDigest != payload.ArgvDigest {
+			evidence.PlannedActualMatch = "MISMATCHED"
+			mismatch = true
+		}
+	case "PROCESS_CANCELLED":
+		var payload struct {
+			TreeObserved bool `json:"treeObserved"`
+		}
+		if err := json.Unmarshal([]byte(input.PayloadJSON), &payload); err != nil {
+			return false, fmt.Errorf("decode process cancellation evidence: %w", err)
+		}
+		if payload.TreeObserved {
+			evidence.ErrorCode = ExecutionErrorCancelledByRequest
+		} else {
+			evidence.ErrorCode = ExecutionErrorCancelFailed
+		}
+	case "PROCESS_EXITED":
+		var payload struct {
+			ExitCode int `json:"exitCode"`
+		}
+		if err := json.Unmarshal([]byte(input.PayloadJSON), &payload); err != nil {
+			return false, fmt.Errorf("decode process exit evidence: %w", err)
+		}
+		evidence.ExitCode = &payload.ExitCode
+	case "TOOL_TERMINAL_OBSERVED":
+		var payload struct {
+			Terminal  string `json:"terminal"`
+			ErrorCode string `json:"errorCode"`
+		}
+		if err := json.Unmarshal([]byte(input.PayloadJSON), &payload); err != nil {
+			return false, fmt.Errorf("decode tool terminal evidence: %w", err)
+		}
+		if payload.Terminal == "FAILED" {
+			evidence.ErrorCode = payload.ErrorCode
+			if evidence.ErrorCode == "" {
+				evidence.ErrorCode = ExecutionErrorToolFailed
+			}
+		}
+	case "RESULT_FACTS_OBSERVED":
+		var payload struct {
+			Result    string `json:"result"`
+			ErrorCode string `json:"errorCode"`
+		}
+		if err := json.Unmarshal([]byte(input.PayloadJSON), &payload); err != nil {
+			return false, fmt.Errorf("decode result evidence: %w", err)
+		}
+		if payload.Result == "FAILED" {
+			evidence.ErrorCode = payload.ErrorCode
+			if evidence.ErrorCode == "" {
+				evidence.ErrorCode = ExecutionErrorResultVerification
+			}
+		}
+	}
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		return false, fmt.Errorf("encode execution process evidence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET process_evidence_json = ?, updated_at = ? WHERE execution_id = ?`, string(raw), utcText(input.ReceivedAt), executionID); err != nil {
+		return false, fmt.Errorf("write execution process evidence: %w", err)
+	}
+	return mismatch, nil
+}
+
+// parseExecutionProcessEvidence 只接受固定字段和安全范围，损坏或未知值一律不投影。
+func parseExecutionProcessEvidence(raw string) *ExecutionProcessEvidence {
+	var payload struct {
+		ExitCode           *int   `json:"exitCode"`
+		PlannedArgvDigest  string `json:"plannedArgvDigest"`
+		ActualArgvDigest   string `json:"actualArgvDigest"`
+		PlannedActualMatch string `json:"plannedActualMatch"`
+		ErrorCode          string `json:"errorCode"`
+	}
+	if json.Unmarshal([]byte(raw), &payload) != nil {
+		return nil
+	}
+	if payload.ExitCode != nil && (*payload.ExitCode < -1 || *payload.ExitCode > 255) {
+		return nil
+	}
+	if payload.PlannedArgvDigest != "" && !isSHA256(payload.PlannedArgvDigest) {
+		return nil
+	}
+	if payload.ActualArgvDigest != "" && !isSHA256(payload.ActualArgvDigest) {
+		return nil
+	}
+	if payload.PlannedActualMatch != "" && payload.PlannedActualMatch != "MATCHED" && payload.PlannedActualMatch != "MISMATCHED" && payload.PlannedActualMatch != "UNAVAILABLE" {
+		return nil
+	}
+	if payload.ErrorCode != "" && !validExecutionErrorCode(payload.ErrorCode) {
+		return nil
+	}
+	if payload.ExitCode == nil && payload.PlannedArgvDigest == "" && payload.ActualArgvDigest == "" && payload.PlannedActualMatch == "" && payload.ErrorCode == "" {
+		return nil
+	}
+	return &ExecutionProcessEvidence{ExitCode: payload.ExitCode, PlannedArgvDigest: payload.PlannedArgvDigest, ActualArgvDigest: payload.ActualArgvDigest, PlannedActualMatch: payload.PlannedActualMatch, ErrorCode: payload.ErrorCode}
+}
+
+// projectTaskOutputLocation 按主体范围裁剪输出位置；授权读者只能看到类型，避免路径成为越权探测通道。
+func projectTaskOutputLocation(kind, path string, owner bool) *TaskOutputLocation {
+	switch kind {
+	case "LOCAL", "OSS", "S3", "COS", "OBS":
+	default:
+		return &TaskOutputLocation{Kind: "UNAVAILABLE", Redaction: "UNAVAILABLE"}
+	}
+	if owner && path != "" && len(path) <= 4096 && !strings.ContainsAny(path, "\x00\r\n") {
+		return &TaskOutputLocation{Kind: kind, Value: path, Redaction: "FULL"}
+	}
+	return &TaskOutputLocation{Kind: kind, Redaction: "KIND_ONLY"}
 }
 
 // mergeExecutionResultSummaryTx 在同一事务内把已接受的结果事实（含 dump.ckpt 存在性）合并为任务级结果摘要。
@@ -6167,6 +6637,18 @@ func validateExecutionClaimNext(input ExecutionClaimNext) error {
 	return nil
 }
 
+func validTaskCancellationRequest(input TaskCancellationRequest) bool {
+	return validAgentOpaqueValue(input.TaskID, 256) && validAgentOpaqueValue(input.SubjectID, 256) &&
+		validAgentOpaqueValue(input.RequestID, 256) && validAgentOpaqueValue(input.IdempotencyKey, 256) &&
+		validAgentOpaqueValue(input.ExecutionID, 256) && isSHA256(input.RequestDigest) &&
+		!input.Now.IsZero() && !input.Deadline.IsZero() && input.Deadline.After(input.Now) && input.Deadline.Sub(input.Now) <= 2*time.Minute
+}
+
+func validExecutionControlPoll(input ExecutionControlPoll) bool {
+	return validAgentOpaqueValue(input.AgentID, 256) && validAgentOpaqueValue(input.ExecutionID, 256) &&
+		validAgentOpaqueValue(input.LeaseID, 256) && input.LeaseEpoch > 0 && isSHA256(input.EnvelopeDigest) && !input.Now.IsZero()
+}
+
 func validateExecutionSecretResolutionRequest(input ExecutionSecretResolutionRequest) error {
 	if input.AgentID == "" || input.ExecutionID == "" || input.LeaseID == "" || input.LeaseEpoch < 1 || !isSHA256(input.EnvelopeDigest) || input.RequestID == "" || !isSHA256(input.RequestDigest) || input.Now.IsZero() {
 		return errors.New("execution secret resolution request is invalid")
@@ -6207,6 +6689,16 @@ func executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, met
 		return "", fmt.Errorf("encode execution envelope: %w", err)
 	}
 	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+// executionArgvDigest 对冻结信封中的 argv 做稳定摘要；摘要比较不保存也不返回命令内容。
+func executionArgvDigest(argv []string) (string, error) {
+	raw, err := json.Marshal(argv)
+	if err != nil {
+		return "", fmt.Errorf("encode argv evidence: %w", err)
+	}
+	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:]), nil
 }
 

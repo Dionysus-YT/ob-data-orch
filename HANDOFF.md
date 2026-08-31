@@ -1,6 +1,7 @@
 # OB Data Orch 交接说明
 
 > 快照日期：2026-08-14
+> 文档状态：历史交接快照，不是当前运行态或发布状态事实源。进程 PID、服务是否运行、授权窗口和“下一步”均可能已过期；当前事实以 [开发任务地图](docs/03-technical/development-task-map.md)、[Export 产品/交互 Canonical](docs/02-design/export-module.md)、[Export 技术契约](docs/03-technical/export-general-contract.md)、[受控验证计划](docs/02-design/export-controlled-validation.md) 和现场验证为准。
 > 权威状态：[开发任务地图](docs/03-technical/development-task-map.md)、[开发准入收口](docs/03-technical/development-readiness-closure.md) 与对应验证证据
 > 安全说明：不记录真实端点、身份、密码、密钥、完整命令、输出路径或工具原始输出。
 

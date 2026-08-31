@@ -1,6 +1,6 @@
 # OB Data Orch
 
-OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发顺序、阶段、门禁、页面功能接入和真实验证状态统一以[开发任务地图](docs/03-technical/development-task-map.md)为准。当前仓库尚未通过 G3 或成为可发布产品；但在明确授权的 Windows 本机 Local MVP 范围内，固定单表 CSV 导出已有一次受控成功路径证据，不能将其扩大为 G3 通过。
+OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发顺序、阶段、门禁、页面功能接入和真实验证状态统一以[开发任务地图](docs/03-technical/development-task-map.md)为准。Export v1 已形成多格式配置、冻结任务、受控执行、结果证据、任务历史和有界取消纵向链路；正式支持范围仍按 Export Canonical Docs 与 EX-V1 证据分级，不能由代码存在或命令生成测试单独推出。
 
 ## 当前可用内容
 
@@ -8,8 +8,8 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发�
 - Go Agent G2 机器协议适配：受保护本机关联状态、HTTPS/CA 校验、受认证心跳和固定预检查信封均已具备；默认不连接数据库、不解析真实凭据、不启动 OB Loader/Dumper；
 - Vue 3 + TypeScript + Vite 产品页面基线：覆盖数据源、三类任务向导、任务/日志、模板、节点与系统设置；其中真实功能接入范围以开发计划逐项验收；
 - OpenAPI 3.1 结构基线：覆盖当前已实现的浏览器与 Agent 操作及 Local MVP 的受控固定信封；任何 G3 结论仍以证据和门禁为准；
-- SQLite 前向迁移：`0001`～`0013` 覆盖首条切片业务元数据、授权绑定、预检查、连接测试、节点环境、执行与日志索引；测试默认使用临时数据库和合成数据；
-- OBDUMPER 4.3.5 首条切片只读参数资源：8 个可用参数、8 个验证门禁参数；
+- SQLite 前向迁移：`0001`～`0020` 覆盖业务元数据、授权绑定、预检查、连接测试、节点环境、执行/日志证据、Export 泛化、任务派生和有界取消；测试默认使用临时数据库和合成数据；
+- OBDUMPER 4.3.5 版本化只读参数资源：v5～v7 保存当前 Export 泛化能力映射，并保留首条切片历史语义；具体可用能力与验证门禁以运行时资源及 Export Canonical 为准；
 - Windows AMD64、Linux AMD64、Linux ARM64 交叉构建；
 - Go/前端测试、静态检查和基础敏感信息扫描。
 
@@ -71,13 +71,21 @@ Windows：
 
 ```powershell
 ./scripts/verify.ps1
+
+# 只验证 Export 的 S0/S1 合成开发路径；强制关闭真实连接、凭据和工具开关
+./scripts/verify-export-synthetic.ps1
 ```
 
 Linux：
 
 ```sh
 ./scripts/verify.sh
+
+# 只验证 Export 的 S0/S1 合成开发路径；强制关闭真实连接、凭据和工具开关
+./scripts/verify-export-synthetic.sh
 ```
+
+S0/S1 入口只使用版本化合成身份、临时 SQLite、假 Agent、假工具和临时工作区，不建立真实网络连接、不解析真实凭据、不启动 OBDUMPER。它用于快速回归领域规则、命令生成、状态/证据投影和失败关闭，不构成 G3/EX-V1 真实验证证据。
 
 ## 目录
 

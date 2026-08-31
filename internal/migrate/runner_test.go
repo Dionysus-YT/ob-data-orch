@@ -43,8 +43,8 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 19 {
-		t.Fatalf("migration count = %d, want 19", migrationCount)
+	if migrationCount != 20 {
+		t.Fatalf("migration count = %d, want 20", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -407,6 +407,10 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read nineteenth migration: %v", err)
 	}
+	twentiethMigration, err := migrations.Files.ReadFile("0020_task_execution_cancellation.sql")
+	if err != nil {
+		t.Fatalf("read twentieth migration: %v", err)
+	}
 	tampered := fstest.MapFS{
 		"0001_initial.sql":                                    &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
 		"0002_add_data_source_odc_identity.sql":               &fstest.MapFile{Data: secondMigration},
@@ -427,6 +431,7 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0017_add_storage_credentials.sql":                    &fstest.MapFile{Data: seventeenthMigration},
 		"0018_task_derivation.sql":                            &fstest.MapFile{Data: eighteenthMigration},
 		"0019_precheck_storage_credential.sql":                &fstest.MapFile{Data: nineteenthMigration},
+		"0020_task_execution_cancellation.sql":                &fstest.MapFile{Data: twentiethMigration},
 	}
 	if err := ApplyFS(ctx, db, tampered); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("Apply() error = %v, want checksum mismatch", err)

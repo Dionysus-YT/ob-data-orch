@@ -214,6 +214,42 @@ func (s *Server) renewAuthenticatedExecution(w http.ResponseWriter, r *http.Requ
 	writeExecutionResponse(w, "EXECUTION_LEASE_RENEWED", map[string]any{"executionId": executionID, "leaseId": request.Payload.LeaseID, "leaseEpoch": request.Payload.LeaseEpoch, "envelopeDigest": request.Payload.EnvelopeDigest, "expiresAt": expiresAt.Format(time.RFC3339Nano), "realExecutionEnabled": true})
 }
 
+// pollAuthenticatedExecutionControl 返回当前租约绑定的固定取消事实，不暴露浏览器请求原文。
+func (s *Server) pollAuthenticatedExecutionControl(w http.ResponseWriter, r *http.Request, executionID string) {
+	machine, executions, ok := s.authenticatedExecutionAgent(w, r)
+	if !ok {
+		return
+	}
+	var request agentExecutionLeaseRequest
+	if !decodeAgentJSON(w, r, &request) {
+		return
+	}
+	if !validExecutionEnvelope(machine, request.agentExecutionEnvelope, "OBDUMPER_EXPORT_POLL_CONTROL") || !validExecutionPathID(executionID) || !validExecutionLeasePayload(request.Payload.LeaseID, request.Payload.LeaseEpoch, request.Payload.EnvelopeDigest) {
+		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	control, err := executions.PollExecutionControl(r.Context(), store.ExecutionControlPoll{
+		AgentID: machine.AgentID, ExecutionID: executionID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
+		EnvelopeDigest: request.Payload.EnvelopeDigest, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		writeExecutionStoreError(w, err)
+		return
+	}
+	payload := map[string]any{
+		"executionId": executionID, "leaseId": request.Payload.LeaseID, "leaseEpoch": request.Payload.LeaseEpoch,
+		"envelopeDigest": request.Payload.EnvelopeDigest, "cancelRequested": control.CancelRequested,
+		"realExecutionEnabled": true,
+	}
+	if control.CancellationRequestID != "" {
+		payload["cancellationRequestId"] = control.CancellationRequestID
+	}
+	if !control.CancellationDeadline.IsZero() {
+		payload["cancellationDeadline"] = control.CancellationDeadline.Format(time.RFC3339Nano)
+	}
+	writeExecutionResponse(w, "EXECUTION_CONTROL", payload)
+}
+
 // resolveAuthenticatedExecutionSecret 只为已领取、已确认的 execution 返回唯一数据库密码槽位。
 // 该响应不写 Agent 状态文件，且用户名与密码在 HTTP 编码后立即清零。
 func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *http.Request, executionID string) {
@@ -468,6 +504,7 @@ func parseAuthenticatedExecutionAction(path string) (string, string, bool) {
 	for suffix, action := range map[string]string{
 		":acknowledge-lease":    "acknowledge-lease",
 		":renew-lease":          "renew-lease",
+		":poll-control":         "poll-control",
 		"/secret-slots:resolve": "resolve-secret-slots",
 		":events:append":        "append-events",
 		":logs:append":          "append-logs",

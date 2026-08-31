@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"ob-data-orch/internal/agentpreflight"
+	"ob-data-orch/internal/agentstate"
+	"ob-data-orch/internal/commandgen"
 )
 
 func TestClaimNextPrecheckRetriesWithSameRequestIDAndMachineCredential(t *testing.T) {
@@ -560,6 +562,88 @@ func TestCompletePrecheck接受存储形态结果(t *testing.T) {
 	input.Report = forged
 	if validPrecheckCompletion(input) {
 		t.Fatal("伪造成功的存储形态报告被接受")
+	}
+}
+
+// TestValidPrecheckGrant拒绝畸形存储上下文 验证 Agent 信封侧的结构边界。
+// Agent 不重新解释 URI 的 scheme/查询语义，但仍必须拒绝缺段、控制字符、路径和输出类型漂移。
+func TestValidPrecheckGrant拒绝畸形存储上下文(t *testing.T) {
+	if !validPrecheckGrant(validStoragePrecheckGrantForTest(), "node-1") {
+		t.Fatal("有效对象存储预检查租约未通过结构校验")
+	}
+
+	cases := map[string]func(*PrecheckGrant){
+		"缺少存储目标": func(grant *PrecheckGrant) {
+			grant.Context.StorageTarget = nil
+		},
+		"provider 与输出类型不一致": func(grant *PrecheckGrant) {
+			grant.Context.StorageTarget.Provider = "S3"
+		},
+		"输出路径含控制字符": func(grant *PrecheckGrant) {
+			grant.Context.OutputPath += "\n"
+		},
+		"存储 URI 含控制字符": func(grant *PrecheckGrant) {
+			grant.Context.StorageTarget.URI += "\x00"
+		},
+		"endpoint 含控制字符": func(grant *PrecheckGrant) {
+			grant.Context.StorageTarget.Endpoint += "\r"
+		},
+		"携带本地日志路径": func(grant *PrecheckGrant) {
+			grant.Context.LogPath = "/E:/tmp/export.log"
+		},
+		"tmp 路径非目标平台绝对路径": func(grant *PrecheckGrant) {
+			grant.Context.StorageTarget.TmpPath = "relative/tmp"
+		},
+		"存储输出路径为空": func(grant *PrecheckGrant) {
+			grant.Context.OutputPath = ""
+		},
+		"检查清单漂移": func(grant *PrecheckGrant) {
+			grant.CheckSet = agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindLocal)
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			grant := validStoragePrecheckGrantForTest()
+			mutate(&grant)
+			if validPrecheckGrant(grant, "node-1") {
+				t.Fatal("畸形对象存储预检查租约被接受")
+			}
+		})
+	}
+}
+
+func validStoragePrecheckGrantForTest() PrecheckGrant {
+	return PrecheckGrant{
+		PrecheckID:    "precheck-storage",
+		LeaseID:       "lease-storage",
+		LeaseEpoch:    1,
+		ExpiresAt:     time.Date(2026, 7, 27, 2, 2, 3, 0, time.UTC),
+		BindingDigest: precheckBindingDigest,
+		Binding: agentstate.PrecheckBinding{
+			PrecheckID:         "precheck-storage",
+			NodeID:             "node-1",
+			DraftRevision:      2,
+			ConfigFingerprint:  "synthetic-fingerprint",
+			CredentialRevision: 3,
+			NodeFactsVersion:   4,
+		},
+		CheckSet: agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindOSS),
+		Context: PrecheckExecutionContext{
+			CompatibilityMode: "MYSQL",
+			Database:          "synthetic_db",
+			Objects:           []string{"synthetic_table"},
+			ContentKind:       "DATA_ONLY",
+			OutputPath:        "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com",
+			TargetPlatform:    commandgen.PlatformWindowsAMD64,
+			AllowedRoots:      []string{`E:\tmp`},
+			OutputKind:        agentpreflight.OutputKindOSS,
+			StorageTarget: &PrecheckStorageTarget{
+				Provider: "OSS",
+				URI:      "oss://synthetic-bucket/exports?endpoint=oss-cn-hangzhou.aliyuncs.com",
+				Endpoint: "oss-cn-hangzhou.aliyuncs.com",
+				TmpPath:  "/E:/tmp/upload",
+			},
+		},
 	}
 }
 

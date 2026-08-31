@@ -45,6 +45,7 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/agent/v1/executions:claim":                              {"post"},
 		"/agent/v1/executions/{executionId}:acknowledge-lease":    {"post"},
 		"/agent/v1/executions/{executionId}:renew-lease":          {"post"},
+		"/agent/v1/executions/{executionId}:poll-control":         {"post"},
 		"/agent/v1/executions/{executionId}/secret-slots:resolve": {"post"},
 		"/agent/v1/executions/{executionId}/events:append":        {"post"},
 		"/agent/v1/executions/{executionId}/logs:append":          {"post"},
@@ -69,6 +70,7 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/storage-credentials/{storageCredentialId}":                  {"delete"},
 		"/api/v1/tasks/{taskId}:rebuild-draft":                               {"post"},
 		"/api/v1/tasks/{taskId}:resume-checkpoint":                           {"post"},
+		"/api/v1/tasks/{taskId}:cancel":                                      {"post"},
 		"/api/v1/tasks/{taskId}:save-template":                               {"post"},
 		"/api/v1/export-config-templates/{templateId}:create-draft":          {"post"},
 	}
@@ -94,8 +96,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 66 {
-		t.Fatalf("operation count = %d, want 66", operationCount)
+	if operationCount != 68 {
+		t.Fatalf("operation count = %d, want 68", operationCount)
 	}
 }
 
@@ -128,13 +130,89 @@ func TestOpenAPI限制本机MVP真实执行(t *testing.T) {
 	paths := object(t, spec, "paths")
 	for path := range paths {
 		lower := strings.ToLower(path)
-		if strings.HasPrefix(path, "/api/v1/") && (strings.Contains(lower, ":cancel") || strings.Contains(lower, ":retry") || strings.Contains(lower, ":execute")) {
+		if strings.HasPrefix(path, "/api/v1/") && (strings.Contains(lower, ":retry") || strings.Contains(lower, ":execute")) {
 			t.Fatalf("unconfirmed browser execution operation present: %s", path)
 		}
 	}
 	submit := object(t, object(t, paths, "/api/v1/export-drafts/{draftId}:submit"), "post")
 	if submit["x-real-execution"] != "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT" {
 		t.Fatal("task submission contract does not expose the Windows local MVP execution gate")
+	}
+}
+
+func TestOpenAPI导出提交只要求预检查并保留旧确认字段兼容(t *testing.T) {
+	t.Parallel()
+	spec := loadOpenAPI(t)
+	components := object(t, spec, "components")
+	paths := object(t, spec, "paths")
+	requestBodies := object(t, components, "requestBodies")
+	schemas := object(t, components, "schemas")
+	submit := object(t, object(t, paths, "/api/v1/export-drafts/{draftId}:submit"), "post")
+	if fmt.Sprint(object(t, submit, "requestBody")["$ref"]) != "#/components/requestBodies/ExportTaskSubmit" {
+		t.Fatal("export submit must use the strict task submission request body")
+	}
+	submitBody := object(t, requestBodies, "ExportTaskSubmit")
+	if submitBody["required"] != true {
+		t.Fatal("export task submission body must be required")
+	}
+	submitSchema := object(t, object(t, object(t, submitBody, "content"), "application/json"), "schema")
+	if submitSchema["$ref"] != "#/components/schemas/ExportTaskSubmit" {
+		t.Fatal("export task submission body must reference its strict schema")
+	}
+	submitRequest := object(t, schemas, "ExportTaskSubmit")
+	if submitRequest["additionalProperties"] != false {
+		t.Fatal("export task submission must reject unknown fields")
+	}
+	assertRequiredProperties(t, submitRequest, "precheckId")
+	submitProperties := object(t, submitRequest, "properties")
+	legacyConfirmation := object(t, submitProperties, "sensitiveCommandConfirmation")
+	if legacyConfirmation["deprecated"] != true {
+		t.Fatal("legacy sensitive command confirmation must be deprecated")
+	}
+	if !strings.Contains(fmt.Sprint(submitRequest["description"]), "普通任务授权") {
+		t.Fatal("export submission must describe query-sql as ordinary task authorization")
+	}
+	confirmation := object(t, schemas, "SensitiveCommandConfirmation")
+	if confirmation["additionalProperties"] != false {
+		t.Fatal("sensitive command confirmation must reject unknown fields")
+	}
+	if confirmation["deprecated"] != true {
+		t.Fatal("legacy sensitive command confirmation schema must be deprecated")
+	}
+	assertRequiredProperties(t, confirmation, "capability", "riskFingerprint", "confirmed")
+	confirmationProperties := object(t, confirmation, "properties")
+	if object(t, confirmationProperties, "capability")["const"] != "CAP_SENSITIVE_COMMAND" || object(t, confirmationProperties, "confirmed")["const"] != true {
+		t.Fatal("sensitive command confirmation must fix capability and affirmative confirmation")
+	}
+	if fmt.Sprint(object(t, confirmationProperties, "riskFingerprint")["$ref"]) != "#/components/schemas/SHA256Digest" {
+		t.Fatal("sensitive command confirmation must bind a SHA-256 risk fingerprint")
+	}
+}
+
+func TestOpenAPI导出V1重定版字段语义(t *testing.T) {
+	t.Parallel()
+	spec := loadOpenAPI(t)
+	schemas := object(t, object(t, spec, "components"), "schemas")
+	config := object(t, schemas, "GeneralizedExportConfig")
+	configProperties := object(t, config, "properties")
+
+	dataFormat := object(t, configProperties, "dataFormat")
+	if !strings.Contains(fmt.Sprint(dataFormat["description"]), "CSV/CUT/SQL") || !strings.Contains(fmt.Sprint(dataFormat["description"]), "历史任务") {
+		t.Fatal("data format contract must distinguish ordinary CSV/CUT/SQL creation from historical formats")
+	}
+
+	outputConfig := object(t, configProperties, "outputConfig")
+	retainEmptyFiles := object(t, object(t, outputConfig, "properties"), "retainEmptyFiles")
+	retainDescription := fmt.Sprint(retainEmptyFiles["description"])
+	if !strings.Contains(retainDescription, "DATA_ONLY") || !strings.Contains(retainDescription, "DDL_ONLY") || !strings.Contains(retainDescription, "skipHeader") {
+		t.Fatal("retain-empty-files contract must cover data content and CSV header behavior")
+	}
+
+	filterConfig := object(t, configProperties, "filterConfig")
+	querySQL := object(t, object(t, filterConfig, "properties"), "querySql")
+	queryDescription := fmt.Sprint(querySQL["description"])
+	if !strings.Contains(queryDescription, "普通高级参数") || !strings.Contains(queryDescription, "file://") || !strings.Contains(queryDescription, "flashbackTimestamp") {
+		t.Fatal("query-sql contract must describe ordinary authorization, file rejection and conflicts")
 	}
 }
 
@@ -164,11 +242,24 @@ func TestOpenAPI任务详情读取使用独立安全投影(t *testing.T) {
 			}
 		}
 	}
+	snapshot := object(t, schemas, "TaskSnapshotRead")
+	snapshotProperties := object(t, snapshot, "properties")
+	assertExactStringEnum(t, object(t, snapshotProperties, "format"), []string{"CSV", "CUT", "SQL", "POS", "PARQUET", "ORC", "AVRO", "DDL", "DDL_CSV"})
 	execution := object(t, schemas, "TaskExecutionRead")
 	properties := object(t, execution, "properties")
 	if object(t, properties, "stageEvidence")["const"] != "UNAVAILABLE" || object(t, properties, "progressEvidence")["const"] != "UNAVAILABLE" {
 		t.Fatal("task execution must explicitly keep unsupported stage and progress evidence unavailable")
 	}
+	for _, field := range []string{"exitCode", "elapsedMs", "errorCode", "errorSummary", "plannedActualMatch", "outputLocation"} {
+		if _, found := properties[field]; !found {
+			t.Fatalf("task execution must expose structured evidence field %s", field)
+		}
+	}
+	outputLocation := object(t, schemas, "TaskOutputLocation")
+	if outputLocation["additionalProperties"] != false {
+		t.Fatal("task output location must reject unknown fields")
+	}
+	assertRequiredProperties(t, outputLocation, "kind", "redaction")
 	// EX-I8：结果摘要必须是受控安全投影——只含相对路径与大小，绝不含内容、校验和或绝对路径。
 	summaryRef := object(t, properties, "resultSummary")
 	if summaryRef["$ref"] != "#/components/schemas/ExecutionResultSummary" {

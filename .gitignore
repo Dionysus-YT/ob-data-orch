@@ -2,6 +2,7 @@
 /ob-loader-dumper-4.3.5-RELEASE.zip
 /.codegraph/
 /.qoder/
+/.firecrawl/
 
 # 本地构建产物（控制面/Agent 二进制为本地构建工件，按 AGENTS.md 6.1 删除后重建，不纳入 Git）
 /control-plane

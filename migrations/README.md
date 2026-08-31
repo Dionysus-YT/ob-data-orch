@@ -1,6 +1,8 @@
 # SQLite 迁移
 
-`0001_initial.sql` 是首条纵向切片的正式前向迁移草案，建立 AD-R14 基线的 20 张窄表及关键外键、唯一性、`STRICT` 和不可变约束。`0002_add_data_source_odc_identity.sql` 补充 ODP 集群与租户字段；`0003_disable_unverified_data_sources.sql` 将历史上没有成功基础连接测试事实的已启用数据源降为禁用，并留下系统审计事实；`0004_cleanup_unreferenced_archived_data_sources.sql` 会物理清理没有草稿、预检查或任务引用的旧归档数据源及其自有凭据和创建幂等记录，并保留原有审计和新增系统删除审计；`0005_add_agent_facts_revision.sql` 为当前 Agent 环境事实增加单调版本，供固定预检查绑定事实新鲜度；`0006_add_agent_heartbeat_idempotency.sql` 保存最后一份心跳请求摘要，使 Agent 在未确认响应前使用同一 `requestId` 重发时不重复推进事实版本。
+`0001_initial.sql` 是首条纵向切片的正式前向迁移草案，建立 AD-R14 基线的窄表及关键外键、唯一性、`STRICT` 和不可变约束。`0002`～`0019` 依次补充 ODP 身份、数据源验证、Agent 事实/心跳幂等、预检查租约与秘密槽位、连接测试、节点环境、执行秘密槽位、持久日志、Export 泛化、系统凭据、对象存储凭据、任务派生和预检查存储凭据绑定。
+
+`0020_task_execution_cancellation.sql` 为 `task_executions` 增加取消请求标识、控制面请求时间、固定期限和固定原因码。取消不保存命令、路径、秘密或自由文本；排队任务可直接投影为 `CANCELLED`，已领取任务先进入 `CANCELLING`，由 Agent 在同一租约内轮询并上报进程树终止事实。
 
 `0007_persist_precheck_leases.sql` 为 `precheck_runs` 增加节点事实版本、绑定摘要和领取 Agent 投影，并新增 `agent_precheck_receipts`。该回执表仅保存 `(agent_id, request_id)`、操作、请求摘要、预检查/租约/epoch、绑定摘要、控制面到期时间和安全状态投影；它不保存机器凭据、连接信息、路径、命令、SQL、秘密槽位或原始检查输出。服务层以回执摘要判断 claim、acknowledge、complete 的同请求重放或同 ID 异摘要冲突；租约以控制面时间过期，迟到的完成结果不得将过期预检查提升为成功。
 
