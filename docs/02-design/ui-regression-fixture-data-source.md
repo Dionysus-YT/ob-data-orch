@@ -6,13 +6,13 @@
 >
 > 启用参数：`?uiFixture=data-sources`
 >
-> Reference Page：[数据源管理 UI Reference Page](ui-reference-page-data-source.md)
+> 视觉与响应式验收规则：[P0 MASTER](../../design-system/MASTER.md)。本 Fixture 只提供 DEV-only 合成测试输入，不定义页面视觉。
 >
 > 定版日期：2026-08-13
 
 ## 1. 用途
 
-该 Fixture 为数据源 Reference Page 提供可重复的 16 行合成输入，用于人工 UI Review、浏览器响应式检查和前端回归测试。它解决真实环境只有少量数据时无法验证 Table Density、Ellipsis、Metadata、列宽、排序、状态组合和 Row Actions 的问题。
+该 Fixture 为数据源管理页面提供可重复的 16 行合成输入，用于人工 UI Review、浏览器响应式检查和前端回归测试。它解决真实环境只有少量数据时无法验证表格密度、截断、metadata、列宽、排序、状态组合和行操作的问题。
 
 Fixture 是稳定 UI Regression 数据源，不是自动 Screenshot Diff 系统，也不能证明真实 API、真实凭据或真实连接测试可用。
 
@@ -66,10 +66,10 @@ Fixture 模式仅替换列表读取输入，并在页面交互入口阻断真实
 
 ## 6. 回归检查清单
 
-每次影响 Reference Page 的视觉或交互修改，至少检查：
+每次影响数据源管理页面的视觉或交互修改，至少检查：
 
-- 1280px、1440px、1920px 下没有非预期整表横向滚动；
-- 52px Row Height 在 16 行下不过松或过密；
+- 1920×1080、1440×1024、1280×720 下没有非预期整表横向滚动；
+- 表格行高、可见列和低优先级 metadata 按 [P0 MASTER](../../design-system/MASTER.md#8-responsive-architecture) 的密度与降级规则验证；
 - 长名称只截断本列，不抬高行高；完整值仍可获得；
 - Host、Port、Tenant、Username 能快速纵向扫描；
 - Environment、Runtime、Enable 不混用同一视觉语义；
@@ -94,6 +94,6 @@ npm run typecheck
 ## 8. 长期维护规则
 
 - 保持 16 行和覆盖矩阵稳定；不要把随机数据、当前时间或真实环境数据引入 Fixture。
-- 业务字段确实变化时，同步更新 Fixture、测试、Reference Page 的列结构和覆盖说明。
+- 业务字段确实变化时，同步更新 Fixture、测试、当前页面的列结构和覆盖说明。
 - 为通过某次截图而随意改数据会破坏回归价值；变更必须说明它新增或替代了哪个边界场景。
 - Fixture 只服务数据源页面；其他模块应在真实需要时建立独立、最小、DEV-only Fixture，不能把数据源字段强行复用。

@@ -104,6 +104,12 @@ OB Data Orch 是 **OB Loader/Dumper 4.3.5 的轻量可视化编排平台**：降
 - Go 代码执行 `gofmt`；前端遵循锁定依赖和现有 TypeScript 配置。
 - 涉及命令、凭据、Agent、日志、SQLite、OpenAPI、迁移或平台适配时，同步更新对应契约、任务地图或验证证据，避免把现役结论只留在聊天中。
 
+### 7.3 前端设计治理
+
+- `design-system/MASTER.md` 是全局 UI/UX 的 P0 Source of Truth。开发、评审或重构任一前端页面前，必须先阅读它；若 `design-system/pages/<page>.md` 存在，再阅读该 P1 页面规则，随后读取适用的产品规则、API/安全契约和验证矩阵。
+- 不得自行新建全局 token、修改 Product Shell 或 Page Archetype、引入第二套视觉语言、复制历史页面 CSS 作为规范，或依据已删除的设计资料恢复旧布局。
+- 现有实现只表示 P4 事实，不自动优先于 P0/P1。发现冲突时先记录并判定为 implementation debt、业务约束或 MASTER defect；只有确认是 MASTER defect 时，才可提议更新 P0。
+
 ## 8. 验证与交付
 
 验证强度与改动风险相称。常用 Go 和仓库门禁为：

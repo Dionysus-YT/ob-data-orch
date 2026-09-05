@@ -3,7 +3,7 @@
 > 文档状态：产品设计语义基线已收口，导出公共链路、普通导入、旁路导入、任务中心、模板复用、高风险权限、执行节点、日志中心与系统设置低保真已确认  
 > 依据：[总体 PRD](../01-product/PRD.md)  
 > 更新日期：2026-07-20
-> 关联低保真：[核心流程低保真基线](core-flow-low-fidelity.md)、[普通导入低保真基线](normal-import-low-fidelity.md)、[旁路导入低保真基线](direct-load-low-fidelity.md)、[任务中心全状态低保真基线](task-center-low-fidelity.md)、[模板中心复用链路低保真基线](template-center-low-fidelity.md)、[权限与安全高风险操作低保真基线](access-control-security-low-fidelity.md)、[执行节点管理低保真基线](execution-node-low-fidelity.md)、[日志中心低保真基线](log-center-low-fidelity.md)、[系统设置低保真基线](system-settings-low-fidelity.md)
+> 场景语义参考：各模块 P3 场景矩阵；全局视觉与导航架构以 [P0 MASTER](../../design-system/MASTER.md) 为准。
 
 ## 架构目标
 
@@ -44,7 +44,7 @@ OB Data Orch
 | 一级导航 | 二级页面 | 页面职责 | 类型 | 优先级 |
 |---|---|---|---|---|
 | 首页 | 运行概览 | 展示平台摘要、任务指标、单一趋势图、执行节点健康、我的任务和最近异常 | 公共支撑 | P0 |
-| 数据源 | 数据源列表 | 筛选、查看、测试、启停、删除或归档数据源 | 公共支撑 | P0 |
+| 数据源 | 数据源列表 | 筛选、查看、测试、启停、永久删除或显式归档数据源 | 公共支撑 | P0 |
 | 数据源 | 新增 / 编辑数据源 | 维护基础连接信息并执行基础连接测试 | 公共支撑 | P0 |
 | 导出 | 新建导出任务 | 按 OBDUMPER 能力配置导出对象、内容、格式和执行参数 | 核心流程 | P0 |
 | 导入 | 模式选择 | 解释普通导入与旁路导入边界并进入对应独立流程 | 核心流程 | P0 |

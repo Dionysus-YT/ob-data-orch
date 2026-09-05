@@ -4,7 +4,7 @@
 > 模块：OBDUMPER 导出
 > 目标版本：4.3.5-RELEASE
 > 更新日期：2026-08-05
-> 产品决策依据：[DEC-014](../01-product/decisions.md#dec-014-导出模块专项产品规则)
+> 产品决策依据：[DEC-014](../../../01-product/decisions.md#dec-014-导出模块专项产品规则)
 > 历史参数事实依据：[归档参数映射](export-parameter-mapping.md)
 > 历史 V1.0 支持状态依据：[归档支持矩阵](export-v1-support-matrix.md)
 

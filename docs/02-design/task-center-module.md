@@ -7,7 +7,7 @@
 > 更新日期：2026-08-03
 > 产品决策依据：[DEC-020](../01-product/decisions.md#dec-020-任务中心与任务详情专项产品规则)  
 > 字段决策依据：[DEC-021](../01-product/decisions.md#dec-021-任务中心与任务详情字段及条件规则)  
-> 关联低保真：[核心流程低保真基线](core-flow-low-fidelity.md)、[任务中心与任务详情全状态低保真基线](task-center-low-fidelity.md)  
+> 场景语义参考：[任务中心与任务详情场景矩阵](task-center-low-fidelity.md)；视觉与页面架构以 [P0 MASTER](../../design-system/MASTER.md) 为准。
 > 低保真决策依据：[DEC-038](../01-product/decisions.md#dec-038-任务中心与任务详情全状态低保真基线)
 
 ## 1. 评审目标

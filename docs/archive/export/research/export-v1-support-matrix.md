@@ -81,7 +81,7 @@
 |---|---|---|---|---|---|
 | `--csv` | NORMAL | LOW | VERIFIED | ENABLED | 推荐格式 |
 | `--cut` | NORMAL | LOW | VERIFIED | ENABLED | 字符串分隔格式 |
-| `--pos` | NORMAL | LOW | VERIFIED（2026-08-07 实测） | ENABLED（待产品接入） | 定长格式，独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，见 [受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) |
+| `--pos` | NORMAL | LOW | VERIFIED（2026-08-07 实测） | ENABLED（待产品接入） | 定长格式，独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，见 [受控实测与定版](../../../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) |
 | `--sql` | NORMAL | LOW | VERIFIED | ENABLED | Insert SQL 格式 |
 | `--par` | NORMAL | LOW | VERIFIED（官方格式表，2026-08-07 接入） | ENABLED | Parquet 列式格式；压缩/序列化不适用，--block-size 不生效 |
 | `--orc` | NORMAL | MEDIUM | VERIFIED（官方格式表，2026-08-07 接入） | ENABLED | ORC 列式格式；内存风险较高，压缩/序列化不适用 |
@@ -505,7 +505,7 @@
 
 ### 6.2 POS 映射（已定版，待产品接入）
 
-2026-08-07 受控实测定版：4.3.5 实际二进制支持独立 `--pos`，必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)` 定义定长列）；官网 4.3.6“CUT + 空 splitter”口径与 4.3.5 行为不符，不再使用。控制文件来源“用户提供 / 自动生成”双支持已确认。详见 [Windows POS 受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)。
+2026-08-07 受控实测定版：4.3.5 实际二进制支持独立 `--pos`，必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)` 定义定长列）；官网 4.3.6“CUT + 空 splitter”口径与 4.3.5 行为不符，不再使用。控制文件来源“用户提供 / 自动生成”双支持已确认。详见 [Windows POS 受控实测与定版](../../../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)。
 
 ### 6.3 --block-size（显式传值已实测，默认值残余）
 

@@ -5,9 +5,7 @@
 > 依据：[总体 PRD](../01-product/PRD.md)、[产品范围](../01-product/product-scope.md)、[关键决策](../01-product/decisions.md)  
 > 更新日期：2026-07-20
 
-> 后续状态（2026-08-13）：本文保留当时的产品语义与静态低保真收口结论。数据源管理此后已形成真实可运行的 [UI Reference Page](ui-reference-page-data-source.md) 和 [Design System v0.1](design-system-v0.1.md)；其他页面不得据此被描述为已经完成同等级迁移。
->
-> 后续状态（2026-08-26）：新模块和发生实质视觉改造的存量模块改以 [前端设计基线：Operator Signal](frontend-design-baseline.md) 为目标；Design System v0.1 继续保留为历史实现证据，不证明存量页面已经迁移。
+> 后续状态（2026-09-02）：本文保留产品语义和场景收口事实，不再提供任何视觉依据。全局 UI/UX 只以 [P0 MASTER](../../design-system/MASTER.md) 为准；现有实现和已移除的 Baseline 都不证明页面已迁移或具备功能可用性。
 
 ## 1. 收口结论
 
@@ -132,7 +130,7 @@ PRD 第 26 章明确要求分模块低保真原型和评审。当前字段和交
 6. 模板使用/从成功任务保存 → 新草稿 → 重新检查；
 7. 生产任务、专家配置和敏感命令的权限不足、授权、二次确认和审计状态。
 
-截至 2026-07-20，上述七条第一批核心流程的静态低保真均已确认，分别见[核心流程低保真基线](core-flow-low-fidelity.md)、[普通导入低保真基线](normal-import-low-fidelity.md)、[旁路导入低保真基线](direct-load-low-fidelity.md)、[任务中心与任务详情全状态低保真基线](task-center-low-fidelity.md)、[模板中心复用链路低保真基线](template-center-low-fidelity.md)和[权限与安全高风险操作低保真基线](access-control-security-low-fidelity.md)。这些结论确认了共同视觉方向和各模块关键差异，但不替代 P0 受控验证、可交互原型或技术设计。
+截至 2026-07-20，上述模块的场景与业务语义已形成 P3 记录，分别见普通导入、旁路导入、任务中心与详情、模板中心及权限与安全场景矩阵。历史共同视觉方向已经移除，当前视觉仅以 [P0 MASTER](../../design-system/MASTER.md) 为准；这些业务场景不替代受控验证、技术设计或功能准入。
 
 ### 5.2 第二批公共模块
 

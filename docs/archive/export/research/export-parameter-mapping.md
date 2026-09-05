@@ -13,7 +13,7 @@
 - 参数出现于 `obdumper --help` 不等于它属于当前导出能力；`--mix`、`--file-suffix`、`--ignore-escape`、`--parallel` 已由官网资料确认属于导入侧。
 - `--storage-uri`、`--file-name`、`--upload-behavior` 已废弃；V1.0 不提供新建入口，只为历史命令识别保留元数据。
 - `--commit-size`、`--server`、`--public-synonym` 仅能从本地 help 看到，官网没有足够语义，不能进入产品表单。
-- POS 映射已定版：OBDUMPER 4.3.5 实际二进制支持独立 `--pos`，且必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)` 定义定长列）；官网 4.3.6“CUT + 空 splitter”口径与 4.3.5 实际行为不符，以 4.3.5 实测定版为准。详见 [Windows POS 定长格式受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)。
+- POS 映射已定版：OBDUMPER 4.3.5 实际二进制支持独立 `--pos`，且必须搭配 `--ctl-path` 与 `<表名>.ctrl` 控制文件（`position(字节长度)` 定义定长列）；官网 4.3.6“CUT + 空 splitter”口径与 4.3.5 实际行为不符，以 4.3.5 实测定版为准。详见 [Windows POS 定长格式受控实测与定版](../../../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)。
 
 ## 2. 官方资料来源
 
@@ -191,7 +191,7 @@
 
 ## 7. 仍需受控实测
 
-- ~~POS 最终生成独立 `--pos` 还是 CUT 组合~~（2026-08-07 已实测定版：独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，见 [受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)）。
+- ~~POS 最终生成独立 `--pos` 还是 CUT 组合~~（2026-08-07 已实测定版：独立 `--pos` + `--ctl-path` + `<表名>.ctrl`，见 [受控实测与定版](../../../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)）。
 - `--block-size` 默认值：官网正文为 0，选项表为 1024MB；实测确认显式传值按 MB/ROW 生效，默认值在 ≤1024MB 数据下不可区分，冲突保留为低风险残余。
 - `--compact-schema`、`--sequence-policy` 在 4.3.5 当前页面缺少完整约束。
 - help-only 的 `--server`、`--public-synonym`、`--commit-size` 是否为可用导出能力。
