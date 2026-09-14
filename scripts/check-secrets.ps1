@@ -6,6 +6,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "git ls-files failed with exit code $LASTEXITCODE"
 }
 $matches = foreach ($file in $files) {
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+        continue
+    }
     Select-String -LiteralPath $file -Pattern $pattern
 }
 if ($matches) {

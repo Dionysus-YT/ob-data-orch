@@ -251,7 +251,7 @@ function unavailableReasonLabel(reason: string) {
 </template>
 
 <style scoped>
-.table-placeholder { padding: 42px; color: #6f7e91; text-align: center; }
+.table-placeholder { padding: 42px; color: var(--color-text-secondary); text-align: center; }
 .table-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .table-actions a, .table-action-button { color: #2863bd; text-decoration: none; }
 .table-action-button { margin: 0; padding: 0; border: 0; background: transparent; font: inherit; cursor: pointer; }
@@ -259,8 +259,8 @@ function unavailableReasonLabel(reason: string) {
 .node-deletion-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 18px; background: rgb(24 34 49 / 46%); }
 .node-deletion-dialog { width: min(640px, 100%); padding: 22px; border: 1px solid #d7e0eb; border-radius: 6px; background: #fff; box-shadow: 0 18px 44px rgb(15 23 42 / 22%); }
 .node-deletion-dialog header, .node-deletion-actions { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
-.node-deletion-dialog h2 { margin: 0 0 5px; color: #334257; font-size: 17px; }
+.node-deletion-dialog h2 { margin: 0 0 5px; color: var(--color-text-primary); font-size: 17px; }
 .node-deletion-dialog header p { margin: 0; color: #7a899c; font-size: 12px; }
-.node-deletion-dialog > p { margin: 0 0 16px; color: #536276; font-size: 13px; line-height: 1.65; }
+.node-deletion-dialog > p { margin: 0 0 16px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.65; }
 .node-deletion-actions { justify-content: end; }
 </style>

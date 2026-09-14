@@ -28,6 +28,22 @@ func TestPrivateODPCommandIdentityUsesCanonicalPrivateODPFormat(t *testing.T) {
 	}
 }
 
+func TestPrivateODPIdentityAllowsMissingCluster(t *testing.T) {
+	jdbcIdentity, ok := composePrivateODPJDBCIdentity("synthetic-user", "synthetic-tenant", "")
+	if !ok || !bytes.Equal(jdbcIdentity, []byte("synthetic-user@synthetic-tenant")) {
+		t.Fatalf("composePrivateODPJDBCIdentity() = %q, %t", jdbcIdentity, ok)
+	}
+	defer func() {
+		for index := range jdbcIdentity {
+			jdbcIdentity[index] = 0
+		}
+	}()
+	commandIdentity, ok := PrivateODPCommandIdentity("synthetic-user", "synthetic-tenant", "")
+	if !ok || commandIdentity != "synthetic-user@synthetic-tenant" {
+		t.Fatalf("PrivateODPCommandIdentity() = %q, %t", commandIdentity, ok)
+	}
+}
+
 func TestComposePrivateODPJDBCIdentityFailsClosedForAmbiguousOrOversizedParts(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -36,7 +52,6 @@ func TestComposePrivateODPJDBCIdentityFailsClosedForAmbiguousOrOversizedParts(t 
 		clusterName string
 	}{
 		{name: "missing tenant", username: "user", clusterName: "cluster"},
-		{name: "missing cluster", username: "user", tenantName: "tenant"},
 		{name: "embedded separator", username: "user@tenant", tenantName: "tenant", clusterName: "cluster"},
 		{name: "colon separator", username: "user", tenantName: "tenant:zone", clusterName: "cluster"},
 		{name: "whitespace", username: "user", tenantName: "tenant name", clusterName: "cluster"},

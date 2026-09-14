@@ -34,9 +34,15 @@ describe('ODC 连接串解析', () => {
     expect(connectionString).toContain('@SERVICE:cluster_service')
   })
 
+  it('兼容不带集群名的用户@租户身份', () => {
+    const connectionString = ['mysql', '-h192.168.2.184', '-P2881', '-utest@gth_mysql', '-pQhrcc@1013'].join(' ')
+    expect(parseDataSourceConnectionString(connectionString)).toMatchObject({
+      compatibilityMode: 'MYSQL', host: '192.168.2.184', port: 2881, username: 'test', tenantName: 'gth_mysql', clusterName: '', password: 'Qhrcc@1013',
+    })
+  })
+
   it('拒绝非 ODP、未知客户端和不完整的参数', () => {
     const passwordOption = `-p${'synthetic-value'}`
-    expect(parseDataSourceConnectionString(['mysql', '-h127.0.0.1', '-P2883', '-uapp@tenant', passwordOption].join(' '))).toBeUndefined()
     expect(parseDataSourceConnectionString(['psql', '-h127.0.0.1', '-P2883', '-uapp@tenant#cluster', passwordOption].join(' '))).toBeUndefined()
     expect(parseDataSourceConnectionString(['mysql', '-h127.0.0.1', '-P2883', '-uapp@tenant#cluster'].join(' '))).toBeUndefined()
   })

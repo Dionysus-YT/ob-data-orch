@@ -3,7 +3,7 @@ withDefaults(defineProps<{ tone?: 'success' | 'danger' | 'warning' | 'info' | 'n
 </script>
 
 <template>
-  <span class="workbench-status" :class="[`is-${tone}`, `is-${appearance}`]"><span class="status-indicator" aria-hidden="true" /><slot /></span>
+  <span class="workbench-status" :class="[`is-${tone}`, `is-${appearance}`]"><slot name="icon"><span class="status-indicator" aria-hidden="true" /></slot><slot /></span>
 </template>
 
 <style scoped>

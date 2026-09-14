@@ -24,9 +24,8 @@ export function validateDataSourceForm(input: DataSourceFormInput, isNew: boolea
   if (!input.displayName.trim()) errors.displayName = '请输入数据源名称。'
   if (!input.host.trim()) errors.host = '请输入 ODP 地址。'
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) errors.port = 'SQL 端口必须是 1 到 65535 之间的整数。'
-  if (!input.clusterName.trim()) errors.clusterName = '请输入集群名称。'
   if (!input.tenantName.trim()) errors.tenantName = '请输入租户名称。'
-  if (isNew && !input.username.trim()) errors.username = '新增数据源时必须填写用户名。'
+  if (!input.username.trim()) errors.username = '请输入用户名。'
   if (isNew && !input.password) errors.password = '新增数据源时必须填写密码。'
   // 可选的 sys 凭据必须成对提供（参考 ODC 数据源高级设置）：账号与密码要么同时填写，要么同时留空。
   if ((input.sysUser?.trim() ? true : false) !== Boolean(input.sysPassword)) {

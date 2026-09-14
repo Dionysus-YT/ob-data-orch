@@ -72,7 +72,7 @@
 - Agent 已提供本机运行时校验入口：管理员必须以绝对路径配置 `OB_DATA_ORCH_AGENT_JAVA_PATH`、`OB_DATA_ORCH_AGENT_TOOL_HOME`，可选配置 `OB_DATA_ORCH_AGENT_WORKSPACE_ROOT`；`ob-data-orch agent --check-runtime` 只固定发现包内 Connector/J 并计算摘要，不连接数据库、不解析凭据，也不启动 OBDUMPER。本机 Windows 已使用 Java 8 与本地 4.3.5 安装目录通过该校验。
 - 受认证 Agent 关联、心跳以及固定 `claim-next → acknowledge-lease → complete` 预检查信封已完成 G2 合成协议与 SQLite 回执验证。`claim-next` 不接受客户端 precheckId 或 leaseId，控制面原子选择绑定记录并校验绑定摘要、节点事实版本、租约 epoch、控制面时钟和单容量；响应继续固定 `realExecutionEnabled=false`。固定 Worker 先完成不依赖数据库槽位的工具环境、输出路径、目录空性和可用空间检查；任一前置项失败时，数据库/对象结果固定为 `UNKNOWN`，且绝不解析秘密槽位。
 - Agent 本地 `DATABASE_CONNECTIVITY` 预检查适配已具备短时槽位、探针工作区、连接失败分类和清理边界。控制面秘密槽位、严格 Agent HTTPS 信封、回执迁移、响应绑定和固定 Worker 已完成合成验证；仅在控制面、Agent 同时设置 `OB_DATA_ORCH_ENABLE_AGENT_JDBC_CONNECTION_TEST=true` 时，才允许 `AGENT_JDBC` 连接测试解析唯一槽位。Windows 本机 MVP 的控制面启动脚本与随包 Agent 启动脚本会显式设置该开关，实际连接仍只由页面一次测试或固定预检查触发；它会先检查冻结主机/端口的 TCP 可达性，只有成功才启动固定 Java/JDBC 探针。2026-07-28 的受控测试最终得到 `SUCCEEDED / DATABASE_CONNECTED`，证明所选本机 Agent 的固定 JDBC 基础连接路径在该时点有效；没有记录端点、凭据或异常原文。该成功不构成 WI-06 通过，`EXPORT_PREFLIGHT` Worker 不会启动 OBDUMPER 或真实导出。
-- `DATA_SOURCE_CONNECTION_TEST` 与 `EXPORT_PREFLIGHT` 的数据库槽位现均由控制面在绑定复验后，以已登记的 `username`、`tenant`、`cluster` 短时组装私有 ODP JDBC 身份 `username@tenant#cluster`；非法分隔符、空白/控制字符、无效 UTF-8 或超过 256 字节时失败关闭。相关测试只使用合成凭据并验证清零，不构成真实 ODP 连接证据。
+- `DATA_SOURCE_CONNECTION_TEST` 与 `EXPORT_PREFLIGHT` 的数据库槽位现均由控制面在绑定复验后，以已登记的 `username`、`tenant`、可选 `cluster` 短时组装私有 ODP JDBC 身份 `username@tenant` 或 `username@tenant#cluster`；非法分隔符、空白/控制字符、无效 UTF-8 或超过 256 字节时失败关闭。相关测试只使用合成凭据并验证清零，不构成真实 ODP 连接证据。
 - 另外五项固定检查尚无真实 Probe，预检查租约/待上报结果没有 Agent 本地恢复队列。上述内容只覆盖直接 Java 的 stdout/stderr 第一层，不覆盖工具文件跟踪、控制面第二层、真实进程、可靠队列或恢复。因此 WI-06、WI-07、WI-09、WI-10 仍未通过，真实任务入口继续关闭。
 
 ## 6. G3 启动判定

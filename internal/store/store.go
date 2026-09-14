@@ -137,6 +137,9 @@ func (s *Store) ListDataSourceSummaries(ctx context.Context) ([]DataSourceSummar
 			}
 			summary.LastTestedAt = &parsedLastTestedAt
 		}
+		if err := s.populateDataSourceLifecycleEligibility(ctx, &summary); err != nil {
+			return nil, err
+		}
 		summaries = append(summaries, summary)
 	}
 	if err := rows.Err(); err != nil {
@@ -191,7 +194,67 @@ func (s *Store) GetDataSourceSummary(ctx context.Context, dataSourceID string) (
 		}
 		summary.LastTestedAt = &parsedLastTestedAt
 	}
+	if err := s.populateDataSourceLifecycleEligibility(ctx, &summary); err != nil {
+		return DataSourceSummary{}, err
+	}
 	return summary, nil
+}
+
+// populateDataSourceLifecycleEligibility 读取当前历史引用并生成服务端唯一的生命周期资格。
+// 引用数量只保存于短生命周期内存投影，不能由前端状态或本地计数替代。
+func (s *Store) populateDataSourceLifecycleEligibility(ctx context.Context, summary *DataSourceSummary) error {
+	referenceCount, err := dataSourceReferenceCount(ctx, s.db, summary.DataSourceID)
+	if err != nil {
+		return err
+	}
+	summary.LifecycleEligibility = newDataSourceLifecycleEligibility(*summary, referenceCount)
+	return nil
+}
+
+type dataSourceReferenceCounter interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// dataSourceReferenceCount 只计入当前真实会保留数据源历史的四类记录。
+// 本函数故意不把不存在的模板或其他推测性引用纳入资格判断。
+func dataSourceReferenceCount(ctx context.Context, queryer dataSourceReferenceCounter, dataSourceID string) (int, error) {
+	var referenceCount int
+	if err := queryer.QueryRowContext(ctx, `
+        SELECT
+            (SELECT COUNT(*) FROM export_drafts WHERE data_source_id = ?) +
+            (SELECT COUNT(*) FROM precheck_runs WHERE data_source_id = ?) +
+            (SELECT COUNT(*) FROM data_source_connection_test_runs WHERE data_source_id = ?) +
+            (SELECT COUNT(*) FROM tasks WHERE data_source_id = ?)
+    `, dataSourceID, dataSourceID, dataSourceID, dataSourceID).Scan(&referenceCount); err != nil {
+		return 0, fmt.Errorf("count data source references: %w", err)
+	}
+	return referenceCount, nil
+}
+
+// newDataSourceLifecycleEligibility 将当前状态、连接测试和历史引用转换为固定动作资格。
+// Delete 与 Archive 是互斥的明确动作：有历史引用只能归档，无历史引用只能永久删除。
+func newDataSourceLifecycleEligibility(summary DataSourceSummary, referenceCount int) DataSourceLifecycleEligibility {
+	eligibility := DataSourceLifecycleEligibility{
+		Enable:  DataSourceLifecycleActionEligibility{Allowed: summary.State != "ENABLED"},
+		Disable: DataSourceLifecycleActionEligibility{Allowed: summary.State != "DISABLED"},
+	}
+	if summary.State == "ENABLED" {
+		eligibility.Enable = DataSourceLifecycleActionEligibility{ReasonCode: "ALREADY_ENABLED", Reason: "数据源当前已启用。"}
+	}
+	if summary.State == "DISABLED" {
+		eligibility.Disable = DataSourceLifecycleActionEligibility{ReasonCode: "ALREADY_DISABLED", Reason: "数据源当前已禁用。"}
+	}
+	if eligibility.Enable.Allowed && (summary.LastTestStatus != "SUCCEEDED" || summary.LastTestSource != "AGENT_JDBC") {
+		eligibility.Enable = DataSourceLifecycleActionEligibility{ReasonCode: "CONNECTION_TEST_REQUIRED", Reason: "当前连接配置尚未通过基础连接测试，不能启用。"}
+	}
+	if referenceCount > 0 {
+		eligibility.Delete = DataSourceLifecycleActionEligibility{ReasonCode: "HISTORICAL_REFERENCES_EXIST", Reason: "存在历史引用，不能永久删除。", ReferenceCount: referenceCount}
+		eligibility.Archive = DataSourceLifecycleActionEligibility{Allowed: true, ReferenceCount: referenceCount}
+		return eligibility
+	}
+	eligibility.Delete = DataSourceLifecycleActionEligibility{Allowed: true}
+	eligibility.Archive = DataSourceLifecycleActionEligibility{ReasonCode: "NO_HISTORICAL_REFERENCES", Reason: "当前没有需要保留的历史引用，请永久删除。"}
+	return eligibility
 }
 
 // ListExecutionNodeSummaries 仅返回当前启用节点的最小安全投影。
@@ -1441,11 +1504,9 @@ func (s *Store) ChangeDataSourceState(ctx context.Context, input DataSourceState
 	return result, err
 }
 
-// DeleteOrArchiveDataSource 在一个短事务内执行已确认的删除语义。
-// 任一历史草稿、预检查或任务引用都保留数据源及其凭据并只归档；
-// 无引用时才删除数据源拥有的凭据修订和数据源记录，审计事实与创建幂等记录始终保留。
-// 已删除资源的创建幂等记录仍需保留至少 24 小时，避免延迟重试错误地重新创建数据源。
-func (s *Store) DeleteOrArchiveDataSource(ctx context.Context, input DataSourceDeletion) (DataSourceDeletionResult, error) {
+// DeleteDataSource 在短事务内执行确定性的永久删除。
+// 历史引用在事务内重新核验；一旦存在引用即拒绝，绝不能改为归档。
+func (s *Store) DeleteDataSource(ctx context.Context, input DataSourceDeletion) (DataSourceDeletionResult, error) {
 	if err := validateDataSourceDeletion(input); err != nil {
 		return DataSourceDeletionResult{}, err
 	}
@@ -1467,38 +1528,12 @@ func (s *Store) DeleteOrArchiveDataSource(ctx context.Context, input DataSourceD
 			return ErrRevisionConflict
 		}
 
-		var referenceCount int
-		if err := tx.QueryRowContext(ctx, `
-            SELECT
-                (SELECT COUNT(*) FROM export_drafts WHERE data_source_id = ?) +
-				(SELECT COUNT(*) FROM precheck_runs WHERE data_source_id = ?) +
-				(SELECT COUNT(*) FROM data_source_connection_test_runs WHERE data_source_id = ?) +
-				(SELECT COUNT(*) FROM tasks WHERE data_source_id = ?)
-		`, input.DataSourceID, input.DataSourceID, input.DataSourceID, input.DataSourceID).Scan(&referenceCount); err != nil {
-			return fmt.Errorf("count data source references: %w", err)
+		referenceCount, err := dataSourceReferenceCount(ctx, tx, input.DataSourceID)
+		if err != nil {
+			return err
 		}
-
 		if referenceCount > 0 {
-			update, err := tx.ExecContext(ctx, `
-                UPDATE data_sources
-                SET state = 'ARCHIVED', revision = revision + 1, updated_at = ?
-                WHERE data_source_id = ? AND revision = ?
-            `, utcText(input.DeletedAt), input.DataSourceID, currentRevision)
-			if err != nil {
-				return fmt.Errorf("archive referenced data source: %w", err)
-			}
-			affected, err := update.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("read data source archive result: %w", err)
-			}
-			if affected != 1 {
-				return ErrRevisionConflict
-			}
-			if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "DATA_SOURCE_ARCHIVED", "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.DeletedAt); err != nil {
-				return err
-			}
-			result.Outcome, result.Revision = "ARCHIVED", currentRevision+1
-			return nil
+			return ErrDataSourceDeleteIneligible
 		}
 
 		if _, err := tx.ExecContext(ctx, `DELETE FROM credential_revisions WHERE data_source_id = ?`, input.DataSourceID); err != nil {
@@ -1523,6 +1558,59 @@ func (s *Store) DeleteOrArchiveDataSource(ctx context.Context, input DataSourceD
 			return err
 		}
 		result.Outcome = "DELETED"
+		return nil
+	})
+	return result, err
+}
+
+// ArchiveDataSource 在短事务内执行确定性的历史保留归档。
+// 没有历史引用时拒绝归档，避免把本应删除的资源变成不透明的保留记录。
+func (s *Store) ArchiveDataSource(ctx context.Context, input DataSourceArchive) (DataSourceDeletionResult, error) {
+	deletion := DataSourceDeletion{
+		DataSourceID: input.DataSourceID, ActorSubjectID: input.ActorSubjectID, ExpectedRevision: input.ExpectedRevision,
+		RequestID: input.RequestID, DeletedAt: input.ArchivedAt,
+	}
+	if err := validateDataSourceDeletion(deletion); err != nil {
+		return DataSourceDeletionResult{}, err
+	}
+	result := DataSourceDeletionResult{}
+	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var currentRevision int64
+		if err := tx.QueryRowContext(ctx, `
+            SELECT revision FROM data_sources WHERE data_source_id = ? AND state != 'ARCHIVED'
+        `, input.DataSourceID).Scan(&currentRevision); errors.Is(err, sql.ErrNoRows) {
+			return ErrDataSourceNotFound
+		} else if err != nil {
+			return fmt.Errorf("read data source archive state: %w", err)
+		}
+		if currentRevision != input.ExpectedRevision {
+			return ErrRevisionConflict
+		}
+		referenceCount, err := dataSourceReferenceCount(ctx, tx, input.DataSourceID)
+		if err != nil {
+			return err
+		}
+		if referenceCount == 0 {
+			return ErrDataSourceArchiveIneligible
+		}
+		updated, err := tx.ExecContext(ctx, `
+            UPDATE data_sources SET state = 'ARCHIVED', revision = revision + 1, updated_at = ?
+            WHERE data_source_id = ? AND revision = ?
+        `, utcText(input.ArchivedAt), input.DataSourceID, currentRevision)
+		if err != nil {
+			return fmt.Errorf("archive referenced data source: %w", err)
+		}
+		affected, err := updated.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read data source archive result: %w", err)
+		}
+		if affected != 1 {
+			return ErrRevisionConflict
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "DATA_SOURCE_ARCHIVED", "DATA_SOURCE", input.DataSourceID, "SUCCEEDED", input.RequestID, input.ArchivedAt); err != nil {
+			return err
+		}
+		result.Outcome, result.Revision = "ARCHIVED", currentRevision+1
 		return nil
 	})
 	return result, err
@@ -6116,7 +6204,7 @@ func validateDraftUpdate(input DraftUpdate) error {
 }
 
 func validateDataSourceCreate(input DataSourceCreate) error {
-	if input.DataSourceID == "" || input.CredentialID == "" || input.CreatorSubjectID == "" || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.ClusterName == "" || input.TenantName == "" || input.Username == "" || input.KeyID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
+	if input.DataSourceID == "" || input.CredentialID == "" || input.CreatorSubjectID == "" || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.TenantName == "" || input.Username == "" || input.KeyID == "" || input.RequestID == "" || input.IdempotencyKey == "" || input.CreatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
 		return errors.New("data source create identity is invalid")
 	}
 	if !isSHA256(input.RequestDigest) || len(input.Nonce) == 0 || len(input.Ciphertext) == 0 {
@@ -6379,7 +6467,7 @@ func validateDataSourceDeletion(input DataSourceDeletion) error {
 
 // validateDataSourceUpdate 复用创建时的连接枚举约束，并额外验证轮换材料。
 func validateDataSourceUpdate(input DataSourceUpdate) error {
-	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.ClusterName == "" || input.TenantName == "" || input.Username == "" || input.RequestID == "" || input.UpdatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
+	if input.DataSourceID == "" || input.ActorSubjectID == "" || input.ExpectedRevision < 1 || input.DisplayName == "" || input.NormalizedName == "" || input.Host == "" || input.TenantName == "" || input.Username == "" || input.RequestID == "" || input.UpdatedAt.IsZero() || input.Port < 1 || input.Port > 65535 {
 		return errors.New("data source update identity is invalid")
 	}
 	if !oneOf(input.Environment, "DEVELOPMENT", "TEST", "STAGING", "PRODUCTION") || input.ConnectionKind != "ODP" || !oneOf(input.CompatibilityMode, "MYSQL", "ORACLE") || (input.CompatibilityMode == "ORACLE" && input.DefaultDatabase != "") {

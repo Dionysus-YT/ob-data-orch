@@ -70,14 +70,18 @@
       "post": { "operationId": "saveTaskTemplate", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "EX-I8：从成功任务保存导出配置模板——只复制非敏感 v6 配置并剥离对象存储凭据引用；不复制凭据、节点、预检查、风险确认、日志或结果。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportConfigTemplateRename" }, "responses": { "201": { "$ref": "#/components/responses/TemplateSaved" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources": {
-      "get": { "operationId": "listDataSources", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "仅返回逐项通过读取范围校验的数据源列表安全投影；包含普通业务用户名，不包含 sys 账号、组合用户名或凭据材料。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceList" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "get": {"operationId":"listDataSources","tags":["DataSources"],"security":[{"BrowserSession":[]}],"description":"仅返回逐项通过读取范围校验的数据源列表安全投影；包含普通业务用户名，不包含 sys 账号、组合用户名或凭据材料。","parameters":[{"name":"limit","in":"query","schema":{"type":"integer","enum":[10]},"description":"管理列表固定10条；无查询参数保留旧调用的完整授权列表。"},{"name":"keyword","in":"query","schema":{"type":"string"}},{"name":"environment","in":"query","schema":{"type":"string"}},{"name":"state","in":"query","schema":{"type":"string"}},{"name":"connectionStatus","in":"query","schema":{"type":"string"}},{"name":"compatibilityMode","in":"query","schema":{"type":"string"}},{"$ref":"#/components/parameters/Cursor"}],"responses":{"200":{"$ref":"#/components/responses/DataSourceList"},"default":{"$ref":"#/components/responses/Error"}}},
       "post": { "operationId": "createDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources/{dataSourceId}": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
       "get": { "operationId": "getDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "读取范围内返回最小详情；只有同一对象管理范围也被确认时，item.username 才出现。它只是不带租户和集群后缀的普通业务用户名。", "responses": { "200": { "$ref": "#/components/responses/DataSourceDetail" }, "default": { "$ref": "#/components/responses/Error" } } },
       "patch": { "operationId": "updateDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "200": { "$ref": "#/components/responses/DataSourceDetail" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "deleteOrArchiveDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "delete": { "operationId": "deleteDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "永久删除。服务端在事务内复验历史引用；存在引用时返回 DATA_SOURCE_DELETE_INELIGIBLE 和最新 lifecycleEligibility，绝不自动归档。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources/{dataSourceId}:archive": {
+      "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
+      "post": { "operationId": "archiveDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "显式归档。只在服务端确认存在历史引用时执行；无引用时返回 DATA_SOURCE_ARCHIVE_INELIGIBLE 和最新 lifecycleEligibility。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/DataSourceArchive" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources/{dataSourceId}:test-connection": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
@@ -307,7 +311,8 @@
       "Ok": { "description": "Authorized, non-cacheable resource response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceEnvelope" } } } },
       "DataSourceList": { "description": "授权数据源列表的安全投影，包含普通业务 username，不包含 sys 或组合身份。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceListEnvelope" } } } },
       "DataSourceDetail": { "description": "授权数据源详情；username 只有同一对象管理范围确认后才出现，且不包含 sys 或组合身份。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDetailEnvelope" } } } },
-      "DataSourceDeletion": { "description": "Data source was physically deleted or archived to preserve history.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDeletionEnvelope" } } } },
+      "DataSourceDeletion": { "description": "Data source was permanently deleted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDeletionEnvelope" } } } },
+      "DataSourceArchive": { "description": "Data source was explicitly archived to preserve existing history.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceArchiveEnvelope" } } } },
       "ExecutionNodeDeletion": { "description": "Execution node was physically deleted or archived to preserve history; archived nodes may report that current Agent access was revoked.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeDeletionEnvelope" } } } },
       "Collection": { "description": "Authorized cursor page without a global count.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CollectionEnvelope" } } } },
       "TaskList": { "description": "Authorization-scoped task page with list-safe fields and authorization-scoped totalPages only.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskListEnvelope" } } } },
@@ -376,7 +381,7 @@
           "compatibilityMode": { "type": "string", "enum": ["MYSQL", "ORACLE"], "description": "OceanBase MySQL 或 OceanBase Oracle 数据源类型。" },
           "host": { "type": "string", "minLength": 1, "maxLength": 255 },
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-          "clusterName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "clusterName": { "type": "string", "maxLength": 255, "description": "可选集群名；留空时控制面按 username@tenant 组合 ODP 身份。" },
           "tenantName": { "type": "string", "minLength": 1, "maxLength": 255 },
           "username": { "type": "string", "minLength": 1, "maxLength": 512 },
           "defaultDatabase": { "type": ["string", "null"], "maxLength": 512 },
@@ -384,7 +389,7 @@
           "sysUser": { "type": "string", "maxLength": 256, "description": "可选的 sys 凭据账号（--sys-user，参考 ODC 数据源高级设置）：拥有 sys 租户视图查看权限的账号，如 root；账号勿填 @sys#集群 后缀。与 sysPassword 必须同时提供或同时留空。" },
           "sysPassword": { "type": "string", "maxLength": 4096, "writeOnly": true, "description": "可选的 sys 凭据密码（--sys-password）：与 sysUser 成对提供；只走加密信封，绝不进入日志、审计、响应或快照。" }
         },
-        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、集群、租户、用户名和密码。创建固定为 DISABLED；启用和禁用只能通过专用状态动作完成。Patch 使用字段存在语义，省略密码表示保持不变；sys 凭据为可选项（参考 ODC 数据源高级设置）。"
+        "description": "连接串只能在浏览器中解析回填，控制面只接收结构化的 ODP 主机、端口、可选集群、租户、用户名和密码。创建固定为 DISABLED；启用和禁用只能通过专用状态动作完成。Patch 使用字段存在语义，省略密码表示保持不变；sys 凭据为可选项（参考 ODC 数据源高级设置）。"
       },
       "DataSourceListItem": {
         "type": "object",
@@ -407,7 +412,8 @@
           "credentialRevision": { "type": "integer", "minimum": 1 },
           "sysCredentialState": { "enum": ["AVAILABLE", "UNAVAILABLE"] },
           "lastTestStatus": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] },
-          "lastTestedAt": { "type": "string", "format": "date-time" }
+          "lastTestedAt": { "type": "string", "format": "date-time" },
+          "lifecycleEligibility": { "$ref": "#/components/schemas/DataSourceLifecycleEligibility", "description": "仅在同一对象的数据源管理范围通过时返回。" }
         },
         "description": "数据源列表使用的最小安全投影；包含普通业务 username，绝不含 sysUser、组合用户名、密码或凭据材料。"
       },
@@ -432,7 +438,8 @@
           "credentialRevision": { "type": "integer", "minimum": 1 },
           "sysCredentialState": { "enum": ["AVAILABLE", "UNAVAILABLE"] },
           "lastTestStatus": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] },
-          "lastTestedAt": { "type": "string", "format": "date-time" }
+          "lastTestedAt": { "type": "string", "format": "date-time" },
+          "lifecycleEligibility": { "$ref": "#/components/schemas/DataSourceLifecycleEligibility", "description": "仅在同一对象的数据源管理范围通过时返回。" }
         },
         "description": "单数据源详情和成功更新响应使用的投影。username 可选；sysUser、组合用户名、密码、密文、nonce、长度和凭据引用均被禁止。"
       },
@@ -442,7 +449,9 @@
         "required": ["requestId", "items"],
         "properties": {
           "requestId": { "$ref": "#/components/schemas/OpaqueId" },
-          "items": { "type": "array", "items": { "$ref": "#/components/schemas/DataSourceListItem" } }
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/DataSourceListItem" } },
+          "nextCursor": { "type": "string", "description": "limit=10 模式下必须返回；空字符串表示末页。" },
+          "total": { "type": "integer", "minimum": 0, "description": "limit=10 模式下当前授权范围和筛选条件内的总数。" }
         }
       },
       "DataSourceDetailEnvelope": {
@@ -1074,9 +1083,32 @@
         "properties": {
           "requestId": { "$ref": "#/components/schemas/OpaqueId" },
           "id": { "$ref": "#/components/schemas/OpaqueId" },
-          "outcome": { "type": "string", "enum": ["DELETED", "ARCHIVED"] },
+          "outcome": { "const": "DELETED" },
           "revision": { "type": "integer", "minimum": 0 }
         }
+      },
+      "DataSourceArchiveEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "id", "outcome", "revision"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "outcome": { "const": "ARCHIVED" },
+          "revision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "DataSourceLifecycleActionEligibility": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["allowed"],
+        "properties": { "allowed": { "type": "boolean" }, "reasonCode": { "type": "string" }, "reason": { "type": "string" }, "referenceCount": { "type": "integer", "minimum": 1 } }
+      },
+      "DataSourceLifecycleEligibility": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enable", "disable", "delete", "archive"],
+        "properties": { "enable": { "$ref": "#/components/schemas/DataSourceLifecycleActionEligibility" }, "disable": { "$ref": "#/components/schemas/DataSourceLifecycleActionEligibility" }, "delete": { "$ref": "#/components/schemas/DataSourceLifecycleActionEligibility" }, "archive": { "$ref": "#/components/schemas/DataSourceLifecycleActionEligibility" } }
       },
       "ExecutionNodeDeletionEnvelope": {
         "type": "object",

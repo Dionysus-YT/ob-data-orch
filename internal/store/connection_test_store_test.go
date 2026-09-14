@@ -347,12 +347,12 @@ func Test数据源连接测试引用使数据源归档(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)
 	requestSyntheticDataSourceConnectionTest(t, store, "connection-test-source-history", "G2_SYNTHETIC")
-	result, err := store.DeleteOrArchiveDataSource(context.Background(), DataSourceDeletion{
+	result, err := store.ArchiveDataSource(context.Background(), DataSourceArchive{
 		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
-		RequestID: "connection-test-delete-source", DeletedAt: testTime.Add(time.Minute),
+		RequestID: "connection-test-delete-source", ArchivedAt: testTime.Add(time.Minute),
 	})
 	if err != nil || result.Outcome != "ARCHIVED" {
-		t.Fatalf("DeleteOrArchiveDataSource() = %#v, %v", result, err)
+		t.Fatalf("ArchiveDataSource() = %#v, %v", result, err)
 	}
 	assertCount(t, store.db, `SELECT COUNT(*) FROM data_source_connection_test_runs WHERE data_source_id = 'source-1'`, 1)
 }

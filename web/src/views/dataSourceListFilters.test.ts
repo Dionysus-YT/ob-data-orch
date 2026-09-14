@@ -19,7 +19,17 @@ describe('数据源列表筛选', () => {
     expect(filterDataSources(sources, { ...allFilters, connectionStatus: 'UNKNOWN' }).map((source) => source.id)).toEqual(['source-4'])
   })
 
+  it('将排队与 Agent 已领取统一归为测试中', () => {
+    const testing = [...sources, { ...sources[0]!, id: 'source-5', lastTestStatus: 'LEASED' as const }]
+    expect(filterDataSources(testing, { ...allFilters, connectionStatus: 'TESTING' }).map((source) => source.id)).toEqual(['source-5'])
+  })
+
   it('与既有关键字、环境、兼容模式和启用状态筛选叠加', () => {
     expect(filterDataSources(sources, { ...allFilters, keyword: '源', environment: 'TEST', compatibilityMode: 'ORACLE', connectionStatus: 'FAILED', state: 'ENABLED' }).map((source) => source.id)).toEqual(['source-3'])
+  })
+
+  it('关键字同时覆盖名称、地址、集群和租户事实', () => {
+    expect(filterDataSources(sources, { ...allFilters, keyword: 'cluster-b' }).map((source) => source.id)).toEqual(['source-2'])
+    expect(filterDataSources(sources, { ...allFilters, keyword: 'tenant-c' }).map((source) => source.id)).toEqual(['source-3'])
   })
 })

@@ -17,6 +17,7 @@ export function dataSourceErrorMessage(error: unknown, fallback: string): string
   const apiError = error as Partial<ApiError>
   if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE') return '当前页面未获得请求安全令牌，已拒绝写操作。请刷新页面后重试。'
   if (apiError.code === 'DATA_SOURCE_NAME_UNAVAILABLE') return '数据源名称不可用，请更换后重试。'
+	if (apiError.code === 'DATA_SOURCE_DELETE_INELIGIBLE' || apiError.code === 'DATA_SOURCE_ARCHIVE_INELIGIBLE') return apiError.message || '数据源生命周期资格已变化，请刷新后重新比较。'
   if (apiError.status === 401) return '登录状态或请求安全校验已失效，请刷新页面后重试。'
   if (apiError.status === 404) return '数据源不存在或当前身份无权访问。'
   if (apiError.status === 409 || apiError.status === 412 || apiError.conflict) return '数据源已发生变化，请刷新后重新比较。'
@@ -88,6 +89,22 @@ interface DataSourceProjection {
   readonly sysCredentialState?: string
   readonly lastTestStatus?: string
   readonly lastTestedAt?: string
+	readonly lifecycleEligibility?: DataSourceLifecycleEligibility
+}
+
+export interface DataSourceLifecycleActionEligibility {
+	readonly allowed: boolean
+	readonly reasonCode?: string
+	readonly reason?: string
+	readonly referenceCount?: number
+}
+
+// DataSourceLifecycleEligibility 只能来自服务端当前投影；页面不得从状态或引用数量自行推断。
+export interface DataSourceLifecycleEligibility {
+	readonly enable: DataSourceLifecycleActionEligibility
+	readonly disable: DataSourceLifecycleActionEligibility
+	readonly delete: DataSourceLifecycleActionEligibility
+	readonly archive: DataSourceLifecycleActionEligibility
 }
 
 export interface DataSourceSummary extends DataSourceProjection {
@@ -591,6 +608,7 @@ export interface TaskLogStream {
 
 export interface BrowserApi {
   listDataSources(): Promise<DataSourceSummary[]>
+  listDataSourcePage(query: Record<string, string>): Promise<{ items: DataSourceSummary[]; nextCursor: string; total: number }>
   listExecutionNodes(): Promise<ExecutionNodeSummary[]>
   listExportNodeCandidates(): Promise<ExecutionNodeCandidate[]>
   listDataSourceConnectionTestNodeCandidates(): Promise<ExecutionNodeCandidate[]>
@@ -605,7 +623,8 @@ export interface BrowserApi {
   createDataSource(input: DataSourceWrite): Promise<string>
   updateDataSource(dataSourceId: string, revision: number, input: DataSourceUpdate): Promise<DataSourceDetail>
   changeDataSourceState(dataSourceId: string, revision: number, targetState: 'ENABLED' | 'DISABLED'): Promise<DataSourceStateChange>
-  deleteOrArchiveDataSource(dataSourceId: string, revision: number): Promise<DataSourceDeletionResult>
+	deleteDataSource(dataSourceId: string, revision: number): Promise<DataSourceDeletionResult>
+	archiveDataSource(dataSourceId: string, revision: number): Promise<DataSourceDeletionResult>
   startDataSourceConnectionTest(dataSourceId: string, revision: number, nodeId: string): Promise<DataSourceConnectionTestRequest>
   getDataSourceConnectionTest(connectionTestId: string): Promise<DataSourceConnectionTest>
   createExportDraft(input: ExportDraftInput): Promise<string>
@@ -654,6 +673,12 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async listDataSources() {
       const body = await request(options, '/api/v1/data-sources', { method: 'GET' })
       return listOf(body, 'items').map(parseDataSourceSummary)
+    },
+    async listDataSourcePage(query) {
+      const body = await request(options, `/api/v1/data-sources?${new URLSearchParams({ ...query, limit: '10' })}`, { method: 'GET' })
+      const total = body.total
+      if (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0 || typeof body.nextCursor !== 'string') throw new Error('数据源分页响应无效')
+      return { items: listOf(body, 'items').map(parseDataSourceSummary), nextCursor: body.nextCursor, total }
     },
     async listExecutionNodes() {
       const body = await request(options, '/api/v1/execution-nodes', { method: 'GET' })
@@ -723,14 +748,21 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       }
       return { state, revision: requiredNumber(body, 'revision') }
     },
-    async deleteOrArchiveDataSource(dataSourceId, revision) {
+	async deleteDataSource(dataSourceId, revision) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, writeRequest(options, {}, revision, 'DELETE', false))
       const outcome = requiredString(body, 'outcome')
-      if (outcome !== 'DELETED' && outcome !== 'ARCHIVED') {
+		if (outcome !== 'DELETED') {
         throw localError('RESPONSE_INVALID', '控制面返回了无效数据源删除结果。')
       }
-      return { outcome, revision: requiredNumber(body, 'revision') }
-    },
+		return { outcome, revision: requiredNumber(body, 'revision') }
+	},
+	async archiveDataSource(dataSourceId, revision) {
+		const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}:archive`, writeRequest(options, {}, revision, 'POST', false))
+		if (requiredString(body, 'outcome') !== 'ARCHIVED') {
+			throw localError('RESPONSE_INVALID', '控制面返回了无效数据源归档结果。')
+		}
+		return { outcome: 'ARCHIVED', revision: requiredNumber(body, 'revision') }
+	},
     async startDataSourceConnectionTest(dataSourceId, revision, nodeId) {
       if (!nodeId.trim()) {
         throw localError('DATA_SOURCE_CONNECTION_TEST_NODE_REQUIRED', '请选择执行节点后再测试连接。')
@@ -977,16 +1009,36 @@ function parseDataSourceProjection(source: Record<string, unknown>): DataSourceP
     compatibilityMode: requiredString(source, 'compatibilityMode'),
     host: requiredString(source, 'host'),
     port: requiredNumber(source, 'port'),
-    clusterName: requiredString(source, 'clusterName'),
+    clusterName: requiredStringAllowEmpty(source, 'clusterName'),
     tenantName: requiredString(source, 'tenantName'),
     defaultDatabase: optionalString(source, 'defaultDatabase'),
     state: requiredString(source, 'state'),
     revision: requiredNumber(source, 'revision'),
     credentialRevision: requiredNumber(source, 'credentialRevision'),
     sysCredentialState: optionalString(source, 'sysCredentialState'),
-    lastTestStatus: optionalString(source, 'lastTestStatus'),
-    lastTestedAt: optionalString(source, 'lastTestedAt'),
-  }
+		lastTestStatus: optionalString(source, 'lastTestStatus'),
+		lastTestedAt: optionalString(source, 'lastTestedAt'),
+		lifecycleEligibility: parseDataSourceLifecycleEligibility(source['lifecycleEligibility']),
+	}
+}
+
+function parseDataSourceLifecycleEligibility(value: unknown): DataSourceLifecycleEligibility | undefined {
+	if (value === undefined || value === null) return undefined
+	const eligibility = asRecord(value)
+	return {
+		enable: parseDataSourceLifecycleActionEligibility(requiredObject(eligibility, 'enable')),
+		disable: parseDataSourceLifecycleActionEligibility(requiredObject(eligibility, 'disable')),
+		delete: parseDataSourceLifecycleActionEligibility(requiredObject(eligibility, 'delete')),
+		archive: parseDataSourceLifecycleActionEligibility(requiredObject(eligibility, 'archive')),
+	}
+}
+
+function parseDataSourceLifecycleActionEligibility(value: Record<string, unknown>): DataSourceLifecycleActionEligibility {
+	const referenceCount = optionalNumber(value, 'referenceCount')
+	if (referenceCount !== undefined && (!Number.isSafeInteger(referenceCount) || referenceCount < 1)) {
+		throw localError('RESPONSE_INVALID', '控制面返回了无效数据源生命周期引用数量。')
+	}
+	return { allowed: requiredBoolean(value, 'allowed'), reasonCode: optionalString(value, 'reasonCode'), reason: optionalString(value, 'reason'), referenceCount }
 }
 
 function parseDataSourceSummary(value: unknown): DataSourceSummary {
@@ -1757,6 +1809,14 @@ function requiredObject(value: Record<string, unknown>, key: string): Record<str
 function requiredString(value: Record<string, unknown>, key: string): string {
   const item = value[key]
   if (typeof item !== 'string' || !item.trim()) {
+    throw localError('RESPONSE_INVALID', '控制面返回了缺失字段。')
+  }
+  return item
+}
+
+function requiredStringAllowEmpty(value: Record<string, unknown>, key: string): string {
+  const item = value[key]
+  if (typeof item !== 'string') {
     throw localError('RESPONSE_INVALID', '控制面返回了缺失字段。')
   }
   return item

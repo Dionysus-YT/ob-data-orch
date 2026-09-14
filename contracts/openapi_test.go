@@ -20,6 +20,7 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/execution-nodes/{nodeId}:enable":                 {"post"},
 		"/api/v1/data-sources":                                    {"get", "post"},
 		"/api/v1/data-sources/{dataSourceId}":                     {"get", "patch", "delete"},
+		"/api/v1/data-sources/{dataSourceId}:archive":             {"post"},
 		"/api/v1/data-sources/{dataSourceId}:test-connection":     {"post"},
 		"/api/v1/data-source-connection-tests/{connectionTestId}": {"get"},
 		"/api/v1/data-sources/{dataSourceId}:disable":             {"post"},
@@ -96,8 +97,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 68 {
-		t.Fatalf("operation count = %d, want 68", operationCount)
+	if operationCount != 69 {
+		t.Fatalf("operation count = %d, want 69", operationCount)
 	}
 }
 
@@ -401,11 +402,13 @@ func TestOpenAPIReferencesResolveAndSecretInputsAreWriteOnly(t *testing.T) {
 	if !ok || len(compatibilityModes) != 2 || compatibilityModes[0] != "MYSQL" || compatibilityModes[1] != "ORACLE" {
 		t.Fatal("data source compatibility mode must be an OceanBase MySQL or Oracle type")
 	}
-	for _, field := range []string{"clusterName", "tenantName"} {
-		property := object(t, properties, field)
-		if property["minLength"] != float64(1) {
-			t.Fatalf("data source %s must be required by the write contract", field)
-		}
+	clusterName := object(t, properties, "clusterName")
+	if _, exists := clusterName["minLength"]; exists {
+		t.Fatal("data source clusterName must remain optional in the write contract")
+	}
+	tenantName := object(t, properties, "tenantName")
+	if tenantName["minLength"] != float64(1) {
+		t.Fatal("data source tenantName must remain required by the write contract")
 	}
 	if _, exists := properties["state"]; exists {
 		t.Fatal("data source state must use dedicated state actions, not the write schema")

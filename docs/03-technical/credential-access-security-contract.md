@@ -57,11 +57,11 @@ Windows DPAPI 和 Linux 文件权限是在当前轻量部署下保护本机启�
 | 数据源密码 | 秘密 | 只显示已设置/未设置、修订时间 | 永不记录原值 | 只存 credentialId/revision |
 | Agent 机器凭据 | 秘密 | 只显示身份状态和轮换时间 | 永不记录原值 | 不进入任务快照 |
 | 控制面根密钥 | 根秘密 | 无查看/复制入口 | 永不记录原值或摘要 | 不进入业务数据 |
-| 组合用户名 | 标识敏感 | 命令预览与计划命令可按任务/数据源权限显示 `-uusername@tenant#cluster` | 统一脱敏 | 保存提交时必要摘要 |
+| 组合用户名 | 标识敏感 | 命令预览与计划命令可按任务/数据源权限显示 `-uusername@tenant` 或 `-uusername@tenant#cluster` | 统一脱敏 | 保存提交时必要摘要 |
 | 主机、端口、数据库名 | 受限业务信息 | 按对象权限显示 | 按统一策略处理 | 保存必要快照 |
 | credentialId/keyId/revision | 安全元数据 | 只在诊断需要时显示非敏感摘要 | 可审计 | 可以保存 |
 
-数据源 `username` 是拆分保存的普通业务用户名，不等同于 `username@tenant#cluster` 组合身份。浏览器在 `GET /api/v1/data-sources` 中只有逐项通过该数据源读取范围校验，才可取得 `username`，且不需要管理范围；这是列表摘要唯一新增的身份字段。单个 `GET /api/v1/data-sources/{dataSourceId}` 详情仍须同时通过读取与管理范围校验，成功 `PATCH /api/v1/data-sources/{dataSourceId}` 已完成同一管理范围校验并复用详情投影。其他写操作响应及仅具读取范围的详情都必须省略它。该例外不放宽组合用户名、sys 账号、sys 密码或任何密码材料的浏览器响应禁令。
+数据源 `username` 是拆分保存的普通业务用户名，不等同于 `username@tenant` 或 `username@tenant#cluster` 组合身份。浏览器在 `GET /api/v1/data-sources` 中只有逐项通过该数据源读取范围校验，才可取得 `username`，且不需要管理范围；这是列表摘要唯一新增的身份字段。单个 `GET /api/v1/data-sources/{dataSourceId}` 详情仍须同时通过读取与管理范围校验，成功 `PATCH /api/v1/data-sources/{dataSourceId}` 已完成同一管理范围校验并复用详情投影。其他写操作响应及仅具读取范围的详情都必须省略它。该例外不放宽组合用户名、sys 账号、sys 密码或任何密码材料的浏览器响应禁令。
 
 秘密不能伪装成普通字符串字段。代码和协议模型必须使用独立秘密引用/槽位类型，禁止把密码加入通用 map 后再依赖日志过滤“补救”。
 
@@ -143,7 +143,7 @@ DPAPI 默认通常绑定同一用户和同一机器，因此它适合本机保�
 - “轮换”与“立即撤销”是不同操作：轮换允许已提交任务按原 revision 执行，撤销则禁止尚未解析的所有 revision；
 - 已经运行的工具进程无法远程收回内存中的密码；撤销只阻止后续解析，不伪装成进程取消；
 - 无引用数据源物理删除时一并删除凭据密文；
-- 存在历史引用时归档数据源，但历史快照只保留 credentialId/revision 元数据；没有活动引用的密码密文按清理规则删除。
+- 存在历史引用时只有显式归档动作可归档数据源；永久删除请求必须拒绝，不能自动转为归档。历史快照只保留 credentialId/revision 元数据；没有活动引用的密码密文按清理规则删除。
 
 ## 8. 基础连接测试中的凭据
 
@@ -160,7 +160,7 @@ DPAPI 默认通常绑定同一用户和同一机器，因此它适合本机保�
 5. 控制面仅在数据源配置、凭据 revision、节点/Agent 绑定、节点事实和租约仍一致时持久化无秘密终态；
 6. 立即关闭连接并释放秘密引用；最终审计或状态保存无法确认时，不把连接状态更新为“可连接”。
 
-当前私有 ODP 切片依据 [DEC-013](../01-product/decisions.md#dec-013-数据源专项产品规则) 分字段保存 `username`、`tenant`、`cluster`，仅在冻结绑定复验通过后由控制面短时组装 JDBC 身份 `username@tenant#cluster`。该格式与 OceanBase V4.3.5 文档中的私有 ODP 连接身份一致（[Java 客户端连接方式](https://en.oceanbase.com/docs/common-oceanbase-database-10000000001974051)、[ODP 连接方式](https://en.oceanbase.com/docs/common-oceanbase-database-10000000001970916)）。组装值只以可清零字节槽位传递，不持久化、不写日志、不进入审计或浏览器响应；任一字段为空、含空白/控制字符、含 `@`、`#`、`:` 分隔符、不是有效 UTF-8 或组合后超过 256 字节时失败关闭。Agent 和 JDBC 探针不得自行猜测、补全或改写该身份。
+当前私有 ODP 切片依据 [DEC-013](../01-product/decisions.md#dec-013-数据源专项产品规则) 分字段保存 `username`、`tenant`、可选 `cluster`，仅在冻结绑定复验通过后由控制面短时组装 JDBC 身份；集群名为空时为 `username@tenant`，有值时为 `username@tenant#cluster`。该格式与 OceanBase V4.3.5 文档中的私有 ODP 连接身份一致（[Java 客户端连接方式](https://en.oceanbase.com/docs/common-oceanbase-database-10000000001974051)、[ODP 连接方式](https://en.oceanbase.com/docs/common-oceanbase-database-10000000001970916)）。组装值只以可清零字节槽位传递，不持久化、不写日志、不进入审计或浏览器响应；`username` 与 `tenant` 为空、任一非空字段含空白/控制字符、含 `@`、`#`、`:` 分隔符、不是有效 UTF-8 或组合后超过 256 字节时失败关闭。Agent 和 JDBC 探针不得自行猜测、补全或改写该身份。
 
 连接字符串、驱动日志和错误包装器必须逐项验证不会输出密码或完整组合用户名。
 
@@ -469,4 +469,4 @@ Windows 验证还发现：官方 `.bat` 没有主动设置 `security.configurati
 - 解析：sys 凭据的短时解析与任务秘密槽位同机制（本契约第 9 节）；`--add-extra-message` 等依赖 sys 凭据的能力只在数据源 sysCredentialState=AVAILABLE 时考虑启用，当前仍保持关闭（待实测）；
 - 幂等摘要：`createRequestDigest` 只以 sys 存在性参与，不落入密码内容或摘要。
 
-- 连接测试（2026-08-10 扩展）：数据源配置了 sys 凭据时，基础连接测试在数据库验证成功后额外用 sys 身份（sysUser@sys#cluster，平台组装）经固定 JDBC 探针验证 sys 租户认证；sys 结果独立记录（sys_verification_status/sys_result_code，枚举 SYS_CONNECTED/SYS_* 错误码），不阻断数据库启用门禁；未配置 sys 凭据的数据源请求 SYS_CONNECTION 槽位失败关闭；绑定摘要包含 sys 引用，Agent 领取/确认/槽位/完成全程复验。
+- 连接测试（2026-08-10 扩展）：数据源配置了 sys 凭据时，基础连接测试在数据库验证成功后额外用 sys 身份（集群为空时为 `sysUser@sys`，有集群时为 `sysUser@sys#cluster`，平台组装）经固定 JDBC 探针验证 sys 租户认证；sys 结果独立记录（sys_verification_status/sys_result_code，枚举 SYS_CONNECTED/SYS_* 错误码），不阻断数据库启用门禁；未配置 sys 凭据的数据源请求 SYS_CONNECTION 槽位失败关闭；绑定摘要包含 sys 引用，Agent 领取/确认/槽位/完成全程复验。

@@ -114,10 +114,11 @@ type DataSourceStateChanger interface {
 	ChangeDataSourceState(context.Context, store.DataSourceStateChange) (store.DataSourceStateChangeResult, error)
 }
 
-// DataSourceDeleter 将物理删除与历史保护归档收敛为同一个原子存储边界。
-// HTTP 层只提交版本化删除意图，不能根据前端状态自行判断引用关系。
+// DataSourceDeleter 提供确定性的永久删除与归档存储边界。
+// HTTP 层只能调用已明确选择的动作，不能把删除请求自动改写为归档。
 type DataSourceDeleter interface {
-	DeleteOrArchiveDataSource(context.Context, store.DataSourceDeletion) (store.DataSourceDeletionResult, error)
+	DeleteDataSource(context.Context, store.DataSourceDeletion) (store.DataSourceDeletionResult, error)
+	ArchiveDataSource(context.Context, store.DataSourceArchive) (store.DataSourceDeletionResult, error)
 }
 
 // DataSourceUpdater 提供包含审计与可选凭据轮换的原子更新边界。
@@ -934,6 +935,10 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 			s.changeDataSourceState(w, r, principal, dataSourceID, targetState)
 			return
 		}
+		if dataSourceID, ok := parseDataSourceArchiveAction(r.URL.Path); ok {
+			s.archiveDataSource(w, r, principal, dataSourceID)
+			return
+		}
 	}
 	if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
 		dataSourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/data-sources/")
@@ -1016,6 +1021,18 @@ func parseDataSourceStateAction(path string) (string, string, bool) {
 	return "", "", false
 }
 
+// parseDataSourceArchiveAction 只识别数据源的显式归档动作。
+// 它不允许 DELETE 路径或任意后缀被解释为归档。
+func parseDataSourceArchiveAction(path string) (string, bool) {
+	const prefix = "/api/v1/data-sources/"
+	const suffix = ":archive"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	dataSourceID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return dataSourceID, dataSourceID != "" && !strings.Contains(dataSourceID, "/")
+}
+
 type dataSourceCreateRequest struct {
 	DisplayName       string `json:"displayName"`
 	Environment       string `json:"environment"`
@@ -1052,6 +1069,133 @@ type dataSourceUpdateRequest struct {
 	// 缺省表示保持现状；两者同空表示清除；两者同非空表示设置/轮换。
 	SysUser     *string `json:"sysUser"`
 	SysPassword *string `json:"sysPassword"`
+}
+
+// normalizeDataSourceCreateRequest 只修剪非秘密结构化字段；密码原文保持原样进入短生命周期加密流程。
+func normalizeDataSourceCreateRequest(request *dataSourceCreateRequest) {
+	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	request.Environment = strings.TrimSpace(request.Environment)
+	request.ConnectionKind = strings.TrimSpace(request.ConnectionKind)
+	request.CompatibilityMode = strings.TrimSpace(request.CompatibilityMode)
+	request.Host = strings.TrimSpace(request.Host)
+	request.ClusterName = strings.TrimSpace(request.ClusterName)
+	request.TenantName = strings.TrimSpace(request.TenantName)
+	request.Username = strings.TrimSpace(request.Username)
+	request.DefaultDatabase = strings.TrimSpace(request.DefaultDatabase)
+	request.SysUser = strings.TrimSpace(request.SysUser)
+}
+
+// normalizeDataSourceUpdateRequest 保留 PATCH 字段存在语义，只修剪已提交的非秘密字段。
+func normalizeDataSourceUpdateRequest(request *dataSourceUpdateRequest) {
+	trim := func(value **string) {
+		if *value == nil {
+			return
+		}
+		trimmed := strings.TrimSpace(**value)
+		*value = &trimmed
+	}
+	trim(&request.DisplayName)
+	trim(&request.Environment)
+	trim(&request.ConnectionKind)
+	trim(&request.CompatibilityMode)
+	trim(&request.Host)
+	trim(&request.ClusterName)
+	trim(&request.TenantName)
+	trim(&request.Username)
+	trim(&request.SysUser)
+}
+
+// validateDataSourceCreateRequest 把浏览器可修正的结构化字段错误绑定到表单字段。
+func validateDataSourceCreateRequest(request dataSourceCreateRequest, passwordProvided, sysPasswordProvided bool) []fieldErrorResponse {
+	fieldErrors := validateDataSourceWriteFields(dataSourceWritableFields{
+		DisplayName:       request.DisplayName,
+		Environment:       request.Environment,
+		ConnectionKind:    request.ConnectionKind,
+		CompatibilityMode: request.CompatibilityMode,
+		Host:              request.Host,
+		Port:              request.Port,
+		ClusterName:       request.ClusterName,
+		TenantName:        request.TenantName,
+		Username:          request.Username,
+		DefaultDatabase:   request.DefaultDatabase,
+		SysUser:           request.SysUser,
+	})
+	if !passwordProvided {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "password", Code: "PASSWORD_REQUIRED", Message: "请输入数据源密码"})
+	}
+	if (request.SysUser == "") != !sysPasswordProvided {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "sysPassword", Code: "SYS_CREDENTIAL_REQUIRED_PAIR", Message: "sys 账号与密码必须同时提供或同时留空"})
+	}
+	return fieldErrors
+}
+
+// validateMergedDataSourceUpdate 校验 PATCH 合并后的最终普通字段；密码缺失仍表示保留现状。
+func validateMergedDataSourceUpdate(summary store.DataSourceSummary) []fieldErrorResponse {
+	return validateDataSourceWriteFields(dataSourceWritableFields{
+		DisplayName:       summary.DisplayName,
+		Environment:       summary.Environment,
+		ConnectionKind:    summary.ConnectionKind,
+		CompatibilityMode: summary.CompatibilityMode,
+		Host:              summary.Host,
+		Port:              summary.Port,
+		ClusterName:       summary.ClusterName,
+		TenantName:        summary.TenantName,
+		Username:          summary.Username,
+		DefaultDatabase:   summary.DefaultDatabase,
+		SysUser:           summary.SysUser,
+	})
+}
+
+type dataSourceWritableFields struct {
+	DisplayName       string
+	Environment       string
+	ConnectionKind    string
+	CompatibilityMode string
+	Host              string
+	Port              int
+	ClusterName       string
+	TenantName        string
+	Username          string
+	DefaultDatabase   string
+	SysUser           string
+}
+
+func validateDataSourceWriteFields(fields dataSourceWritableFields) []fieldErrorResponse {
+	fieldErrors := make([]fieldErrorResponse, 0, 8)
+	if fields.DisplayName == "" || len(fields.DisplayName) > 200 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "displayName", Code: "DATA_SOURCE_NAME_INVALID", Message: "请输入不超过 200 个字符的数据源名称"})
+	}
+	if fields.Environment != "DEVELOPMENT" && fields.Environment != "TEST" && fields.Environment != "STAGING" && fields.Environment != "PRODUCTION" {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "environment", Code: "DATA_SOURCE_ENVIRONMENT_INVALID", Message: "请选择有效的数据源环境"})
+	}
+	if fields.ConnectionKind != "ODP" {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "connectionKind", Code: "DATA_SOURCE_CONNECTION_KIND_INVALID", Message: "当前仅支持 ODP 连接方式"})
+	}
+	if fields.CompatibilityMode != "MYSQL" && fields.CompatibilityMode != "ORACLE" {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "compatibilityMode", Code: "DATA_SOURCE_COMPATIBILITY_MODE_INVALID", Message: "请选择 OceanBase MySQL 或 OceanBase Oracle"})
+	}
+	if fields.Host == "" || len(fields.Host) > 255 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "host", Code: "DATA_SOURCE_HOST_INVALID", Message: "请输入不超过 255 个字符的 ODP 地址"})
+	}
+	if fields.Port < 1 || fields.Port > 65535 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "port", Code: "DATA_SOURCE_PORT_INVALID", Message: "SQL 端口必须是 1 到 65535 之间的整数"})
+	}
+	if len(fields.ClusterName) > 255 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "clusterName", Code: "DATA_SOURCE_CLUSTER_INVALID", Message: "集群名不能超过 255 个字符"})
+	}
+	if fields.TenantName == "" || len(fields.TenantName) > 255 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "tenantName", Code: "DATA_SOURCE_TENANT_INVALID", Message: "请输入不超过 255 个字符的租户名称"})
+	}
+	if fields.Username == "" || len(fields.Username) > 512 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "username", Code: "DATA_SOURCE_USERNAME_INVALID", Message: "请输入不超过 512 个字符的用户名"})
+	}
+	if len(fields.DefaultDatabase) > 512 || (fields.CompatibilityMode == "ORACLE" && fields.DefaultDatabase != "") {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "defaultDatabase", Code: "DATA_SOURCE_DEFAULT_DATABASE_INVALID", Message: "默认数据库仅适用于 MySQL 模式，且不能超过 512 个字符"})
+	}
+	if len(fields.SysUser) > 256 {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "sysUser", Code: "DATA_SOURCE_SYS_USER_INVALID", Message: "sys 账号不能超过 256 个字符"})
+	}
+	return fieldErrors
 }
 
 // executionNodeWriteRequest 只接收节点管理员在注册时声明的固定本机配置。
@@ -1725,22 +1869,26 @@ func (s *Server) createDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
 		return
 	}
-	request.SysUser = strings.TrimSpace(request.SysUser)
+	normalizeDataSourceCreateRequest(&request)
 	password := []byte(request.Password)
 	request.Password = ""
 	defer credential.Zero(password)
+	sysPassword := []byte(request.SysPassword)
+	request.SysPassword = ""
+	defer credential.Zero(sysPassword)
+	if fieldErrors := validateDataSourceCreateRequest(request, len(password) > 0, len(sysPassword) > 0); len(fieldErrors) > 0 {
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "DATA_SOURCE_FIELDS_INVALID", "数据源字段不符合要求", false, fieldErrors)
+		return
+	}
 	if len(password) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false, []fieldErrorResponse{{Field: "password", Code: "PASSWORD_REQUIRED", Message: "密码不能为空"}})
 		return
 	}
 	// 可选的 sys 凭据必须成对提供（参考 ODC 数据源高级设置）。
 	if (request.SysUser == "") != (request.SysPassword == "") {
-		writeError(w, http.StatusUnprocessableEntity, "SYS_CREDENTIAL_REQUIRED_PAIR", "sys 账号与密码必须同时提供或同时留空", false)
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "SYS_CREDENTIAL_REQUIRED_PAIR", "sys 账号与密码必须同时提供或同时留空", false, []fieldErrorResponse{{Field: "sysPassword", Code: "SYS_CREDENTIAL_REQUIRED_PAIR", Message: "sys 账号与密码必须同时提供或同时留空"}})
 		return
 	}
-	sysPassword := []byte(request.SysPassword)
-	request.SysPassword = ""
-	defer credential.Zero(sysPassword)
 	dataSourceID, credentialID, err := newOpaqueID(), newOpaqueID(), error(nil)
 	if dataSourceID == "" || credentialID == "" {
 		err = errors.New("generate identifier")
@@ -1839,13 +1987,18 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "请求字段无效", false)
 		return
 	}
+	normalizeDataSourceUpdateRequest(&request)
 	if !request.hasChanges() {
 		writeError(w, http.StatusUnprocessableEntity, "UPDATE_EMPTY", "至少需要更新一个数据源字段", false)
 		return
 	}
 	merged, err := request.merge(current)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_UPDATE_REJECTED", "数据源字段不符合要求", false)
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "DATA_SOURCE_FIELDS_INVALID", "数据源字段不符合要求", false, dataSourceMergeFieldErrors(err))
+		return
+	}
+	if fieldErrors := validateMergedDataSourceUpdate(merged); len(fieldErrors) > 0 {
+		writeErrorWithFields(w, http.StatusUnprocessableEntity, "DATA_SOURCE_FIELDS_INVALID", "数据源字段不符合要求", false, fieldErrors)
 		return
 	}
 	update := store.DataSourceUpdate{
@@ -1865,7 +2018,7 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 		*request.Password = ""
 		defer credential.Zero(password)
 		if len(password) == 0 {
-			writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
+			writeErrorWithFields(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false, []fieldErrorResponse{{Field: "password", Code: "PASSWORD_REQUIRED", Message: "密码不能为空"}})
 			return
 		}
 		reference, refErr := s.credentials.GetDataSourceCredentialReference(r.Context(), dataSourceID)
@@ -1900,7 +2053,7 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 			*request.SysPassword = ""
 			defer credential.Zero(sysPassword)
 			if len(sysPassword) == 0 {
-				writeError(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false)
+				writeErrorWithFields(w, http.StatusUnprocessableEntity, "PASSWORD_REQUIRED", "密码不能为空", false, []fieldErrorResponse{{Field: "sysPassword", Code: "PASSWORD_REQUIRED", Message: "密码不能为空"}})
 				return
 			}
 			// 复用当前 sys 凭据版本以轮换，未配置过则新建凭据标识。
@@ -1938,6 +2091,10 @@ func (s *Server) updateDataSource(w http.ResponseWriter, r *http.Request, princi
 	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "DATA_SOURCE_UPDATE_REJECTED", "数据源字段不符合要求", false)
+		return
+	}
+	if refreshed, refreshErr := s.dataSource.GetDataSourceSummary(r.Context(), dataSourceID); refreshErr == nil && refreshed.Revision == result.Revision {
+		writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": newDataSourceDetailResponse(refreshed, true)})
 		return
 	}
 	current.DisplayName, current.Environment, current.ConnectionKind, current.CompatibilityMode = merged.DisplayName, merged.Environment, merged.ConnectionKind, merged.CompatibilityMode
@@ -1989,7 +2146,7 @@ func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.D
 	if r.DefaultDatabase != nil {
 		var value *string
 		if err := json.Unmarshal(r.DefaultDatabase, &value); err != nil {
-			return store.DataSourceSummary{}, err
+			return store.DataSourceSummary{}, errors.New("default database must be string or null")
 		}
 		if value == nil {
 			merged.DefaultDatabase = ""
@@ -2005,6 +2162,13 @@ func (r dataSourceUpdateRequest) merge(current store.DataSourceSummary) (store.D
 		merged.SysUser = strings.TrimSpace(*r.SysUser)
 	}
 	return merged, nil
+}
+
+func dataSourceMergeFieldErrors(err error) []fieldErrorResponse {
+	if err != nil && strings.Contains(err.Error(), "default database") {
+		return []fieldErrorResponse{{Field: "defaultDatabase", Code: "DATA_SOURCE_DEFAULT_DATABASE_INVALID", Message: "默认数据库必须是字符串或 null"}}
+	}
+	return []fieldErrorResponse{{Field: "sysPassword", Code: "SYS_CREDENTIAL_REQUIRED_PAIR", Message: "sys 账号与密码必须同时提供或同时留空"}}
 }
 
 // parseExportDraftAction 仅识别固定草稿资源和已登记的命令预览动作。
@@ -2604,8 +2768,8 @@ func (s *Server) changeDataSourceState(w http.ResponseWriter, r *http.Request, p
 	})
 }
 
-// deleteDataSource 先完成 CSRF、对象范围和版本校验，再交由仓储依据历史引用决定删除或归档。
-// 不向调用方暴露引用类型、数量或归档对象信息，避免借由失败路径枚举历史事实。
+// deleteDataSource 只执行永久删除；历史引用会在事务内再次核验并返回当前资格冲突。
+// 调用方如需保留引用历史，必须明确请求 archiveDataSource。
 func (s *Server) deleteDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
 	if s.deleter == nil || s.authorizer == nil || s.csrf == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源删除依赖", false)
@@ -2624,7 +2788,7 @@ func (s *Server) deleteDataSource(w http.ResponseWriter, r *http.Request, princi
 		notFound(w, r)
 		return
 	}
-	result, err := s.deleter.DeleteOrArchiveDataSource(r.Context(), store.DataSourceDeletion{
+	result, err := s.deleter.DeleteDataSource(r.Context(), store.DataSourceDeletion{
 		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
 		RequestID: requestID(w), DeletedAt: time.Now().UTC(),
 	})
@@ -2636,12 +2800,79 @@ func (s *Server) deleteDataSource(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusPreconditionFailed, "DATA_SOURCE_REVISION_CONFLICT", "数据源已发生变化，请刷新后重试", false)
 		return
 	}
+	if errors.Is(err, store.ErrDataSourceDeleteIneligible) {
+		s.writeDataSourceLifecycleConflict(w, r, dataSourceID, "DATA_SOURCE_DELETE_INELIGIBLE", "数据源存在历史引用，不能永久删除")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_DELETE_UNAVAILABLE", "数据源删除暂时不可用", true)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"requestId": requestID(w), "id": dataSourceID, "outcome": result.Outcome, "revision": result.Revision,
+	})
+}
+
+// archiveDataSource 只执行显式归档；无历史引用时拒绝，不能将归档变成隐藏的软删除。
+func (s *Server) archiveDataSource(w http.ResponseWriter, r *http.Request, principal identity.Principal, dataSourceID string) {
+	if s.deleter == nil || s.authorizer == nil || s.csrf == nil {
+		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置数据源归档依赖", false)
+		return
+	}
+	if err := s.csrf.ValidateCSRF(r); err != nil {
+		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
+		return
+	}
+	expectedRevision, ok := parseIfMatchRevision(r.Header.Get("If-Match"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "REVISION_REQUIRED", "需要有效的数据版本号", false)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, dataSourceID) != nil {
+		notFound(w, r)
+		return
+	}
+	result, err := s.deleter.ArchiveDataSource(r.Context(), store.DataSourceArchive{
+		DataSourceID: dataSourceID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
+		RequestID: requestID(w), ArchivedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, store.ErrDataSourceNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, store.ErrRevisionConflict) {
+		writeError(w, http.StatusPreconditionFailed, "DATA_SOURCE_REVISION_CONFLICT", "数据源已发生变化，请刷新后重试", false)
+		return
+	}
+	if errors.Is(err, store.ErrDataSourceArchiveIneligible) {
+		s.writeDataSourceLifecycleConflict(w, r, dataSourceID, "DATA_SOURCE_ARCHIVE_INELIGIBLE", "数据源没有需要保留的历史引用，请永久删除")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DATA_SOURCE_ARCHIVE_UNAVAILABLE", "数据源归档暂时不可用", true)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requestId": requestID(w), "id": dataSourceID, "outcome": result.Outcome, "revision": result.Revision,
+	})
+}
+
+// writeDataSourceLifecycleConflict 返回已获管理范围主体的最新动作资格。
+// 资格不包含历史对象标识，浏览器必须刷新列表而非用旧投影重试。
+func (s *Server) writeDataSourceLifecycleConflict(w http.ResponseWriter, r *http.Request, dataSourceID, code, message string) {
+	if s.dataSource == nil {
+		writeError(w, http.StatusConflict, code, message, false)
+		return
+	}
+	summary, err := s.dataSource.GetDataSourceSummary(r.Context(), dataSourceID)
+	if err != nil {
+		writeError(w, http.StatusConflict, code, message, false)
+		return
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"requestId": requestID(w), "code": code, "message": message, "retryable": false,
+		"fieldErrors": []fieldErrorResponse{}, "safeDetails": map[string]any{},
+		"lifecycleEligibility": newDataSourceLifecycleEligibilityResponse(summary.LifecycleEligibility),
 	})
 }
 
@@ -5715,7 +5946,17 @@ func (s *Server) listDataSources(w http.ResponseWriter, r *http.Request, princip
 		if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, summary.DataSourceID) != nil {
 			continue
 		}
-		items = append(items, newDataSourceListResponse(summary))
+		includeLifecycleEligibility := identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceWrite, summary.DataSourceID) == nil
+		items = append(items, newDataSourceListResponse(summary, includeLifecycleEligibility))
+	}
+	if len(r.URL.Query()) > 0 {
+		page, next, total, err := dataSourcePage(items, r.URL.Query(), principal.ID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "DATA_SOURCE_QUERY_INVALID", "数据源筛选或游标无效", false)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": page, "nextCursor": next, "total": total})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
 }
@@ -6264,6 +6505,25 @@ type dataSourceResponse struct {
 	SysCredentialState string `json:"sysCredentialState"`
 	LastTestStatus     string `json:"lastTestStatus,omitempty"`
 	LastTestedAt       string `json:"lastTestedAt,omitempty"`
+	// LifecycleEligibility 只在同一对象管理范围通过后返回，避免读取范围泄露历史引用事实。
+	LifecycleEligibility *dataSourceLifecycleEligibilityResponse `json:"lifecycleEligibility,omitempty"`
+}
+
+// dataSourceLifecycleActionEligibilityResponse 是浏览器可消费的固定动作资格。
+// ReferenceCount 只在大于零时出现，且从不返回任何历史对象标识。
+type dataSourceLifecycleActionEligibilityResponse struct {
+	Allowed        bool   `json:"allowed"`
+	ReasonCode     string `json:"reasonCode,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	ReferenceCount int    `json:"referenceCount,omitempty"`
+}
+
+// dataSourceLifecycleEligibilityResponse 将四种不互换的生命周期动作投影给管理界面。
+type dataSourceLifecycleEligibilityResponse struct {
+	Enable  dataSourceLifecycleActionEligibilityResponse `json:"enable"`
+	Disable dataSourceLifecycleActionEligibilityResponse `json:"disable"`
+	Delete  dataSourceLifecycleActionEligibilityResponse `json:"delete"`
+	Archive dataSourceLifecycleActionEligibilityResponse `json:"archive"`
 }
 
 // dataSourceListResponse 只用于已通过读取范围校验的数据源列表。
@@ -6490,7 +6750,7 @@ func executionNodeDataRootUsages(node store.ExecutionNode) []executionNodeDataRo
 	return result
 }
 
-func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
+func newDataSourceResponse(summary store.DataSourceSummary, includeLifecycleEligibility bool) dataSourceResponse {
 	response := dataSourceResponse{
 		ID: summary.DataSourceID, DisplayName: summary.DisplayName, Environment: summary.Environment,
 		ConnectionKind: summary.ConnectionKind, CompatibilityMode: summary.CompatibilityMode,
@@ -6507,23 +6767,43 @@ func newDataSourceResponse(summary store.DataSourceSummary) dataSourceResponse {
 	if summary.LastTestedAt != nil {
 		response.LastTestedAt = summary.LastTestedAt.UTC().Format(time.RFC3339Nano)
 	}
+	if includeLifecycleEligibility {
+		eligibility := newDataSourceLifecycleEligibilityResponse(summary.LifecycleEligibility)
+		response.LifecycleEligibility = &eligibility
+	}
 	return response
+}
+
+func newDataSourceLifecycleEligibilityResponse(eligibility store.DataSourceLifecycleEligibility) dataSourceLifecycleEligibilityResponse {
+	return dataSourceLifecycleEligibilityResponse{
+		Enable:  newDataSourceLifecycleActionEligibilityResponse(eligibility.Enable),
+		Disable: newDataSourceLifecycleActionEligibilityResponse(eligibility.Disable),
+		Delete:  newDataSourceLifecycleActionEligibilityResponse(eligibility.Delete),
+		Archive: newDataSourceLifecycleActionEligibilityResponse(eligibility.Archive),
+	}
+}
+
+func newDataSourceLifecycleActionEligibilityResponse(eligibility store.DataSourceLifecycleActionEligibility) dataSourceLifecycleActionEligibilityResponse {
+	return dataSourceLifecycleActionEligibilityResponse{
+		Allowed: eligibility.Allowed, ReasonCode: eligibility.ReasonCode,
+		Reason: eligibility.Reason, ReferenceCount: eligibility.ReferenceCount,
+	}
 }
 
 // newDataSourceListResponse 构造已授权列表的普通业务用户名投影。
 // 它绝不拼接租户或集群后缀，也不复制 sys 账号或任何凭据材料。
-func newDataSourceListResponse(summary store.DataSourceSummary) dataSourceListResponse {
+func newDataSourceListResponse(summary store.DataSourceSummary, includeLifecycleEligibility bool) dataSourceListResponse {
 	return dataSourceListResponse{
-		dataSourceResponse: newDataSourceResponse(summary),
+		dataSourceResponse: newDataSourceResponse(summary, includeLifecycleEligibility),
 		Username:           summary.Username,
 	}
 }
 
 // newDataSourceDetailResponse 在已完成对象范围校验后构造详情投影。
 // 该函数只复制拆分保存的业务用户名，绝不组装或返回 sys/租户/集群组合身份。
-func newDataSourceDetailResponse(summary store.DataSourceSummary, includeUsername bool) dataSourceDetailResponse {
-	response := dataSourceDetailResponse{dataSourceResponse: newDataSourceResponse(summary)}
-	if includeUsername {
+func newDataSourceDetailResponse(summary store.DataSourceSummary, includeManagementProjection bool) dataSourceDetailResponse {
+	response := dataSourceDetailResponse{dataSourceResponse: newDataSourceResponse(summary, includeManagementProjection)}
+	if includeManagementProjection {
 		response.Username = summary.Username
 	}
 	return response

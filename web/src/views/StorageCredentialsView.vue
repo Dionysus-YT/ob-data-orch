@@ -269,7 +269,7 @@ function updatedAtLabel(value: string) {
   padding: 0 10px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
-  color: #2b3037;
+  color: var(--color-text-primary);
   background: var(--color-bg-surface);
   font-size: 13px;
 }

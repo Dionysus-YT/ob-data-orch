@@ -21,7 +21,7 @@ The page manages configuration and exposes safely projected test/lifecycle facts
 
 - Breadcrumb is `任务配置 / 数据源管理`; it is presented by the shared shell/context pattern, not recreated as local navigation.
 - The page heading is `数据源管理`. A single short description may explain that sources must be verified before use in a task; it must not repeat table facts or create a KPI strip.
-- `新增数据源` is the only possible primary action. Show it only to a principal with the P3 create/manage capability. It opens the create drawer.
+- `新增数据源` is the only possible primary action. Show it only to a principal with the P3 create/manage capability. It opens a type menu with `OceanBase MySQL` and `OceanBase Oracle`; each opens its own fixed-mode create drawer.
 - A page may legitimately have no primary action. `刷新` is always a utility action, never the primary business action.
 
 ### 2.2 Toolbar
@@ -95,14 +95,15 @@ Create and edit both use the shared right-side Drawer. The official operating fl
 
 Drawer anatomy:
 
-1. **Header** — `新增数据源` or `编辑数据源`, close control, and a compact `已保存` / `未保存更改` state. For edit, only safe immutable context may be shown.
-2. **Basic information** — display name and environment.
-3. **Connection configuration** — structured ODP endpoint and credentials fields; see form grouping below.
-4. **Advanced system credentials** — one collapsed disclosure, only when the P3 compatibility/mode permits it.
-5. **Connection test** — only for an already saved source. It contains node selection, current test progress/result, and the secondary `测试连接` action.
-6. **Footer** — `取消`/close secondary on the left and `保存` as the one primary action on the right. Footer actions remain limited to navigation and persistence; test controls remain in their semantic section.
+1. **Header** — `新建数据源` / `编辑数据源`, close control; omit the separate configuration-state strip.
+2. **Type and parser** — fixed OceanBase mode, followed by an always-visible optional smart-parser textarea.
+3. **Connection address** — paired host/port and cluster/tenant fields on the global workspace surface; MySQL alone exposes default database.
+4. **Database account** — paired username/password, followed directly by node selection, refresh and connection-test controls with a persistent save prerequisite.
+5. **Metadata** — environment; editing also shows the saved name. Creating requests the required name in a dialog after connection-field validation and before persistence. Project binding is outside the product contract and is omitted.
+6. **Advanced settings** — one collapsed disclosure for optional sys credentials.
+7. **Footer** — right-aligned `取消` and primary `确定`. Confirm saves only; it never starts a connection test.
 
-The drawer body scrolls independently. Ordinary sections are separated by headings, whitespace, and dividers; do not nest cards. The test result is a bounded semantic result surface only while it contains a distinct result/failure fact. No persistent Task Summary or Inspector is allowed here.
+Node selection and results remain inline in the same form; the list test action focuses node selection. The body scrolls independently. Address and account groups use the global workspace surface without nested cards. Required name/tenant/password validation remains unchanged; cluster is optional and participates in the derived ODP identity only when supplied. The naming dialog preserves the connection draft on cancellation or save failure; successful creation keeps the drawer and selected node available for a separate test. This layout follows the 2026-09-10 user request and does not change Save/Test semantics.
 
 ### 5.1 Form grouping and conditions
 
@@ -113,14 +114,14 @@ The drawer body scrolls independently. Ordinary sections are separated by headin
 | Credential handling | Password is required when creating. On edit, an empty password means preserve the stored secret; a non-empty value is a replacement and must never be echoed after save. System-account credentials are optional advanced paired inputs. The UI may show only P3-authorized configuration state, never secret content, length, ciphertext, or a secret-presence inference beyond the contract. |
 | Connection test | Select an eligible runtime node; expose its safe readiness/compatibility facts in the control/result context. Runtime selection is test context, not source metadata. No test is available before the source is saved. |
 
-Changing compatibility mode removes and clears the incompatible default-database value before persistence. Fields rendered conditionally must be removed from submitted payloads when inapplicable.
+The selected type is fixed within each create/edit drawer. Editing uses the saved record type. Parsing a connection string of the other mode rejects the entire fill and preserves the draft. MySQL alone exposes the default database. Fields rendered conditionally must be removed from submitted payloads when inapplicable.
 
 ## 6. Validation, dirty state, save, and test
 
 ### 6.1 Validation
 
 - Validate a field after it is touched/blurred and validate all relevant fields on Save. Place a concise, programmatic error beside the field; after failed Save, provide a linked error summary at the top of the drawer.
-- Enforce P3-required values and formats: display-name uniqueness, environment enum, compatibility mode, structured host, port in `1–65535`, cluster, tenant, username, create-time password, conditional MySQL default database, and paired system credentials.
+- Enforce P3-required values and formats: display-name uniqueness, environment enum, compatibility mode, structured host, port in `1–65535`, optional cluster, tenant, username, create-time password, conditional MySQL default database, and paired system credentials.
 - Client validation improves feedback only. Server validation, uniqueness, authorization, `If-Match` revision, and lifecycle eligibility are decisive. Preserve non-secret user input after a server error and map safe field errors back to fields.
 - No browser or client validation may claim that the database is reachable. That fact only comes from the asynchronous P3 test run.
 
@@ -176,7 +177,7 @@ Actions are per-record and derived only from P3 server-returned permissions and 
 
 Use the P3 cursor contract. The footer presents `上一页` / `下一页` only when the response supplies the respective cursor. Do not render a fabricated page number, total pages, or total count. A total is shown only when the API explicitly returns an authorized total for the current scope. Preserve query/filter state across cursor changes and return focus to the table caption after navigation.
 
-**P3 contract clarification required before implementation:** the API documentation describes cursor pagination while the specific data-source list response schema must explicitly expose the cursor(s) required by this UI. Reconcile that P3/API detail first. Until then, do not retain current client-side `1 / N` pagination as a production substitute.
+管理页固定每页 10 条，通过服务端 keyword/environment/state/compatibilityMode/connectionStatus 筛选。nextCursor 为空表示末页，上一页使用本次查询的已访问游标栈；total 来自同一授权筛选范围。变更条件清空游标栈，刷新保留条件，旧异步响应不得覆盖新查询。
 
 ### 9.2 Shared viewport behavior
 
@@ -214,5 +215,13 @@ This P1 specification is the acceptance target for the Data Sources migration. I
 ## 12. Governance record
 
 - **GLOBAL SPEC ISSUE:** None identified. This page spec does not modify P0 Product Shell, tokens, visual language, responsive degradation order, or global action hierarchy.
-- **P3 contract clarification:** cursor-response fields for data-source list pagination need explicit API/schema alignment before production pagination work. This is not a P0 defect and must not be solved by inventing a frontend protocol.
+- **P3 contract alignment (2026-09-14):** 管理列表的 limit=10、nextCursor 与授权 total 已在 OpenAPI 和 API/SQLite 契约中对齐；运行服务升级状态见任务地图。
 - Existing implementation is P4 fact, not design authority. Any conflict found during implementation must be classified as implementation debt, P3 business constraint, or a proposed P0 defect; only the last may initiate a MASTER change.
+
+### 2026-09-10：ODC 模板适配
+
+按用户确认，新建先选 OceanBase MySQL / OceanBase Oracle，再进入对应固定类型的 520px 抽屉；正文左右 24px，地址/端口、集群/租户、用户名/密码成对排列。按用户后续批注使用连接地址/账号全局工作区底色分组与独立保存/测试语义，不引入 ODC 项目、SSL、初始化 SQL 或驱动属性。窄视口保留内部滚动和固定底栏。
+
+本轮截图细化：智能解析常显；账号下提供图标加次级按钮的测试入口和同行前置提示；环境、数据源名称、高级设置依次排列；底栏为取消/确定。与截图的业务差异：不提供项目绑定，保留必填数据源名称和私有 ODP 集群名；测试仍需先保存并选择执行节点。
+
+2026-09-10 浏览器批注：删除配置状态条；连接地址、数据库账号和测试入口统一使用全局工作区底色 `--color-bg-surface`；测试按钮恢复标准尺寸与间距，禁用原因在旁常显。

@@ -83,7 +83,7 @@ function dateTime(value: string) {
   </section>
 
   <section class="filter-bar task-filter-bar" aria-label="任务筛选">
-    <label>任务名称 / ID 关键字<input disabled placeholder="当前切片暂未开放筛选" /></label>
+    <label>任务名称 / ID 关键字<input disabled placeholder="筛选暂不可用" /></label>
     <label>任务类型<select disabled><option>全部</option></select></label>
     <label>任务状态<select disabled><option>全部</option></select></label>
     <label>创建时间<input disabled placeholder="开始日期 ～ 结束日期" /></label>
@@ -91,7 +91,7 @@ function dateTime(value: string) {
     <button type="button" class="button button-primary" disabled>查询</button>
   </section>
 
-  <section class="scope-bar"><span>当前范围：本人创建或已按数据源明确授权的任务</span><span>仅显示授权范围内的页数；筛选能力将在后续 F3 小步骤接入。</span></section>
+  <section class="scope-bar"><span>当前范围：本人创建或已按数据源明确授权的任务</span><span>当前仅支持分页浏览，搜索和筛选暂不可用。</span></section>
 
   <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }} <button type="button" class="link-button" @click="loadCurrentPage">重试</button></p>
   <div v-if="loading && tasks.length === 0" class="content-card loading-state" role="status">正在读取授权任务…</div>

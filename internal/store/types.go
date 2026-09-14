@@ -21,6 +21,8 @@ var (
 	ErrDataSourceNotFound                    = errors.New("data source does not exist")
 	ErrDataSourceConnectionTestRequired      = errors.New("data source requires a successful connection test")
 	ErrDataSourceNameUnavailable             = errors.New("data source name is unavailable")
+	ErrDataSourceDeleteIneligible            = errors.New("data source cannot be permanently deleted")
+	ErrDataSourceArchiveIneligible           = errors.New("data source cannot be archived")
 	ErrExecutionNodeNotFound                 = errors.New("execution node does not exist")
 	ErrExecutionNodeNameUnavailable          = errors.New("execution node name is unavailable")
 	ErrExecutionNodeEnvironmentCheckRequired = errors.New("execution node environment check is required")
@@ -451,7 +453,28 @@ type DataSourceSummary struct {
 	LastTestedAt            *time.Time
 	LastTestSafeSummaryJSON string
 	LastTestSource          string
-	UpdatedAt               time.Time
+	// LifecycleEligibility 是根据当前数据源状态和历史引用即时计算的管理动作资格。
+	// 它不含引用对象标识，控制面仍须按对象管理范围决定是否向浏览器投影。
+	LifecycleEligibility DataSourceLifecycleEligibility
+	UpdatedAt            time.Time
+}
+
+// DataSourceLifecycleActionEligibility 表达一个固定生命周期动作在当前事实下是否可执行。
+// ReasonCode 是稳定的产品契约代码；ReferenceCount 仅用于已获管理范围的安全投影。
+type DataSourceLifecycleActionEligibility struct {
+	Allowed        bool
+	ReasonCode     string
+	Reason         string
+	ReferenceCount int
+}
+
+// DataSourceLifecycleEligibility 将启用、禁用、永久删除和归档拆为四个独立的服务端事实。
+// 浏览器不能由状态或引用数量自行推断这些动作，也不能把删除降级为归档。
+type DataSourceLifecycleEligibility struct {
+	Enable  DataSourceLifecycleActionEligibility
+	Disable DataSourceLifecycleActionEligibility
+	Delete  DataSourceLifecycleActionEligibility
+	Archive DataSourceLifecycleActionEligibility
 }
 
 // ExecutionNodeSummary 是导出草稿选择节点时可返回的最小非敏感投影。
@@ -765,8 +788,8 @@ type DataSourceStateChangeResult struct {
 	Replayed bool
 }
 
-// DataSourceDeletion 表达一次受版本保护的数据源删除请求。
-// 仓储会依据历史引用决定实际物理删除或归档，调用方不能预先指定结果。
+// DataSourceDeletion 表达一次受版本保护的永久删除请求。
+// 存在历史引用时必须返回资格冲突，调用方需明确改用归档动作。
 type DataSourceDeletion struct {
 	DataSourceID     string
 	ActorSubjectID   string
@@ -775,7 +798,17 @@ type DataSourceDeletion struct {
 	DeletedAt        time.Time
 }
 
-// DataSourceDeletionResult 只返回实际处置结果和归档后的新版本。
+// DataSourceArchive 表达一次受版本保护的归档请求。
+// 归档只用于保留当前已存在的历史引用，不能替代无引用资源的永久删除。
+type DataSourceArchive struct {
+	DataSourceID     string
+	ActorSubjectID   string
+	ExpectedRevision int64
+	RequestID        string
+	ArchivedAt       time.Time
+}
+
+// DataSourceDeletionResult 返回已确定的生命周期动作结果。
 // 物理删除不再有可读取的资源版本，因此 Revision 为零。
 type DataSourceDeletionResult struct {
 	Outcome  string
@@ -1281,7 +1314,7 @@ type PrecheckSecretResolutionRequest struct {
 type EncryptedPrecheckDatabaseConnection struct {
 	Host string
 	Port int
-	// Username 是控制面按已登记字段短时组装的 username@tenant#cluster，不得持久化或记录日志。
+	// Username 是控制面按已登记字段短时组装的 username@tenant 或 username@tenant#cluster，不得持久化或记录日志。
 	Username     []byte
 	DataSourceID string
 	// OwnerSubjectID 和 NodeID 只能用于解密前复验草稿所有者当前的数据源与节点权限，不能进入 Agent 响应或审计。
@@ -1505,7 +1538,7 @@ type DataSourceConnectionTestSecretResolutionRequest struct {
 type EncryptedDataSourceConnectionTestDatabaseConnection struct {
 	Host string
 	Port int
-	// Username 是控制面按已登记字段短时组装的 username@tenant#cluster，不得持久化或记录日志。
+	// Username 是控制面按已登记字段短时组装的 username@tenant 或 username@tenant#cluster，不得持久化或记录日志。
 	Username       []byte
 	DataSourceID   string
 	OwnerSubjectID string

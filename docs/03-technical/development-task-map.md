@@ -1,5 +1,7 @@
 # 导出模块开发任务地图
 
+> 2026-09-14 数据源管理配套修复：服务端授权范围内搜索、筛选及固定 10 条游标分页已实现；控制面/契约测试、前端构建与 lint、23 条合成数据的 10/10/3 分页及搜索筛选交互通过。本机控制面已按二进制变更流程重启，运行服务的新分页接口已验证返回 `items`、`nextCursor` 和 `total`；不改变 EX-V1 真实执行门禁。
+
 > 文档状态：2026-08-22 Export V1 六步与参数分层产品/契约已重新定版；当前下一工作项是运行时对齐，四类存储真实取证、凭据探测和检查点继续取证仍归 EX-V1
 > 适用范围：OBDUMPER 4.3.5 的 V1.0 导出模块全能力；现有单表 CSV 仅作为已实现基线
 > 当前执行工作流：CONS-05 六步向导与参数元数据 v8 运行时对齐；EX-V1 真实取证在实现、回归和授权条件满足后继续排期
@@ -32,7 +34,7 @@ EX-D0 当前实现盘点与冻结
 | CONS-02 领域与安全收敛 | Export 领域校验、能力选择、风险分级、query-sql 旧门禁、兼容回归 | COMPLETED（局部已被新契约替代） | 历史实现已提取领域规则并实现 query-sql 敏感门禁；该门禁不再是目标行为，保留为待迁移源码事实 |
 | CONS-03 执行、体验与文档收口 | Cancel、结果证据、六步向导、Canonical Docs、文档 inventory、历史资料治理和 S0/S1 开发入口 | COMPLETED | 结果证据、受控取消、任务详情操作、合成回归、可重复 S0/S1 Export 验证入口、Canonical 文档收口和历史资料归档已完成；`HANDOFF.md` 已标注为历史快照；真实 OBDUMPER/远端存储取证仍归 EX-V1，不由合成闭环推出 |
 | CONS-04 六步与参数分层重定版 | 步骤顺序、参数归属、对象下拉、CSV/CUT/SQL 普通入口、租户兼容、query-sql、retain-empty-files | CONTRACT_COMPLETED | DEC-046、Export Canonical、产品范围、根约束、技术契约、验证计划、OpenAPI 兼容修订和 v8 设计草案一致 |
-| CONS-05 运行时对齐 | Vue 六步、服务端规范化、OpenAPI 实现、参数元数据 v8、旧敏感门禁迁移与回归 | NEXT | 旧任务/模板/v5～v7 可读；普通新建只见 CSV/CUT/SQL；query-sql 普通授权；retain-empty-files 全三格式；1280/1440/1920 交互回归通过 |
+| CONS-05 运行时对齐 | Vue 六步、服务端规范化、OpenAPI 实现、参数元数据 v8、旧敏感门禁迁移与回归 | NEXT | 旧任务/模板/v5～v7 可读；普通新建只见 CSV/CUT/SQL；query-sql 普通授权；retain-empty-files 全三格式；1920×1080 / 1440×1024 / 1280×720 交互回归通过 |
 
 EX-D1、EX-D2 与 EX-I1～EX-I8 已形成现有设计和实现基线，后续不再用现场 WI 缺口直接扩写能力。收敛阶段优先冻结事实、职责和安全门禁；真实凭据探测、真实工具启动和用户数据库操作仍受当次授权及 G3/G4 门禁约束。本机 MVP/Agent 包启动器开启的受控存储 TCP 探针按其运行期持续授权，不扩展到凭据探测、工具执行或数据库操作。
 
@@ -90,7 +92,7 @@ Phase 5 已完成结果证据切片：`process_evidence_json` 保存受控进程
 | 9 | **EX-I6 对象存储** ✅ 部分 | OSS/S3/COS/OBS 受控 URI、凭据槽位、临时目录、网络/权限/空间预检查和脱敏展示 | 第一段已交付（2026-08-07）：jar 字节码取证确认 OBDUMPER 走 Hadoop FileSystem 抽象且 access-key/secret-key 非必填（可走 HADOOP_CONF_DIR/core-site.xml 配置链），**存储凭据可不进 argv**——URI 拒绝任何密钥参数（access-key/secret-key 进 URI 即 422），凭据走执行槽位（Agent 侧 core-site.xml 短生命周期注入，方案见 [EX-I6 决策](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) 与本文）；v6 元数据解锁 --tmp-path（绑定全部 9 个能力）、受控 URI 校验（scheme 白名单/参数白名单 endpoint/region/storage-class/拒绝任意 URI）、输出类型 LOCAL/OSS/S3/COS/OBS 归一化与生成器路径分流校验（STORAGE_URI_INVALID）、前端步骤 5 输出类型单选与对象存储区域（不收集密钥）、契约测试（OSS 全流程 + 8 类越界负例）。第二段已交付（2026-08-14，代码审查收口）：主体级存储凭据（迁移 0017 两表 + 控制面 CRUD/轮换/删除 + 草稿引用归一化 + 提交绑定复验 + 执行槽位解析 + core-site.xml 生成与 HADOOP_CONF_DIR 短时注入），审查修复了执行解密 AAD 信封标识、创建幂等重放摘要与三处写端点 CSRF 失败关闭，并补齐 OpenAPI 与前端（存储凭据管理页 + 向导步骤 5 凭据绑定）。**第三段已交付（2026-08-14）**：存储专用预检查框架——存储形态检查清单（DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → AVAILABLE_SPACE（--tmp-path 卷）→ STORAGE_CONNECTIVITY → STORAGE_AUTH）、预检查上下文存储目标段（受控 URI/endpoint/tmpPath）、Agent 探测接口（TCP 连通性探测由显式开关控制；本机 MVP/Agent 包启动器默认开启并按进程生命周期持续授权；凭据探测仍归 EX-V1）、完成端点按输出类型复核形态，提交门禁由结果驱动（两项存储检查 PASSED 才可提交，否则 STORAGE_PRECHECK_REQUIRED）；旧 STORAGE_PRECHECK_UNAVAILABLE 功能门禁移除。四类存储真实取证与凭据探测授权执行归 EX-V1 排期 |
 | 10 | **EX-I7 高级与专家能力** ✅ 部分 | DDL 行为、筛选、一致性、性能、资源和高风险确认 | 既有 DDL、文件拆分、压缩等级、MySQL DATE/DATETIME、partition 与 exclude-data-types 实现记录保持不变；`--add-extra-message`、`--sequence-policy` 及其余时间格式仍保持 VALIDATION_GATED。2026-08-22 重新定版：`--query-sql` 允许作为普通高级筛选参数进入固定 OBDUMPER 导出链路，不提供 SQL 编辑器、file:// 或非 OBDUMPER SQL 通道；现有敏感门禁实现由 CONS-05 迁移 |
 | 11 | **EX-I8 结果、失败恢复与复用** ✅ | 结果清单、失败操作、派生任务关系、`dump.ckpt` 继续、基于原配置新建、从头执行，以及获准范围内的模板复用 | **四段已交付（2026-08-14）**：8-A 结果与失败事实——Agent 在成功与失败路径都上报受控结果事实（文件数/字节数/受限相对路径清单 + `dump.ckpt` 存在性，失败路径作为失败终态后的迟到事实由同一租约接受），控制面合并为 `result_summary_json` 任务级结果摘要并投影到任务详情（OpenAPI `ExecutionResultSummary` 安全投影 + 前端“执行结果”区）；8-B 派生任务与两类派生草稿——迁移 0018（`tasks.derivation_kind` + `export_drafts.source_task_id/source_derivation`）、`POST /tasks/{id}:rebuild-draft`（从失败任务冻结快照重建可编辑 v6 草稿，REBUILD_FROM_CONFIG 可改参 / RERUN_FROM_SCRATCH 提交时服务端强制指纹一致）、提交时写入 `parent_task_id/derivation_kind`、任务概览投影来源关系；8-C 检查点继续——`POST /tasks/{id}:resume-checkpoint`（失败终态 + dump.ckpt 事实 + 原预检查成功为资格条件，继承原快照并追加官方 `--retry`，不重新预检查；`CHECKPOINT_RESUME` 任务领取复验当前事实但豁免预检查 TTL），前端失败任务操作区三按钮与向导派生草稿加载/回填；8-D 模板复用——`POST /tasks/{id}:save-template`（仅成功任务；剥离存储凭据引用）、模板列表/改名/删除、`POST /export-config-templates/{id}:create-draft`（重新选择数据源/节点，不复制凭据/预检查/风险确认），前端模板中心与任务详情“保存为模板”。**已对本机真实数据端到端验证**：从 2026-08-13 真实成功任务保存模板、模板列表、由模板创建草稿（201）；真实失败任务的检查点继续按预期失败关闭（CHECKPOINT_RESUME_UNAVAILABLE——旧任务无检查点事实）。**未完成（归 EX-V1，需真实材料）**：dump.ckpt 续跑取证（需大数据量/慢导出制造保存点）、两项存储探测的真实端点执行（Agent 已装载探测开关）、四类存储端到端导出；手工新建模板（POST /export-config-templates）保持契约声明未实现 |
-| 12 | **CONS-05 六步与参数元数据 v8 运行时对齐** | Vue 六步布局、对象下拉、单一高级折叠区、v8 元数据、服务端规范化、OpenAPI 实现和旧任务兼容 | 合成回归覆盖新建 CSV/CUT/SQL、Oracle/MySQL 禁用原因、query-sql 普通授权、retain-empty-files 三格式、历史 v5～v7 读取和 1280/1440/1920 布局 |
+| 12 | **CONS-05 六步与参数元数据 v8 运行时对齐** | Vue 六步 Task Builder、对象下拉、单一高级设置入口、v8 元数据、服务端规范化、OpenAPI 实现和旧任务兼容 | 合成回归覆盖新建 CSV/CUT/SQL、Oracle/MySQL 禁用原因、query-sql 普通授权、retain-empty-files 三格式、历史 v5～v7 读取，以及 P0 的 1920×1080 / 1440×1024 / 1280×720 响应式验证 |
 | 13 | **EX-V1 分切片 Windows 验证** | 每个已启用能力的授权真实证据 | G3/WI 只验证已实现切片，不再反向决定产品设计顺序；一个组合通过不得外推其他组合 |
 | 14 | **EX-V2 三目标认证** | Windows AMD64、麒麟 Linux AMD64、麒麟 Linux ARM64 的正式构建与运行证据 | 目标机原生验证通过；交叉编译不能替代运行证据 |
 | 15 | **EX-R 发布评审** | 安全、恢复、备份、升级、兼容、运维和残余风险结论 | 只有已设计、已实现、已验证且有证据的能力进入发布声明 |
@@ -239,7 +241,7 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 - 部署边界：本机 `--local-mvp` 固定为 `https://127.0.0.1:8080`，必须同时配置 TLS 证书和私钥，且仅可绑定回环地址；Agent 包通过随包 CA 验证该证书，不能用 HTTP、跳过校验或反向代理信任头替代。G3 仍必须在获批准的直接 TLS 监听或可信边缘 TLS 终止后提供可由 Agent CA 验证的 HTTPS 端点。
 - 已完成：WI-01～WI-04、WI-12 的脱敏外部前置已确认后，秘密槽位严格契约、回执、权限漂移、响应绑定和固定 `EXPORT_PREFLIGHT` Worker 已完成 G2 合成闭环。Worker 会先完成不依赖数据库槽位的工具环境、输出路径、输出目录空性和可用空间检查；任一前置项未通过时，数据库与对象检查固定回报 `UNKNOWN`，且绝不调用槽位解析。六项报告仍按既定契约顺序返回。TLS 集成测试只由浏览器创建预检查，受认证 Agent Worker 通过 `claim-next` 自动领取，不注入 precheckId，且未连接真实 ODP、未解析真实凭据或启动 OBDUMPER。默认 Agent 启动入口仍未组装 `EXPORT_PREFLIGHT` Worker，因此真实检查执行、真实凭据解析和 WI-06 事实仍未满足；不得因本项完成而恢复 F2、启用数据源或开放真实任务。
 - 已确认：基础连接测试由浏览器每次明确选择的、已认证执行节点 Agent 执行；控制面只协调、授权、校验和审计。测试事实必须绑定数据源连接配置/凭据 revision、节点、Agent 与节点事实版本，单节点成功不推导其他节点可达；导出前仍必须由最终选定节点重新执行 `EXPORT_PREFLIGHT`。
-- 已完成：独立 `DATA_SOURCE_CONNECTION_TEST` 的 G2 合成租约闭环、页面反馈及秘密槽位绑定已实现；当前私有 ODP 的 JDBC 身份按已确认字段短时组装为 `username@tenant#cluster`，非法或超长输入失败关闭，合成验证不解析真实密码。
+- 已完成：独立 `DATA_SOURCE_CONNECTION_TEST` 的 G2 合成租约闭环、页面反馈及秘密槽位绑定已实现；当前私有 ODP 的 JDBC 身份按已确认字段短时组装为 `username@tenant` 或 `username@tenant#cluster`，非法或超长输入失败关闭，合成验证不解析真实密码。
 - 已完成：默认 Agent 启动入口在受认证心跳成功后最多运行一条 `G2_SYNTHETIC` 连接测试，顺序固定为 `enroll → heartbeat → claim-next → acknowledge → complete`。心跳失败时不领取；长期模式隔离固定 Worker 错误以保持心跳，`--once` 模式明确返回错误。该组装没有秘密槽位、JDBC、Java、工作目录或可靠恢复队列。
 - 验证：2026-07-28 回环 TLS Local MVP 使用实际常驻 Windows `agent.exe` 创建合成数据源并提交节点侧连接测试，状态从 `PENDING` 变为 `SUCCEEDED / SYNTHETIC_OK / G2_SYNTHETIC`，且安全投影固定为 `realConnectionVerified=false`。Local MVP 显式装配 `ConnectionTests` 存储依赖；心跳仅因采样时间变化不递增 `factsRevision`，避免在 Agent 领取前使冻结绑定失效。该验证不解析秘密、不连接真实 ODP、不启动 Java 或 OBDUMPER。
 - 已完成：基础连接诊断与任务接收状态解耦。具备授权、当前受认证 Agent 事实、平台匹配和空闲容量的 `DISABLED` 或 `ENABLED` 节点可进入 `DATA_SOURCE_CONNECTION_TEST` 候选并冻结测试；`MAINTENANCE`/`ARCHIVED` 在候选、创建和租约漂移复验中失败关闭。`OBDUMPER_EXPORT` 候选仍只接受 `ENABLED`，诊断不会改变管理状态或授予任务资格。
@@ -250,7 +252,7 @@ F0 页面、字段规则与契约对照已记录于[页面、字段规则与契�
 ### F2：数据源选择与固定预检查子步骤（G2；Windows 本机预检查待逐次取证）
 
 - 已完成：导出草稿创建、命令预览和预检查的仓储/控制面重算都要求数据源同时为 `ENABLED`、`last_test_status = SUCCEEDED` 且 `last_test_source = AGENT_JDBC`；绕过页面提交或数据源后续失去该事实时，草稿不能创建，既有草稿也不能继续预览、预检查或提交。
-- 已完成：导出向导第 1 步仅加载并显示授权范围内符合该条件的安全摘要，支持加载失败重试、无登记数据源与已登记但不可选两种空态，并在选择后同步右侧摘要；浏览器不接收用户名、密码或命令参数。
+- 已完成：导出向导第 1 步仅加载并显示授权范围内符合该条件的安全摘要，支持加载失败重试、无登记数据源与已登记但不可选两种空态，并在选择后同步当前任务上下文；浏览器不接收用户名、密码或命令参数。
 - 已完成：导出向导现在将所选合格数据源、一个明确数据库/Schema、一个表、一个已授权且启用的节点和该节点平台匹配的本地绝对输出路径提交给既有单表 CSV 草稿 API；浏览器不生成命令，服务端仍重新执行数据源、节点范围和固定字段校验。
 - 已完成：节点候选只返回有权且启用的最小安全投影。候选不表示 Agent 在线、工具正确、输出路径可写或任务可执行；这些事实继续由后续固定预检查确认。无候选、加载失败、无权对象、缺少 CSRF、无效路径和草稿创建失败均保持失败关闭。
 - 已完成：草稿创建后，向导只读取服务端返回的草稿 revision 和固定 CSV 配置，再以该 revision 请求控制面重算脱敏命令。命令在浏览器本地二次脱敏校验通过前不会进入页面状态；草稿读取、版本冲突、网络或二次脱敏失败都会清空命令并提供安全重试。

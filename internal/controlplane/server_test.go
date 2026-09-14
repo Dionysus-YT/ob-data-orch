@@ -65,17 +65,39 @@ func TestCreateDataSourceRequiresSafetyChecksAndPassesOnlyEncryptedCredential(t 
 		Identity: browserOnlyIdentityProvider{}, Roles: allowedRoleAuthorizer{}, Creator: creator,
 		Encryptor: keyring, CSRF: allowedCSRF{}, CredentialKeyID: "test-key",
 	})
-	body := []byte(`{"displayName":"Created Source","environment":"TEST","connectionKind":"ODP","compatibilityMode":"MYSQL","host":"127.0.0.1","port":2881,"clusterName":"synthetic-cluster","tenantName":"synthetic-tenant","username":"synthetic-user","password":"synthetic-password"}`)
+	body := []byte(`{"displayName":"Created Source","environment":"TEST","connectionKind":"ODP","compatibilityMode":"MYSQL","host":"127.0.0.1","port":2881,"clusterName":"","tenantName":"synthetic-tenant","username":"synthetic-user","password":"synthetic-password"}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources", bytes.NewReader(body))
 	request.Header.Set("Idempotency-Key", "synthetic-idempotency-key")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusCreated || creator.input.DataSourceID == "" || creator.input.ClusterName != "synthetic-cluster" || creator.input.TenantName != "synthetic-tenant" || len(creator.input.Ciphertext) == 0 {
+	if response.Code != http.StatusCreated || creator.input.DataSourceID == "" || creator.input.ClusterName != "" || creator.input.TenantName != "synthetic-tenant" || len(creator.input.Ciphertext) == 0 {
 		t.Fatalf("create response=%d input=%#v", response.Code, creator.input)
 	}
 	serialized, _ := json.Marshal(creator.input)
 	if bytes.Contains(serialized, []byte("synthetic-password")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-password")) {
 		t.Fatal("plaintext password escaped create boundary")
+	}
+}
+
+func TestCreateDataSourceReturnsFieldErrorsBeforeCredentialWork(t *testing.T) {
+	t.Parallel()
+	keyring, err := credential.NewKeyring(map[string][]byte{"test-key": bytes.Repeat([]byte{7}, 32)})
+	if err != nil {
+		t.Fatalf("NewKeyring() error = %v", err)
+	}
+	creator := &recordingCreator{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Roles: allowedRoleAuthorizer{}, Creator: creator,
+		Encryptor: keyring, CSRF: allowedCSRF{}, CredentialKeyID: "test-key",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources", bytes.NewBufferString(`{"displayName":" ","environment":"TEST","connectionKind":"ODP","compatibilityMode":"MYSQL","host":"127.0.0.1","port":2881,"clusterName":"","tenantName":"synthetic-tenant","username":"","password":"synthetic-password"}`))
+	request.Header.Set("Idempotency-Key", "synthetic-invalid-source")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity || creator.input.DataSourceID != "" || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"DATA_SOURCE_FIELDS_INVALID"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"field":"displayName"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"field":"username"`)) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-password")) {
+		t.Fatalf("field error response=%d body=%s input=%#v", response.Code, response.Body.String(), creator.input)
 	}
 }
 
@@ -494,39 +516,61 @@ func TestChangeDataSourceStateRequiresCSRFAndObjectWriteScope(t *testing.T) {
 	}
 }
 
-func TestDeleteDataSourceReturnsActualOutcome(t *testing.T) {
+func TestDeleteDataSourceReturnsPermanentDeleteOutcome(t *testing.T) {
 	t.Parallel()
-	for _, testCase := range []struct {
-		name     string
-		outcome  string
-		revision int64
-	}{
-		{name: "physical delete", outcome: "DELETED", revision: 0},
-		{name: "archive referenced", outcome: "ARCHIVED", revision: 2},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			deleter := &recordingDataSourceDeleter{result: store.DataSourceDeletionResult{Outcome: testCase.outcome, Revision: testCase.revision}}
-			handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
-				Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
-				Deleter: deleter, CSRF: allowedCSRF{},
-			})
-			request := httptest.NewRequest(http.MethodDelete, "/api/v1/data-sources/source-allowed", nil)
-			request.Header.Set("If-Match", `"rev-1"`)
-			response := httptest.NewRecorder()
+	deleter := &recordingDataSourceDeleter{result: store.DataSourceDeletionResult{Outcome: "DELETED"}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		Deleter: deleter, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/data-sources/source-allowed", nil)
+	request.Header.Set("If-Match", `"rev-1"`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"outcome":"DELETED"`)) || deleter.deleteInput.DataSourceID != "source-allowed" || deleter.deleteInput.ExpectedRevision != 1 {
+		t.Fatalf("delete response=%d body=%s input=%#v", response.Code, response.Body.String(), deleter.deleteInput)
+	}
+}
 
-			handler.ServeHTTP(response, request)
+func TestArchiveDataSourceUsesExplicitArchiveAction(t *testing.T) {
+	t.Parallel()
+	deleter := &recordingDataSourceDeleter{result: store.DataSourceDeletionResult{Outcome: "ARCHIVED", Revision: 2}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		Deleter: deleter, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/data-sources/source-allowed:archive", nil)
+	request.Header.Set("If-Match", `"rev-1"`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"outcome":"ARCHIVED"`)) || deleter.archiveInput.DataSourceID != "source-allowed" || deleter.archiveInput.ExpectedRevision != 1 {
+		t.Fatalf("archive response=%d body=%s input=%#v", response.Code, response.Body.String(), deleter.archiveInput)
+	}
+}
 
-			var body struct {
-				Outcome  string `json:"outcome"`
-				Revision int64  `json:"revision"`
-			}
-			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode deletion response: %v", err)
-			}
-			if response.Code != http.StatusOK || body.Outcome != testCase.outcome || body.Revision != testCase.revision || deleter.input.DataSourceID != "source-allowed" || deleter.input.ExpectedRevision != 1 {
-				t.Fatalf("delete response=%d body=%#v input=%#v", response.Code, body, deleter.input)
-			}
-		})
+func TestDeleteDataSourceIneligibleReturnsCurrentLifecycleEligibility(t *testing.T) {
+	t.Parallel()
+	deleter := &recordingDataSourceDeleter{err: store.ErrDataSourceDeleteIneligible}
+	sources := staticDataSources{summaries: []store.DataSourceSummary{{
+		DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "PRODUCTION", ConnectionKind: "ODP", CompatibilityMode: "MYSQL",
+		Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 1,
+		LifecycleEligibility: store.DataSourceLifecycleEligibility{
+			Enable:  store.DataSourceLifecycleActionEligibility{ReasonCode: "ALREADY_ENABLED", Reason: "数据源当前已启用。"},
+			Disable: store.DataSourceLifecycleActionEligibility{Allowed: true},
+			Delete:  store.DataSourceLifecycleActionEligibility{ReasonCode: "HISTORICAL_REFERENCES_EXIST", Reason: "存在历史引用，不能永久删除。", ReferenceCount: 3},
+			Archive: store.DataSourceLifecycleActionEligibility{Allowed: true, ReferenceCount: 3},
+		},
+	}}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		DataSources: sources, Deleter: deleter, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/data-sources/source-allowed", nil)
+	request.Header.Set("If-Match", `"rev-1"`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"DATA_SOURCE_DELETE_INELIGIBLE"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"referenceCount":3`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"archive":{"allowed":true`)) {
+		t.Fatalf("delete conflict response=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -680,7 +724,7 @@ func TestDataSourceResponseIncludesLastTestTimeWithoutConnectionIdentity(t *test
 		DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL",
 		Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user",
 		State: "ENABLED", Revision: 1, CredentialRevision: 2, LastTestStatus: "SUCCEEDED", LastTestedAt: &testedAt,
-	})
+	}, false)
 	body, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal data source response: %v", err)
@@ -712,6 +756,59 @@ func TestUpdateDataSourceEncryptsPasswordAndKeepsItOutOfResponses(t *testing.T) 
 	serialized, _ := json.Marshal(updater.input)
 	if bytes.Contains(serialized, []byte("synthetic-rotated-password")) || bytes.Contains(response.Body.Bytes(), []byte("synthetic-rotated-password")) || bytes.Contains(response.Body.Bytes(), []byte(`"sysUser"`)) {
 		t.Fatal("plaintext password escaped update boundary")
+	}
+}
+
+func TestUpdateDataSourceReturnsFieldErrorsForMergedFields(t *testing.T) {
+	t.Parallel()
+	updater := &recordingUpdater{}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		DataSources: staticDataSourceReader{}, Updater: updater, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/data-sources/source-allowed", bytes.NewBufferString(`{"username":" ","port":70000}`))
+	request.Header.Set("If-Match", `"rev-1"`)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity || updater.input.DataSourceID != "" || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"DATA_SOURCE_FIELDS_INVALID"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"field":"username"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"field":"port"`)) {
+		t.Fatalf("field error response=%d body=%s input=%#v", response.Code, response.Body.String(), updater.input)
+	}
+}
+
+func TestUpdateDataSourceReturnsRefreshedLifecycleEligibility(t *testing.T) {
+	t.Parallel()
+	updater := &recordingUpdater{connectionTestInvalidated: true}
+	reader := &sequenceDataSourceReader{summaries: []store.DataSourceSummary{
+		{
+			DataSourceID: "source-allowed", DisplayName: "test", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL",
+			Host: "192.168.2.53", Port: 2883, ClusterName: "rlc_cdpV4", TenantName: "test", Username: "root",
+			State: "ENABLED", Revision: 9, CredentialRevision: 2, LastTestStatus: "SUCCEEDED",
+			LifecycleEligibility: store.DataSourceLifecycleEligibility{Enable: store.DataSourceLifecycleActionEligibility{ReasonCode: "ALREADY_ENABLED"}},
+		},
+		{
+			DataSourceID: "source-allowed", DisplayName: "test", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL",
+			Host: "192.168.2.184", Port: 2881, ClusterName: "", TenantName: "gth_mysql", Username: "test",
+			State: "DISABLED", Revision: 10, CredentialRevision: 2,
+			LifecycleEligibility: store.DataSourceLifecycleEligibility{
+				Enable:  store.DataSourceLifecycleActionEligibility{ReasonCode: "CONNECTION_TEST_REQUIRED", Reason: "当前连接配置尚未通过基础连接测试，不能启用。"},
+				Disable: store.DataSourceLifecycleActionEligibility{ReasonCode: "ALREADY_DISABLED", Reason: "数据源当前已禁用。"},
+			},
+		},
+	}}
+	handler := NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sourceAuthorizer{allowedID: "source-allowed", allowWrite: true},
+		DataSources: reader, Updater: updater, CSRF: allowedCSRF{},
+	})
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/data-sources/source-allowed", bytes.NewBufferString(`{"host":"192.168.2.184","port":2881,"clusterName":"","tenantName":"gth_mysql","username":"test","defaultDatabase":null}`))
+	request.Header.Set("If-Match", `"rev-9"`)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"DISABLED"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"revision":10`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"reasonCode":"CONNECTION_TEST_REQUIRED"`)) || bytes.Contains(response.Body.Bytes(), []byte(`"reasonCode":"ALREADY_ENABLED"`)) {
+		t.Fatalf("refreshed update response=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -2845,6 +2942,31 @@ func (sources staticDataSources) GetDataSourceSummary(_ context.Context, dataSou
 	return store.DataSourceSummary{}, store.ErrDataSourceNotFound
 }
 
+type sequenceDataSourceReader struct {
+	summaries []store.DataSourceSummary
+	reads     int
+}
+
+func (reader *sequenceDataSourceReader) ListDataSourceSummaries(context.Context) ([]store.DataSourceSummary, error) {
+	return append([]store.DataSourceSummary(nil), reader.summaries...), nil
+}
+
+func (reader *sequenceDataSourceReader) GetDataSourceSummary(_ context.Context, dataSourceID string) (store.DataSourceSummary, error) {
+	if len(reader.summaries) == 0 {
+		return store.DataSourceSummary{}, store.ErrDataSourceNotFound
+	}
+	index := reader.reads
+	if index >= len(reader.summaries) {
+		index = len(reader.summaries) - 1
+	}
+	reader.reads++
+	summary := reader.summaries[index]
+	if summary.DataSourceID != dataSourceID {
+		return store.DataSourceSummary{}, store.ErrDataSourceNotFound
+	}
+	return summary, nil
+}
+
 func mustStaticDataSourceReader() staticDataSources {
 	return staticDataSources{summaries: []store.DataSourceSummary{
 		{DataSourceID: "source-allowed", DisplayName: "Allowed", Environment: "TEST", ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.1", Port: 2881, ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", State: "ENABLED", Revision: 1, CredentialRevision: 2, LastTestStatus: "SUCCEEDED"},
@@ -2883,9 +3005,10 @@ func (nameUnavailableCreator) CreateDataSource(context.Context, store.DataSource
 type recordingStateChanger struct{ input store.DataSourceStateChange }
 
 type recordingDataSourceDeleter struct {
-	input  store.DataSourceDeletion
-	result store.DataSourceDeletionResult
-	err    error
+	deleteInput  store.DataSourceDeletion
+	archiveInput store.DataSourceArchive
+	result       store.DataSourceDeletionResult
+	err          error
 }
 
 type recordingExecutionNodeDeleter struct {
@@ -2935,8 +3058,13 @@ func (c *recordingStateChanger) ChangeDataSourceState(_ context.Context, input s
 	return store.DataSourceStateChangeResult{State: input.TargetState, Revision: 2}, nil
 }
 
-func (d *recordingDataSourceDeleter) DeleteOrArchiveDataSource(_ context.Context, input store.DataSourceDeletion) (store.DataSourceDeletionResult, error) {
-	d.input = input
+func (d *recordingDataSourceDeleter) DeleteDataSource(_ context.Context, input store.DataSourceDeletion) (store.DataSourceDeletionResult, error) {
+	d.deleteInput = input
+	return d.result, d.err
+}
+
+func (d *recordingDataSourceDeleter) ArchiveDataSource(_ context.Context, input store.DataSourceArchive) (store.DataSourceDeletionResult, error) {
+	d.archiveInput = input
 	return d.result, d.err
 }
 

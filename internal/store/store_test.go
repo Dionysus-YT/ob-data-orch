@@ -1359,7 +1359,7 @@ func TestCreateDataSourceAtomicallyPersistsEncryptedCredentialAuditAndIdempotenc
 		DataSourceID: "source-create", CredentialID: "credential-create", CreatorSubjectID: "subject-1",
 		DisplayName: "Created Source", NormalizedName: "created-source", Environment: "TEST",
 		ConnectionKind: "ODP", CompatibilityMode: "MYSQL", Host: "127.0.0.3", Port: 2881,
-		ClusterName: "synthetic-cluster", TenantName: "synthetic-tenant", Username: "synthetic-user", DefaultDatabase: "synthetic_db", KeyID: "key-create",
+		ClusterName: "", TenantName: "synthetic-tenant", Username: "synthetic-user", DefaultDatabase: "synthetic_db", KeyID: "key-create",
 		Nonce: []byte{1, 2, 3}, Ciphertext: []byte{4, 5, 6}, RequestID: "request-create-1",
 		IdempotencyKey: "idempotency-create-1", RequestDigest: testFingerprint, CreatedAt: testTime,
 	}
@@ -1471,17 +1471,27 @@ func TestChangeDataSourceStateIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
-func TestDeleteOrArchiveDataSourcePreservesHistoryAndReleasesUnusedName(t *testing.T) {
+func TestDataSourceLifecycleActionsPreserveHistoryAndReleaseUnusedName(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)
 	ctx := context.Background()
 
-	archived, err := store.DeleteOrArchiveDataSource(ctx, DataSourceDeletion{
+	eligibility, err := store.GetDataSourceSummary(ctx, "source-1")
+	if err != nil || eligibility.LifecycleEligibility.Delete.Allowed || !eligibility.LifecycleEligibility.Archive.Allowed || eligibility.LifecycleEligibility.Delete.ReferenceCount != 2 {
+		t.Fatalf("referenced source lifecycle eligibility = %#v, %v", eligibility.LifecycleEligibility, err)
+	}
+	if _, err := store.DeleteDataSource(ctx, DataSourceDeletion{
 		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
-		RequestID: "request-archive-referenced", DeletedAt: testTime.Add(time.Minute),
+		RequestID: "request-delete-referenced", DeletedAt: testTime.Add(time.Minute),
+	}); !errors.Is(err, ErrDataSourceDeleteIneligible) {
+		t.Fatalf("DeleteDataSource(referenced) error = %v, want ErrDataSourceDeleteIneligible", err)
+	}
+	archived, err := store.ArchiveDataSource(ctx, DataSourceArchive{
+		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		RequestID: "request-archive-referenced", ArchivedAt: testTime.Add(time.Minute),
 	})
 	if err != nil || archived.Outcome != "ARCHIVED" || archived.Revision != 2 {
-		t.Fatalf("DeleteOrArchiveDataSource(referenced) = %#v, %v", archived, err)
+		t.Fatalf("ArchiveDataSource(referenced) = %#v, %v", archived, err)
 	}
 	var state string
 	if err := store.db.QueryRow(`SELECT state FROM data_sources WHERE data_source_id = 'source-1'`).Scan(&state); err != nil || state != "ARCHIVED" {
@@ -1510,27 +1520,57 @@ func TestDeleteOrArchiveDataSourcePreservesHistoryAndReleasesUnusedName(t *testi
 	if err != nil || created.DataSourceID != unused.DataSourceID {
 		t.Fatalf("CreateDataSource(unused) = %#v, %v", created, err)
 	}
-	deleted, err := store.DeleteOrArchiveDataSource(ctx, DataSourceDeletion{
+	if _, err := store.ArchiveDataSource(ctx, DataSourceArchive{
 		DataSourceID: unused.DataSourceID, ActorSubjectID: "subject-1", ExpectedRevision: 1,
-		RequestID: "request-delete-unused", DeletedAt: testTime.Add(3 * time.Minute),
+		RequestID: "request-archive-unused", ArchivedAt: testTime.Add(3 * time.Minute),
+	}); !errors.Is(err, ErrDataSourceArchiveIneligible) {
+		t.Fatalf("ArchiveDataSource(unused) error = %v, want ErrDataSourceArchiveIneligible", err)
+	}
+	if _, err := store.GetDataSourceSummary(ctx, unused.DataSourceID); err != nil {
+		t.Fatalf("GetDataSourceSummary(stale delete read) = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+        INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at)
+        VALUES ('draft-stale-delete', 'subject-1', ?, 'node-1', 1, '4.3.5-RELEASE', 'obdumper-4.3.5-slice-v3', 'export-odp-single-table-csv-v1', '{"database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/tmp/output"}', ?, '{}', ?, ?)
+    `, unused.DataSourceID, testFingerprint, utcText(testTime), utcText(testTime)); err != nil {
+		t.Fatalf("insert stale delete reference: %v", err)
+	}
+	if _, err := store.DeleteDataSource(ctx, DataSourceDeletion{
+		DataSourceID: unused.DataSourceID, ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		RequestID: "request-stale-delete", DeletedAt: testTime.Add(4 * time.Minute),
+	}); !errors.Is(err, ErrDataSourceDeleteIneligible) {
+		t.Fatalf("DeleteDataSource(stale reference) error = %v, want ErrDataSourceDeleteIneligible", err)
+	}
+
+	deletable := unused
+	deletable.DataSourceID, deletable.CredentialID = "source-unused-delete", "credential-unused-delete"
+	deletable.DisplayName, deletable.NormalizedName = "Unused Delete Source", "unused delete source"
+	deletable.RequestID, deletable.IdempotencyKey, deletable.KeyID = "request-unused-delete", "idempotency-unused-delete", "key-unused-delete"
+	deletable.CreatedAt = testTime.Add(5 * time.Minute)
+	if _, err := store.CreateDataSource(ctx, deletable); err != nil {
+		t.Fatalf("CreateDataSource(deletable) = %v", err)
+	}
+	deleted, err := store.DeleteDataSource(ctx, DataSourceDeletion{
+		DataSourceID: deletable.DataSourceID, ActorSubjectID: "subject-1", ExpectedRevision: 1,
+		RequestID: "request-delete-unused", DeletedAt: testTime.Add(6 * time.Minute),
 	})
 	if err != nil || deleted.Outcome != "DELETED" || deleted.Revision != 0 {
-		t.Fatalf("DeleteOrArchiveDataSource(unused) = %#v, %v", deleted, err)
+		t.Fatalf("DeleteDataSource(unused) = %#v, %v", deleted, err)
 	}
-	assertCount(t, store.db, "SELECT COUNT(*) FROM data_sources WHERE data_source_id = 'source-unused'", 0)
-	assertCount(t, store.db, "SELECT COUNT(*) FROM credential_revisions WHERE data_source_id = 'source-unused'", 0)
-	assertCount(t, store.db, "SELECT COUNT(*) FROM request_idempotency WHERE resource_id = 'source-unused'", 1)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM data_sources WHERE data_source_id = 'source-unused-delete'", 0)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM credential_revisions WHERE data_source_id = 'source-unused-delete'", 0)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM request_idempotency WHERE resource_id = 'source-unused-delete'", 1)
 	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'DATA_SOURCE_DELETED'", 1)
-	replayed, err := store.CreateDataSource(ctx, unused)
-	if err != nil || !replayed.Replayed || replayed.DataSourceID != unused.DataSourceID {
+	replayed, err := store.CreateDataSource(ctx, deletable)
+	if err != nil || !replayed.Replayed || replayed.DataSourceID != deletable.DataSourceID {
 		t.Fatalf("CreateDataSource(deleted replay) = %#v, %v", replayed, err)
 	}
-	assertCount(t, store.db, "SELECT COUNT(*) FROM data_sources WHERE data_source_id = 'source-unused'", 0)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM data_sources WHERE data_source_id = 'source-unused-delete'", 0)
 
-	recreated := unused
+	recreated := deletable
 	recreated.DataSourceID, recreated.CredentialID = "source-unused-recreated", "credential-unused-recreated"
 	recreated.RequestID, recreated.IdempotencyKey, recreated.KeyID = "request-unused-recreated", "idempotency-unused-recreated", "key-unused-recreated"
-	recreated.CreatedAt = testTime.Add(4 * time.Minute)
+	recreated.CreatedAt = testTime.Add(7 * time.Minute)
 	if _, err := store.CreateDataSource(ctx, recreated); err != nil {
 		t.Fatalf("CreateDataSource(reused deleted name) error = %v", err)
 	}

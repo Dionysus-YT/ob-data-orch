@@ -13,9 +13,9 @@ const steps = computed(() => {
 <template>
   <div class="wizard-frame">
     <ol class="stepper" aria-label="任务创建步骤">
-      <li v-for="(step, index) in steps" :key="step" :class="{ active: index + 1 === (activeStep ?? 1), complete: index + 1 < (activeStep ?? 1) }"><span>{{ index + 1 }}</span><p>{{ step }}</p></li>
+      <li v-for="(step, index) in steps" :key="step" :aria-current="index + 1 === (activeStep ?? 1) ? 'step' : undefined" :class="{ active: index + 1 === (activeStep ?? 1), complete: index + 1 < (activeStep ?? 1) }"><span>{{ index + 1 }}</span><p>{{ step }}</p></li>
     </ol>
     <div class="wizard-columns"><section class="wizard-main"><slot /></section><aside class="wizard-summary"><slot name="summary" /></aside></div>
-    <slot name="footer"><footer class="wizard-footer"><button type="button" class="button button-secondary" disabled>上一步</button><span class="wizard-baseline-note">页面基线已就绪；步骤校验、草稿与提交将在对应模块功能接入后启用。</span><span class="footer-grow" /><button type="button" class="button button-tertiary" disabled>保存草稿</button><button type="button" class="button button-primary" disabled>下一步</button></footer></slot>
+    <slot name="footer"><footer class="wizard-footer"><button type="button" class="button button-secondary" disabled>上一步</button><span class="wizard-baseline-note">当前导入流程尚未开放草稿保存与任务提交。</span><span class="footer-grow" /><button type="button" class="button button-tertiary" disabled>保存草稿</button><button type="button" class="button button-primary" disabled>下一步</button></footer></slot>
   </div>
 </template>

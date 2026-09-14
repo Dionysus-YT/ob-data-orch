@@ -40,7 +40,7 @@ defineExpose({ focus: () => buttonElement.value?.focus() })
 }
 
 .workbench-icon-button:disabled {
-  color: #a1a7ae;
+  color: var(--text-disabled);
   cursor: not-allowed;
 }
 </style>

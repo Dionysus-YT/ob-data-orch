@@ -11,23 +11,26 @@ const maximumODPJDBCIdentityBytes = 256
 // PrivateODPCommandIdentity 为已授权的命令预览和受控执行参数生成私有 ODP 组合用户名。
 // 返回值只能进入受控命令路径，不能记录到普通日志、错误或审计中。
 func PrivateODPCommandIdentity(username, tenantName, clusterName string) (string, bool) {
-	if !validPrivateODPIdentityPart(username) || !validPrivateODPIdentityPart(tenantName) || !validPrivateODPIdentityPart(clusterName) {
+	if !validPrivateODPIdentityPart(username) || !validPrivateODPIdentityPart(tenantName) || !validPrivateODPOptionalClusterPart(clusterName) {
 		return "", false
 	}
-	length := len(username) + len(tenantName) + len(clusterName) + 2
+	length := privateODPIdentityLength(username, tenantName, clusterName)
 	if length > maximumODPJDBCIdentityBytes {
 		return "", false
+	}
+	if clusterName == "" {
+		return username + "@" + tenantName, true
 	}
 	return username + "@" + tenantName + "#" + clusterName, true
 }
 
 // composePrivateODPJDBCIdentity 将分字段保存的私有 ODP 身份组合为 JDBC 驱动需要的短时字节。
-// 当前首条切片固定使用 username@tenant#cluster；调用方必须在使用结束后清零返回值，不能持久化完整身份。
+// 集群名可为空：有集群时使用 username@tenant#cluster，留空时使用 username@tenant；调用方必须在使用结束后清零返回值，不能持久化完整身份。
 func composePrivateODPJDBCIdentity(username, tenantName, clusterName string) ([]byte, bool) {
-	if !validPrivateODPIdentityPart(username) || !validPrivateODPIdentityPart(tenantName) || !validPrivateODPIdentityPart(clusterName) {
+	if !validPrivateODPIdentityPart(username) || !validPrivateODPIdentityPart(tenantName) || !validPrivateODPOptionalClusterPart(clusterName) {
 		return nil, false
 	}
-	length := len(username) + len(tenantName) + len(clusterName) + 2
+	length := privateODPIdentityLength(username, tenantName, clusterName)
 	if length > maximumODPJDBCIdentityBytes {
 		return nil, false
 	}
@@ -35,9 +38,19 @@ func composePrivateODPJDBCIdentity(username, tenantName, clusterName string) ([]
 	identity = append(identity, username...)
 	identity = append(identity, '@')
 	identity = append(identity, tenantName...)
+	if clusterName == "" {
+		return identity, true
+	}
 	identity = append(identity, '#')
 	identity = append(identity, clusterName...)
 	return identity, true
+}
+
+func privateODPIdentityLength(username, tenantName, clusterName string) int {
+	if clusterName == "" {
+		return len(username) + len(tenantName) + 1
+	}
+	return len(username) + len(tenantName) + len(clusterName) + 2
 }
 
 func validPrivateODPIdentityPart(value string) bool {
@@ -50,4 +63,8 @@ func validPrivateODPIdentityPart(value string) bool {
 		}
 	}
 	return true
+}
+
+func validPrivateODPOptionalClusterPart(value string) bool {
+	return value == "" || validPrivateODPIdentityPart(value)
 }

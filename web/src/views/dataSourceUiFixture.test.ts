@@ -3,19 +3,20 @@ import { describe, expect, it } from 'vitest'
 import { DATA_SOURCE_UI_FIXTURES, dataSourceUiFixtureForSearch, isDataSourceUiFixtureEnabled } from './dataSourceUiFixture'
 
 describe('数据源列表开发界面样本', () => {
-  it('提供 16 条具有稳定且唯一标识的安全合成数据', () => {
-    expect(DATA_SOURCE_UI_FIXTURES).toHaveLength(16)
+  it('提供与冻结基线同态的 7 条安全合成数据', () => {
+    expect(DATA_SOURCE_UI_FIXTURES).toHaveLength(7)
     expect(DATA_SOURCE_UI_FIXTURES.map((source) => source.id)).toEqual([
-      'ui-fixture-data-source-01', 'ui-fixture-data-source-02', 'ui-fixture-data-source-03', 'ui-fixture-data-source-04',
-      'ui-fixture-data-source-05', 'ui-fixture-data-source-06', 'ui-fixture-data-source-07', 'ui-fixture-data-source-08',
-      'ui-fixture-data-source-09', 'ui-fixture-data-source-10', 'ui-fixture-data-source-11', 'ui-fixture-data-source-12',
-      'ui-fixture-data-source-13', 'ui-fixture-data-source-14', 'ui-fixture-data-source-15', 'ui-fixture-data-source-16',
+      'ui-fixture-production-finance-reporting',
+      'ui-fixture-customer-analytics-source',
+      'ui-fixture-data-mart-sales',
+      'ui-fixture-internal-reporting-db',
+      'ui-fixture-legacy-finance-archive',
+      'ui-fixture-data-lake-external-source',
+      'ui-fixture-dev-sandbox',
     ])
-    expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.id)).size).toBe(16)
+    expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.id)).size).toBe(7)
     expect(DATA_SOURCE_UI_FIXTURES.every((source) => source.connectionKind === 'ODP')).toBe(true)
-    expect(DATA_SOURCE_UI_FIXTURES.every((source) => source.host.endsWith('.test') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(source.host))).toBe(true)
-    expect(DATA_SOURCE_UI_FIXTURES.every((source) => source.host.length <= 15)).toBe(true)
-    expect(DATA_SOURCE_UI_FIXTURES.every((source) => source.tenantName.length <= 8)).toBe(true)
+    expect(DATA_SOURCE_UI_FIXTURES.every((source) => source.host === '192.0.2.18')).toBe(true)
     expect(DATA_SOURCE_UI_FIXTURES.every((source) => source.username.length > 0)).toBe(true)
     expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.sysCredentialState))).toEqual(new Set(['AVAILABLE', 'UNAVAILABLE']))
   })
@@ -24,19 +25,21 @@ describe('数据源列表开发界面样本', () => {
     expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.environment))).toEqual(new Set(['DEVELOPMENT', 'TEST', 'STAGING', 'PRODUCTION']))
     expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.compatibilityMode))).toEqual(new Set(['MYSQL', 'ORACLE']))
     expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.state))).toEqual(new Set(['ENABLED', 'DISABLED']))
-    expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.port))).toEqual(new Set([2881, 2882, 2883, 2884]))
-    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'SUCCEEDED')).toHaveLength(4)
-    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'FAILED')).toHaveLength(4)
-    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'INVALIDATED')).toHaveLength(4)
-    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => !source.lastTestStatus)).toHaveLength(4)
-    expect(DATA_SOURCE_UI_FIXTURES.some((source) => source.displayName === '开发源')).toBe(true)
-    expect(DATA_SOURCE_UI_FIXTURES.some((source) => source.displayName.length > 40 && /[\u4E00-\u9FFF]/u.test(source.displayName))).toBe(true)
-    expect(DATA_SOURCE_UI_FIXTURES.some((source) => source.displayName.length > 80 && /^[a-z-]+$/u.test(source.displayName))).toBe(true)
-    expect(DATA_SOURCE_UI_FIXTURES.some((source) => source.host === 'db.test')).toBe(true)
-    expect(Math.max(...DATA_SOURCE_UI_FIXTURES.map((source) => source.host.length))).toBe(15)
-    expect(DATA_SOURCE_UI_FIXTURES.some((source) => source.tenantName.length === 1)).toBe(true)
-    expect(Math.max(...DATA_SOURCE_UI_FIXTURES.map((source) => source.tenantName.length))).toBe(8)
-    expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.username)).size).toBeGreaterThan(8)
+    expect(new Set(DATA_SOURCE_UI_FIXTURES.map((source) => source.port))).toEqual(new Set([2883]))
+    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'SUCCEEDED')).toHaveLength(2)
+    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'FAILED')).toHaveLength(1)
+    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'INVALIDATED')).toHaveLength(1)
+    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'UNKNOWN')).toHaveLength(1)
+    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => source.lastTestStatus === 'PENDING')).toHaveLength(1)
+    expect(DATA_SOURCE_UI_FIXTURES.filter((source) => !source.lastTestStatus)).toHaveLength(1)
+  })
+
+  it('为有历史任务引用的数据源提供服务端生命周期资格样本', () => {
+    const source = DATA_SOURCE_UI_FIXTURES.find((item) => item.displayName === 'Production finance reporting')
+    expect(source?.lifecycleEligibility).toMatchObject({
+      delete: { allowed: false, reasonCode: 'HISTORICAL_REFERENCES_EXIST', referenceCount: 3 },
+      archive: { allowed: true, referenceCount: 3 },
+    })
   })
 
   it('仅在开发环境且唯一显式参数精确匹配时启用', () => {

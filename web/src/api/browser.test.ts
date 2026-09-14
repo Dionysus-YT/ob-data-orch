@@ -25,7 +25,7 @@ describe('浏览器 API 客户端', () => {
         compatibilityMode: 'MYSQL',
         host: '127.0.0.1',
         port: 2881,
-        clusterName: 'synthetic-cluster',
+        clusterName: '',
         tenantName: 'synthetic-tenant',
         username: 'synthetic-user',
         state: 'ENABLED',
@@ -49,7 +49,7 @@ describe('浏览器 API 客户端', () => {
       compatibilityMode: 'MYSQL',
       host: '127.0.0.1',
       port: 2881,
-      clusterName: 'synthetic-cluster',
+      clusterName: '',
       tenantName: 'synthetic-tenant',
       username: 'synthetic-user',
       state: 'ENABLED',
@@ -986,7 +986,7 @@ describe('浏览器 API 客户端', () => {
   it('数据源物理删除使用版本条件且返回明确结果', async () => {
     const { api, calls } = apiWith(Response.json({ outcome: 'DELETED', revision: 0 }))
 
-    await expect(api.deleteOrArchiveDataSource('source-1', 2)).resolves.toEqual({ outcome: 'DELETED', revision: 0 })
+    await expect(api.deleteDataSource('source-1', 2)).resolves.toEqual({ outcome: 'DELETED', revision: 0 })
 
     expect(calls[0]?.path).toBe('/api/v1/data-sources/source-1')
     expect(calls[0]?.init).toMatchObject({ method: 'DELETE' })
@@ -998,9 +998,11 @@ describe('浏览器 API 客户端', () => {
   })
 
   it('数据源归档保留明确结果', async () => {
-    const { api } = apiWith(Response.json({ outcome: 'ARCHIVED', revision: 3 }))
+    const { api, calls } = apiWith(Response.json({ outcome: 'ARCHIVED', revision: 3 }))
 
-    await expect(api.deleteOrArchiveDataSource('source-1', 2)).resolves.toEqual({ outcome: 'ARCHIVED', revision: 3 })
+    await expect(api.archiveDataSource('source-1', 2)).resolves.toEqual({ outcome: 'ARCHIVED', revision: 3 })
+    expect(calls[0]?.path).toBe('/api/v1/data-sources/source-1:archive')
+    expect(calls[0]?.init).toMatchObject({ method: 'POST' })
   })
 
   it('执行节点删除使用版本条件且返回明确结果', async () => {
@@ -1032,7 +1034,7 @@ describe('浏览器 API 客户端', () => {
   it('拒绝未知的数据源删除结果', async () => {
     const { api } = apiWith(Response.json({ outcome: 'UNKNOWN', revision: 3 }))
 
-    await expect(api.deleteOrArchiveDataSource('source-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    await expect(api.deleteDataSource('source-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
   it('数据源启停与删除缺少 CSRF 时失败关闭', async () => {
@@ -1041,7 +1043,7 @@ describe('浏览器 API 客户端', () => {
     await expect(api.changeDataSourceState('source-1', 2, 'DISABLED')).rejects.toMatchObject({
       code: 'CSRF_TOKEN_UNAVAILABLE',
     })
-    await expect(api.deleteOrArchiveDataSource('source-1', 2)).rejects.toMatchObject({
+    await expect(api.deleteDataSource('source-1', 2)).rejects.toMatchObject({
       code: 'CSRF_TOKEN_UNAVAILABLE',
     })
 

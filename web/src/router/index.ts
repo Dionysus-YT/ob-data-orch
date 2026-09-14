@@ -1,8 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AccessControlView from '@/views/AccessControlView.vue'
-import DataSourceFormView from '@/views/DataSourceFormView.vue'
-import DataSourceListView from '@/views/DataSourceListView.vue'
 import DirectLoadWizardView from '@/views/DirectLoadWizardView.vue'
 import ExecutionNodeDetailView from '@/views/ExecutionNodeDetailView.vue'
 import ExecutionNodeFormView from '@/views/ExecutionNodeFormView.vue'
@@ -18,12 +16,17 @@ import TaskDetailView from '@/views/TaskDetailView.vue'
 import TemplateCenterView from '@/views/TemplateCenterView.vue'
 import SystemSettingsView from '@/views/SystemSettingsView.vue'
 
+const visualFoundationRoutes = import.meta.env.DEV
+  ? [{ path: '/__visual-foundation/:page?', name: 'visual-foundation-lab', component: () => import('@/visual-foundation/VisualFoundationLab.vue'), meta: { title: 'Visual Foundation Lab', visualFoundationLab: true } }]
+  : []
+
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    { path: '/workbench/data-sources', name: 'workbench-data-sources', redirect: (to) => ({ name: 'data-sources', query: to.query }) },
     { path: '/', name: 'home', component: HomeView, meta: { title: '首页' } },
-    { path: '/data-sources', name: 'data-sources', component: DataSourceListView, meta: { title: '数据源管理', contentWidth: 'wide' } },
-    { path: '/data-sources/:id', name: 'data-source-form', component: DataSourceFormView, meta: { title: '数据源管理' } },
+    { path: '/data-sources', name: 'data-sources', component: () => import('@/workbench/sources/SourceWorkspace.vue'), meta: { title: '数据源管理', contentWidth: 'wide' } },
+    { path: '/data-sources/:id', redirect: (to) => ({ name: 'data-sources', query: { edit: String(to.params.id) } }) },
     { path: '/exports/new', name: 'new-export', component: ExportWizardView, meta: { title: '导出任务' } },
     { path: '/imports/normal/new', name: 'new-normal-import', component: NormalImportWizardView, meta: { title: '普通导入' } },
     { path: '/imports/direct/new', name: 'new-direct-import', component: DirectLoadWizardView, meta: { title: '旁路导入' } },
@@ -38,6 +41,7 @@ export const router = createRouter({
     { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },
     { path: '/settings/access-control', name: 'access-control', component: AccessControlView, meta: { title: '权限配置' } },
     { path: '/settings/storage-credentials', name: 'storage-credentials', component: StorageCredentialsView, meta: { title: '存储凭据' } },
+    ...visualFoundationRoutes,
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: '页面不存在' } },
   ],
 })

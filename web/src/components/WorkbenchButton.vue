@@ -1,20 +1,24 @@
 <script setup lang="ts">
+import { LoaderCircle } from '@lucide/vue'
+
 withDefaults(defineProps<{
   variant?: 'primary' | 'secondary' | 'text' | 'danger'
   type?: 'button' | 'submit' | 'reset'
   disabled?: boolean
-}>(), { variant: 'secondary', type: 'button', disabled: false })
+  busy?: boolean
+}>(), { variant: 'secondary', type: 'button', disabled: false, busy: undefined })
 </script>
 
 <template>
-  <button :type="type" class="workbench-button" :class="`is-${variant}`" :disabled="disabled">
-    <slot name="icon" />
-    <slot />
+  <button :type="type" class="workbench-button" :class="[`is-${variant}`, { 'has-progress': busy !== undefined }]" :disabled="disabled || busy" :aria-busy="busy || undefined">
+    <span class="workbench-button-content"><slot name="icon" /><slot /></span>
+    <LoaderCircle v-if="busy" class="workbench-button-spinner" :size="18" aria-hidden="true" />
   </button>
 </template>
 
 <style scoped>
 .workbench-button {
+  position: relative;
   display: inline-flex;
   height: var(--size-control);
   align-items: center;
@@ -23,7 +27,7 @@ withDefaults(defineProps<{
   padding: 0 var(--space-3);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
-  color: #343b44;
+  color: var(--color-text-primary);
   background: var(--color-bg-surface);
   font-size: var(--text-label-table-size);
   font-weight: var(--font-weight-medium);
@@ -60,6 +64,19 @@ withDefaults(defineProps<{
   color: #fff;
   background: var(--color-danger);
 }
+
+.workbench-button.is-danger:hover:not(:disabled) {
+  border-color: var(--destructive-hover);
+  color: #fff;
+  background: var(--destructive-hover);
+}
+
+/* 异步按钮预留进度图标的位置，加载时动作名持续可见且按钮宽度不变。 */
+.workbench-button-content { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
+.workbench-button.has-progress { padding-inline-end: 40px; }
+.workbench-button-spinner { position: absolute; right: 12px; animation: workbench-button-spin 900ms linear infinite; }
+@keyframes workbench-button-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .workbench-button-spinner { animation: none; } }
 
 .workbench-button:focus-visible {
   outline: 2px solid rgb(37 103 185 / 30%);

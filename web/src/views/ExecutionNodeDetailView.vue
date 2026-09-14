@@ -383,17 +383,17 @@ function unavailableReasonLabel(reason: string) {
 <style scoped>
 .heading-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .agent-registration { display: grid; gap: 16px; margin-bottom: 16px; padding: 20px; border-left: 3px solid #2f6fd2; }
-.agent-registration h2 { margin: 3px 0 7px; color: #334257; font-size: 18px; }
+.agent-registration h2 { margin: 3px 0 7px; color: var(--color-text-primary); font-size: 18px; }
 .agent-registration p { margin: 0; color: #66758a; font-size: 13px; line-height: 1.65; }
-.agent-registration ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; color: #536276; font-size: 13px; line-height: 1.6; }
+.agent-registration ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; }
 .agent-registration-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .agent-registration-actions span { color: #7a899c; font-size: 12px; }
-.agent-registration-more, .enrollment-advanced { padding: 11px 12px; border: 1px solid #e0e7f0; background: #f8fafc; }
-.agent-registration-more summary, .enrollment-advanced summary { cursor: pointer; color: #536276; font-size: 13px; font-weight: 600; }
+.agent-registration-more, .enrollment-advanced { padding: 11px 12px; border: 1px solid var(--color-border-default); background: var(--color-bg-subtle); }
+.agent-registration-more summary, .enrollment-advanced summary { cursor: pointer; color: var(--color-text-secondary); font-size: 13px; font-weight: 600; }
 .agent-registration-more p { margin-top: 10px; color: #7d5a2f; }
-.node-overview { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; padding: 21px 0; border-bottom: 1px solid #e0e7f0; }
-.node-overview h2 { margin: 3px 0 0; color: #334257; font-size: 20px; }
-.node-id { margin: 5px 0 0; color: #8a98a9; font-size: 12px; }
+.node-overview { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; padding: 21px 0; border-bottom: 1px solid var(--color-border-default); }
+.node-overview h2 { margin: 3px 0 0; color: var(--color-text-primary); font-size: 20px; }
+.node-id { margin: 5px 0 0; color: var(--color-text-secondary); font-size: 12px; }
 .availability { display: grid; gap: 5px; max-width: 430px; color: #8d4e28; font-size: 13px; line-height: 1.55; }
 .availability strong { color: #9c5229; font-size: 15px; }
 .availability.available { color: #267249; }
@@ -406,23 +406,23 @@ function unavailableReasonLabel(reason: string) {
 .node-status-grid small { color: #738195; font-size: 12px; line-height: 1.5; }
 .node-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .node-detail-section { padding: 20px; }
-.node-detail-section h2, .node-boundary h2 { margin: 0 0 16px; color: #405066; font-size: 16px; }
+.node-detail-section h2, .node-boundary h2 { margin: 0 0 16px; color: var(--color-text-primary); font-size: 16px; }
 .summary-definition code { display: block; width: fit-content; max-width: 100%; margin: 3px 0; overflow-wrap: anywhere; color: #40566f; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .facts-empty, .node-boundary p { margin: 0; color: #738195; font-size: 13px; line-height: 1.65; }
 .node-boundary { margin-top: 16px; padding: 20px; }
 .enrollment-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 18px; background: rgb(24 34 49 / 46%); }
 .enrollment-dialog { width: min(640px, 100%); max-height: min(720px, calc(100vh - 36px)); overflow: auto; padding: 22px; border: 1px solid #d7e0eb; border-radius: 6px; background: #fff; box-shadow: 0 18px 44px rgb(15 23 42 / 22%); }
 .enrollment-dialog-header { display: flex; align-items: start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
-.enrollment-dialog-header h2 { margin: 0 0 5px; color: #334257; font-size: 17px; }
+.enrollment-dialog-header h2 { margin: 0 0 5px; color: var(--color-text-primary); font-size: 17px; }
 .enrollment-dialog-header p { margin: 0; color: #7a899c; font-size: 12px; }
-.enrollment-status { margin: 0; color: #6f7e91; font-size: 13px; }
-.enrollment-intro { margin: 0 0 16px; color: #536276; font-size: 13px; line-height: 1.65; }
+.enrollment-status { margin: 0; color: var(--color-text-secondary); font-size: 13px; }
+.enrollment-intro { margin: 0 0 16px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.65; }
 .enrollment-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; }
-.enrollment-meta div { padding: 10px 12px; border: 1px solid #e0e7f0; background: #f8fafc; }
+.enrollment-meta div { padding: 10px 12px; border: 1px solid var(--color-border-default); background: var(--color-bg-subtle); }
 .enrollment-meta dt { margin-bottom: 4px; color: #8290a3; font-size: 12px; }
 .enrollment-meta dd { margin: 0; overflow-wrap: anywhere; color: #46566c; font-size: 13px; }
-.enrollment-guide { margin-bottom: 16px; padding: 14px; border: 1px solid #e0e7f0; background: #f8fafc; }
-.enrollment-guide h3 { margin: 0 0 10px; color: #405066; font-size: 14px; }
+.enrollment-guide { margin-bottom: 16px; padding: 14px; border: 1px solid var(--color-border-default); background: var(--color-bg-subtle); }
+.enrollment-guide h3 { margin: 0 0 10px; color: var(--color-text-primary); font-size: 14px; }
 .enrollment-guide dl { display: grid; gap: 8px; margin: 0 0 10px; }
 .enrollment-guide dl div { display: grid; gap: 4px; }
 .enrollment-guide dt { color: #7a899c; font-size: 12px; }
@@ -432,8 +432,8 @@ function unavailableReasonLabel(reason: string) {
 .enrollment-command-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
 .enrollment-command-heading h3 { margin: 0; }
 .enrollment-guide pre { margin: 8px 0 0; overflow-x: auto; padding: 10px; border: 1px solid #d7e0eb; background: #fff; white-space: pre-wrap; }
-.enrollment-material { display: grid; gap: 7px; color: #536276; font-size: 13px; }
-.enrollment-material textarea { width: 100%; min-height: 116px; resize: vertical; padding: 10px; border: 1px solid #cfd9e6; border-radius: 4px; color: #334257; background: #f8fafc; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.enrollment-material { display: grid; gap: 7px; color: var(--color-text-secondary); font-size: 13px; }
+.enrollment-material textarea { width: 100%; min-height: 116px; resize: vertical; padding: 10px; border: 1px solid #cfd9e6; border-radius: 4px; color: var(--color-text-primary); background: var(--color-bg-subtle); font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .enrollment-copy-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .enrollment-copy-actions span { color: #267249; font-size: 12px; }
 .enrollment-warning { margin: 14px 0 0; color: #7a899c; font-size: 12px; line-height: 1.65; }

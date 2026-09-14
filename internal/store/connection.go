@@ -1390,7 +1390,7 @@ func readEncryptedDataSourceConnectionTestDatabaseConnection(ctx context.Context
 }
 
 // readEncryptedDataSourceConnectionTestSysCredential 从冻结的 sys 凭据引用读取加密材料并组装 sys 租户身份。
-// sys 身份为 sysUser@sys#cluster（参考 ODC：账号勿填 @sys#集群 后缀，由平台组装）。
+// sys 身份由平台组装；集群为空时为 sysUser@sys，有集群时为 sysUser@sys#cluster（参考 ODC：账号勿填 @sys#集群 后缀）。
 func readEncryptedDataSourceConnectionTestSysCredential(ctx context.Context, tx *sql.Tx, run storedDataSourceConnectionTest) (EncryptedDataSourceConnectionTestDatabaseConnection, error) {
 	var connection EncryptedDataSourceConnectionTestDatabaseConnection
 	var sysUser, clusterName string

@@ -1,0 +1,305 @@
+/* 数据源组件与原生顶层弹窗共享生产主题，避免弹窗离开外壳后丢失变量。 */
+.orch-ui {
+  --orch-ink: var(--color-text-primary);
+  --orch-secondary: var(--color-text-secondary);
+  --orch-muted: var(--color-text-tertiary);
+  --orch-blue: var(--color-primary);
+  --orch-blue-hover: var(--color-primary-hover);
+  --orch-selected: var(--color-primary-soft);
+  --orch-page: var(--color-bg-page);
+  --orch-surface: var(--color-bg-subtle);
+  --orch-line: var(--color-border-default);
+  --orch-strong-line: var(--color-border-strong);
+  --orch-danger: var(--color-danger);
+  --orch-warning: var(--color-warning);
+  --orch-success: var(--color-success);
+  --orch-control: var(--size-control);
+  --orch-nav-width: var(--size-sidebar);
+  --orch-header-height: 48px;
+  color: var(--orch-ink);
+  font: 14px/22px "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  letter-spacing: 0;
+  color-scheme: light;
+}
+.orch-ui *, .orch-ui *::before, .orch-ui *::after { box-sizing: border-box; letter-spacing: 0; }
+.orch-ui :is(button, input, select, textarea) { font: inherit; }
+.orch-ui :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--orch-blue); outline-offset: 2px; }
+.orch-ui :is(button, a) { touch-action: manipulation; }
+.orch-ui :is(button, input, select, textarea):disabled { cursor: not-allowed; }
+.orch-ui :is(code, .orch-technical) { font: 12px/18px "Cascadia Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+.orch-ui svg { flex: none; stroke-width: 1.75; }
+.orch-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.orch-skip { position: fixed; top: -70px; left: 12px; z-index: 1200; padding: 8px 16px; color: #fff; background: var(--orch-ink); }
+.orch-skip:focus { top: 8px; }
+
+/* 全局上下文保持稳定，模块导航仅在左侧。 */
+.orch-application { display: flex; min-height: 100dvh; background: var(--orch-page); }
+.orch-side-nav { position: fixed; inset: 0 auto 0 0; z-index: 40; display: flex; width: var(--orch-nav-width); flex-direction: column; background: var(--orch-page); }
+.orch-wordmark { display: flex; height: var(--orch-header-height); flex: none; align-items: center; gap: 10px; padding-inline: 24px; border-bottom: 1px solid var(--orch-line); color: var(--orch-ink); font-size: 17px; font-weight: 650; text-decoration: none; white-space: nowrap; }
+.orch-brand-mark { color: var(--orch-blue); }
+.orch-side-nav-list { min-height: 0; flex: 1; padding: 20px 12px 12px; overflow-y: auto; scrollbar-width: thin; }
+.orch-side-group { margin: 0; padding: 0 0 16px; }
+.orch-side-group + .orch-side-group { padding-top: 16px; border-top: 1px solid var(--color-border-default); }
+.orch-side-group h2 { margin: 0 12px 8px; color: var(--orch-muted); font-size: 12px; font-weight: 400; line-height: 18px; }
+.orch-side-group a { position: relative; display: flex; min-height: 40px; align-items: center; gap: 12px; margin-block: 4px; padding: 8px 12px; border: 1px solid transparent; border-radius: 6px; color: var(--orch-ink); font-size: 14px; font-weight: 400; text-decoration: none; transition: background-color 120ms, border-color 120ms; }
+.orch-side-group a svg { color: var(--color-text-secondary); }
+.orch-side-group a:hover { background: var(--color-primary-soft); }
+.orch-side-group a.is-current { border-color: #b6cefa; color: var(--orch-blue); background: var(--color-primary-soft); font-weight: 600; }
+.orch-side-group a.is-current svg { color: var(--orch-blue); }
+.orch-side-footer { display: flex; min-height: 52px; flex: none; align-items: center; justify-content: space-between; gap: 8px; margin-inline: 24px; border-top: 1px solid var(--orch-line); color: var(--orch-muted); font-size: 12px; }
+.orch-content-frame { width: calc(100% - var(--orch-nav-width)); min-width: 0; min-height: 100dvh; margin-left: var(--orch-nav-width); }
+.orch-product-header { position: sticky; top: 0; z-index: 30; display: flex; height: var(--orch-header-height); align-items: center; justify-content: space-between; gap: 24px; padding-inline: 24px; border-bottom: 1px solid var(--orch-line); background: var(--orch-page); }
+.orch-header-context { display: flex; min-width: 0; align-items: center; gap: 10px; color: var(--orch-muted); font-size: 12px; white-space: nowrap; }
+.orch-header-context strong { overflow: hidden; color: var(--orch-secondary); font-weight: 400; text-overflow: ellipsis; }
+.orch-header-context svg { color: #a2b0c8; }
+.orch-global-actions { display: flex; flex: none; align-items: center; gap: 12px; }
+.orch-header-divider { width: 1px; height: 16px; background: var(--orch-strong-line); }
+.orch-account { display: inline-flex; min-height: 28px; align-items: center; gap: 8px; padding: 2px 12px; border: 1px solid var(--orch-strong-line); border-radius: 6px; color: var(--orch-secondary); background: #fff; font-size: 12px; text-decoration: none; }
+.orch-account:hover { border-color: var(--orch-blue); color: var(--orch-blue); }
+.orch-main { min-width: 0; padding: 0 24px 40px; scroll-margin-top: 64px; }
+.orch-main:focus { outline: none; }
+.orch-source-workspace { min-width: 0; container: orch-workspace / inline-size; }
+.orch-preview-note { display: flex; min-height: 28px; align-items: center; gap: 10px; margin-top: 12px; color: var(--orch-secondary); font-size: 12px; line-height: 18px; }
+.orch-preview-note > span { flex: none; padding: 1px 6px; border: 1px solid var(--orch-strong-line); border-radius: 3px; font-weight: 500; }
+.orch-page-header { display: flex; min-height: 80px; align-items: center; justify-content: space-between; gap: 16px; }
+.orch-page-title { display: flex; min-width: 0; align-items: center; gap: 16px; }
+.orch-page-title h1 { margin: 0; color: var(--orch-ink); font-size: 24px; font-weight: 600; line-height: 32px; }
+.orch-context-label { padding-left: 16px; border-left: 1px solid var(--orch-strong-line); color: var(--orch-secondary); font-size: 12px; }
+.orch-page-actions { display: flex; flex: none; align-items: center; gap: 12px; }
+
+.orch-button { display: inline-flex; height: var(--orch-control); flex: none; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border: 1px solid var(--orch-strong-line); border-radius: 4px; color: var(--orch-ink); background: #fff; font-size: 14px; font-weight: 400; line-height: 22px; white-space: nowrap; text-decoration: none; cursor: pointer; transition: background-color 120ms, border-color 120ms, color 120ms; }
+.orch-button:hover:not(:disabled) { border-color: var(--orch-blue); color: var(--orch-blue); background: #fff; }
+.orch-button:active:not(:disabled) { background: var(--orch-selected); }
+.orch-button--primary { border-color: var(--orch-blue); color: #fff; background: var(--orch-blue); box-shadow: 0 1px 2px rgb(0 74 178 / 10%); }
+.orch-button--primary:hover:not(:disabled) { border-color: var(--orch-blue-hover); color: #fff; background: var(--orch-blue-hover); }
+.orch-button--primary:active:not(:disabled) { border-color: #0049b0; color: #fff; background: #0049b0; }
+.orch-button--quiet { border-color: transparent; color: var(--orch-secondary); background: transparent; box-shadow: none; }
+.orch-button--quiet:hover:not(:disabled) { border-color: transparent; color: var(--orch-blue); background: var(--orch-selected); }
+.orch-button--danger { border-color: var(--orch-danger); color: #fff; background: var(--orch-danger); }
+.orch-button--danger:hover:not(:disabled) { border-color: #ac2e36; color: #fff; background: #ac2e36; }
+.orch-button--icon { width: 32px; height: 32px; padding: 0; }
+.orch-button:disabled { border-color: #e0e6f0; color: var(--text-disabled); background: var(--color-bg-subtle); box-shadow: none; opacity: 1; }
+.orch-button--quiet:disabled { border-color: transparent; background: transparent; }
+
+/* 一张连续表格工作面，搜索、行事实与操作各有层次。 */
+.orch-management { min-width: 0; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgb(54 69 99 / 4%), 0 2px 6px rgb(54 69 99 / 3%); }
+.orch-table-meta { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--orch-line); }
+.orch-table-meta h2 { margin: 0; color: var(--orch-ink); font-size: 16px; font-weight: 600; line-height: 24px; }
+.orch-toolbar { display: flex; min-height: 72px; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 24px; }
+.orch-search { position: relative; display: flex; width: 300px; height: var(--orch-control); flex: 0 1 300px; align-items: center; border: 1px solid var(--orch-strong-line); border-radius: 4px; color: var(--orch-muted); background: #fff; transition: border-color 120ms; }
+.orch-search > svg { margin-inline: 10px 8px; }
+.orch-search input { width: 100%; height: 100%; min-width: 0; padding: 0 10px 0 0; border: 0; border-radius: inherit; color: var(--orch-ink); background: transparent; outline: none; }
+.orch-search:hover:not(:has(input:disabled)) { border-color: var(--color-primary); }
+.orch-search:focus-within { border-color: var(--orch-blue); outline: 2px solid var(--orch-blue); outline-offset: 2px; }
+.orch-search input:focus-visible { outline: none; }
+.orch-search:has(input:disabled) { background: var(--color-bg-subtle); }
+.orch-ui input::placeholder, .orch-ui textarea::placeholder { color: var(--orch-muted); opacity: 1; }
+.orch-filter { position: relative; display: inline-flex; height: var(--orch-control); flex: none; align-items: center; }
+.orch-filter select { width: 100%; height: 100%; padding: 0 32px 0 12px; appearance: none; border: 1px solid var(--orch-strong-line); border-radius: 4px; color: var(--orch-secondary); background: #fff; cursor: pointer; transition: border-color 120ms; }
+.orch-filter > svg { position: absolute; right: 10px; color: var(--orch-muted); pointer-events: none; }
+.orch-filter select:hover:not(:disabled) { border-color: var(--color-primary); }
+.orch-filter select:disabled { color: var(--text-disabled); background: var(--color-bg-subtle); }
+.orch-contract-note { margin: 0; padding: 0 24px 16px; color: var(--orch-secondary); font-size: 12px; line-height: 20px; }
+.orch-table-scroll { position: relative; width: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: #c2cde1 var(--orch-surface); }
+.orch-fact-table { width: 100%; border-collapse: collapse; table-layout: fixed; text-align: left; }
+.orch-col-identity { width: 26%; }.orch-col-env { width: 7%; }.orch-col-endpoint { width: 16%; }.orch-col-tenant { width: 13%; }.orch-col-mode { width: 8%; }.orch-col-test { width: 15%; }.orch-col-state { width: 8%; }.orch-col-actions { width: 7%; }
+.orch-fact-table th { height: 44px; padding: 10px 16px; border-block: 1px solid var(--orch-line); color: var(--orch-secondary); background: var(--orch-surface); font-size: 13px; font-weight: 400; line-height: 20px; white-space: nowrap; }
+.orch-fact-table td { height: 56px; padding: 8px 16px; border-bottom: 1px solid var(--color-border-default); color: var(--orch-ink); font-size: 14px; line-height: 20px; vertical-align: middle; }
+.orch-fact-table th:first-child, .orch-fact-table td:first-child { padding-left: 24px; }
+.orch-fact-table tbody tr { background: #fff; transition: background-color 120ms; }
+.orch-fact-table tbody tr:nth-child(even) { background: var(--color-bg-subtle); }
+.orch-fact-table tbody tr:hover { background: var(--color-primary-soft); }
+.orch-fact-table tbody tr.is-selected { background: var(--orch-selected); }
+.orch-fact-table tbody tr.is-selected td:first-child { box-shadow: inset 2px 0 var(--orch-blue); }
+.orch-identity-cell { position: relative; }
+.orch-identity-cell > .orch-source-icon { position: absolute; top: 50%; left: 24px; transform: translateY(-50%); }
+.orch-source-icon { display: grid; width: 30px; height: 32px; place-items: center; border-radius: 4px; color: #5280bb; background: #f0f5fc; }
+.orch-identity-cell > div { min-width: 0; padding-left: 42px; }
+.orch-identity-cell button { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 0; color: var(--orch-blue); background: transparent; font-size: 14px; font-weight: 400; line-height: 20px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.orch-identity-cell button:hover { color: var(--orch-blue-hover); text-decoration: underline; text-underline-offset: 3px; }
+.orch-secondary-fact { display: block; margin-top: 2px; overflow: hidden; color: var(--orch-muted); font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.orch-endpoint, .orch-fact-value { display: block; overflow: hidden; color: var(--color-text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.orch-endpoint > span { color: var(--orch-secondary); }
+.orch-env { display: inline-flex; min-height: 22px; align-items: center; padding: 0 7px; border: 1px solid #e4eaf5; border-radius: 3px; color: var(--orch-secondary); background: #f6f8fd; font-size: 12px; line-height: 18px; white-space: nowrap; }
+.orch-env--production { border-color: #cddbef; color: #405b85; background: #eef3fb; }
+.orch-mode { color: var(--orch-secondary); font-size: 13px; }
+.orch-inline-mode { display: none; }
+.orch-status { display: inline-flex; max-width: 100%; align-items: center; gap: 7px; color: var(--orch-secondary); font-size: 13px; font-weight: 400; line-height: 20px; white-space: nowrap; }
+.orch-status--danger { color: var(--orch-danger); }.orch-status--warning { color: var(--orch-warning); }.orch-status--success { color: var(--orch-success); }.orch-status--running { color: var(--orch-blue); }
+.orch-status-symbol { display: inline-grid; width: 13px; height: 13px; flex: none; place-items: center; border: 1px solid currentColor; border-radius: 50%; }
+.orch-status--danger .orch-status-symbol { border-color: var(--orch-danger); color: #fff; background: var(--orch-danger); }
+.orch-status--success .orch-status-symbol { border-color: var(--orch-success); color: #fff; background: var(--orch-success); }
+.orch-test-time { padding-left: 20px; }
+.orch-lifecycle { display: inline-flex; align-items: center; gap: 8px; color: var(--orch-secondary); font-size: 13px; line-height: 20px; white-space: nowrap; }
+.orch-lifecycle > span { width: 6px; height: 6px; border: 1px solid #8998b0; border-radius: 50%; }
+.orch-lifecycle.is-enabled { color: var(--color-text-secondary); }.orch-lifecycle.is-enabled > span { border-color: var(--color-text-secondary); background: var(--color-text-secondary); }
+.orch-row-actions > div { display: flex; justify-content: flex-end; gap: 4px; }
+.orch-fact-table .orch-row-actions { padding-left: 4px; padding-right: 16px; }
+.orch-row-test { color: var(--orch-secondary); }
+.orch-table-footer { display: flex; min-height: 56px; align-items: center; justify-content: flex-end; gap: 16px; padding: 12px 24px; color: var(--orch-secondary); font-size: 12px; }
+.orch-table-footer .source-pagination { margin-left: auto; }
+.orch-table-loading { border-top: 1px solid var(--orch-line); }
+.orch-table-loading > div { display: grid; height: 56px; grid-template-columns: 2fr 1fr 1fr 1fr; align-items: center; gap: 48px; padding: 16px 24px; border-bottom: 1px solid var(--orch-line); }
+.orch-skeleton { display: block; width: 100%; height: 14px; border-radius: 3px; background: #e8edf5; animation: orch-pulse 1.4s ease-in-out infinite; }
+.orch-empty { display: flex; min-height: 360px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px; border-top: 1px solid var(--orch-line); color: var(--orch-muted); text-align: center; }
+.orch-empty h2 { margin: 8px 0 0; color: var(--orch-ink); font-size: 18px; font-weight: 500; line-height: 26px; }
+.orch-empty p { max-width: 500px; margin: 0 0 8px; color: var(--orch-secondary); font-size: 14px; line-height: 22px; }
+.orch-empty--search { min-height: 280px; border-top: 0; }
+.orch-inline-feedback { margin-bottom: 12px; color: var(--orch-success); font-size: 13px; }
+.orch-menu { position: fixed; z-index: 200; width: 214px; padding: 6px; border: 1px solid var(--orch-line); border-radius: 6px; background: #fff; box-shadow: 0 6px 24px rgb(54 69 99 / 14%), 0 2px 6px rgb(54 69 99 / 5%); }
+.orch-menu button { display: flex; width: 100%; min-height: 36px; align-items: center; gap: 10px; padding: 6px 10px; border: 0; border-radius: 4px; color: var(--orch-ink); background: transparent; font-size: 14px; text-align: left; cursor: pointer; }
+.orch-menu button:hover:not(:disabled), .orch-menu button:focus-visible { color: var(--orch-blue); background: var(--orch-selected); }
+.orch-menu button:disabled { color: var(--text-disabled); }
+.orch-menu button.is-danger:not(:disabled) { color: var(--orch-danger); }
+.orch-menu hr { margin: 5px 6px; border: 0; border-top: 1px solid var(--orch-line); }
+
+/* 原生顶层抽屉覆盖工作区，开关状态不参与主表的宽度计算。 */
+.orch-dock { position: fixed; inset: 0 0 0 auto; width: 640px; max-width: 100vw; height: 100dvh; max-height: none; margin: 0; padding: 0; overflow: hidden; border: 0; border-left: 1px solid var(--orch-line); border-radius: 0; background: #fff; box-shadow: -8px 0 32px rgb(34 53 88 / 12%); animation: orch-dock-in 180ms ease-out; }
+.orch-dock[open] { display: flex; flex-direction: column; }
+.orch-dock::backdrop { background: rgb(24 41 71 / 16%); }
+.orch-dock-header { display: flex; min-height: 72px; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--orch-line); background: #fff; }
+.orch-dock-title { display: flex; align-items: center; gap: 12px; color: var(--color-text-secondary); }
+.orch-dock-header h2 { margin: 0; color: var(--orch-ink); font-size: 20px; font-weight: 500; line-height: 28px; }
+.orch-dock-header h2:focus { outline: none; }
+.orch-dock-state { display: flex; min-height: 36px; flex: none; align-items: center; gap: 7px; padding: 8px 24px; color: var(--orch-secondary); background: var(--orch-surface); font-size: 12px; line-height: 18px; }
+.orch-dock-revision { margin-left: auto; color: var(--orch-muted); font-family: Consolas, monospace; font-size: 12px; }
+.orch-dirty-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orch-warning); }
+.orch-dock-body { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.orch-editor-tabs { display: flex; height: 48px; flex: none; gap: 28px; margin: 0 24px; border-bottom: 1px solid var(--orch-line); }
+.orch-editor-tabs button { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 0 4px; border: 0; border-bottom: 2px solid transparent; color: var(--orch-secondary); background: transparent; font-size: 14px; cursor: pointer; }
+.orch-editor-tabs button:hover { color: var(--orch-blue); }
+.orch-editor-tabs button[aria-selected='true'] { border-bottom-color: var(--orch-blue); color: var(--orch-blue); font-weight: 500; }
+.orch-tab-indicator { width: 5px; height: 5px; border-radius: 50%; background: var(--orch-blue); }
+.orch-editor-scroll { min-height: 0; flex: 1; padding: 0 24px 24px; overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: 20px; scrollbar-width: thin; scrollbar-gutter: stable; }
+.orch-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.orch-form-section { padding-block: 24px; border-bottom: 1px solid var(--orch-line); }
+.orch-form-section h3 { margin: 0 0 16px; color: var(--orch-ink); font-size: 16px; font-weight: 500; line-height: 24px; }
+.orch-form-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 16px; }
+.orch-span-all { grid-column: 1 / -1; }
+.orch-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.orch-section-heading h3 { margin: 0; }
+.orch-section-heading > span, .orch-section-heading > svg { color: var(--orch-muted); font-size: 12px; }
+.orch-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.orch-field > label { display: flex; align-items: baseline; gap: 4px; color: var(--orch-secondary); font-size: 13px; font-weight: 400; line-height: 20px; }
+.orch-required { color: var(--orch-danger); }
+.orch-input, .orch-select { display: block; width: 100%; min-width: 0; height: var(--orch-control); padding: 0 12px; border: 1px solid var(--orch-strong-line); border-radius: 4px; color: var(--orch-ink); background: #fff; line-height: 22px; transition: border-color 120ms, box-shadow 120ms; }
+.orch-input:hover:not(:disabled), .orch-select:hover:not(:disabled) { border-color: var(--color-primary); }
+.orch-input:focus, .orch-select:focus { border-color: var(--orch-blue); }
+.orch-input[aria-invalid='true'], .orch-select[aria-invalid='true'] { border-color: var(--orch-danger); }
+.orch-input:disabled, .orch-select:disabled, .orch-fieldset:disabled .orch-input, .orch-fieldset:disabled .orch-select { border-color: #e0e6f0; color: var(--text-disabled); background: var(--color-bg-subtle); }
+/* 普通表单输入沿用 UI 字体，等宽字体仅用于命令、日志等技术证据。 */
+.orch-field--technical .orch-input { font-family: inherit; font-size: 13px; }
+.orch-field p { margin: 0; color: var(--orch-muted); font-size: 12px; line-height: 18px; }
+.orch-field .orch-field-error, .orch-field-error { margin: 0; color: var(--orch-danger); font-size: 12px; line-height: 18px; }
+textarea.orch-input { height: auto; min-height: 76px; padding-block: 8px; resize: vertical; }
+.orch-disclosure { min-width: 0; padding-block: 16px; }
+.orch-disclosure > summary { display: flex; min-height: 28px; align-items: center; gap: 7px; color: var(--orch-secondary); font-size: 13px; line-height: 20px; list-style: none; cursor: pointer; }
+.orch-disclosure > summary::-webkit-details-marker { display: none; }
+.orch-disclosure > summary > svg { transform: rotate(-90deg); }
+.orch-disclosure[open] > summary > svg { transform: none; }
+.orch-disclosure > summary > span { margin-left: auto; color: var(--orch-muted); font-size: 12px; }
+.orch-disclosure > p { color: var(--orch-secondary); font-size: 12px; line-height: 20px; }
+.orch-parser { margin-top: -8px; margin-bottom: 16px; padding: 0; }
+.orch-parser summary { color: var(--orch-blue); }
+.orch-parser[open] { padding-bottom: 16px; border-bottom: 1px solid var(--orch-line); }
+.orch-parser .orch-field { margin-block: 10px; }
+.orch-advanced > summary { color: var(--orch-ink); font-size: 14px; font-weight: 500; }
+.orch-password { position: relative; }
+.orch-password input { padding-right: 40px; }
+.orch-password .orch-button { position: absolute; top: 2px; right: 2px; }
+.orch-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--orch-secondary); font-size: 13px; }
+.orch-checkbox input { width: 16px; height: 16px; margin: 0; accent-color: var(--orch-blue); }
+.orch-dock-footer { min-height: 72px; flex: none; padding: 18px 24px; border-top: 1px solid var(--orch-line); background: #fff; box-shadow: 0 -2px 8px rgb(54 69 99 / 3%); }
+.orch-editor-actions { display: flex; align-items: center; gap: 12px; }
+.orch-editor-actions > span { flex: 1; }
+.orch-footer-hint { margin: 0 0 12px; color: var(--orch-secondary); font-size: 12px; line-height: 18px; }
+.orch-editor-loading { display: grid; align-content: start; gap: 36px; padding: 24px; color: var(--orch-muted); font-size: 13px; }
+.orch-editor-loading .orch-skeleton { height: 36px; }
+.orch-test-panel { padding-top: 24px; }
+.orch-test-summary { display: flex; align-items: center; gap: 14px; padding-bottom: 24px; }
+.orch-test-summary h3 { margin: 0; color: var(--orch-ink); font-size: 16px; font-weight: 500; line-height: 24px; }
+.orch-test-summary p { margin: 4px 0 0; color: var(--orch-secondary); font-size: 12px; line-height: 18px; }
+.orch-test-mark { display: grid; width: 44px; height: 44px; flex: none; place-items: center; border-radius: 6px; color: var(--color-text-secondary); background: var(--color-bg-subtle); }
+.orch-test-fact { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 16px; border-block: 1px solid var(--orch-line); color: var(--orch-secondary); font-size: 13px; }
+.orch-node-selection { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: start; gap: 8px; margin: 24px 0 16px; }
+.orch-node-selection > .orch-button { margin-top: 28px; }
+.orch-security-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 24px; color: var(--orch-muted); }
+.orch-security-note > svg { margin-top: 2px; }.orch-security-note p { margin: 0; font-size: 12px; line-height: 20px; }
+.orch-alert { margin-block: 16px; padding: 12px 16px; border: 1px solid #d9e5f7; border-radius: 4px; color: var(--orch-secondary); background: #f2f7fe; font-size: 13px; line-height: 20px; }
+.orch-alert p { margin: 4px 0 0; }.orch-alert strong { color: var(--orch-ink); font-size: 14px; font-weight: 500; }
+.orch-alert--danger { border-color: #f1cdd0; background: #fff6f6; }.orch-alert--danger strong { color: var(--orch-danger); }
+.orch-alert--warning { border-color: #ead8b8; background: #fffbf3; }.orch-alert--warning strong { color: var(--orch-warning); }
+.orch-alert > .orch-button { margin-top: 10px; }
+.orch-test-evidence { margin-top: 24px; padding-top: 4px; }
+.orch-test-evidence > h3 { margin: 6px 0 12px; color: var(--orch-ink); font-size: 17px; font-weight: 500; line-height: 26px; }
+.orch-test-evidence > p, .orch-test-evidence li { color: var(--orch-secondary); font-size: 14px; line-height: 22px; }
+.orch-test-evidence ul { padding-left: 18px; }.orch-test-evidence li { margin-block: 8px; }
+.orch-test-evidence .orch-evidence-caption { color: var(--orch-danger); font-size: 12px; }
+.orch-evidence-facts { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--orch-line); }
+.orch-evidence-facts > div { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; margin-top: 10px; font-size: 13px; }
+.orch-evidence-facts dt { color: var(--orch-muted); }.orch-evidence-facts dd { margin: 0; overflow-wrap: anywhere; color: var(--orch-ink); }
+.orch-confirm { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto; border: 1px solid var(--orch-line); border-radius: 8px; background: #fff; box-shadow: 0 12px 40px rgb(34 53 88 / 16%); }
+.orch-confirm::backdrop { background: rgb(24 41 71 / 20%); }
+.orch-confirm > header { display: flex; align-items: center; gap: 12px; padding: 20px 24px 12px; }
+.orch-confirm > header > svg { color: var(--orch-danger); }
+.orch-confirm h2 { flex: 1; margin: 0; color: var(--orch-ink); font-size: 18px; font-weight: 500; line-height: 26px; }
+.orch-confirm-body { padding: 0 24px 24px; color: var(--orch-secondary); font-size: 14px; line-height: 22px; }
+.orch-confirm-body p { margin-block: 10px; }
+.orch-confirm-object { padding: 10px 12px; overflow-wrap: anywhere; border-left: 2px solid var(--orch-strong-line); color: var(--orch-ink); background: var(--orch-surface); font-weight: 500; }
+.orch-confirm > footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--orch-line); }
+.orch-inline-link { display: inline-flex; align-items: center; gap: 4px; color: var(--orch-blue); text-decoration: none; }
+.orch-spin { animation: orch-spin 1s linear infinite; }
+@keyframes orch-spin { to { transform: rotate(360deg); } }
+@keyframes orch-pulse { 50% { opacity: .45; } }
+@keyframes orch-dock-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+@container orch-workspace (max-width: 1120px) {
+  .orch-col-mode, .orch-mode-cell { display: none; }.orch-inline-mode { display: inline; }
+  .orch-col-identity { width: 25%; }.orch-col-env { width: 7%; }.orch-col-endpoint { width: 18%; }.orch-col-tenant { width: 15%; }.orch-col-test { width: 19%; }.orch-col-state { width: 10%; }.orch-col-actions { width: 6%; }
+  .orch-fact-table th, .orch-fact-table td { padding-inline: 12px; }
+  .orch-fact-table th:first-child, .orch-fact-table td:first-child { padding-left: 20px; }
+  .orch-identity-cell > .orch-source-icon { left: 20px; }
+  .orch-row-test { display: none; }
+  .orch-toolbar { gap: 8px; }.orch-search { flex-basis: 260px; }
+}
+@container orch-workspace (max-width: 900px) {
+  .orch-context-label { display: none; }
+  .orch-fact-table { min-width: 850px; }
+  .orch-search { flex-grow: 1; }
+}
+@media (max-width: 1280px) {
+  .orch-application { --orch-nav-width: 56px; }
+  .orch-wordmark { justify-content: center; padding-inline: 0; }
+  .orch-wordmark > span, .orch-side-group h2, .orch-side-group a > span, .orch-side-footer { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .orch-side-nav-list { padding: 12px 6px; }
+  .orch-side-group { padding-bottom: 10px; }.orch-side-group + .orch-side-group { padding-top: 10px; }
+  .orch-side-group a { justify-content: center; padding: 8px 0; }
+  .orch-main, .orch-product-header { padding-inline: 20px; }
+}
+@media (max-width: 640px) {
+  .orch-application { --orch-nav-width: 48px; }
+  .orch-side-nav-list { padding-inline: 4px; }.orch-side-group a { min-height: 36px; }
+  .orch-product-header { gap: 8px; padding-inline: 12px; }
+  .orch-header-context > span, .orch-header-context > svg { display: none; }
+  .orch-global-actions { gap: 8px; }.orch-global-actions .orch-button { width: 28px; height: 28px; padding: 0; }.orch-global-actions .orch-button > span { display: none; }
+  .orch-account { min-width: 28px; justify-content: center; padding: 3px; }.orch-account > span, .orch-header-divider { display: none; }
+  .orch-main { padding: 0 12px 24px; }.orch-preview-note { align-items: flex-start; }
+  .orch-page-header { min-height: 76px; }.orch-page-title h1 { font-size: 24px; line-height: 32px; }
+  .orch-table-meta { min-height: 64px; flex-wrap: wrap; gap: 10px; padding: 14px; }
+  .orch-table-meta h2 { font-size: 15px; }.orch-page-actions { gap: 4px; }.orch-page-actions .orch-button--primary { padding-inline: 10px; }
+  .orch-toolbar { gap: 8px; padding: 12px 14px; }.orch-search { flex-basis: 100%; }.orch-filter { max-width: 100%; }
+  .orch-filter select { padding-left: 10px; font-size: 13px; }
+  .orch-contract-note { padding-inline: 14px; }.orch-table-footer { padding-inline: 14px; }
+  .orch-empty { padding-inline: 20px; }
+  .orch-dock { width: 100vw; border-left: 0; }
+  .orch-dock-header, .orch-dock-state, .orch-editor-scroll, .orch-dock-footer { padding-inline: 20px; }
+  .orch-editor-tabs { margin-inline: 20px; }
+}
+@media (max-width: 420px) {
+  .orch-form-grid { grid-template-columns: minmax(0, 1fr); }.orch-span-all { grid-column: auto; }
+  .orch-editor-actions { gap: 6px; }.orch-editor-actions .orch-button { padding-inline: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-ui *, .orch-ui *::before, .orch-ui *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

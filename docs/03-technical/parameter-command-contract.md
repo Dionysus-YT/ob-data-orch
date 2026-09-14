@@ -117,7 +117,7 @@
 |---:|---|---|---|
 | 10 | `--host` → `-h<host>` | 数据源快照 | 必填；单一私有 ODP 地址；由 G3 证明 SQL 端口与连接表达 |
 | 20 | `--port` → `-P<port>` | 数据源快照 | 必填；单一 SQL 端口 |
-| 30 | `--user` → `-u<username@tenant#cluster>` | 数据源快照派生 | 必填；按已验证私有 ODP 连接表达生成；命令预览、计划命令和工具执行日志均保留该连接标识，便于人工排障 |
+| 30 | `--user` → `-u<username@tenant>` 或 `-u<username@tenant#cluster>` | 数据源快照派生 | 必填；按已验证私有 ODP 连接表达生成，集群名留空时不追加 `#`；命令预览、计划命令和工具执行日志均保留该连接标识，便于人工排障 |
 | 40 | 数据库密码（逻辑输入） → 预览 `-p ******` | 凭据引用 | 平台 V1.0 必填；实际 argv 不生成 `-p` 或密码值，只生成指向官方安全文件属性的秘密槽位 |
 | 50 | `--database` | 任务显式值 | 必填；可由数据源默认值回填，但提交时冻结为任务值 |
 | 60 | `--table` | 任务显式值 | 必填；本切片只允许一个已预检查的明确表名，不允许 `*`、列表或任意表达式 |
@@ -131,7 +131,7 @@
 PC-R04 确认的八项是首条切片的**逻辑输入集合**，不是八个实际命令行参数。后续已经确认的 CS-R12、TL-R08 以及 Windows `secure-gen` 兼容性证据要求采用更严格的安全边界：
 
 - 八项必填逻辑输入仍为 host、port、user、password、database、table、csv、file-path；`log-path` 与 `skip-check-dir` 是 v5 新增的显式可选输入；
-- 未填写可选项时，实际 `argvTemplate` 只包含 `-h<host>`、`-P<port>`、`-u<username@tenant#cluster>`、database、table、csv、file-path，共七项；填写日志路径或勾选跳过目录检查时按稳定顺序追加对应令牌；
+- 未填写可选项时，实际 `argvTemplate` 只包含 `-h<host>`、`-P<port>`、`-u<username@tenant[#cluster]>`、database、table、csv、file-path，共七项；填写日志路径或勾选跳过目录检查时按稳定顺序追加对应令牌；
 - password 只保存版本化凭据引用，生成到 `secretSlots`，目标属性固定为 `oceanbase.jdbc.password`；
 - `argvTemplate`、环境变量和显示命令均不得出现密码原值；显示命令固定以 `-p ******` 标识密码逻辑位置，实际 argv 不含 `-p`，避免 Agent 进入交互式提示；
 - 参数元数据 `obdumper-4.3.5-slice-v1` 保持不可变，`v2` 以校验和固定 `v1` 并只覆盖密码发射目标；`v3`、`v4` 保留该密码边界及私有 ODP 能力；现行 `v5` 继续固定 `v1`，并以版本化附加定义启用 `--log-path` 和 `--skip-check-dir`，不为 `--column-quote-mode` 注入默认值。

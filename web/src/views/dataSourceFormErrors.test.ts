@@ -31,15 +31,20 @@ describe('数据源表单字段错误', () => {
       displayName: '请输入数据源名称。',
       host: '请输入 ODP 地址。',
       port: 'SQL 端口必须是 1 到 65535 之间的整数。',
-      clusterName: '请输入集群名称。',
       tenantName: '请输入租户名称。',
-      username: '新增数据源时必须填写用户名。',
+      username: '请输入用户名。',
       password: '新增数据源时必须填写密码。',
     })
   })
 
-  it('允许编辑时不修改用户名和密码', () => {
-    expect(validateDataSourceForm({ ...validInput, username: '', password: '' }, false)).toEqual({})
+  it('集群名留空也可通过本地校验', () => {
+    expect(validateDataSourceForm({ ...validInput, clusterName: '' }, true)).toEqual({})
+  })
+
+  it('编辑时仍要求保留结构化用户名，但允许不修改密码', () => {
+    expect(validateDataSourceForm({ ...validInput, username: '', password: '' }, false)).toEqual({
+      username: '请输入用户名。',
+    })
   })
 
   it('sys 凭据必须成对填写（参考 ODC 数据源高级设置）', () => {

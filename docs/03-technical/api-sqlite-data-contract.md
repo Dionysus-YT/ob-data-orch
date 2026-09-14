@@ -114,16 +114,17 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 
 | 方法与路径 | 用途 | 关键规则 |
 |---|---|---|
-| `GET /api/v1/data-sources` | 授权列表 | 游标分页；筛选和数量与对象权限一致；逐项通过读取范围校验后返回普通业务用户名，不返回 sys 账号、组合用户名或任何凭据材料 |
+| `GET /api/v1/data-sources` | 授权列表 | 管理页传 `limit=10`；支持 keyword（名称、主机、集群、租户，不区分大小写）、environment、state、compatibilityMode、connectionStatus。先逐项读取授权，再筛选和按 ID 稳定排序；响应 items、nextCursor（末页为空字符串）、total（授权筛选范围内数量）。游标绑定调用者和查询条件，每次重新授权；无查询参数保留旧调用的完整授权列表。只返回普通业务用户名，不返回 sys 账号、组合用户名或凭据材料 |
 | `POST /api/v1/data-sources` | 新增 | 需要 `Idempotency-Key`；密码为仅写字段；业务与审计原子提交 |
 | `GET /api/v1/data-sources/{dataSourceId}` | 详情 | 读取范围可获取最小详情；仅同时拥有同一对象数据源管理范围的主体可回显拆分保存的普通业务 `username`；不返回密码、密文、nonce、长度、sys 账号或 `<username>@<tenant>#<cluster>` 组合用户名 |
 | `PATCH /api/v1/data-sources/{dataSourceId}` | 编辑/轮换密码 | 需要 `If-Match`；密码缺失表示不变，非空表示新 revision；成功响应复用已确认管理范围的详情投影，可回显普通业务 `username` |
 | `POST /api/v1/data-sources/{dataSourceId}:test-connection` | 基础连接测试 | 提交明确 `nodeId`、`If-Match` 与幂等键后异步排队；允许符合当前机器事实的 `DISABLED` 或 `ENABLED` 节点，拒绝 `MAINTENANCE`/`ARCHIVED`；控制面不在 DB 事务中进行网络连接，结果标明测试节点与节点事实版本 |
 | `POST /api/v1/data-sources/{dataSourceId}:disable` | 禁用 | 幂等状态操作；阻断新任务，不伪装取消运行任务 |
 | `POST /api/v1/data-sources/{dataSourceId}:enable` | 启用 | 不自动恢复旧连接测试或预检查 |
-| `DELETE /api/v1/data-sources/{dataSourceId}` | 删除或归档 | 无历史引用才物理删除，否则归档；响应明确实际结果 |
+| `DELETE /api/v1/data-sources/{dataSourceId}` | 永久删除 | `If-Match`、CSRF 和数据源管理范围必填；服务端在写事务内复验历史引用，无引用才物理删除；有引用返回 `DATA_SOURCE_DELETE_INELIGIBLE` 与当前 `lifecycleEligibility`，绝不自动归档 |
+| `POST /api/v1/data-sources/{dataSourceId}:archive` | 显式归档 | `If-Match`、CSRF 和数据源管理范围必填；服务端在写事务内复验历史引用，有引用才归档；无引用返回 `DATA_SOURCE_ARCHIVE_INELIGIBLE` 与当前 `lifecycleEligibility`，不会退化为删除 |
 
-数据源列表在服务端逐项通过读取范围校验后，返回拆分保存的普通业务 `username`，不需要额外的数据源管理范围。单个详情仍仅在服务端同时确认读取与管理范围时，才额外返回该字段；成功 `PATCH` 已在同一对象管理范围下执行，因此复用该详情投影。它不是服务端返回的可执行组合身份，服务端不得据此拼接或返回 `username@tenant#cluster`。创建、状态、删除和其他非详情响应仍不返回 `username`。任何数据源响应均不返回密码、密文、nonce、密码长度、sys 账号、sys 密码或凭据引用。连接测试只返回固定状态、节点、节点事实版本、完成时间和脱敏代码，不返回导入/导出权限、对象诊断、性能结论、SQL、JDBC URL、用户名、密码或异常原文。
+数据源列表在服务端逐项通过读取范围校验后，返回拆分保存的普通业务 `username`，不需要额外的数据源管理范围。单个详情仍仅在服务端同时确认读取与管理范围时，才额外返回该字段；成功 `PATCH` 已在同一对象管理范围下执行，因此复用该详情投影。`lifecycleEligibility` 同样只在对象管理范围通过时返回，固定包含 enable、disable、delete、archive 四项服务端资格；其稳定原因码可说明当前动作受阻，`referenceCount` 只在管理范围且存在历史引用时出现，绝不返回引用对象标识。它不是服务端返回的可执行组合身份，服务端不得据此拼接或返回 `username@tenant` / `username@tenant#cluster`。创建、状态、删除和其他非详情响应仍不返回 `username`。任何数据源响应均不返回密码、密文、nonce、密码长度、sys 账号、sys 密码或凭据引用。连接测试只返回固定状态、节点、节点事实版本、完成时间和脱敏代码，不返回导入/导出权限、对象诊断、性能结论、SQL、JDBC URL、用户名、密码或异常原文。
 
 ### 5.3 导出草稿、预检查和提交
 
