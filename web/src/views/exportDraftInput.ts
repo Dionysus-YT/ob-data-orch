@@ -103,7 +103,7 @@ const CSV_QUOTE_MODES: readonly CsvQuoteMode[] = ['all', 'all_not_null', 'minima
 const COMPRESSION_ALGOS: readonly CompressionAlgo[] = ['zstd', 'zlib', 'gzip', 'snappy']
 const MEMORY_PATTERN = /^[1-9][0-9]*[KMGTP]?$/
 // EX-I7 文件拆分（2026-08-10）：--block-size 官方表达（正整数 MB 或正整数+MB/ROW）。
-const BLOCK_SIZE_PATTERN = /^[1-9][0-9]*(MB|ROW)?$/
+export const BLOCK_SIZE_PATTERN = /^[1-9][0-9]*(MB|ROW)?$/
 // 时间格式只允许 ASCII 空格与已核验的格式字符，不能把制表符或换行作为空白字符接受。
 const TIMESTAMP_FORMAT_PATTERN = /^[A-Za-z0-9 \-/:.'TZ]+$/
 

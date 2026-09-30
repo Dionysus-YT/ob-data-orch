@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { UnorderedListOutlined } from '@ant-design/icons-vue'
+import OrchOperationalTable from '@/components/OrchOperationalTable.vue'
+const columns = [{"key":"c0","title":"任务"},{"key":"c1","title":"类型"},{"key":"c2","title":"数据源 / 对象"},{"key":"c3","title":"状态 / 阶段"},{"key":"c4","title":"进度"},{"key":"c5","title":"执行节点"},{"key":"c6","title":"创建人"},{"key":"c7","title":"时间"},{"key":"c8","title":"操作"}]
+
+import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { browserApi, taskDetailErrorMessage, taskListPageSizes, type TaskListItem, type TaskListPageSize } from '@/api/browser'
@@ -54,8 +59,8 @@ function goToNextPage() {
   void loadCurrentPage()
 }
 
-function changePageSize(event: Event) {
-  const selected = Number((event.target as HTMLSelectElement).value)
+function changePageSize(value: unknown) {
+  const selected = Number(value)
   if (selected !== 10 && selected !== 20 && selected !== 50) return
   pageSize.value = selected
   pageCursors.value = [undefined]
@@ -75,55 +80,52 @@ function dateTime(value: string) {
   <section class="page-heading task-heading">
     <div><h1>任务中心</h1><p>当前接入授权范围内的导出任务读取。列表只用于定位与进入详情，不展开命令、完整参数、错误或日志。</p><small v-if="lastUpdated">最后更新：{{ dateTime(lastUpdated) }}</small></div>
     <div class="task-create-actions">
-      <button type="button" class="button button-secondary" :disabled="loading" @click="loadCurrentPage">刷新</button>
-      <RouterLink class="button button-secondary" to="/exports/new">新建导出</RouterLink>
-      <RouterLink class="button button-secondary" to="/imports/normal/new">新建普通导入</RouterLink>
-      <RouterLink class="button button-primary" to="/imports/direct/new">新建旁路导入</RouterLink>
+      <AButton :disabled="loading" @click="loadCurrentPage">刷新</AButton>
+      <RouterLink v-slot="{ href, navigate }" to="/exports/new" custom><AButton :href="href" @click="navigate">新建导出</AButton></RouterLink>
+      <RouterLink v-slot="{ href, navigate }" to="/imports/normal/new" custom><AButton :href="href" @click="navigate">新建普通导入</AButton></RouterLink>
+      <RouterLink v-slot="{ href, navigate }" to="/imports/direct/new" custom><AButton :href="href" type="primary" @click="navigate">新建旁路导入</AButton></RouterLink>
     </div>
   </section>
 
   <section class="filter-bar task-filter-bar" aria-label="任务筛选">
-    <label>任务名称 / ID 关键字<input disabled placeholder="筛选暂不可用" /></label>
-    <label>任务类型<select disabled><option>全部</option></select></label>
-    <label>任务状态<select disabled><option>全部</option></select></label>
-    <label>创建时间<input disabled placeholder="开始日期 ～ 结束日期" /></label>
-    <button type="button" class="button button-secondary" disabled>展开筛选</button>
-    <button type="button" class="button button-primary" disabled>查询</button>
+    <label>任务名称 / ID 关键字<AInput aria-label="任务名称 / ID 关键字" disabled placeholder="筛选暂不可用" /></label>
+    <label>任务类型<ASelect default-value="全部" aria-label="任务类型" disabled><ASelectOption value="全部">全部</ASelectOption></ASelect></label>
+    <label>任务状态<ASelect default-value="全部" aria-label="任务状态" disabled><ASelectOption value="全部">全部</ASelectOption></ASelect></label>
+    <label>创建时间<AInput aria-label="创建时间" disabled placeholder="开始日期 ～ 结束日期" /></label>
+    <AButton disabled>展开筛选</AButton>
+    <AButton disabled type="primary">查询</AButton>
   </section>
 
   <section class="scope-bar"><span>当前范围：本人创建或已按数据源明确授权的任务</span><span>当前仅支持分页浏览，搜索和筛选暂不可用。</span></section>
 
-  <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }} <button type="button" class="link-button" @click="loadCurrentPage">重试</button></p>
+  <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }} <AButton type="text" @click="loadCurrentPage">重试</AButton></p>
   <div v-if="loading && tasks.length === 0" class="content-card loading-state" role="status">正在读取授权任务…</div>
 
   <section v-else-if="!failure || tasks.length > 0" class="content-card table-card">
-    <table>
-      <thead><tr><th>任务</th><th>类型</th><th>数据源 / 对象</th><th>状态 / 阶段</th><th>进度</th><th>执行节点</th><th>创建人</th><th>时间</th><th>操作</th></tr></thead>
-      <tbody>
-        <tr v-if="tasks.length === 0"><td colspan="9"><div class="empty-state"><div class="empty-mark">□</div><h2>尚无可展示任务</h2><p>当前授权范围内没有已提交任务。</p><div class="task-create-actions"><RouterLink class="button button-primary" to="/exports/new">创建首个导出任务</RouterLink></div></div></td></tr>
-        <tr v-for="task in tasks" v-else :key="task.id">
-          <td><strong>导出任务</strong><small>{{ task.id }}</small></td>
-          <td>{{ taskTypeLabel(task.type) }}</td>
-          <td><strong>{{ task.dataSourceId }}</strong><small>{{ task.objectSummary || '对象摘要不可用' }}</small></td>
-          <td><strong><span class="status-dot" :class="taskStateClass(task)" />{{ taskStateLabel(task) }}</strong><small>{{ taskStageLabel(task) }}</small><small v-if="taskNeedsReconciliation(task)" class="task-reconciliation">状态核对中</small></td>
-          <td>{{ taskProgressLabel() }}</td>
-          <td>{{ task.nodeId }}</td>
-          <td>{{ task.ownedByCurrentUser ? '我' : '已授权任务' }}</td>
-          <td><strong>{{ task.startedAt ? '开始' : '提交' }}：{{ dateTime(task.startedAt || task.submittedAt) }}</strong><small>更新：{{ dateTime(task.updatedAt) }}</small></td>
-          <td><RouterLink class="link-button" :to="{ name: 'task-detail', params: { id: task.id } }">查看详情</RouterLink></td>
-        </tr>
-      </tbody>
-    </table>
+    <OrchOperationalTable :rows="tasks" :columns="columns" row-key="id" label="任务列表" :loading="loading">
+      <template #bodyCell="{ record: task, column }">
+        <div v-if="column.key === 'c0'"><strong>导出任务</strong><small>{{ task.id }}</small></div>
+        <div v-else-if="column.key === 'c1'">{{ taskTypeLabel(task.type) }}</div>
+        <div v-else-if="column.key === 'c2'"><strong>{{ task.dataSourceId }}</strong><small>{{ task.objectSummary || '对象摘要不可用' }}</small></div>
+        <div v-else-if="column.key === 'c3'"><strong><span class="status-dot" :class="taskStateClass(task)" />{{ taskStateLabel(task) }}</strong><small>{{ taskStageLabel(task) }}</small><small v-if="taskNeedsReconciliation(task)" class="task-reconciliation">状态核对中</small></div>
+        <div v-else-if="column.key === 'c4'">{{ taskProgressLabel() }}</div>
+        <div v-else-if="column.key === 'c5'">{{ task.nodeId }}</div>
+        <div v-else-if="column.key === 'c6'">{{ task.ownedByCurrentUser ? '我' : '已授权任务' }}</div>
+        <div v-else-if="column.key === 'c7'"><strong>{{ task.startedAt ? '开始' : '提交' }}：{{ dateTime(task.startedAt || task.submittedAt) }}</strong><small>更新：{{ dateTime(task.updatedAt) }}</small></div>
+        <div v-else-if="column.key === 'c8'"><RouterLink class="link-button" :to="{ name: 'task-detail', params: { id: task.id } }">查看详情</RouterLink></div>
+      </template>
+      <template #empty><div v-if="tasks.length === 0"><div class="empty-state"><div class="empty-mark"><UnorderedListOutlined class="product-icon" aria-hidden="true" /></div><h2>尚无可展示任务</h2><p>当前授权范围内没有已提交任务。</p><div class="task-create-actions"><RouterLink v-slot="{ href, navigate }" to="/exports/new" custom><AButton :href="href" type="primary" @click="navigate">创建首个导出任务</AButton></RouterLink></div></div></div></template>
+    </OrchOperationalTable>
     <div class="task-pagination" aria-label="任务列表分页">
       <span aria-live="polite">{{ totalPages === 0 ? '暂无结果，共 0 页' : `第 ${pageIndex + 1} 页，共 ${totalPages} 页` }}</span>
       <label>每页显示
-        <select :value="pageSize" :disabled="loading" @change="changePageSize">
-          <option v-for="size in taskListPageSizes" :key="size" :value="size">{{ size }} 条</option>
-        </select>
+        <ASelect aria-label="每页显示" :value="pageSize" :disabled="loading" @change="changePageSize">
+          <ASelectOption v-for="size in taskListPageSizes" :key="size" :value="size">{{ size }} 条</ASelectOption>
+        </ASelect>
       </label>
       <div>
-        <button type="button" class="button button-secondary" :disabled="loading || pageIndex === 0" @click="goToPreviousPage">上一页</button>
-        <button type="button" class="button button-secondary" :disabled="loading || !nextCursor" @click="goToNextPage">下一页</button>
+        <AButton :disabled="loading || pageIndex === 0" @click="goToPreviousPage">上一页</AButton>
+        <AButton :disabled="loading || !nextCursor" @click="goToNextPage">下一页</AButton>
       </div>
     </div>
   </section>
@@ -131,8 +133,7 @@ function dateTime(value: string) {
 </template>
 
 <style scoped>
-.task-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 14px 0 2px; color: #607187; font-size: 13px; }
-.task-pagination label, .task-pagination > div { display: flex; align-items: center; gap: 8px; }
-.task-pagination select { min-width: 84px; height: 32px; padding: 4px 8px; border: 1px solid #dbe3ed; border-radius: 4px; color: #405066; background: #fff; }
+.task-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--ob-foundation-space-3); padding: var(--ob-foundation-space-3) 0 2px; color: var(--ob-color-secondary); font-size: var(--ob-component-field-label-size); }
+.task-pagination label, .task-pagination > div { display: flex; align-items: center; gap: var(--ob-foundation-space-2); }
 @media (max-width: 620px) { .task-pagination { align-items: flex-start; flex-direction: column; } }
 </style>

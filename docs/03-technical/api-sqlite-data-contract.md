@@ -121,7 +121,7 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 | `POST /api/v1/data-sources/{dataSourceId}:test-connection` | 基础连接测试 | 提交明确 `nodeId`、`If-Match` 与幂等键后异步排队；允许符合当前机器事实的 `DISABLED` 或 `ENABLED` 节点，拒绝 `MAINTENANCE`/`ARCHIVED`；控制面不在 DB 事务中进行网络连接，结果标明测试节点与节点事实版本 |
 | `POST /api/v1/data-sources/{dataSourceId}:disable` | 禁用 | 幂等状态操作；阻断新任务，不伪装取消运行任务 |
 | `POST /api/v1/data-sources/{dataSourceId}:enable` | 启用 | 不自动恢复旧连接测试或预检查 |
-| `DELETE /api/v1/data-sources/{dataSourceId}` | 永久删除 | `If-Match`、CSRF 和数据源管理范围必填；服务端在写事务内复验历史引用，无引用才物理删除；有引用返回 `DATA_SOURCE_DELETE_INELIGIBLE` 与当前 `lifecycleEligibility`，绝不自动归档 |
+| `DELETE /api/v1/data-sources/{dataSourceId}` | 永久删除 | `If-Match`、CSRF 和数据源管理范围必填；服务端在写事务内复验活动任务；等待调度、STARTING、RUNNING、CANCELLING 或状态待核对时返回 `DATA_SOURCE_DELETE_INELIGIBLE` 与当前 `lifecycleEligibility`（原因码 `UNFINISHED_TASKS_EXIST`），绝不自动归档；其他情况物理删除配置与凭据，保留历史记录，未完成连接测试及可用预检查失效 |
 | `POST /api/v1/data-sources/{dataSourceId}:archive` | 显式归档 | `If-Match`、CSRF 和数据源管理范围必填；服务端在写事务内复验历史引用，有引用才归档；无引用返回 `DATA_SOURCE_ARCHIVE_INELIGIBLE` 与当前 `lifecycleEligibility`，不会退化为删除 |
 
 数据源列表在服务端逐项通过读取范围校验后，返回拆分保存的普通业务 `username`，不需要额外的数据源管理范围。单个详情仍仅在服务端同时确认读取与管理范围时，才额外返回该字段；成功 `PATCH` 已在同一对象管理范围下执行，因此复用该详情投影。`lifecycleEligibility` 同样只在对象管理范围通过时返回，固定包含 enable、disable、delete、archive 四项服务端资格；其稳定原因码可说明当前动作受阻，`referenceCount` 只在管理范围且存在历史引用时出现，绝不返回引用对象标识。它不是服务端返回的可执行组合身份，服务端不得据此拼接或返回 `username@tenant` / `username@tenant#cluster`。创建、状态、删除和其他非详情响应仍不返回 `username`。任何数据源响应均不返回密码、密文、nonce、密码长度、sys 账号、sys 密码或凭据引用。连接测试只返回固定状态、节点、节点事实版本、完成时间和脱敏代码，不返回导入/导出权限、对象诊断、性能结论、SQL、JDBC URL、用户名、密码或异常原文。
@@ -301,7 +301,9 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 
 `tasks` 通过 `storage_credential_id/storage_credential_revision` 只引用对象存储凭据标识与修订；密钥绝不进入该表。EX-I6 存储预检查的检查结果与本地六项共用 `precheck_runs.result_json`，按输出类型为本地六项或存储六项两种受控形态之一（2026-08-14）。
 
-数据源连接测试使用单条当前 run、短租约和 Agent 回执保证控制面重启后的幂等与绑定复验；它不是通用任务或历史诊断表。仅已通过 G3 的 Agent JDBC 终态才能更新 `data_sources` 的最近测试摘要；G2 合成终态只用于协议验证，绝不成为启用或导出准入依据。`audit_events` 保存无秘密动作事实。Agent 心跳只更新当前事实，不保存无限心跳历史。显式日志缺口作为版本化 GAP 记录写入脱敏段，并在 `log_streams/log_batches` 保存摘要，不另建缺口表。
+数据源连接测试使用单条当前 run、短租约和 Agent 回执保证控制面重启后的幂等与绑定复验；它不是通用任务或历史诊断表。`0022` 起同一短租约表以 `operation_kind` 区分基础连接测试与导出对象元数据查询；后者额外冻结数据库、兼容模式、对象类型、关键字，结果最多保存 100 个对象名和截断标记，不能更新 `data_sources` 最近测试摘要，也不计入数据源或节点的历史引用资格；有效期过后由连接测试过期清理流程清空已保存对象名。仅已通过 G3 的基础 `AGENT_JDBC` 终态才能更新该摘要；G2 合成终态只用于协议验证，绝不成为启用或导出准入依据。`audit_events` 保存无秘密动作事实。Agent 心跳只更新当前事实，不保存无限心跳历史。显式日志缺口作为版本化 GAP 记录写入脱敏段，并在 `log_streams/log_batches` 保存摘要，不另建缺口表。
+
+导出对象查询处于 `PENDING` 超过 30 秒后按过期投影；过期清理和领取事务都必须阻止迟到 Agent 执行。已领取的查询继续遵守原短租约期限，页面不自动重发真实数据库查询。
 
 ## 11. 字段和约束规则
 
@@ -401,7 +403,7 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 12. 同一 Agent 预检查 claim、acknowledge、complete 的同 requestId/同摘要在重启后返回原回执，同 requestId/异摘要、旧 epoch、bindingDigest 漂移和过期 complete 均不能改变通过状态；
 13. Windows AMD64、麒麟 V10 SP3 C86、V10 SP1 ARM64、V11 ARM64 完成初始化、迁移、并发领取、事件、备份和恢复。
 
-当前已完成核心约束及仓储短事务的本地合成验证，详见[API/数据模型 SQLite 约束验证](evidence/api-data-model-sqlite-spike-2026-07-21.md)。该结果不开放浏览器 API、Agent 协议或真实任务。
+当前已完成核心约束及仓储短事务的本地合成验证，详见[API/数据模型 SQLite 约束验证](evidence/component-validation.md#api-sqlite)。该结果不开放浏览器 API、Agent 协议或真实任务。
 
 ## 18. 明确禁止
 

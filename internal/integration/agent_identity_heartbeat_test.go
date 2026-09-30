@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +101,50 @@ func TestAgentEnrollmentAndHeartbeatOverTLS(t *testing.T) {
 		node.Agent.EnvironmentFacts.CPUUsagePercent != nil || node.Agent.EnvironmentFacts.MemoryUsagePercent != nil || len(node.Agent.EnvironmentFacts.DataRootUsages) != 0 {
 		t.Fatalf("GetExecutionNode() = %#v, %v", node, err)
 	}
+	original, err := state.AgentIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := state.RuntimeConfiguration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := metadata.UpdateExecutionNode(ctx, store.ExecutionNodeUpdate{NodeID: node.NodeID, ActorSubjectID: "node-admin", ExpectedRevision: node.Revision, DisplayName: node.DisplayName, NormalizedName: "synthetic tls node", Platform: node.Platform, AllowedRoots: node.AllowedRoots, ToolHome: `E:\synthetic\updated-tool`, JavaPath: node.JavaPath, RequestID: "configuration-update", UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	release := state.HoldRuntimeConfiguration()
+	if err := state.SyncRuntimeConfiguration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := state.RuntimeConfiguration()
+	if err != nil || frozen.Digest != configuration.Digest {
+		t.Fatal("运行期间配置改变")
+	}
+	release()
+	if err := state.SyncRuntimeConfiguration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := state.RuntimeConfiguration()
+	if err != nil || updated.ToolHome != `E:\synthetic\updated-tool` || updated.Digest == configuration.Digest {
+		t.Fatal("空闲后配置未应用")
+	}
+	current, err := state.AgentIdentity()
+	if err != nil || current != original {
+		t.Fatal("配置同步改变机器身份")
+	}
+	anonymous, err := http.NewRequest("POST", server.URL+"/agent/v1/runtime-configuration:sync", strings.NewReader(`{"protocolVersion":"agent-v1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied, err := server.Client().Do(anonymous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied.Body.Close()
+	if denied.StatusCode != 401 {
+		t.Fatal("匿名配置同步未被拒绝")
+	}
+
 }
 
 type agentWireBrowserIdentity struct{}

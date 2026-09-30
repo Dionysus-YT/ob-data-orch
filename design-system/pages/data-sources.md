@@ -1,7 +1,9 @@
-# Data Sources Page Specification
+# 数据源标准页 · Data Sources Page Specification
 
 > Authority: **P1 — page-specific rule**
-> Status: **DATA SOURCES PAGE SPEC READY**
+> Status: **已定版 · 后续页面视觉与组件标准**
+> 定版日期：2026-09-14；依据：用户明确确认与 [DEC-047](../../docs/01-product/decisions.md#dec-047-数据源页面定版与后续页面标准)。
+> 初始定版源码：`94adccdd421f54ad22fba0b087448c7ad6379880`；现行规则包含下述已确认修订，最近更新 2026-09-18，路由 `/data-sources`。
 > Scope: Data Sources management/list page and its create/edit drawer.
 > Read before implementation: [P0 MASTER](../MASTER.md) → this file → the P3 data-source, API, credential, validation, and lifecycle contracts. P3 business facts remain authoritative where this document refers to them.
 
@@ -9,28 +11,34 @@
 
 This is the concrete **Management / Table** archetype for data sources. Its stable composition is:
 
-`Product Shell → Breadcrumb → Page Header → Toolbar → Feedback → Dense Table → Cursor Pagination → Edit Drawer / Confirmation Dialog`
+`Product Shell → 工作区标题与上下文 → 列表标题及刷新/新建 → 筛选 → 表格与反馈 → 左侧统计/右下角分页 → 编辑抽屉/确认框`
 
-It uses the P0 Light Technical Operations Workbench language: a content-first workspace, typography and dividers for ordinary grouping, one table surface, compact controls, and no permanent inspector. It must not introduce global tokens, alter the Product Shell, or make the drawer a second application shell.
+It uses the P0 design language in [DESIGN.md](../DESIGN.md): Minimalism & Swiss Style, restrained B2B neutral palette, medium-high density, one table surface, compact controls, and no permanent inspector. It must not introduce global tokens, alter the Product Shell, or make the drawer a second application shell.
 
 The page manages configuration and exposes safely projected test/lifecycle facts. It does **not** provide direct database access, runtime administration, arbitrary command execution, SQL entry, secret readback, or task configuration.
+
+### 1.1 后续页面复用规则
+
+- 所有页面沿用当前 Product Shell、字体、配色、控件、菜单、状态、校验和弹层语言；从 [DESIGN](../DESIGN.md)、[tokens](../tokens/README.md) 及 `patterns/` 复用，不复制整份数据源 CSS。
+- 管理列表沿用一张工作面：标题左侧、刷新/主动作右侧，下面搜索与筛选、表格，底部左侧统计、右下角分页。分页随列表布局，不固定到浏览器窗口；条数和游标能力按各模块 API，不强制所有列表每页 10 条。
+- 概览、向导、详情和设置共享视觉与组件，内容结构按其 Archetype；数据源字段、类型菜单、命名步骤、连接测试和 520px 抽屉宽度属于本页规则，不机械复制。
+- 后续模块调整共享样式或组件时，同步检查标准页的列表、分页、抽屉与确认框，防止回归。功能修复仍按契约和验证规则进行，新的视觉变更记录到 P0/P1；当前源码不会自动替换冻结版本。
 
 ## 2. Page header and action model
 
 ### 2.1 Header
 
-- Breadcrumb is `任务配置 / 数据源管理`; it is presented by the shared shell/context pattern, not recreated as local navigation.
+- 顶栏只保留产品标识和全局动作；不重复面包屑或页面标题。工作区标题为 `数据源管理`，上下文为 `OceanBase / ODP`。
 - The page heading is `数据源管理`. A single short description may explain that sources must be verified before use in a task; it must not repeat table facts or create a KPI strip.
-- `新增数据源` is the only possible primary action. Show it only to a principal with the P3 create/manage capability. It opens a type menu with `OceanBase MySQL` and `OceanBase Oracle`; each opens its own fixed-mode create drawer.
+- `新建数据源` 是列表标题同行右侧唯一主动作，刷新位于其旁。只向具备 P3 create/manage capability 的用户提供；展开 `OceanBase MySQL` / `OceanBase Oracle` 类型菜单，再打开固定模式抽屉。
 - A page may legitimately have no primary action. `刷新` is always a utility action, never the primary business action.
 
 ### 2.2 Toolbar
 
-Toolbar order is: search → high-value filters → active-filter reset → refresh. It belongs below the header and above the table; it is not part of Product Header.
+筛选区位于列表标题下、表格上；顺序是搜索 → 环境 → 测试结果 → 可用状态 → 兼容模式 → 清除筛选。刷新在上方列表标题的动作区，不放进 Product Header。
 
 - Search label: `搜索数据源`; search only documented, authorized list fields: display name, host/ODP endpoint, cluster, and tenant. Do not search secrets, raw connection strings, system credentials, hidden IDs, or records not returned by the server.
-- Always-available filters: environment, lifecycle availability (`已启用` / `已禁用`), and connection-test state.
-- Compatibility mode is a secondary filter: visible at 1920, placed in an overflow/filter popover at narrower widths.
+- 固定筛选包括环境、连接测试、可用状态（`已启用` / `已停用`）和兼容模式；收窄时在同一筛选区换行，冻结版本没有额外筛选弹层。
 - `清除筛选` appears only when a query or filter is active. It clears all active conditions and returns focus to search.
 - `刷新` retains the current query, filters, cursor position, and credible rows. It reports refresh failure in the page feedback region rather than replacing rows with an empty state.
 - No bulk action is specified until a P3 contract supplies a safe bulk capability.
@@ -47,13 +55,19 @@ The table is the principal workspace, not a card grid. It uses P0 dense-row, con
 | P0 | Environment | P3 environment value. It is a business context label, not a success/error status. Production may have a restrained risk treatment but must remain textually explicit. |
 | P0 | Endpoint | Structured host/ODP endpoint and port. Long values truncate visually and expose the complete authorized value through an accessible tooltip/copy action. |
 | P0 | Cluster / tenant | Structured cluster and tenant facts; never reconstruct these from a raw connection string. |
-| P0 | Connection test | Test-state label plus last completion time where supplied. It is distinct from lifecycle availability. |
-| P0 | Availability | `已启用` or `已禁用`; it is the management lifecycle state, not a statement that connectivity is currently valid. |
+| P0 | Connection test | 单行圆点与短文案：未测试、测试中、测试成功、连接失败、已失效、已过期、待确认；完成时间和验证详情在抽屉查看，不在列表增加次行。 |
+| P0 | Availability | `已启用` / `已停用`，独立于连接测试，不能推导当前可连接或任务资格。 |
 | P0 | Actions | Per-row, server-returned lifecycle eligibility controls; see section 8. |
-| P1 | Compatibility | MySQL / Oracle compatibility fact. At 1440 it may become secondary identity metadata; at 1280 it is hidden from the column model, not replaced by a fabricated value. |
+| P1 | Compatibility | MySQL / Oracle 事实；工作区容器宽度不超过 1120px 时按共享样式并入名称次行，不按视口宽度猜测或伪造兼容模式。 |
 | P2 | No persistent column | ODP connection kind is fixed product context, and default database/username are secondary identity metadata. System credentials and test runtime facts belong in the drawer. **Runtime is not a data-source table column.** |
 
 The initial sort order and any sortable headers are shown only when a P3/API contract declares supported server-side sort keys. A visual sort affordance without a matching server contract is prohibited. The table has an accessible caption describing its current result scope and active filters.
+
+兼容模式、连接测试和可用状态三列的表头与内容居中，其他事实按现役表格列对齐。名称链接、地址、端口和集群沿用 UI 字体；兼容模式无底色；地址不重复 ODP 次行。环境保留中文名称及开发绿、生产红、测试橙标签；存量预生产仍以黄色标签显示。环境颜色不代表连接或任务资格。
+
+数据源列不展示装饰图标；表头、名称与次行左对齐，不保留图标占位或缩进。环境使用 Ant `Tag` 分类标签，浅色底、对应色文字、无边框；无边框背景通过 `colorFillTertiary` 主题 token 配置。
+
+可用状态切换仅由当前行 `Switch` 展示处理中与服务端返回的结果，不显示顶部成功消息或独立加载提示。失败仍保留明确错误原因；删除保留成功反馈与确认语义。
 
 ## 4. Status domains and lifecycle
 
@@ -66,7 +80,7 @@ Never collapse these domains into a single badge.
 | Verification quality | `AGENT_JDBC` with `realConnectionVerified=true`; `G2_SYNTHETIC` | Only a successful real `AGENT_JDBC` verification may satisfy the P3 prerequisite to enable/offer the source for task selection. A synthetic success is labelled explicitly as non-qualifying. |
 | Environment / compatibility | P3 facts | Context only; never use the error/success palette as their primary meaning. |
 
-`SUCCEEDED` is labelled `已验证可连接` only when the result is real `AGENT_JDBC` verification. A synthetic result stays visibly non-qualifying. `UNKNOWN`, `EXPIRED`, and `INVALIDATED` use a warning/neutral treatment with explanatory text, not a false failure or success. Status always includes text and icon/shape; color is supplementary.
+列表 `SUCCEEDED` 使用绿色圆点与“测试成功”，绿色只表示最近记录成功，与“已启用”共用视觉而不合并状态。抽屉只有真实 `AGENT_JDBC` 且 `realConnectionVerified=true` 才能表达“已验证可连接”；合成结果明确标注不可作为真实资格。未知、过期、失效各自保留文案，不能冒充成功。状态均保留文字，颜色只作补充。
 
 ### 4.1 Lifecycle and test state machine
 
@@ -97,19 +111,19 @@ Drawer anatomy:
 
 1. **Header** — `新建数据源` / `编辑数据源`, close control; omit the separate configuration-state strip.
 2. **Type and parser** — fixed OceanBase mode, followed by an always-visible optional smart-parser textarea.
-3. **Connection address** — paired host/port and cluster/tenant fields on the global workspace surface; MySQL alone exposes default database.
-4. **Database account** — paired username/password, followed directly by node selection, refresh and connection-test controls with a persistent save prerequisite.
-5. **Metadata** — environment; editing also shows the saved name. Creating requests the required name in a dialog after connection-field validation and before persistence. Project binding is outside the product contract and is omitted.
+3. **Connection address** — host/port and cluster/tenant use two columns in one muted surface group; MySQL alone adds the full-width default database field.
+4. **Database account** — username/password use a second muted surface group. A compact `测试连接` control reveals node selection and refresh on one row, then the prerequisite/status hint and separate `开始测试` action on the next row, with results below. The unsaved-source prerequisite remains visible.
+5. **Metadata** — environment follows the account group; `默认` is an unselected hint, never a persisted value. New records choose 开发、生产 or 测试 in that order; existing 预生产 records remain readable and editable. Editing also shows the saved name below it. Creating requests the required name in a dialog after connection-field validation and before persistence. Project binding is outside the product contract and is omitted.
 6. **Advanced settings** — one collapsed disclosure for optional sys credentials.
 7. **Footer** — right-aligned `取消` and primary `确定`. Confirm saves only; it never starts a connection test.
 
-Node selection and results remain inline in the same form; the list test action focuses node selection. The body scrolls independently. Address and account groups use the global workspace surface without nested cards. Required name/tenant/password validation remains unchanged; cluster is optional and participates in the derived ODP identity only when supplied. The naming dialog preserves the connection draft on cancellation or save failure; successful creation keeps the drawer and selected node available for a separate test. This layout follows the 2026-09-10 user request and does not change Save/Test semantics.
+Node selection and results remain inline in the same form when the test area is expanded; the list test action opens that area and focuses node selection. The body scrolls independently; the 520px drawer is capped at the viewport width on narrow screens. Address and account groups use a flat muted surface without nested cards. Required name/tenant/password validation remains unchanged; cluster is optional and participates in the derived ODP identity only when supplied. The naming dialog preserves the connection draft on cancellation or save failure; successful creation keeps the drawer and selected node available for a separate test. The 2026-09-28 layout reference updates grouping and order only; its project selector and direct test semantics are not part of the product contract.
 
 ### 5.1 Form grouping and conditions
 
 | Group | Fields and behavior |
 |---|---|
-| Basic information | Display name (globally unique) and environment (`dev` / `test` / `stage` / `prod`). Do not add a description field until P3/API supports it. |
+| Basic information | Display name (globally unique) and a required environment choice (开发 / 生产 / 测试 for new records; 预生产 remains valid for stored records). Do not add a description field until P3/API supports it. |
 | Connection configuration | Fixed ODP connection kind; compatibility mode; host; port; cluster; tenant; username; password; and default database only for MySQL mode. A connection-string parser, if retained, is a local fill helper: it populates structured fields, is never stored or transmitted as an alternative connection representation, and exposes parse errors locally. |
 | Credential handling | Password is required when creating. On edit, an empty password means preserve the stored secret; a non-empty value is a replacement and must never be echoed after save. System-account credentials are optional advanced paired inputs. The UI may show only P3-authorized configuration state, never secret content, length, ciphertext, or a secret-presence inference beyond the contract. |
 | Connection test | Select an eligible runtime node; expose its safe readiness/compatibility facts in the control/result context. Runtime selection is test context, not source metadata. No test is available before the source is saved. |
@@ -163,29 +177,29 @@ Loading preserves table geometry with non-deceptive rows/skeletons and never ann
 Actions are per-record and derived only from P3 server-returned permissions and lifecycle eligibility. The compact action menu may contain:
 
 - `编辑` — opens the edit drawer when management authorization is present.
-- `测试连接` — opens/focuses the Test section for a saved, authorized source; its availability follows section 6.
-- `启用` — available only after a server-authorized, qualifying real test. It does not recover historical task eligibility automatically.
-- `停用` — explicit confirmation states that new task use is blocked and running tasks are not cancelled.
-- `归档` — available only for referenced records; confirmation explains that it preserves historical references and removes the source from new candidates.
-- `删除` — available only for unreferenced records; confirmation names the record and is irreversible. A delete ineligibility response must not silently become archive.
+- `删除` — 依据服务端删除资格决定可用性；点击打开二次确认框，说明对象、不可恢复、凭据清理与历史保留；取消不发送请求，确认才执行。处理中禁用生命周期动作并显示进度，成功后反馈对象名称并刷新列表；失败显示原因并重读资格与版本，不得静默改为归档。
 
-`启用` may execute directly with immediate safe feedback only when P3 allows it. Disable, archive, delete, discard, and any other P0 high-risk action require the shared confirmation dialog. Disabled or omitted actions must use the server reason; no client-side guessed eligibility, hover-only explanation, or action substitution is permitted.
+2026-09-16 用户指定行菜单仅保留“编辑”和“删除”；测试连接保留行内入口及编辑抽屉入口，窄屏通过编辑抽屉访问。可用状态使用紧凑圆角滑轨与圆形滑块，蓝色启用、灰色禁用，按用户提供的“自定义设置”截图采用 44×22 滑轨、18px 白色圆形滑块，不内嵌可见文字；保留无障碍状态、键盘焦点及服务端不可用原因。此前浏览器工具连接失败不再作为当前验收状态；2026-09-16 隔离 Playwright 验证范围与结果见[前端平台基线](../../docs/03-technical/frontend-platform-baseline.md)，不据此推断真实业务已上线。
+
+`启用` may execute directly with immediate safe feedback only when P3 allows it. Disable, archive, discard, and other P0 high-risk actions require the shared confirmation dialog. 数据源删除按 2026-09-16 用户修订恢复二次确认。历史引用不阻止删除；等待调度、启动、运行、取消中及待核对任务阻止删除。Disabled or omitted actions must use the server reason; no client-side guessed eligibility, hover-only explanation, or action substitution is permitted.
 
 ## 9. Pagination and responsive adaptation
 
 ### 9.1 Cursor pagination
 
-Use the P3 cursor contract. The footer presents `上一页` / `下一页` only when the response supplies the respective cursor. Do not render a fabricated page number, total pages, or total count. A total is shown only when the API explicitly returns an authorized total for the current scope. Preserve query/filter state across cursor changes and return focus to the table caption after navigation.
+分页位于列表底部右侧，与左侧 `共 N 条` 统计同一 Footer。右侧顺序为 `10 条/页 → 上一页 → 第 N 页 → 下一页`；上下页使用具有可访问名称的图标按钮，当前页通过 live region 宣告。空间不足时按共享样式换行，不能用绝对定位遮挡内容。
 
-管理页固定每页 10 条，通过服务端 keyword/environment/state/compatibilityMode/connectionStatus 筛选。nextCursor 为空表示末页，上一页使用本次查询的已访问游标栈；total 来自同一授权筛选范围。变更条件清空游标栈，刷新保留条件，旧异步响应不得覆盖新查询。
+管理页固定每页 10 条，通过服务端 keyword/environment/state/compatibilityMode/connectionStatus 筛选。nextCursor 为空时下一页禁用，上一页使用本次查询的已访问游标栈，首屏禁用；加载与刷新期间两按钮禁用。第 N 页由已访问游标栈长度加一得到，total 来自服务端同一授权筛选范围；不虚构总页数或任意跳页。条件变化清空游标栈，翻页保留条件，旧异步响应不得覆盖新查询。
 
 ### 9.2 Shared viewport behavior
 
 | Viewport | Page behavior |
 |---|---|
-| 1920×1080 (baseline) | Full P0 and P1 columns; search, primary filters, compatibility filter, and utility refresh visible. The standard edit drawer and dense table occupy the broad workspace. |
-| 1440×1024 | Global shell remains visible per P0. Compatibility filter moves to overflow if needed; compatibility column becomes secondary identity metadata before any P0 column is removed. Toolbar may wrap into two compact lines without changing action hierarchy. |
-| 1280×720 | Global navigation uses the P0 collapsed rail. P1 compatibility column/filter is hidden or moved to explicit overflow; all P0 decision columns remain. Search remains discoverable, filters collapse into a labelled filter control, and no whole-page horizontal scrolling is allowed. The drawer remains an overlay and preserves its footer. |
+| 1920×1080 (baseline) | 完整 200px 导航、24px 工作区边距；显示列表事实、搜索和筛选，刷新及新建在列表标题同行右侧。 |
+| 1440×1024 | 保留完整 200px 模块出口、24px 工作区边距；筛选按剩余空间换行，列收敛由工作区容器宽度决定。 |
+| 1280×720 | 48px 图标轨、24px 工作区边距；搜索和筛选保留可达，表格内部承接必要滚动，分页与抽屉底栏可达。不能因布局使整页横向滚动。 |
+
+列响应式遵循当前 `orch-workspace` 容器查询：不超过 1120px 时兼容模式并入名称次行、行内测试通过编辑抽屉访问；不超过 900px 时表格保留内部横滚。三档视口和键盘检查仍需在后续页面或共享组件变更时实际执行。
 
 The main workspace is the final area to compress. Long table values use truncation/copy/accessible disclosure; responsive behavior must not hide lifecycle availability, connection-test state, or the actions required for an authorized management decision.
 
@@ -196,32 +210,31 @@ The main workspace is the final area to compress. Long table values use truncati
 - Drawer opening moves focus to its heading; focus is contained while open and returns to its invoker on close. Dirty/discard and destructive dialogs have an explicit least-destructive default.
 - Associate field errors and top summary links using programmatic descriptions. Announce save/test start, terminal result, and errors through concise live regions without duplicating a result on every polling refresh.
 - Status communicates text, icon/shape, and color; meet P0 contrast and focus requirements. Tooltip/copy affordances are keyboard accessible and expose untruncated authorized values safely.
-- Dense desktop geometry retains P0 minimum 36px controls and 40px rows. Do not reduce hit targets, type contrast, or keyboard operation merely to fit a column.
+- 桌面控件、表格与字号沿用 P0 第 9 节的数据源定版值；不为塞入列而缩小点击区域、降低对比度或破坏键盘操作。
 
-## 11. Migration implementation constraints and debt retirement
+## 11. 冻结实现入口与维护
 
-This P1 specification is the acceptance target for the Data Sources migration. It does not authorize bulk deletion; each item follows the inventory sequence: reference analysis → replacement → `vue-tsc` → build → page verification → dead-code removal.
+初始定版源码只用于追溯；当前实现遵循本文件与 P0 的现行修订。下表为唯一实现入口，后续开发先核对实际路由与样式加载关系。
 
-| Current P4 debt to retire in this migration | Required replacement / verification |
+| 标准部分 | 现役实现 |
 |---|---|
-| Ten-column legacy list, including fixture-only `Runtime` and a runtime-derived database label | Adopt section 3. Remove runtime from persistent rows; select node only in the test context. Verify against real authorized API payload and DEV fixture separately. |
-| Client-side full-list filtering and `1 / N` pagination | Implement server-scoped query/filter/cursor behavior only after the P3 cursor response is clarified. Do not imply completeness from one loaded page. |
-| Card-like table wrapper, legacy 52px rows, raw/scoped table CSS | Use the shared P0 table surface, 40px dense rows, control/focus/status tokens, divider hierarchy, and no duplicate page token values. |
-| New-record primary `保存并测试` behavior | Make `保存` the sole primary and remove the composite convenience action unless P3/API later authorizes it. Verify Save and Test state transitions independently. |
-| Standalone `DataSourceFormView` detail aside / parallel layout | Reuse one table + Drawer composition; no local inspector or alternate full-page form skeleton. |
-| Test status treated as a simple connection badge | Render lifecycle, test projection, and verification quality as separate domains; cover synthetic, invalidated, unknown, and real-success eligibility cases. |
-| Page-specific responsive/table/drawer/control styles | Remove or replace after call-site analysis with P0 shared behavior, including 1920/1440/1280 checks, keyboard flow, and permission/error states. |
+| 路由与页面 | [router/index.ts](../../web/src/router/index.ts) → [SourceWorkspace.vue](../../web/src/workbench/sources/SourceWorkspace.vue)；`/workbench/data-sources` 重定向到 `/data-sources` |
+| 公共外壳 | [ProductShell.vue](../../web/src/components/ProductShell.vue)、[ProductHeader.vue](../../web/src/components/ProductHeader.vue) |
+| 编辑、校验与测试 | [SourceEditor.vue](../../web/src/workbench/sources/SourceEditor.vue)、[useSourceEditor.ts](../../web/src/workbench/sources/useSourceEditor.ts)、[ConnectionTestResult.vue](../../web/src/components/ConnectionTestResult.vue) |
+| 共享组件 | Primitive 使用 Ant Design Vue；产品语义由 [OrchSourceActions](../../web/src/workbench/sources/OrchSourceActions.vue)、[OrchOperationalTable](../../web/src/components/OrchOperationalTable.vue)、[OrchDangerConfirm](../../web/src/components/OrchDangerConfirm.vue)、[ConnectionTestResult](../../web/src/components/ConnectionTestResult.vue) 与 [useAntDrawerDialog](../../web/src/composables/useAntDrawerDialog.ts) 承载 |
+| 样式 | [main.ts](../../web/src/main.ts) 顺序加载 Ant reset → `platform/tokens.css` → `archetypes.css` → `sources.css` → `shell.css` → `components.css`；唯一值源为 [tokens.ts](../../web/src/platform/tokens.ts)，迁移关系见[前端平台基线](../../docs/03-technical/frontend-platform-baseline.md) |
+| 合成验证入口 | DEV 环境 `/data-sources?uiFixture=data-sources`；[样本说明](../../docs/02-design/ui-regression-fixture-data-source.md)与 [sourceGateway.ts](../../web/src/workbench/sources/sourceGateway.ts) |
+
+已删除的旧页面、实验入口和基线图片仅通过 [Git 历史](../../docs/README.md#history) 追溯，不作为现行设计入口。
+
+定版确认视觉与页面交互方向，不等同于业务契约、可访问性矩阵或所有状态已验收。P3 仍是业务目标；行菜单按第 8 节仅保留编辑/删除，不得恢复历史归档入口。不得由视觉定版推导真实业务已实现，也不得将实现缺口复制成其他页面的业务标准。
 
 ## 12. Governance record
 
-- **GLOBAL SPEC ISSUE:** None identified. This page spec does not modify P0 Product Shell, tokens, visual language, responsive degradation order, or global action hierarchy.
+- **2026-09-28 抽屉布局修订：** 按用户提供的视觉参考调整双列浅灰分组、字段顺序及紧凑测试入口；创建和编辑共享布局，保留现有项目字段边界与独立保存/测试语义。
+- **2026-09-18 用户修订：** 状态切换反馈收敛到行内开关；环境使用浅底分类 Tag；移除数据源列图标和遗留缩进。清除本页重复的历史截图说明，当前规则集中在相应章节。
+
+- **2026-09-14 定版：** 用户明确将当前数据源页面确认为后续页面标准，P0 v3.0 与 DEC-047 同步承接。旧 P1 的面包屑、列表测试时间、40px 数据行及待接入分页等描述已被现役基线替代。
+- **2026-09-17 Design System Consolidation：** 本页继续作为 Management / Table Reference Page；全局视觉值、字体、色彩、密度和 Ant ownership 改由 `DESIGN.md`、`tokens/` 与 `patterns/` 承担。业务流、字段、服务端资格、Save/Test 独立语义和删除确认不变。
 - **P3 contract alignment (2026-09-14):** 管理列表的 limit=10、nextCursor 与授权 total 已在 OpenAPI 和 API/SQLite 契约中对齐；运行服务升级状态见任务地图。
-- Existing implementation is P4 fact, not design authority. Any conflict found during implementation must be classified as implementation debt, P3 business constraint, or a proposed P0 defect; only the last may initiate a MASTER change.
-
-### 2026-09-10：ODC 模板适配
-
-按用户确认，新建先选 OceanBase MySQL / OceanBase Oracle，再进入对应固定类型的 520px 抽屉；正文左右 24px，地址/端口、集群/租户、用户名/密码成对排列。按用户后续批注使用连接地址/账号全局工作区底色分组与独立保存/测试语义，不引入 ODC 项目、SSL、初始化 SQL 或驱动属性。窄视口保留内部滚动和固定底栏。
-
-本轮截图细化：智能解析常显；账号下提供图标加次级按钮的测试入口和同行前置提示；环境、数据源名称、高级设置依次排列；底栏为取消/确定。与截图的业务差异：不提供项目绑定，保留必填数据源名称和私有 ODP 集群名；测试仍需先保存并选择执行节点。
-
-2026-09-10 浏览器批注：删除配置状态条；连接地址、数据库账号和测试入口统一使用全局工作区底色 `--color-bg-surface`；测试按钮恢复标准尺寸与间距，禁用原因在旁常显。
+- 本次指定的源码版本因用户确认获得基线身份；其他现有页面及后续未批准修改仍是 P4。后续改动按 P0 变更规则记录，不能以“代码现在如此”覆盖标准或业务契约。

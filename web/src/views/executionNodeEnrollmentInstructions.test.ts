@@ -6,14 +6,14 @@ describe('执行节点 Agent 关联指引', () => {
   it('为 Windows 生成不含注册码的单命令注册入口', () => {
     const command = agentRegistrationCommand('WINDOWS_AMD64')
 
-    expect(command).toBe('.\\agent.exe -register')
+    expect(command).toBe('.\\启动.cmd')
     expect(command).not.toMatch(/material|token|password/i)
   })
 
   it('为 Linux 保留相同的单命令注册语义', () => {
     const command = agentRegistrationCommand('LINUX_ARM64')
 
-    expect(command).toBe('./agent -register')
+    expect(command).toBe('./start.sh')
     expect(command).not.toMatch(/material|token|password/i)
   })
 
@@ -31,9 +31,9 @@ describe('执行节点 Agent 关联指引', () => {
     })
   })
 
-  it('配置漂移时允许已关联节点重新签发注册码', () => {
-    expect(requiresAgentRegistration('PENDING', [])).toBe(true)
-    expect(requiresAgentRegistration('ASSOCIATED', ['RUNTIME_CONFIGURATION_MISMATCH'])).toBe(true)
-    expect(requiresAgentRegistration('ASSOCIATED', ['NODE_DISABLED'])).toBe(false)
+  it('配置变更通过同步生效，无需重新注册', () => {
+    expect(requiresAgentRegistration('PENDING')).toBe(true)
+    expect(requiresAgentRegistration('ASSOCIATED')).toBe(false)
+    expect(requiresAgentRegistration('ASSOCIATED')).toBe(false)
   })
 })

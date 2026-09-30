@@ -3,7 +3,7 @@
 > 文档状态：验证计划保留未完成用例；已有受控证据已回写为当前基线，未验证项仍保持门控
 > 目标工具：OBDUMPER 4.3.5-RELEASE
 > 更新日期：2026-08-22
-> 关联文档：[导出模块 Canonical](export-module.md) · [通用导出技术契约](../03-technical/export-general-contract.md) · [Export 历史研究归档](../archive/export/research/)
+> 关联文档：[导出模块 Canonical](export-module.md) · [通用导出技术契约](../03-technical/export-general-contract.md)
 
 ## 1. 目标
 
@@ -21,13 +21,13 @@
 
 | 能力/格式 | 当前状态 | 已有证据 | 仍缺少的证据或动作 |
 |---|---|---|---|
-| CSV 本地导出 | VERIFIED（Windows 局部链路） | [Windows 单表 CSV 成功](../03-technical/evidence/windows-authorized-real-export-2026-08-04.md)；[CSV 特殊值两次独立导出](../03-technical/evidence/windows-csv-special-values-validation-2026-08-05.md) | G3 全量门禁、WI-05 实际进程 argv 取证、跨目标认证 |
-| POS 用户提供控制文件 | VERIFIED（命令映射与定长输出） | [POS 受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md) | 向导/生成器/预检查完整产品通道回归；自动生成控制文件实现与证据延期 |
+| CSV 本地导出 | VERIFIED（Windows 局部链路） | [Windows 单表 CSV 成功](../03-technical/evidence/windows-validation.md#csv-export)；[CSV 特殊值两次独立导出](../03-technical/evidence/windows-validation.md#csv-special-values) | G3 全量门禁、WI-05 实际进程 argv 取证、跨目标认证 |
+| POS 用户提供控制文件 | VERIFIED（命令映射与定长输出） | [POS 受控实测与定版](../03-technical/evidence/windows-validation.md#pos-format) | 向导/生成器/预检查完整产品通道回归；自动生成控制文件实现与证据延期 |
 | CUT / Insert SQL | IMPLEMENTED，EVIDENCE_PENDING | EX-I4 契约、控制面、前端和生成器正负例；当前无逐格式 Windows 真实输出证据 | 既有 Run History 映射或另行授权的逐格式真实结果 |
 | Parquet / ORC / Avro | VALIDATION_GATED | EX-I5 元数据、生成器、控制面和前端合成正负例 | 逐格式真实输出、对象范围/资源限制和结果事实 |
-| DDL / DDL + CSV | DDL `REAL_TOOL_VERIFIED`；DDL + CSV `IMPLEMENTED，EVIDENCE_PENDING` | [EX-I7 剩余参数记录（2026-08-11）](../03-technical/evidence/exi7-remaining-parameters-2026-08-11.md) 覆盖真实 `--ddl`、`--ddl --all --compact-schema`；[对象 DDL 记录（2026-08-13）](../03-technical/evidence/exi7-remaining-parameters-2026-08-13.md) 覆盖 procedure/user DDL 退出码 0 与文件输出；另有 EX-I2/EX-I3 契约路径 | DDL 现场记录尚未绑定 Export task/history；DDL + CSV 仍缺独立 Golden Path、失败与结果投影 |
-| OSS / S3 / COS / OBS | SYNTHETIC_ONLY，提交受门禁 | [EX-I6 存储预检查框架](../03-technical/evidence/exi6-storage-precheck-framework-2026-08-14.md) | 真实 endpoint、凭据探测、四类 provider 端到端和远端结果事实 |
-| `dump.ckpt` 继续 | SYNTHETIC_ONLY | [EX-I8 结果与恢复](../03-technical/evidence/exi8-derivation-result-recovery-2026-08-14.md) | 慢导出/中断产生保存点后的真实继续任务 |
+| DDL / DDL + CSV | DDL `REAL_TOOL_VERIFIED`；DDL + CSV `IMPLEMENTED，EVIDENCE_PENDING` | [EX-I7 剩余参数记录（2026-08-11）](../03-technical/evidence/export-increment-validation.md#exi7-batch1) 覆盖真实 `--ddl`、`--ddl --all --compact-schema`；[对象 DDL 记录（2026-08-13）](../03-technical/evidence/export-increment-validation.md#exi7-batch2) 覆盖 procedure/user DDL 退出码 0 与文件输出；另有 EX-I2/EX-I3 契约路径 | DDL 现场记录尚未绑定 Export task/history；DDL + CSV 仍缺独立 Golden Path、失败与结果投影 |
+| OSS / S3 / COS / OBS | SYNTHETIC_ONLY，提交受门禁 | [EX-I6 存储预检查框架](../03-technical/evidence/export-increment-validation.md#exi6-storage) | 真实 endpoint、凭据探测、四类 provider 端到端和远端结果事实 |
+| `dump.ckpt` 继续 | SYNTHETIC_ONLY | [EX-I8 结果与恢复](../03-technical/evidence/export-increment-validation.md#exi8-recovery) | 慢导出/中断产生保存点后的真实继续任务 |
 | `--query-sql` | IMPLEMENTED，EVIDENCE_PENDING | 普通高级参数：NORMAL、普通任务授权、无 capability/二次确认；已覆盖直接文本、file:// 拒绝、互斥、预检查与提交回归 | 真实工具行为仍按 EX-V1 授权验证 |
 
 “正式支持候选”表示产品范围可以继续评审，不表示当前已通过 EX-V1 或 G3。每一行的状态必须由相应证据、契约测试和发布门禁共同更新。
@@ -80,7 +80,7 @@ git diff --check                                                                
 | GP-02 多对象 CSV/POS | PARTIAL | POS 已有 6 表定长输出；完整向导到任务历史的多对象回归待补 |
 | GP-03 DDL_ONLY / DDL_AND_DATA(CSV) | PARTIAL | DDL_ONLY 有 EX-I7 真实工具输出，但尚未形成产品任务历史证据；DDL_AND_DATA(CSV) 缺独立 Golden Path 证据 |
 | GP-04 每个正式候选格式至少一次真实结果 | PARTIAL | CSV/POS 有结果；CUT/SQL 尚无逐格式真实结果，结构化格式仍门控 |
-| GP-05 预检查失败不创建任务、不启动工具 | VERIFIED（局部） | [低权限对象访问验证](../03-technical/evidence/windows-low-privilege-object-access-validation-2026-08-05.md) |
+| GP-05 预检查失败不创建任务、不启动工具 | VERIFIED（局部） | [低权限对象访问验证](../03-technical/evidence/windows-validation.md#low-privilege) |
 | GP-06 工具失败、取消、重启和历史回看 | PARTIAL | 工具失败、排队/运行中/超时取消已有合成与局部协议证据；真实工具进程树终止、重启恢复和检查点继续仍待 EX-V1 |
 
 取消的合成验收要求：排队任务直接 `CANCELLED`；运行中任务先 `CANCELLING`，仅在 `PROCESS_CANCELLED`、`PROCESS_EXITED` 和结果事实闭合后 `CANCELLED`；重复幂等键重放同一结果；不同摘要冲突；轮询期限到期失败关闭并标记核对。任何页面按钮、父进程退出码或 Agent 自报状态都不能单独证明取消成功。
@@ -182,7 +182,7 @@ S0/S1 的无人工审批只适用于无真实副作用路径，不能关闭身�
 
 ### 5.1 POS 映射
 
-当前证据已覆盖独立 `--pos --ctl-path` 的命令映射和定长输出（见 [POS 受控实测与定版](../03-technical/evidence/windows-pos-format-validation-2026-08-07.md)）；EVT-P0-02 的 CUT 等价组合和自动生成控制文件实现仍不作为当前 V1 可用路径。以下用例表保留为可复核的验证计划，不把已有 POS 证据扩写成所有 POS 组合均已通过。
+当前证据已覆盖独立 `--pos --ctl-path` 的命令映射和定长输出（见 [POS 受控实测与定版](../03-technical/evidence/windows-validation.md#pos-format)）；EVT-P0-02 的 CUT 等价组合和自动生成控制文件实现仍不作为当前 V1 可用路径。以下用例表保留为可复核的验证计划，不把已有 POS 证据扩写成所有 POS 组合均已通过。
 
 | ID | 验证问题 | 最小操作 | 通过标准 | 回写位置 |
 |---|---|---|---|---|
@@ -300,9 +300,9 @@ obdumper <连接参数> --table vt_text --cut --column-splitter ""   --ctl-path 
 
 1. [导出模块 Canonical](export-module.md)：更新含义、默认值、适用范围、显示/清值/阻断规则、格式卡片和待实测清单。
 2. [通用导出技术契约](../03-technical/export-general-contract.md)：更新机器校验、命令、Agent、结果和取消证据。
-3. `docs/archive/export/research/`：只在需要追溯参数研究或字段编号时追加历史记录，不作为当前发布态事实源。
+3. [技术证据目录](../03-technical/README.md#evidence)：在对应主题记录 EVT 用例、日期、环境、结果与限制，不再回写已删除的历史研究目录。
 4. [关键决策](../01-product/decisions.md)：只有验证结果要求改变已确认产品规则时，才新增或修订决策。
-5. [文档中心](../README.md)：更新模块与验证状态。
+5. [开发任务地图](../03-technical/development-task-map.md)：更新阶段、能力与验证门禁；文档中心只维护导航。
 
 每项回写必须引用 EVT 用例 ID，避免把一次人工尝试写成无来源结论。
 

@@ -208,7 +208,24 @@ func (s *Store) populateDataSourceLifecycleEligibility(ctx context.Context, summ
 		return err
 	}
 	summary.LifecycleEligibility = newDataSourceLifecycleEligibility(*summary, referenceCount)
+	active, err := dataSourceActiveTaskCount(ctx, s.db, summary.DataSourceID)
+	if err != nil {
+		return err
+	}
+	if active > 0 {
+		summary.LifecycleEligibility.Delete = DataSourceLifecycleActionEligibility{ReasonCode: "UNFINISHED_TASKS_EXIST", Reason: "存在未完成任务，请等待任务结束后删除。"}
+	}
 	return nil
+}
+
+// dataSourceActiveTaskCount 包含尚未领取、执行中和终态仍待核对的任务；历史终态不阻止删除。
+func dataSourceActiveTaskCount(ctx context.Context, queryer dataSourceReferenceCounter, dataSourceID string) (int, error) {
+	var count int
+	err := queryer.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks t
+        LEFT JOIN task_executions e ON e.task_id = t.task_id
+        WHERE t.data_source_id = ? AND (e.execution_id IS NULL
+        OR e.state NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED') OR e.reconciliation_required != 0)`, dataSourceID).Scan(&count)
+	return count, err
 }
 
 type dataSourceReferenceCounter interface {
@@ -223,7 +240,7 @@ func dataSourceReferenceCount(ctx context.Context, queryer dataSourceReferenceCo
         SELECT
             (SELECT COUNT(*) FROM export_drafts WHERE data_source_id = ?) +
             (SELECT COUNT(*) FROM precheck_runs WHERE data_source_id = ?) +
-            (SELECT COUNT(*) FROM data_source_connection_test_runs WHERE data_source_id = ?) +
+            (SELECT COUNT(*) FROM data_source_connection_test_runs WHERE data_source_id = ? AND operation_kind = 'CONNECTION_TEST') +
             (SELECT COUNT(*) FROM tasks WHERE data_source_id = ?)
     `, dataSourceID, dataSourceID, dataSourceID, dataSourceID).Scan(&referenceCount); err != nil {
 		return 0, fmt.Errorf("count data source references: %w", err)
@@ -232,7 +249,7 @@ func dataSourceReferenceCount(ctx context.Context, queryer dataSourceReferenceCo
 }
 
 // newDataSourceLifecycleEligibility 将当前状态、连接测试和历史引用转换为固定动作资格。
-// Delete 与 Archive 是互斥的明确动作：有历史引用只能归档，无历史引用只能永久删除。
+// 历史引用不阻止永久删除；兼容保留显式归档资格，未完成任务另行复验。
 func newDataSourceLifecycleEligibility(summary DataSourceSummary, referenceCount int) DataSourceLifecycleEligibility {
 	eligibility := DataSourceLifecycleEligibility{
 		Enable:  DataSourceLifecycleActionEligibility{Allowed: summary.State != "ENABLED"},
@@ -248,7 +265,7 @@ func newDataSourceLifecycleEligibility(summary DataSourceSummary, referenceCount
 		eligibility.Enable = DataSourceLifecycleActionEligibility{ReasonCode: "CONNECTION_TEST_REQUIRED", Reason: "当前连接配置尚未通过基础连接测试，不能启用。"}
 	}
 	if referenceCount > 0 {
-		eligibility.Delete = DataSourceLifecycleActionEligibility{ReasonCode: "HISTORICAL_REFERENCES_EXIST", Reason: "存在历史引用，不能永久删除。", ReferenceCount: referenceCount}
+		eligibility.Delete = DataSourceLifecycleActionEligibility{Allowed: true}
 		eligibility.Archive = DataSourceLifecycleActionEligibility{Allowed: true, ReferenceCount: referenceCount}
 		return eligibility
 	}
@@ -421,7 +438,7 @@ func (s *Store) UpdateExecutionNode(ctx context.Context, input ExecutionNodeUpda
 		update, err := tx.ExecContext(ctx, `
             UPDATE execution_nodes
 			SET display_name = ?, normalized_name = ?, platform = ?, allowed_roots_json = ?, tool_home = ?, java_path = ?,
-                management_state = 'DISABLED', environment_check_id = NULL, environment_check_status = 'NOT_CHECKED',
+                environment_check_id = NULL, environment_check_status = 'NOT_CHECKED',
                 environment_check_code = NULL, environment_check_facts_revision = NULL,
                 environment_check_requested_at = NULL, environment_check_completed_at = NULL,
                 revision = revision + 1, updated_at = ?
@@ -715,7 +732,7 @@ func (s *Store) DeleteOrArchiveExecutionNode(ctx context.Context, input Executio
 				(SELECT COUNT(*) FROM precheck_runs WHERE node_id = ?) +
 				(SELECT COUNT(*) FROM tasks WHERE node_id = ?) +
 				(SELECT COUNT(*) FROM task_executions WHERE node_id = ?) +
-				(SELECT COUNT(*) FROM data_source_connection_test_runs WHERE node_id = ?)
+				(SELECT COUNT(*) FROM data_source_connection_test_runs WHERE node_id = ? AND operation_kind = 'CONNECTION_TEST')
 		`, input.NodeID, input.NodeID, input.NodeID, input.NodeID, input.NodeID, input.NodeID, input.NodeID).Scan(&referenceCount); err != nil {
 			return fmt.Errorf("count execution node references: %w", err)
 		}
@@ -1014,8 +1031,8 @@ func (s *Store) ExchangeAgentEnrollment(ctx context.Context, input AgentEnrollme
 	return result, err
 }
 
-// loadAgentEnrollmentRuntimeConfiguration 只在有效关联材料已验证后读取该节点的固定本机配置。
-// 配置不允许为空或跨平台，避免 Agent 关联成功后退化到环境变量、PATH 或控制面动态下发路径。
+// loadAgentEnrollmentRuntimeConfiguration 在关联材料或机器身份已验证后读取绑定节点配置。
+// 配置不允许为空或跨平台，避免 Agent 退化到环境变量或 PATH；同步只允许既定结构化配置。
 func loadAgentEnrollmentRuntimeConfiguration(ctx context.Context, tx *sql.Tx, nodeID string) (AgentEnrollmentRuntimeConfiguration, error) {
 	var configuration AgentEnrollmentRuntimeConfiguration
 	var allowedRootsJSON, managementState string
@@ -1505,7 +1522,7 @@ func (s *Store) ChangeDataSourceState(ctx context.Context, input DataSourceState
 }
 
 // DeleteDataSource 在短事务内执行确定性的永久删除。
-// 历史引用在事务内重新核验；一旦存在引用即拒绝，绝不能改为归档。
+// 仅未完成任务阻止删除；历史记录独立保留，当前凭据同步清理。
 func (s *Store) DeleteDataSource(ctx context.Context, input DataSourceDeletion) (DataSourceDeletionResult, error) {
 	if err := validateDataSourceDeletion(input); err != nil {
 		return DataSourceDeletionResult{}, err
@@ -1528,12 +1545,21 @@ func (s *Store) DeleteDataSource(ctx context.Context, input DataSourceDeletion) 
 			return ErrRevisionConflict
 		}
 
-		referenceCount, err := dataSourceReferenceCount(ctx, tx, input.DataSourceID)
+		referenceCount, err := dataSourceActiveTaskCount(ctx, tx, input.DataSourceID)
 		if err != nil {
 			return err
 		}
 		if referenceCount > 0 {
 			return ErrDataSourceDeleteIneligible
+		}
+		// 尚未提交的检查随配置删除失效，保留历史及幂等回执，禁止继续领取或解析凭据。
+		if _, err := tx.ExecContext(ctx, `UPDATE precheck_runs SET status = 'INVALIDATED', completed_at = ?
+            WHERE data_source_id = ? AND status IN ('PENDING', 'LEASED', 'SUCCEEDED')`, utcText(input.DeletedAt), input.DataSourceID); err != nil {
+			return fmt.Errorf("invalidate deleted source prechecks: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE data_source_connection_test_runs SET status = 'INVALIDATED', completed_at = ?
+            WHERE data_source_id = ? AND status IN ('PENDING', 'LEASED')`, utcText(input.DeletedAt), input.DataSourceID); err != nil {
+			return fmt.Errorf("invalidate deleted source connection tests: %w", err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `DELETE FROM credential_revisions WHERE data_source_id = ?`, input.DataSourceID); err != nil {

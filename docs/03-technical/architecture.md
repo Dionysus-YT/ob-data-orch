@@ -2,8 +2,16 @@
 
 > 文档状态：技术架构、技术路线与首条切片最小实现契约已确认
 > 适用范围：V1.0 首条纵向切片及后续三类任务共用基础
-> 产品依据：[产品范围](../01-product/product-scope.md)、[关键决策](../01-product/decisions.md)、[产品设计基线收口](../02-design/product-design-baseline-closure.md)
+> 产品依据：[产品范围](../01-product/product-scope.md)、[关键决策](../01-product/decisions.md)、[产品设计基线收口](../01-product/decisions.md#dec-034-产品设计语义基线收口)
 > 更新日期：2026-07-21
+
+### 单一部署入口（DEC-048，2026-09-14）
+
+控制面同一 HTTPS 服务托管编译后的 Vue 静态资源、登录、业务 API、Agent 协议和动态生成的 Agent 安装包；Vite 用于源码开发与前端构建，不属于安装包运行依赖。安装后的固定数据目录与程序资源分离，后台服务使用固定账户。构建脚本只输出独立成品包，不更换运行服务。启动入口统一管理首次配置、安装、自启、停止、升级与状态。
+
+### 源码开发入口（2026-09-15 用户补充）
+
+安装包流程只用于稳定版本；Windows AMD64 日常开发使用 `scripts/dev.ps1` 和 `-Agent`。控制面以显式开发参数将认证后的页面与 HMR WebSocket 代理到回环 Vite，API 和 Agent 协议仍在原 HTTPS 入口处理。仅允许回环访问，独立数据位于 `var/dev/`；真实能力由持久配置控制，开发入口支持 -RealExecution 开启并保留。真实模式 Go 变化只提示，由终端 r 明确触发正常取消、停止、删除旧开发程序、重新构建并启动；合成模式自动更新；前端 HMR 无需打包。详见[开发使用说明](deployment-operations.md#源码开发模式)。
 
 ## 1. 设计目标
 

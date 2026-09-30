@@ -1,6 +1,9 @@
 import type { DataSourceDetail, DataSourceSummary, DataSourceUpdate, DataSourceWrite } from '@/api/browser'
 
+export type SourceTone = 'neutral' | 'success' | 'warning' | 'danger' | 'running'
+
 export const environments = [{ value: 'DEVELOPMENT', label: '开发' }, { value: 'TEST', label: '测试' }, { value: 'STAGING', label: '预生产' }, { value: 'PRODUCTION', label: '生产' }] as const
+export const editorEnvironments = [{ value: 'DEVELOPMENT', label: '开发' }, { value: 'PRODUCTION', label: '生产' }, { value: 'TEST', label: '测试' }] as const
 export function environmentLabel(value: string) { return environments.find((entry) => entry.value === value)?.label ?? '未知环境' }
 
 export function connectionFact(source: Pick<DataSourceSummary, 'lastTestStatus' | 'lastTestedAt'>) {
@@ -24,13 +27,21 @@ export function connectionListFact(source: Pick<DataSourceSummary, 'lastTestStat
   return { label: labels[status] ?? '待确认', tone }
 }
 
+export function antBadgeStatus(tone: SourceTone) {
+  if (tone === 'running') return 'processing'
+  if (tone === 'danger') return 'error'
+  if (tone === 'success') return 'success'
+  if (tone === 'warning') return 'warning'
+  return 'default'
+}
+
 export function formatVerifiedTime(value?: string) {
   if (!value || !Number.isFinite(new Date(value).getTime())) return '验证时间未提供'
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
 }
 
-export type SourceForm = { -readonly [K in keyof DataSourceWrite]: DataSourceWrite[K] }
-export function blankSourceForm(): SourceForm { return { displayName: '', environment: 'TEST', connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '', port: 2883, clusterName: '', tenantName: '', username: '', defaultDatabase: '', password: '', sysUser: '', sysPassword: '' } }
+export type SourceForm = Omit<{ -readonly [K in keyof DataSourceWrite]: DataSourceWrite[K] }, 'environment'> & { environment: DataSourceWrite['environment'] | undefined }
+export function blankSourceForm(): SourceForm { return { displayName: '', environment: undefined, connectionKind: 'ODP', compatibilityMode: 'MYSQL', host: '', port: 2883, clusterName: '', tenantName: '', username: '', defaultDatabase: '', password: '', sysUser: '', sysPassword: '' } }
 
 // 仅比较 P3 允许变更的字段；凭据留空保留，显式清除 sys 凭据使用既有 API 空值语义。
 export function sourceUpdate(form: SourceForm, source: DataSourceDetail, clearSys: boolean): DataSourceUpdate {
@@ -38,7 +49,7 @@ export function sourceUpdate(form: SourceForm, source: DataSourceDetail, clearSy
   for (const key of ['displayName', 'host', 'clusterName', 'tenantName', 'username'] as const) {
     if (form[key].trim() !== (source[key] ?? '')) changed[key] = form[key].trim()
   }
-  if (form.environment !== source.environment) changed.environment = form.environment
+  if (form.environment && form.environment !== source.environment) changed.environment = form.environment
   if (form.compatibilityMode !== source.compatibilityMode) changed.compatibilityMode = form.compatibilityMode
   if (form.port !== source.port) changed.port = form.port
   const database = form.compatibilityMode === 'MYSQL' ? form.defaultDatabase ?? '' : ''

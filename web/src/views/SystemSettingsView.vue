@@ -1,5 +1,9 @@
+<script setup lang="ts">
+import { SettingOutlined } from '@ant-design/icons-vue'
+import { Button as AButton } from 'ant-design-vue'
+</script>
 <template>
   <section class="page-heading"><div><h1>系统设置</h1><p>单页面分区展示平台真实生效值、来源与影响范围。未接入的配置不填充猜测值，也不提供无意义的保存入口。</p></div><span class="draft-status">配置暂不可用</span></section>
-  <section class="settings-tabs" aria-label="系统设置分区"><button class="active" disabled>平台基础</button><button disabled>调度</button><button disabled>安全</button><button disabled>工具与兼容</button></section>
-  <section class="settings-layout"><section class="content-card settings-main"><h2>平台基础</h2><div class="empty-state"><div class="empty-mark">⚙</div><h2>系统设置功能尚未接入</h2><p>接入后每项将显示真实生效值、来源、修改时间和状态。一次只编辑一个分区，并以版本校验实现独立原子保存。</p></div><section class="configuration-summary"><h3>已确认的设置边界</h3><dl><div><dt>保留期</dt><dd>任务、普通日志与审计日志分别管理；降低保留期不承诺立即删除或恢复。</dd></div><div><dt>调度</dt><dd>保持用户显式选择节点；不自动选择、提交、改派或调整并发。</dd></div><div><dt>安全</dt><dd>内置脱敏不可关闭；密钥不显示、不复制、不下载。</dd></div></dl></section></section><aside class="content-card settings-aside"><h2>影响说明</h2><p>平台设置不会回写已提交任务、历史命令或不可变快照。</p><p>工具元数据变化将使草稿和模板重新校验，但不会安装、升级或切换节点工具。</p><p>发现配置版本冲突时阻断覆盖，刷新后重新比较；不自动合并或强制保存。</p></aside></section>
+  <section class="settings-tabs" aria-label="系统设置分区"><AButton disabled class="active">平台基础</AButton><AButton disabled>调度</AButton><AButton disabled>安全</AButton><AButton disabled>工具与兼容</AButton></section>
+  <section class="settings-layout"><section class="content-card settings-main"><h2>平台基础</h2><div class="empty-state"><div class="empty-mark"><SettingOutlined class="product-icon" aria-hidden="true" /></div><h2>系统设置功能尚未接入</h2><p>接入后每项将显示真实生效值、来源、修改时间和状态。一次只编辑一个分区，并以版本校验实现独立原子保存。</p></div><section class="configuration-summary"><h3>已确认的设置边界</h3><dl><div><dt>保留期</dt><dd>任务、普通日志与审计日志分别管理；降低保留期不承诺立即删除或恢复。</dd></div><div><dt>调度</dt><dd>保持用户显式选择节点；不自动选择、提交、改派或调整并发。</dd></div><div><dt>安全</dt><dd>内置脱敏不可关闭；密钥不显示、不复制、不下载。</dd></div></dl></section></section><aside class="content-card settings-aside"><h2>影响说明</h2><p>平台设置不会回写已提交任务、历史命令或不可变快照。</p><p>工具元数据变化将使草稿和模板重新校验，但不会安装、升级或切换节点工具。</p><p>发现配置版本冲突时阻断覆盖，刷新后重新比较；不自动合并或强制保存。</p></aside></section>
 </template>

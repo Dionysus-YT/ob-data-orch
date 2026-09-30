@@ -25,6 +25,17 @@ export function dataSourceErrorMessage(error: unknown, fallback: string): string
   return apiError.message || fallback
 }
 
+export function exportCatalogErrorMessage(error: unknown): string {
+  const apiError = error as Partial<ApiError>
+  if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE' || apiError.status === 401) return '登录或页面安全校验已失效，请刷新后重试。'
+  if (apiError.code === 'EXPORT_OBJECT_CATALOG_FIELDS_INVALID') return '目录查询条件与当前控制面版本不兼容。请更新控制面与 Agent 后重新加载。'
+  if (apiError.status === 404) return '对象目录接口不可用，或当前身份无权读取所选数据源和节点。请确认控制面已更新并检查授权；仍可手动添加对象。'
+  if (apiError.status === 409 || apiError.status === 412) return '数据源配置已变化，请刷新页面后重新选择。'
+  if (apiError.code === 'EXPORT_OBJECT_CATALOG_NODE_UNAVAILABLE') return '执行节点当前无法接收对象查询。请检查 Agent 心跳和节点状态；也可手动添加对象。'
+  if (apiError.code === 'NETWORK_UNAVAILABLE') return '无法连接控制面，请检查服务状态后重试。'
+  return apiError.message || '无法读取对象元数据，可重试或手动添加。'
+}
+
 export function exportDraftErrorMessage(error: unknown, fallback: string): string {
   const apiError = error as Partial<ApiError>
   if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE') return '当前页面未获得请求安全令牌，已拒绝创建草稿。请刷新页面后重试。'
@@ -176,6 +187,19 @@ export interface DataSourceConnectionTest {
   readonly sysCredentialConfigured: boolean
   readonly sysVerificationStatus?: DataSourceConnectionTestSysVerificationStatus
   readonly sysResultCode?: string
+}
+
+export interface ExportObjectCatalogQuery {
+  readonly id: string
+  readonly status: DataSourceConnectionTestStatus
+  readonly dataSourceId: string
+  readonly nodeId: string
+  readonly database: string
+  readonly objectType: 'DATABASE' | ExportObjectType
+  readonly keyword: string
+  readonly objects: readonly string[]
+  readonly truncated: boolean
+  readonly validUntil: string
 }
 
 export interface DataSourceStateChange {
@@ -627,6 +651,8 @@ export interface BrowserApi {
 	archiveDataSource(dataSourceId: string, revision: number): Promise<DataSourceDeletionResult>
   startDataSourceConnectionTest(dataSourceId: string, revision: number, nodeId: string): Promise<DataSourceConnectionTestRequest>
   getDataSourceConnectionTest(connectionTestId: string): Promise<DataSourceConnectionTest>
+  searchExportObjects(dataSourceId: string, revision: number, input: { nodeId: string; database: string; objectType: 'DATABASE' | ExportObjectType; keyword: string }): Promise<ExportObjectCatalogQuery>
+  getExportObjectCatalogQuery(queryId: string): Promise<ExportObjectCatalogQuery>
   createExportDraft(input: ExportDraftInput): Promise<string>
   getExportDraft(draftId: string): Promise<ExportDraft>
   updateExportDraft(draft: ExportDraft): Promise<ExportDraft>
@@ -777,6 +803,14 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async getDataSourceConnectionTest(connectionTestId) {
       const body = await request(options, `/api/v1/data-source-connection-tests/${encodeURIComponent(connectionTestId)}`, { method: 'GET' })
       return parseDataSourceConnectionTest(requiredObject(body, 'item'))
+    },
+    async searchExportObjects(dataSourceId, revision, input) {
+      const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}:search-export-objects`, writeRequest(options, input, revision, 'POST', true))
+      return parseExportObjectCatalogQuery(requiredObject(body, 'item'))
+    },
+    async getExportObjectCatalogQuery(queryId) {
+      const body = await request(options, `/api/v1/export-object-catalog-queries/${encodeURIComponent(queryId)}`, { method: 'GET' })
+      return parseExportObjectCatalogQuery(requiredObject(body, 'item'))
     },
     async createExportDraft(input) {
       const body = await request(options, '/api/v1/export-drafts', writeRequest(options, input))
@@ -930,7 +964,11 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
 
 export function browserApi(): BrowserApi {
   return createBrowserApi({
-    fetcher: fetch,
+    fetcher: async (input, init) => {
+      const response = await fetch(input, init)
+      if (response.status === 401) window.location.assign('/login')
+      return response
+    },
     csrfToken: csrfTokenFromDocument,
     idempotencyKey: newIdempotencyKey,
   })
@@ -1056,6 +1094,25 @@ function parseDataSourceConnectionTestRequest(value: Record<string, unknown>): D
     id: requiredString(value, 'id'),
     status: parseDataSourceConnectionTestStatus(value),
     nodeId: requiredString(value, 'nodeId'),
+  }
+}
+
+function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportObjectCatalogQuery {
+  const status = parseDataSourceConnectionTestStatus(value)
+  const objectType = requiredString(value, 'objectType')
+  if (objectType !== 'DATABASE' && objectType !== 'TABLE' && objectType !== 'VIEW') throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
+  const database = objectType === 'DATABASE' ? requiredStringAllowEmpty(value, 'database') : requiredString(value, 'database')
+  if (objectType === 'DATABASE' && database !== '') throw localError('RESPONSE_INVALID', '控制面返回了无效数据库查询范围。')
+  const objects = requiredStringList(value, 'objects')
+  if (objects.length > 100 || objects.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name))) {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效对象目录。')
+  }
+  if (status !== 'SUCCEEDED' && objects.length > 0) throw localError('RESPONSE_INVALID', '未完成的对象查询包含对象名称。')
+  return {
+    id: requiredString(value, 'id'), status, dataSourceId: requiredString(value, 'dataSourceId'),
+    nodeId: requiredString(value, 'nodeId'), database, objectType,
+    keyword: optionalString(value, 'keyword') ?? '', objects, truncated: requiredBoolean(value, 'truncated'),
+    validUntil: requiredString(value, 'validUntil'),
   }
 }
 

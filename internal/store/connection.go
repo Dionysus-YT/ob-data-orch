@@ -9,12 +9,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
+
+// ExportObjectCatalogClaimTimeout 限制对象查询在 Agent 未领取时的排队时间；领取后的 JDBC 执行仍使用原租约期限。
+const ExportObjectCatalogClaimTimeout = 30 * time.Second
 
 // RequestDataSourceConnectionTest 在一个短事务内冻结指定节点 Agent 的基础连接测试意图。
 // 它不会建立数据库连接、解析密码或启动 JDBC；这些动作只能由后续持有租约的 Agent 执行。
 func (s *Store) RequestDataSourceConnectionTest(ctx context.Context, input DataSourceConnectionTestCreate) (DataSourceConnectionTestCreateResult, error) {
+	if input.OperationKind == "" {
+		input.OperationKind = "CONNECTION_TEST"
+	}
 	if err := validateDataSourceConnectionTestCreate(input); err != nil {
 		return DataSourceConnectionTestCreateResult{}, err
 	}
@@ -71,11 +80,13 @@ func (s *Store) RequestDataSourceConnectionTest(ctx context.Context, input DataS
                 credential_id, credential_revision, node_id, binding_agent_id, node_facts_revision,
                 binding_digest, status, verification_source, lease_id, lease_epoch, lease_expires_at,
                 result_code, safe_summary_json, created_at, completed_at, valid_until,
-                sys_credential_id, sys_credential_revision
+                sys_credential_id, sys_credential_revision,
+				operation_kind, catalog_database, catalog_compatibility_mode, catalog_object_type, catalog_keyword
             )
             SELECT ?, ds.data_source_id, ?, ?, ds.credential_id, ds.current_credential_revision,
                    ?, ?, ?, ?, 'PENDING', ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?,
-                   ds.sys_credential_id, ds.sys_credential_revision
+                   ?, ?,
+				   ?, ?, ?, ?, ?
             FROM data_sources AS ds
             JOIN credential_revisions AS cr
               ON cr.credential_id = ds.credential_id
@@ -95,6 +106,8 @@ func (s *Store) RequestDataSourceConnectionTest(ctx context.Context, input DataS
 			input.ConnectionTestID, input.CreatorSubjectID, binding.ConnectionConfigDigest,
 			binding.NodeID, binding.BindingAgentID, binding.NodeFactsRevision, binding.BindingDigest,
 			binding.VerificationSource, utcText(input.CreatedAt), utcText(binding.ValidUntil),
+			nullableString(binding.SysCredentialID), nullableInt64(binding.SysCredentialRevision),
+			binding.OperationKind, nullableString(binding.CatalogDatabase), nullableString(binding.CatalogCompatibilityMode), nullableString(binding.CatalogObjectType), nullableString(binding.CatalogKeyword),
 			binding.NodeID, binding.BindingAgentID, input.CreatorSubjectID, input.DataSourceID,
 			input.ExpectedDataSourceRevision, binding.NodeFactsRevision,
 		)
@@ -161,6 +174,12 @@ func (s *Store) GetDataSourceConnectionTestRun(ctx context.Context, connectionTe
 		SysCredentialRevision:  run.Binding.SysCredentialRevision,
 		SysVerificationStatus:  run.SysVerificationStatus,
 		SysResultCode:          run.SysResultCode,
+		OperationKind:          run.Binding.OperationKind,
+		CatalogDatabase:        run.Binding.CatalogDatabase,
+		CatalogObjectType:      run.Binding.CatalogObjectType,
+		CatalogKeyword:         run.Binding.CatalogKeyword,
+		CatalogObjects:         append([]string(nil), run.CatalogObjects...),
+		CatalogTruncated:       run.CatalogTruncated,
 		ValidUntil:             run.Binding.ValidUntil,
 		CreatedAt:              run.CreatedAt,
 		CompletedAt:            run.CompletedAt,
@@ -604,6 +623,14 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		if input.VerificationSource != run.Binding.VerificationSource {
 			return ErrDataSourceConnectionTestLeaseRejected
 		}
+		if run.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
+			if input.SysVerificationStatus != "NOT_CONFIGURED" || input.SysResultCode != "" ||
+				!validCatalogResult(input.Status, input.CatalogObjects, input.CatalogTruncated) {
+				return ErrDataSourceConnectionTestLeaseRejected
+			}
+		} else if len(input.CatalogObjects) > 0 || input.CatalogTruncated {
+			return ErrDataSourceConnectionTestLeaseRejected
+		}
 		hasSysCredential := run.Binding.SysCredentialID != "" && run.Binding.SysCredentialRevision > 0
 		if hasSysCredential == (input.SysVerificationStatus == "NOT_CONFIGURED") {
 			return ErrDataSourceConnectionTestLeaseRejected
@@ -675,13 +702,25 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		if err != nil {
 			return err
 		}
+		var catalogJSON any
+		if run.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" && input.Status == "SUCCEEDED" {
+			objects := input.CatalogObjects
+			if objects == nil {
+				objects = []string{}
+			}
+			encoded, encodeErr := json.Marshal(objects)
+			if encodeErr != nil {
+				return encodeErr
+			}
+			catalogJSON = string(encoded)
+		}
 		updated, err := tx.ExecContext(ctx, `
             UPDATE data_source_connection_test_runs
             SET status = ?, result_code = ?, safe_summary_json = ?, completed_at = ?,
-                sys_verification_status = ?, sys_result_code = ?
+                sys_verification_status = ?, sys_result_code = ?, catalog_objects_json = ?, catalog_truncated = ?
             WHERE connection_test_id = ? AND status = 'LEASED'
         `, input.Status, input.EvidenceCode, safeSummaryJSON, utcText(input.Now),
-			nullableString(input.SysVerificationStatus), nullableString(input.SysResultCode), input.ConnectionTestID)
+			nullableString(input.SysVerificationStatus), nullableString(input.SysResultCode), catalogJSON, input.CatalogTruncated, input.ConnectionTestID)
 		if err != nil {
 			return fmt.Errorf("complete data source connection test: %w", err)
 		}
@@ -692,7 +731,7 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		if affected != 1 {
 			return ErrDataSourceConnectionTestLeaseRejected
 		}
-		if input.VerificationSource == "AGENT_JDBC" {
+		if input.VerificationSource == "AGENT_JDBC" && run.Binding.OperationKind == "CONNECTION_TEST" {
 			updatedSource, err := tx.ExecContext(ctx, `
                 UPDATE data_sources
                 SET last_test_status = ?, last_tested_at = ?, last_test_safe_summary_json = ?,
@@ -765,6 +804,8 @@ type storedDataSourceConnectionTest struct {
 	SafeSummaryJSON       string
 	SysVerificationStatus string
 	SysResultCode         string
+	CatalogObjects        []string
+	CatalogTruncated      bool
 	CreatedAt             time.Time
 	CompletedAt           time.Time
 }
@@ -807,6 +848,8 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 	var run storedDataSourceConnectionTest
 	var leaseID, resultCode, safeSummaryJSON sql.NullString
 	var sysCredentialID, sysVerificationStatus, sysResultCode sql.NullString
+	var catalogDatabase, catalogCompatibilityMode, catalogObjectType, catalogKeyword, catalogObjectsJSON sql.NullString
+	var catalogTruncated int
 	var leaseEpoch sql.NullInt64
 	var sysCredentialRevision sql.NullInt64
 	var createdAt string
@@ -816,7 +859,9 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
                credential_id, credential_revision, node_id, binding_agent_id, node_facts_revision,
 		       binding_digest, status, verification_source, lease_id, lease_epoch,
                lease_expires_at, result_code, safe_summary_json, created_at, completed_at, valid_until,
-               sys_credential_id, sys_credential_revision, sys_verification_status, sys_result_code
+               sys_credential_id, sys_credential_revision, sys_verification_status, sys_result_code,
+		       operation_kind, catalog_database, catalog_compatibility_mode, catalog_object_type, catalog_keyword,
+               catalog_objects_json, catalog_truncated
         FROM data_source_connection_test_runs
         WHERE connection_test_id = ?
     `, connectionTestID).Scan(
@@ -826,6 +871,8 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 		&run.Binding.BindingDigest, &run.Status, &run.Binding.VerificationSource, &leaseID, &leaseEpoch,
 		&leaseExpiresAt, &resultCode, &safeSummaryJSON, &createdAt, &completedAt, &validUntil,
 		&sysCredentialID, &sysCredentialRevision, &sysVerificationStatus, &sysResultCode,
+		&run.Binding.OperationKind, &catalogDatabase, &catalogCompatibilityMode, &catalogObjectType, &catalogKeyword,
+		&catalogObjectsJSON, &catalogTruncated,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedDataSourceConnectionTest{}, ErrDataSourceConnectionTestLeaseRejected
@@ -842,6 +889,13 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 	run.Binding.SysCredentialID = sysCredentialID.String
 	run.Binding.SysCredentialRevision = sysCredentialRevision.Int64
 	run.SysVerificationStatus, run.SysResultCode = sysVerificationStatus.String, sysResultCode.String
+	run.Binding.CatalogDatabase, run.Binding.CatalogCompatibilityMode, run.Binding.CatalogObjectType, run.Binding.CatalogKeyword = catalogDatabase.String, catalogCompatibilityMode.String, catalogObjectType.String, catalogKeyword.String
+	if catalogObjectsJSON.Valid {
+		if err := json.Unmarshal([]byte(catalogObjectsJSON.String), &run.CatalogObjects); err != nil {
+			return storedDataSourceConnectionTest{}, fmt.Errorf("parse export object catalog result: %w", err)
+		}
+	}
+	run.CatalogTruncated = catalogTruncated == 1
 	if validUntil.Valid {
 		if run.Binding.ValidUntil, parseErr = time.Parse(time.RFC3339Nano, validUntil.String); parseErr != nil {
 			return storedDataSourceConnectionTest{}, fmt.Errorf("parse data source connection test validity: %w", parseErr)
@@ -894,9 +948,11 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
         WHERE ds.data_source_id = ?
           AND ds.revision = ?
           AND ds.state != 'ARCHIVED'
+          AND (? != 'EXPORT_OBJECT_CATALOG' OR (ds.state = 'ENABLED' AND ds.last_test_status = 'SUCCEEDED' AND ds.last_test_source = 'AGENT_JDBC'))
           AND n.management_state IN ('ENABLED', 'DISABLED')
+          AND (? != 'EXPORT_OBJECT_CATALOG' OR n.management_state = 'ENABLED')
           AND a.facts_revision > 0
-	`, input.NodeID, input.CreatorSubjectID, input.DataSourceID, input.ExpectedDataSourceRevision).Scan(
+	`, input.NodeID, input.CreatorSubjectID, input.DataSourceID, input.ExpectedDataSourceRevision, input.OperationKind, input.OperationKind).Scan(
 		&connectionKind, &compatibilityMode, &host, &port, &clusterName, &tenantName, &username,
 		&binding.CredentialID, &binding.CredentialRevision, &credentialStatus, &nodePlatform,
 		&binding.BindingAgentID, &binding.NodeFactsRevision, &lastHeartbeatAt,
@@ -943,10 +999,17 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 		NodeFactsRevision:      binding.NodeFactsRevision,
 		BindingAgentID:         binding.BindingAgentID,
 		VerificationSource:     input.VerificationSource,
+		OperationKind:          input.OperationKind,
+		CatalogDatabase:        input.CatalogDatabase,
+		CatalogObjectType:      input.CatalogObjectType,
+		CatalogKeyword:         input.CatalogKeyword,
 		ValidUntil:             input.ValidUntil.UTC(),
 	}
+	if input.OperationKind == "EXPORT_OBJECT_CATALOG" {
+		binding.CatalogCompatibilityMode = compatibilityMode
+	}
 	// G2 合成测试不解析真实秘密，因此不能冻结一个自身无法验证的 sys 槽位。
-	if input.VerificationSource == "AGENT_JDBC" {
+	if input.VerificationSource == "AGENT_JDBC" && input.OperationKind == "CONNECTION_TEST" {
 		binding.SysCredentialID = sysCredentialID
 		binding.SysCredentialRevision = sysCredentialRevision
 	}
@@ -1042,12 +1105,13 @@ func validateCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql
 	var connectionKind, compatibilityMode, host, clusterName, tenantName, username string
 	var port int
 	var credentialID, credentialStatus, sourceState, nodeState, currentAgentID, agentStatus string
+	var lastTestStatus, lastTestSource sql.NullString
 	var sysCredentialID, sysCredentialStatus string
 	var credentialRevision, factsRevision, sysCredentialRevision int64
 	err := tx.QueryRowContext(ctx, `
         SELECT ds.connection_kind, ds.compatibility_mode, ds.host, ds.port, ds.cluster_name,
                ds.tenant_name, ds.username, ds.credential_id, ds.current_credential_revision,
-               ds.state, cr.status, n.management_state, a.agent_id, a.status, a.facts_revision,
+	       ds.state, ds.last_test_status, ds.last_test_source, cr.status, n.management_state, a.agent_id, a.status, a.facts_revision,
 		       COALESCE(ds.sys_credential_id, ''), COALESCE(ds.sys_credential_revision, 0),
 		       COALESCE(scr.status, '')
         FROM data_sources AS ds
@@ -1063,7 +1127,7 @@ func validateCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql
         WHERE ds.data_source_id = ?
     `, binding.NodeID, binding.BindingAgentID, binding.DataSourceID).Scan(
 		&connectionKind, &compatibilityMode, &host, &port, &clusterName, &tenantName, &username,
-		&credentialID, &credentialRevision, &sourceState, &credentialStatus, &nodeState,
+		&credentialID, &credentialRevision, &sourceState, &lastTestStatus, &lastTestSource, &credentialStatus, &nodeState,
 		&currentAgentID, &agentStatus, &factsRevision,
 		&sysCredentialID, &sysCredentialRevision, &sysCredentialStatus,
 	)
@@ -1073,13 +1137,16 @@ func validateCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql
 	if err != nil {
 		return fmt.Errorf("read current data source connection test binding: %w", err)
 	}
-	sysBindingMatches := binding.VerificationSource != "AGENT_JDBC" ||
+	sysBindingMatches := binding.VerificationSource != "AGENT_JDBC" || binding.OperationKind == "EXPORT_OBJECT_CATALOG" ||
 		(sysCredentialID == binding.SysCredentialID && sysCredentialRevision == binding.SysCredentialRevision &&
 			(sysCredentialRevision == 0 || sysCredentialStatus == "ACTIVE"))
 	if sourceState == "ARCHIVED" || credentialStatus != "ACTIVE" || !dataSourceConnectionTestNodeStateAllowed(nodeState) ||
 		currentAgentID != binding.BindingAgentID || agentStatus != "ACTIVE" ||
 		credentialID != binding.CredentialID || credentialRevision != binding.CredentialRevision ||
 		factsRevision != binding.NodeFactsRevision || !sysBindingMatches {
+		return ErrDataSourceConnectionTestLeaseRejected
+	}
+	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" && (sourceState != "ENABLED" || lastTestStatus.String != "SUCCEEDED" || lastTestSource.String != "AGENT_JDBC" || nodeState != "ENABLED") {
 		return ErrDataSourceConnectionTestLeaseRejected
 	}
 	connectionConfigDigest, err := dataSourceConnectionConfigDigest(
@@ -1148,6 +1215,16 @@ func dataSourceConnectionConfigDigest(dataSourceID, connectionKind, compatibilit
 }
 
 func dataSourceConnectionTestBindingDigest(binding DataSourceConnectionTestBinding) (string, error) {
+	var catalog any
+	type catalogBinding struct {
+		Database          string `json:"database"`
+		CompatibilityMode string `json:"compatibilityMode"`
+		ObjectType        string `json:"objectType"`
+		Keyword           string `json:"keyword"`
+	}
+	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
+		catalog = catalogBinding{binding.CatalogDatabase, binding.CatalogCompatibilityMode, binding.CatalogObjectType, binding.CatalogKeyword}
+	}
 	payload, err := json.Marshal(struct {
 		BindingAgentID         string `json:"bindingAgentId"`
 		ConnectionConfigDigest string `json:"connectionConfigDigest"`
@@ -1161,6 +1238,7 @@ func dataSourceConnectionTestBindingDigest(binding DataSourceConnectionTestBindi
 		SysCredentialRevision  int64  `json:"sysCredentialRevision"`
 		ValidUntil             string `json:"validUntil"`
 		VerificationSource     string `json:"verificationSource"`
+		Catalog                any    `json:"catalog,omitempty"`
 	}{
 		BindingAgentID: binding.BindingAgentID, ConnectionConfigDigest: binding.ConnectionConfigDigest,
 		ConnectionTestID: binding.ConnectionTestID, CredentialID: binding.CredentialID,
@@ -1168,6 +1246,7 @@ func dataSourceConnectionTestBindingDigest(binding DataSourceConnectionTestBindi
 		NodeFactsRevision: binding.NodeFactsRevision, NodeID: binding.NodeID,
 		SysCredentialID: binding.SysCredentialID, SysCredentialRevision: binding.SysCredentialRevision,
 		ValidUntil: utcText(binding.ValidUntil), VerificationSource: binding.VerificationSource,
+		Catalog: catalog,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode data source connection test binding digest: %w", err)
@@ -1495,9 +1574,10 @@ func expireDataSourceConnectionTestsTx(ctx context.Context, tx *sql.Tx, now time
           AND (
               valid_until IS NULL OR valid_until <= ?
               OR (status = 'LEASED' AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+              OR (status = 'PENDING' AND operation_kind = 'EXPORT_OBJECT_CATALOG' AND created_at <= ?)
           )
         RETURNING connection_test_id
-    `, utcText(now), utcText(now), utcText(now))
+    `, utcText(now), utcText(now), utcText(now), utcText(now.Add(-ExportObjectCatalogClaimTimeout)))
 	if err != nil {
 		return 0, fmt.Errorf("expire data source connection tests: %w", err)
 	}
@@ -1516,6 +1596,14 @@ func expireDataSourceConnectionTestsTx(ctx context.Context, tx *sql.Tx, now time
 	}
 	if err := rows.Close(); err != nil {
 		return 0, fmt.Errorf("close expired data source connection tests: %w", err)
+	}
+	// 对象名仅供短时向导选择；到期后清空持久化结果，不保留目录历史。
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE data_source_connection_test_runs
+		SET catalog_objects_json = NULL, catalog_truncated = 0
+		WHERE operation_kind = 'EXPORT_OBJECT_CATALOG' AND valid_until <= ? AND catalog_objects_json IS NOT NULL
+	`, utcText(now)); err != nil {
+		return 0, fmt.Errorf("clear expired export object catalog: %w", err)
 	}
 	for _, connectionTestID := range connectionTestIDs {
 		if err := insertDataSourceConnectionTestExpiryAudit(ctx, tx, connectionTestID, now); err != nil {
@@ -1599,6 +1687,14 @@ func validateDataSourceConnectionTestCreate(input DataSourceConnectionTestCreate
 		input.HeartbeatFreshAfter.After(input.CreatedAt) || input.ValidUntil.IsZero() || !input.ValidUntil.After(input.CreatedAt) {
 		return ErrDataSourceConnectionTestInvalid
 	}
+	if input.OperationKind == "EXPORT_OBJECT_CATALOG" {
+		if input.VerificationSource != "AGENT_JDBC" || !validCatalogScope(input.CatalogDatabase, input.CatalogObjectType) ||
+			!validCatalogText(input.CatalogKeyword, 100, true) {
+			return ErrDataSourceConnectionTestInvalid
+		}
+	} else if input.OperationKind != "CONNECTION_TEST" || input.CatalogDatabase != "" || input.CatalogObjectType != "" || input.CatalogKeyword != "" {
+		return ErrDataSourceConnectionTestInvalid
+	}
 	return nil
 }
 
@@ -1614,7 +1710,55 @@ func validateDataSourceConnectionTestBinding(binding DataSourceConnectionTestBin
 	if (binding.SysCredentialID == "") != (binding.SysCredentialRevision == 0) {
 		return ErrDataSourceConnectionTestInvalid
 	}
+	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
+		if binding.VerificationSource != "AGENT_JDBC" || binding.SysCredentialID != "" ||
+			!validCatalogScope(binding.CatalogDatabase, binding.CatalogObjectType) || !oneOf(binding.CatalogCompatibilityMode, "MYSQL", "ORACLE") ||
+			!validCatalogText(binding.CatalogKeyword, 100, true) {
+			return ErrDataSourceConnectionTestInvalid
+		}
+	} else if (binding.OperationKind != "" && binding.OperationKind != "CONNECTION_TEST") || binding.CatalogDatabase != "" || binding.CatalogCompatibilityMode != "" || binding.CatalogObjectType != "" || binding.CatalogKeyword != "" {
+		return ErrDataSourceConnectionTestInvalid
+	}
 	return nil
+}
+
+// validCatalogScope 限制数据库目录查询只能使用空数据库名；对象查询仍必须绑定明确数据库。
+func validCatalogScope(database, objectType string) bool {
+	if objectType == "DATABASE" {
+		return database == ""
+	}
+	return oneOf(objectType, "TABLE", "VIEW") && validCatalogText(database, 256, false)
+}
+
+// validCatalogText 将目录筛选限制为短 UTF-8 文本；JDBC 模式转义由固定探针执行。
+func validCatalogText(value string, maximum int, allowEmpty bool) bool {
+	if (!allowEmpty && value == "") || len(value) > maximum || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
+// validCatalogResult 限定 Agent 可回传的对象名集合；失败与未知不得携带可发现对象。
+func validCatalogResult(status string, objects []string, truncated bool) bool {
+	if status != "SUCCEEDED" {
+		return len(objects) == 0 && !truncated
+	}
+	if len(objects) > 100 {
+		return false
+	}
+	seen := make(map[string]bool, len(objects))
+	for _, name := range objects {
+		if !validCatalogText(name, 256, false) || strings.ContainsAny(name, "*,") || seen[name] {
+			return false
+		}
+		seen[name] = true
+	}
+	return true
 }
 
 func validateDataSourceConnectionTestClaimNext(input DataSourceConnectionTestClaimNext) error {

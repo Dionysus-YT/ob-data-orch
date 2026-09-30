@@ -1,8 +1,8 @@
 # OB Data Orch 核心用户流程
 
-> 文档状态：产品设计语义基线已收口，导出公共链路、普通导入、旁路导入、任务中心、模板复用与高风险权限低保真已确认  
-> 依据：[总体 PRD](../01-product/PRD.md)  
-> 更新日期：2026-07-20  
+> 文档状态：产品设计语义基线已收口，导出公共链路、普通导入、旁路导入、任务中心、模板复用与高风险权限低保真已确认\
+> 依据：[产品范围](../01-product/product-scope.md)\
+> 更新日期：2026-07-20\
 > 场景语义参考：适用模块的 P3 场景矩阵；视觉与页面架构以 [P0 MASTER](../../design-system/MASTER.md) 为准。
 
 ## 通用前提
@@ -198,7 +198,7 @@
 
 ## 模板创建与使用流程
 
-专项规则见[模板中心模块专项评审稿](template-center-module.md)；已确认页面见[模板中心复用链路低保真基线](template-center-low-fidelity.md)。
+专项规则见[模板中心模块专项评审稿](template-center-module.md)；已确认页面见[模板中心复用链路低保真基线](template-center-module.md#business-scenarios)。
 
 ### 创建或保存模板
 
@@ -237,7 +237,7 @@
 
 ## 权限配置与高风险操作流程
 
-专项规则见[权限与安全基线专项评审稿](access-control-security-module.md)；已确认页面见[权限与安全高风险操作低保真基线](access-control-security-low-fidelity.md)。
+专项规则见[权限与安全基线专项评审稿](access-control-security-module.md)；已确认页面见[权限与安全高风险操作低保真基线](access-control-security-module.md#business-scenarios)。
 
 ### 配置用户权限
 

@@ -63,6 +63,52 @@ func TestRunNext允许显式JDBC运行器回写固定结果(t *testing.T) {
 	}
 }
 
+func TestRunNext导出目录要求专用运行器并回传有界对象(t *testing.T) {
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	grant := testGrant(now, agentwire.DataSourceConnectionTestAgentJDBC)
+	grant.Binding.OperationKind = "EXPORT_OBJECT_CATALOG"
+	grant.Binding.CatalogDatabase = "appdb"
+	grant.Binding.CatalogCompatibilityMode = "MYSQL"
+	grant.Binding.CatalogObjectType = "TABLE"
+	protocol := &protocolStub{grant: grant}
+	worker := testWorker(protocol, fixedClock(now))
+	worker.JDBCRunner = jdbcRunnerStub{}
+	if _, _, err := worker.RunNext(context.Background()); !errors.Is(err, ErrGrantRejected) {
+		t.Fatalf("普通连接运行器不应处理目录租约: %v", err)
+	}
+	protocol = &protocolStub{grant: grant}
+	worker = testWorker(protocol, fixedClock(now))
+	worker.JDBCRunner = catalogRunnerStub{}
+	outcome, found, err := worker.RunNext(context.Background())
+	if err != nil || !found || len(outcome.CatalogObjects) != 1 || outcome.CatalogObjects[0] != "orders" {
+		t.Fatalf("目录查询结果 = %#v, %t, %v", outcome, found, err)
+	}
+	if result := protocol.completion(); len(result.CatalogObjects) != 1 || result.CatalogObjects[0] != "orders" {
+		t.Fatalf("目录完成信封 = %#v", result)
+	}
+}
+
+func TestRunNext数据库目录只接受空数据库绑定(t *testing.T) {
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	grant := testGrant(now, agentwire.DataSourceConnectionTestAgentJDBC)
+	grant.Binding.OperationKind = "EXPORT_OBJECT_CATALOG"
+	grant.Binding.CatalogCompatibilityMode = "MYSQL"
+	grant.Binding.CatalogObjectType = "DATABASE"
+	protocol := &protocolStub{grant: grant}
+	worker := testWorker(protocol, fixedClock(now))
+	worker.JDBCRunner = catalogRunnerStub{}
+	if _, found, err := worker.RunNext(context.Background()); err != nil || !found {
+		t.Fatalf("数据库目录租约应可由专用运行器处理: found=%t err=%v", found, err)
+	}
+	grant.Binding.CatalogDatabase = "synthetic_db"
+	protocol = &protocolStub{grant: grant}
+	worker = testWorker(protocol, fixedClock(now))
+	worker.JDBCRunner = catalogRunnerStub{}
+	if _, found, err := worker.RunNext(context.Background()); !found || !errors.Is(err, ErrGrantRejected) {
+		t.Fatalf("数据库目录不能携带数据库绑定: found=%t err=%v", found, err)
+	}
+}
+
 func TestRunNext在确认前拒绝漂移绑定(t *testing.T) {
 	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
 	grant := testGrant(now, agentwire.DataSourceConnectionTestG2Synthetic)
@@ -152,6 +198,14 @@ type protocolStub struct {
 type jdbcRunnerStub struct {
 	sysStatus agentwire.DataSourceConnectionTestSysVerificationStatus
 	sysCode   string
+}
+
+type catalogRunnerStub struct{ jdbcRunnerStub }
+
+func (catalogRunnerStub) RunCatalog(_ context.Context, grant agentwire.DataSourceConnectionTestGrant) Outcome {
+	return Outcome{ConnectionTestID: grant.ConnectionTestID, Status: agentwire.DataSourceConnectionTestSucceeded,
+		EvidenceCode: "DATABASE_CONNECTED", VerificationSource: agentwire.DataSourceConnectionTestAgentJDBC,
+		SysVerificationStatus: agentwire.DataSourceConnectionTestSysNotConfigured, CatalogObjects: []string{"orders"}}
 }
 
 func (j jdbcRunnerStub) RunConnectionTest(_ context.Context, grant agentwire.DataSourceConnectionTestGrant) Outcome {

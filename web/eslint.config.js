@@ -9,6 +9,8 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
+  { files: ['scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
+  { files: ['tests/fixtures/zoom-extension/*.js'], languageOptions: { globals: { chrome: 'readonly' } } },
   {
     files: ['**/*.{ts,vue}'],
     languageOptions: {

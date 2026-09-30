@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,8 +44,8 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 20 {
-		t.Fatalf("migration count = %d, want 20", migrationCount)
+	if migrationCount != 22 {
+		t.Fatalf("migration count = %d, want 22", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -68,6 +69,54 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	defer rows.Close()
 	if rows.Next() {
 		t.Fatal("foreign key check returned a violation")
+	}
+}
+
+func Test历史解耦迁移保留现有任务(t *testing.T) {
+	db := openTestDatabase(t)
+	ctx := context.Background()
+	legacy := fstest.MapFS{}
+	names, err := fs.Glob(migrations.Files, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if strings.HasPrefix(name, "0021_") || strings.HasPrefix(name, "0022_") {
+			continue
+		}
+		data, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy[name] = &fstest.MapFile{Data: data}
+	}
+	if err := ApplyFS(ctx, db, legacy); err != nil {
+		t.Fatal(err)
+	}
+	insertSyntheticTaskFixture(t, db)
+	if err := Apply(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	// 模式迁移只解除对当前配置的外键依赖，不能删除历史或破坏任务不可变约束。
+	if _, err := db.Exec(`DELETE FROM credential_revisions WHERE data_source_id = 'source-1'; DELETE FROM data_sources WHERE data_source_id = 'source-1'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"tasks", "precheck_runs", "export_drafts"} {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("历史表 %s 未保留: %d, %v", table, count, err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM tasks`); err == nil {
+		t.Fatal("任务不可变约束丢失")
+	}
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if rows.Next() || rows.Err() != nil {
+		t.Fatal("迁移后外键不完整")
 	}
 }
 
@@ -411,7 +460,17 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read twentieth migration: %v", err)
 	}
+	twentyFirstMigration, err := migrations.Files.ReadFile("0021_decouple_data_source_history.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	twentySecondMigration, err := migrations.Files.ReadFile("0022_export_object_catalog.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	tampered := fstest.MapFS{
+		"0022_export_object_catalog.sql":                      &fstest.MapFile{Data: twentySecondMigration},
+		"0021_decouple_data_source_history.sql":               &fstest.MapFile{Data: twentyFirstMigration},
 		"0001_initial.sql":                                    &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},
 		"0002_add_data_source_odc_identity.sql":               &fstest.MapFile{Data: secondMigration},
 		"0003_disable_unverified_data_sources.sql":            &fstest.MapFile{Data: thirdMigration},

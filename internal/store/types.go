@@ -584,8 +584,8 @@ type AgentEnrollmentResult struct {
 	RuntimeConfiguration AgentEnrollmentRuntimeConfiguration
 }
 
-// AgentEnrollmentRuntimeConfiguration 是首次关联时随受认证响应交给 Agent 的固定本机配置。
-// 它来自节点管理员登记的声明，Agent 必须在本机复核后才能用于 JDBC 或 OBDUMPER，后续心跳不能覆盖它。
+// AgentEnrollmentRuntimeConfiguration 是关联或配置同步时交给 Agent 的固定本机配置。
+// 它来自节点管理员登记的声明，Agent 必须在本机复核后才能用于 JDBC 或 OBDUMPER，配置同步不授予执行资格。
 type AgentEnrollmentRuntimeConfiguration struct {
 	Platform     string
 	ToolHome     string
@@ -789,7 +789,7 @@ type DataSourceStateChangeResult struct {
 }
 
 // DataSourceDeletion 表达一次受版本保护的永久删除请求。
-// 存在历史引用时必须返回资格冲突，调用方需明确改用归档动作。
+// 存在未完成或状态待核对的任务时返回资格冲突，历史记录独立保留。
 type DataSourceDeletion struct {
 	DataSourceID     string
 	ActorSubjectID   string
@@ -1438,9 +1438,16 @@ type DataSourceConnectionTestRun struct {
 	SysCredentialRevision int64
 	SysVerificationStatus string
 	SysResultCode         string
-	ValidUntil            time.Time
-	CreatedAt             time.Time
-	CompletedAt           time.Time
+	// OperationKind 区分基础连接测试与导出向导的有界对象候选查询；后者不得更新数据源测试事实。
+	OperationKind     string
+	CatalogDatabase   string
+	CatalogObjectType string
+	CatalogKeyword    string
+	CatalogObjects    []string
+	CatalogTruncated  bool
+	ValidUntil        time.Time
+	CreatedAt         time.Time
+	CompletedAt       time.Time
 }
 
 // DataSourceConnectionTestCreate 只提交测试意图、选定节点和浏览器幂等信息。
@@ -1452,6 +1459,10 @@ type DataSourceConnectionTestCreate struct {
 	ExpectedDataSourceRevision int64
 	NodeID                     string
 	VerificationSource         string
+	OperationKind              string
+	CatalogDatabase            string
+	CatalogObjectType          string
+	CatalogKeyword             string
 	RequestID                  string
 	IdempotencyKey             string
 	RequestDigest              string
@@ -1470,19 +1481,24 @@ type DataSourceConnectionTestCreateResult struct {
 // 它只表达受控数据源连接事实，不能承载 URL、SQL、命令、路径或秘密原文。
 // SysCredentialID/SysCredentialRevision 是可选的 sys 凭据引用（大于 0 表示需要额外验证 sys 租户）。
 type DataSourceConnectionTestBinding struct {
-	ConnectionTestID       string
-	DataSourceID           string
-	ConnectionConfigDigest string
-	CredentialID           string
-	CredentialRevision     int64
-	NodeID                 string
-	NodeFactsRevision      int64
-	BindingAgentID         string
-	BindingDigest          string
-	VerificationSource     string
-	SysCredentialID        string
-	SysCredentialRevision  int64
-	ValidUntil             time.Time
+	ConnectionTestID         string
+	DataSourceID             string
+	ConnectionConfigDigest   string
+	CredentialID             string
+	CredentialRevision       int64
+	NodeID                   string
+	NodeFactsRevision        int64
+	BindingAgentID           string
+	BindingDigest            string
+	VerificationSource       string
+	OperationKind            string
+	CatalogDatabase          string
+	CatalogCompatibilityMode string
+	CatalogObjectType        string
+	CatalogKeyword           string
+	SysCredentialID          string
+	SysCredentialRevision    int64
+	ValidUntil               time.Time
 }
 
 // DataSourceConnectionTestClaimNext 是受认证 Agent 请求领取下一条匹配节点绑定测试的输入。
@@ -1597,6 +1613,8 @@ type AgentDataSourceConnectionTestCompletion struct {
 	VerificationSource    string
 	SysVerificationStatus string
 	SysResultCode         string
+	CatalogObjects        []string
+	CatalogTruncated      bool
 	Now                   time.Time
 }
 

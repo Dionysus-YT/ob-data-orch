@@ -7,6 +7,8 @@
 
 ## 1. 结论先行
 
+前端实现补充（2026-09-16）：保持 Vue 3 + TypeScript + Vite，Primitive 统一使用 Ant Design Vue；实际锁定版本、Canonical Token、产品组件契约、样式架构和升级验证见 [前端平台基线](frontend-platform-baseline.md)。P0/P1 和业务契约优先，不由框架默认值改变产品规则。
+
 确认采用以下技术路线：
 
 ```text
@@ -126,7 +128,7 @@ Agent 通过显式环境块启动工具，不修改机器级环境，也不把�
 - 任务领取采用短原子事务和租约，不依赖 PostgreSQL 的 `SELECT ... FOR UPDATE`；
 - 不把导出文件、原始凭据、完整命令明文或逐行原始日志写入 SQLite；
 - 备份使用 SQLite Online Backup API 或 `VACUUM INTO` 形成一致快照，不在服务运行时直接复制单个 `.db` 文件；
-- SQLite 驱动必须在 Windows AMD64、Linux AMD64/ARM64 上通过相同迁移、事务、崩溃恢复和备份恢复测试。2026-07-21 已验证 `modernc.org/sqlite v1.54.0` 在关闭 CGO 时可生成三目标产物，Windows 事务与备份运行通过；三套麒麟运行、升级和并发门禁通过后再最终锁定驱动，详见[SQLite 跨平台最小技术验证](evidence/sqlite-cross-platform-spike-2026-07-21.md)。
+- SQLite 驱动必须在 Windows AMD64、Linux AMD64/ARM64 上通过相同迁移、事务、崩溃恢复和备份恢复测试。2026-07-21 已验证 `modernc.org/sqlite v1.54.0` 在关闭 CGO 时可生成三目标产物，Windows 事务与备份运行通过；三套麒麟运行、升级和并发门禁通过后再最终锁定驱动，详见[SQLite 跨平台最小技术验证](evidence/component-validation.md#sqlite-platform)。
 
 ## 5. Windows/Linux 多架构基线
 

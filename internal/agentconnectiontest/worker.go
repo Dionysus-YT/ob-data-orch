@@ -42,6 +42,11 @@ type JDBCRunner interface {
 	RunConnectionTest(context.Context, agentwire.DataSourceConnectionTestGrant) Outcome
 }
 
+// CatalogRunner 仅处理导出向导签发的固定元数据查询租约。
+type CatalogRunner interface {
+	RunCatalog(context.Context, agentwire.DataSourceConnectionTestGrant) Outcome
+}
+
 // Outcome 是控制面已确认的基础连接测试终态安全投影。
 // 只有 AGENT_JDBC 的 DATABASE_CONNECTED 才表示固定节点已建立 JDBC 连接；它仍不代表导出可执行。
 // Sys 字段只表达可选的 sys 凭据验证事实（参考 ODC 的 sys 账号验证），与数据库结果相互独立。
@@ -52,6 +57,8 @@ type Outcome struct {
 	VerificationSource    agentwire.DataSourceConnectionTestVerificationSource
 	SysVerificationStatus agentwire.DataSourceConnectionTestSysVerificationStatus
 	SysEvidenceCode       string
+	CatalogObjects        []string
+	CatalogTruncated      bool
 }
 
 // Worker 串行处理一条由当前已认证 Agent 领取的基础连接测试租约。
@@ -151,6 +158,19 @@ func (w *Worker) validGrant(identity agentwire.AgentIdentity, grant agentwire.Da
 	if !validBinding {
 		return false
 	}
+	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
+		if grant.VerificationSource != agentwire.DataSourceConnectionTestAgentJDBC || !validCatalogGrantScope(binding.CatalogDatabase, binding.CatalogObjectType) ||
+			(binding.CatalogCompatibilityMode != "MYSQL" && binding.CatalogCompatibilityMode != "ORACLE") ||
+			len(binding.CatalogKeyword) > 100 ||
+			binding.SysCredentialRevision != 0 || binding.SysCredentialID != "" {
+			return false
+		}
+		_, ok := w.JDBCRunner.(CatalogRunner)
+		return ok
+	}
+	if binding.OperationKind != "" && binding.OperationKind != "CONNECTION_TEST" {
+		return false
+	}
 	switch grant.VerificationSource {
 	case agentwire.DataSourceConnectionTestG2Synthetic:
 		return true
@@ -159,6 +179,14 @@ func (w *Worker) validGrant(identity agentwire.AgentIdentity, grant agentwire.Da
 	default:
 		return false
 	}
+}
+
+// validCatalogGrantScope 让数据库目录只使用空命名空间，对象目录仍固定到明确数据库。
+func validCatalogGrantScope(database, objectType string) bool {
+	if objectType == "DATABASE" {
+		return database == ""
+	}
+	return (objectType == "TABLE" || objectType == "VIEW") && database != ""
 }
 
 // testOutcome 将来源固定到唯一可接受的结果集合，避免运行器将异常文本或任意结果写入控制面。
@@ -171,7 +199,12 @@ func (w *Worker) testOutcome(ctx context.Context, grant agentwire.DataSourceConn
 			SysVerificationStatus: agentwire.DataSourceConnectionTestSysNotConfigured,
 		}, true
 	case agentwire.DataSourceConnectionTestAgentJDBC:
-		outcome := w.JDBCRunner.RunConnectionTest(ctx, grant)
+		var outcome Outcome
+		if grant.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
+			outcome = w.JDBCRunner.(CatalogRunner).RunCatalog(ctx, grant)
+		} else {
+			outcome = w.JDBCRunner.RunConnectionTest(ctx, grant)
+		}
 		return outcome, validJDBCOutcome(grant, outcome)
 	default:
 		return Outcome{}, false
@@ -198,7 +231,8 @@ func completion(bootID string, grant agentwire.DataSourceConnectionTestGrant, ou
 		BootID: bootID, ConnectionTestID: grant.ConnectionTestID, LeaseID: grant.LeaseID,
 		LeaseEpoch: grant.LeaseEpoch, BindingDigest: grant.BindingDigest, Status: outcome.Status,
 		EvidenceCode: outcome.EvidenceCode, VerificationSource: outcome.VerificationSource,
-		SysVerificationStatus: outcome.SysVerificationStatus, SysEvidenceCode: outcome.SysEvidenceCode, SentAt: sentAt,
+		SysVerificationStatus: outcome.SysVerificationStatus, SysEvidenceCode: outcome.SysEvidenceCode,
+		CatalogObjects: outcome.CatalogObjects, CatalogTruncated: outcome.CatalogTruncated, SentAt: sentAt,
 	}
 }
 
@@ -211,6 +245,19 @@ func validJDBCOutcome(grant agentwire.DataSourceConnectionTestGrant, outcome Out
 	sysOutcomeValid := hasSys == (outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured) &&
 		outcome.SysVerificationStatus != "" && agentwire.ValidDataSourceConnectionTestSysOutcome(outcome.SysVerificationStatus, outcome.SysEvidenceCode)
 	if !sysOutcomeValid {
+		return false
+	}
+	if grant.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
+		if outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured || len(outcome.CatalogObjects) > 100 ||
+			(outcome.Status != agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated)) {
+			return false
+		}
+		for _, name := range outcome.CatalogObjects {
+			if !validOpaque(name, 256) || strings.ContainsAny(name, "*,") {
+				return false
+			}
+		}
+	} else if len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated {
 		return false
 	}
 	return (outcome.Status == agentwire.DataSourceConnectionTestSucceeded && outcome.EvidenceCode == "DATABASE_CONNECTED") ||

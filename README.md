@@ -1,103 +1,133 @@
 # OB Data Orch
 
-OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。开发顺序、阶段、门禁、页面功能接入和真实验证状态统一以[开发任务地图](docs/03-technical/development-task-map.md)为准。Export v1 已形成多格式配置、冻结任务、受控执行、结果证据、任务历史和有界取消纵向链路；正式支持范围仍按 Export Canonical Docs 与 EX-V1 证据分级，不能由代码存在或命令生成测试单独推出。
+OB Data Orch 是 **OB Loader/Dumper 4.3.5 的轻量可视化编排平台**，用于配置数据任务、管理执行节点，以及查看任务状态、日志和结果证据。平台沿用官方工具能力，支持范围与真实验证状态以[开发任务地图](docs/03-technical/development-task-map.md)为准。
 
-## 当前可用内容
+## 部署方式
 
-- Go 控制面最小浏览器/Agent API 适配：默认未配置身份时失败关闭并关闭真实执行；回环 Local MVP 使用 TLS，可完成节点声明、一次性注册码签发、Agent 实际关联、节点侧连接测试、固定预检查与受控单表 CSV 提交。真实连接、预检查或工具启动仍须逐次满足任务地图的授权和证据门槛；
-- Go Agent G2 机器协议适配：受保护本机关联状态、HTTPS/CA 校验、受认证心跳和固定预检查信封均已具备；默认不连接数据库、不解析真实凭据、不启动 OB Loader/Dumper；
-- Vue 3 + TypeScript + Vite 产品页面基线：覆盖数据源、三类任务向导、任务/日志、模板、节点与系统设置；其中真实功能接入范围以开发计划逐项验收；
-- OpenAPI 3.1 结构基线：覆盖当前已实现的浏览器与 Agent 操作及 Local MVP 的受控固定信封；任何 G3 结论仍以证据和门禁为准；
-- SQLite 前向迁移：`0001`～`0020` 覆盖业务元数据、授权绑定、预检查、连接测试、节点环境、执行/日志证据、Export 泛化、任务派生和有界取消；测试默认使用临时数据库和合成数据；
-- OBDUMPER 4.3.5 版本化只读参数资源：v5～v7 保存当前 Export 泛化能力映射，并保留首条切片历史语义；具体可用能力与验证门禁以运行时资源及 Export Canonical 为准；
-- Windows AMD64、Linux AMD64、Linux ARM64 交叉构建；
-- Go/前端测试、静态检查和基础敏感信息扫描。
+一台控制面连接一台或多台 Agent：
 
-`/readyz` 只表示控制面进程本身可响应。默认启动时业务 API 会因未配置浏览器身份而失败关闭；显式 `--local-mvp` 只允许回环本机的 TLS 管理面，并可验证节点、注册码、Agent 实际关联与首次心跳。默认该入口不会建立真实数据库连接；仅在当次真实连接获明确授权、控制面与 Agent 都设置 `OB_DATA_ORCH_ENABLE_AGENT_JDBC_CONNECTION_TEST=true`，且 Agent 已通过 Java/工具运行时校验时，才允许固定 JDBC 探针建立一次受控基础连接。该开关不启用节点、预检查、OBDUMPER 或任何导入导出。Agent 只会主动访问 HTTPS 控制面；HTTP、未受信证书及非回环 Local MVP 绑定都会失败关闭。交叉构建成功也不等于三个麒麟目标环境已经认证通过。
+- **控制面**提供网页、HTTPS API 和任务编排，使用本机 SQLite 保存元数据。
+- **Agent**安装在执行机器，主动连接控制面；Java 8 和 OB Loader/Dumper 4.3.5 安装在这台机器。
+- **浏览器**访问控制面的 HTTPS 地址。前端随包发布，无需另起 Vite 或 Node.js 服务。
 
-### Windows 本机 Agent 注册测试
+运行机器不需要 Go、Node.js 或 npm。控制面与 Agent 可以位于同一机器，也可以分开部署；分开时，控制面地址必须能从 Agent 机器访问，不能使用 `localhost` 或 `127.0.0.1`。
 
-```powershell
-# 终端一：生成仅用于本机回环 TLS 的 7 天测试证书（材料位于 Git 忽略的 var/）
-./scripts/new-local-mvp-tls-certificate.ps1
+## 日常开发：直接运行源码
 
-# 终端一：仅监听 https://127.0.0.1:8080，不接受外部连接
-$env:OB_DATA_ORCH_LISTEN = '127.0.0.1:8080'
-$env:OB_DATA_ORCH_TLS_CERT_FILE = "$PWD\var\local-mvp-tls\control-plane-cert.pem"
-$env:OB_DATA_ORCH_TLS_KEY_FILE = "$PWD\var\local-mvp-tls\control-plane-key.pem"
-go run ./cmd/control-plane --local-mvp
-
-# 终端二：构建固定指向本机控制面的 Windows Agent 包
-./scripts/build-local-mvp-agent-package.ps1 -ControlPlaneCAFile "$PWD\var\local-mvp-tls\control-plane-ca.pem"
-
-# 终端三：Vite 代理会显式验证本机测试 CA，绝不跳过 TLS 校验
-$env:NODE_EXTRA_CA_CERTS = "$PWD\var\local-mvp-tls\control-plane-ca.pem"
-Set-Location web
-npm run dev -- --host 127.0.0.1
-```
-
-在浏览器打开 `http://127.0.0.1:5173/nodes`，创建 Windows 节点后可在节点详情下载 Windows Agent ZIP。将 ZIP 解压到目标 Windows 机器，首次双击“首次注册并启动Agent.cmd”，粘贴页面生成的一次性注册码并按 Enter；进程会继续发送心跳。以后双击“启动Agent.cmd”，无需再次输入注册码。两个脚本都会显式启用固定 JDBC 连接测试、六项 `EXPORT_PREFLIGHT` 与受控真实执行；它只会在操作者完成预检查并在导出向导点击“提交并启动导出”后，领取该节点的一条冻结单表 CSV 任务并直接启动 OBDUMPER。密码只进入任务级官方安全文件，绝不进入启动参数或日志。该下载包固定连接本机回环 TLS，只用于控制面和 Agent 位于同一 Windows 主机的 Local MVP 测试。当前实时日志为控制面进程内投影，控制面重启后不保留；断线恢复与正式 G3 验收尚未完成。
-
-本机 MVP 的 `G2_SYNTHETIC` 连接测试在控制面确认首次心跳后由 Agent 独立领取，最多约 2 秒开始处理，不再等待下一次 30 秒心跳。它不建立真实数据库连接。
-
-本机 MVP 的监听地址固定为 `127.0.0.1:8080`，且必须同时配置 TLS 证书和私钥。`OB_DATA_ORCH_ENABLE_REAL_EXECUTION=true` 仅在控制面使用 `--local-mvp` 且 Agent 为 Windows AMD64 时启用这条受控本机链路；非本机 MVP、任意命令、任意 SQL、任意路径浏览、自动重试和重新分配仍然拒绝。
-
-### G2 Agent HTTPS 边界
-
-非 `--local-mvp` 控制面只有同时配置绝对路径的 `OB_DATA_ORCH_TLS_CERT_FILE` 与 `OB_DATA_ORCH_TLS_KEY_FILE` 时才会使用 HTTPS；缺少任一文件会拒绝启动。Windows 本机包无需用户填写 URL、节点 IP、CA 路径或节点标识：包内固定 `https://127.0.0.1:8080` 与同目录 CA 文件，注册码仅通过标准输入短时接收。Agent 不会跟随重定向、使用代理或跳过证书和主机名校验。
-
-这条链路已通过回环 TLS、临时 SQLite 与实际 Windows `agent.exe` 完成关联和首个心跳验证；仍不是获授权 G3 运行环境，也不是连接真实 ODP、启用数据源或启动工具的授权。
-
-## 本地启动
-
-要求 Go 1.26、Node.js 24 和 npm 11。
+在 Windows AMD64 开发机器的仓库根目录执行（Go 1.26、Node.js 24、npm 11）：
 
 ```powershell
-# 控制面默认仅监听 127.0.0.1:8080，未配置浏览器身份时所有业务 API 失败关闭
-go run ./cmd/control-plane
+# 首次或前端锁文件变化后安装依赖
+npm --prefix web ci
 
-# 未关联 Agent 会失败关闭；已关联 Agent 仅发送 HTTPS 心跳，不执行工具
-go run ./cmd/agent
+# 终端一：开发控制面 + Vite，首次提示设置开发 admin 密码
+.\scripts\dev.ps1 -RealExecution
 
-# 前端开发服务器
-Set-Location web
-npm ci
-npm run dev
+# 终端二：需要节点联调时启动开发 Agent，首次粘贴网页注册码
+.\scripts\dev.ps1 -Agent -RealExecution
 ```
 
-## 验证
+浏览器访问 **`https://127.0.0.1:18443`**。首次需信任 `var/dev/control-plane/data/control-plane-ca.pem` 公钥，再以 `admin` 登录。创建 Windows 节点后，将注册码粘贴到第二个终端；开发 Agent 无需下载和安装服务。
 
-Windows：
+- 修改 Vue、TypeScript、CSS：Vite 即时更新页面，无需打包。
+- 修改 Go、契约 JSON 或迁移 SQL：真实模式下提示待更新，结束当前测试后在对应终端输入 `r` 并回车，完成正常停止、重编译和重启；不用打包。合成模式保留自动重启。控制面重启后需重新登录。
+- `Ctrl+C` 退出对应入口。开发数据库、身份和证书保留在 `var/dev/`，不复用安装版数据，也不自动迁移旧 Local MVP。
+- `-RealExecution` 在对应组件的开发配置中开启真实连接与工具执行，后续不带参数启动也保留开启状态。开发入口仍只监听回环，实际任务沿用授权、预检查和执行门禁；开发监视器不管理已安装的系统服务。
+
+Vite 由开发入口管理，浏览器统一访问上面的 HTTPS 地址。稳定后再执行下方构建与安装包升级流程。详细说明见[源码开发模式](docs/03-technical/deployment-operations.md#源码开发模式)。
+
+## 稳定版本：安装包启动
+
+### 1. 准备安装包
+
+使用与控制面机器匹配的完整安装包，解压到固定的本机磁盘目录：
+
+| 包名 | 目标 |
+|---|---|
+| `ob-data-orch-windows-amd64.zip` | Windows AMD64 |
+| `ob-data-orch-linux-amd64.zip` | 指定麒麟 AMD64 目标 |
+| `ob-data-orch-linux-arm64.zip` | 指定麒麟 ARM64 目标 |
+
+Linux 包仅对应[技术栈列明的三个麒麟目标](docs/03-technical/technology-stack.md)，不代表任意 Linux 发行版均受支持；目标机原生认证仍待完成。没有成品包时，按下方“从源码构建”生成。
+
+### 2. 启动控制面
+
+- **Windows**：右键包内 `启动.cmd`，选择“以管理员身份运行”。
+- **Linux**：在解压目录执行 `chmod +x control-plane start.sh`，再执行 `sudo ./start.sh`。
+
+选择 **1 启动**，按提示填写固定 HTTPS 地址并设置 `admin` 密码。Windows 首次安装还需当前 Windows 账户的密码，不能使用 PIN；后续维护须使用同一账户。Linux 入口创建固定专用服务账户。
+
+启动检查通过后，在浏览器打开所填地址并登录。Windows 入口会为本机安装 CA 公钥信任；其他访问机器及 Linux 浏览器需先信任控制面 `data/control-plane-ca.pem`。详见[首次安装](docs/03-technical/deployment-operations.md#首次安装控制面)。
+
+### 3. 关联 Agent
+
+1. 在网页“执行节点”创建节点，按目标机器填写平台、Java、工具及允许目录等配置。
+2. 从节点页面下载对应平台的 Agent 包，解压到执行机器的固定目录。不要直接使用控制面包内 `agents/` 的分发素材。
+3. 运行 Agent 包内的启动入口，首次粘贴页面提供的注册码。注册码单次使用、24 小时有效；包内已包含控制面地址和 CA 公钥。
+4. 回到节点页面确认关联、心跳和环境检查结果；新节点检查通过后再启用。
+
+[Agent 安装与注册详解](docs/03-technical/deployment-operations.md#安装与关联-agent)
+
+### 4. 使用网页
+
+先准备可用执行节点，再在“数据源”维护连接信息。获准进行真实验证后，使用连接测试和导出向导完成参数配置、预检查、提交；随后在任务中心查看状态、日志与结果证据。
+
+**安装包默认关闭真实执行。** 节点在线不等于数据库可连接，也不等于可以运行导出。启用条件和操作方法见[网页使用与真实执行](docs/03-technical/deployment-operations.md#网页使用与真实执行)。
+
+## 日常启停与升级
+
+控制面和 Agent 各自使用安装目录内的同一个入口：Windows 为 `启动.cmd`，Linux 为 `start.sh`。
+
+| 菜单 | 用途 |
+|---|---|
+| 1 启动 | 首次安装服务；已安装时启动服务 |
+| 2 停止 | 停止对应服务，保留数据和身份 |
+| 3 升级 | 输入新版包的独立解压目录，在原安装目录完成替换 |
+| 4 查看状态 | 查看对应系统服务状态；Agent 在线状态另看节点页面 |
+
+升级保留 `data`、Agent 配置和 CA，更新程序、发布资源及启动入口。**2026-09-14 的旧入口首次升级前，需要先替换入口脚本**；旧 Local MVP 部署则属于迁移，不能直接套用菜单升级。按[升级与旧部署迁移](docs/03-technical/deployment-operations.md#升级与故障恢复)操作。
+
+## 从源码构建
+
+在 Windows 开发机器准备 Go 1.26、Node.js 24、npm 11，并在仓库根目录执行：
 
 ```powershell
-./scripts/verify.ps1
+# 首次构建或前端锁文件更新后安装依赖
+npm --prefix web ci
 
-# 只验证 Export 的 S0/S1 合成开发路径；强制关闭真实连接、凭据和工具开关
-./scripts/verify-export-synthetic.ps1
+# 构建前端及三个目标的控制面、Agent 成品包
+./scripts/build-package.ps1
 ```
 
-Linux：
+输出位于 `artifacts/release-时间/`，包含三个 ZIP 及对应目录。构建不会安装、停止或更新现有服务。完整包中的 `web/` 和 `agents/` 必须与控制面程序一起交付。
 
-```sh
-./scripts/verify.sh
+## 开发验证
 
-# 只验证 Export 的 S0/S1 合成开发路径；强制关闭真实连接、凭据和工具开关
-./scripts/verify-export-synthetic.sh
-```
+| 范围 | Windows | Linux / Shell |
+|---|---|---|
+| 整体工程检查 | `./scripts/verify.ps1` | `./scripts/verify.sh` |
+| Export 合成回归 | `./scripts/verify-export-synthetic.ps1` | `./scripts/verify-export-synthetic.sh` |
+| 启动入口隔离回归 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/tests/distribution.ps1` | `bash scripts/tests/distribution.sh` |
 
-S0/S1 入口只使用版本化合成身份、临时 SQLite、假 Agent、假工具和临时工作区，不建立真实网络连接、不解析真实凭据、不启动 OBDUMPER。它用于快速回归领域规则、命令生成、状态/证据投影和失败关闭，不构成 G3/EX-V1 真实验证证据。
+合成回归使用临时数据和假依赖，不构成真实数据库、官方工具或目标平台运行验收。启动入口测试使用假服务操作，不安装系统服务。
 
-## 目录
+当前启动改造已通过代码回归、隔离升级测试及三目标构建；**Windows 服务安装、开机自启和麒麟原生运行仍未完成验证**。具体范围见[验证记录](docs/03-technical/deployment-operations.md#2026-09-15-启动入口修复验证)，开发顺序和准入仍以任务地图为准。
 
-```text
-cmd/                  控制面和 Agent 启动入口
-contracts/            OpenAPI 3.1 结构与安全边界基线
-internal/             工程基础设施、迁移器和参数元数据读取器
-migrations/           SQLite 前向迁移草案
-web/                  最小 Vue 业务链路
-scripts/              本地一致性验证
-docs/                 产品、设计与技术基线
-.github/workflows/    持续集成
-```
+## 文档与源码
 
-页面基线、合成验证、真实功能可用与真实环境验证是不同状态。默认 Agent 启动入口只进行受认证关联、心跳和 `G2_SYNTHETIC` 基础连接测试编排，不解析数据库槽位、不启动 Java/JDBC 或 OBDUMPER；真实数据库连接、真实凭据、真实进程和 OBDUMPER 执行均须遵循任务地图规定的授权与证据门禁。
+- [安装、使用与运维手册](docs/03-technical/deployment-operations.md)：准备环境、注册 Agent、启停、升级和故障定位。
+- [文档中心](docs/README.md)：产品范围、设计、技术契约与验证证据。
+- [开发任务地图](docs/03-technical/development-task-map.md)：当前阶段、下一步和准入门禁。
+
+| 目录 | 内容 |
+|---|---|
+| `cmd/` | 控制面与 Agent 的程序入口 |
+| `internal/` | 业务实现、Agent 协议及基础设施 |
+| `contracts/`、`migrations/` | API 契约与 SQLite 迁移 |
+| `web/`、`design-system/` | Vue 前端与设计规范 |
+| `scripts/` | 构建、启动器与验证脚本 |
+| `docs/` | 产品、设计、技术与证据文档 |
+
+<a id="原本机开发环境升级"></a>
+
+旧 Local MVP 数据与身份迁移说明已集中到[使用手册](docs/03-technical/deployment-operations.md#旧-local-mvp-部署迁移)。

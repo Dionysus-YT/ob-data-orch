@@ -9,7 +9,7 @@
 
 项目已具备 Windows 本机 Local MVP 的受控固定单表 CSV 导出链路，以及任务、详情和持久日志的授权读取。该能力现统一标记为 `CSV_SINGLE_TABLE_V1`，只是导出模块的已实现基线，不代表完整导出模块、G3、WI-01～WI-12、麒麟目标或生产发布通过。
 
-开发路线已从“继续逐项完成 WI 现场验证”切换为“先完成导出模块全功能设计与技术契约，再按能力切片实现和验证”。**EX-D0**、**EX-D1**、**EX-D2**、**EX-I1 通用导出骨架**、**EX-I2 对象范围与 DDL**、**EX-I3 CSV 完整能力**、**EX-I4 CUT、SQL 与 POS**、**EX-I5 Parquet/ORC/Avro** 均已完成；**EX-I6** 已交付三段——第一段（对象存储受控 URI、--tmp-path、输出类型 LOCAL/OSS/S3/COS/OBS 全链路）、第二段（存储凭据槽位：迁移 0017 + 控制面 CRUD/轮换/删除 + 草稿引用 + 提交绑定 + Agent 同租约槽位解析 + core-site.xml 生成与 HADOOP_CONF_DIR 短时注入）、第三段（存储专用预检查框架与提交门禁打通 + OpenAPI/前端同步，2026-08-14，详见 [EX-I6 存储预检查框架证据](docs/03-technical/evidence/exi6-storage-precheck-framework-2026-08-14.md)）。**EX-I7 剩余参数第二批**已完成受控实测、产品接入与代码审查收口。**EX-I8** 已交付三段（2026-08-14，合成验证）：8-A 结果与失败事实（Agent 成功/失败路径上报受控结果事实与 dump.ckpt 存在性，控制面合并 result_summary_json 并投影到任务详情）、8-B 派生任务与两类派生草稿（迁移 0018 + `POST /tasks/{id}:rebuild-draft` 基于原配置新建/从头重新执行 + 提交写入 parent/derivation）、8-C 检查点继续（`POST /tasks/{id}:resume-checkpoint` 继承原快照追加 --retry，不重新预检查），详见 [EX-I8 证据](docs/03-technical/evidence/exi8-derivation-result-recovery-2026-08-14.md)。剩余工程动作以任务地图为准：**下一补充切片为 EX-I8 模板复用收口**（从成功任务保存模板/模板创建草稿，模板不复用凭据、节点、预检查或风险确认）；EX-I6 两项存储探测真实执行、四类存储端到端取证与 dump.ckpt 续跑取证需真实外网/工具授权，归 **EX-V1** 排期；对象存储任务在两项存储检查 PASSED 前保持提交阻断。
+开发路线已从“继续逐项完成 WI 现场验证”切换为“先完成导出模块全功能设计与技术契约，再按能力切片实现和验证”。**EX-D0**、**EX-D1**、**EX-D2**、**EX-I1 通用导出骨架**、**EX-I2 对象范围与 DDL**、**EX-I3 CSV 完整能力**、**EX-I4 CUT、SQL 与 POS**、**EX-I5 Parquet/ORC/Avro** 均已完成；**EX-I6** 已交付三段——第一段（对象存储受控 URI、--tmp-path、输出类型 LOCAL/OSS/S3/COS/OBS 全链路）、第二段（存储凭据槽位：迁移 0017 + 控制面 CRUD/轮换/删除 + 草稿引用 + 提交绑定 + Agent 同租约槽位解析 + core-site.xml 生成与 HADOOP_CONF_DIR 短时注入）、第三段（存储专用预检查框架与提交门禁打通 + OpenAPI/前端同步，2026-08-14，详见 [EX-I6 存储预检查框架证据](docs/03-technical/evidence/export-increment-validation.md#exi6-storage)）。**EX-I7 剩余参数第二批**已完成受控实测、产品接入与代码审查收口。**EX-I8** 已交付三段（2026-08-14，合成验证）：8-A 结果与失败事实（Agent 成功/失败路径上报受控结果事实与 dump.ckpt 存在性，控制面合并 result_summary_json 并投影到任务详情）、8-B 派生任务与两类派生草稿（迁移 0018 + `POST /tasks/{id}:rebuild-draft` 基于原配置新建/从头重新执行 + 提交写入 parent/derivation）、8-C 检查点继续（`POST /tasks/{id}:resume-checkpoint` 继承原快照追加 --retry，不重新预检查），详见 [EX-I8 证据](docs/03-technical/evidence/export-increment-validation.md#exi8-recovery)。剩余工程动作以任务地图为准：**下一补充切片为 EX-I8 模板复用收口**（从成功任务保存模板/模板创建草稿，模板不复用凭据、节点、预检查或风险确认）；EX-I6 两项存储探测真实执行、四类存储端到端取证与 dump.ckpt 续跑取证需真实外网/工具授权，归 **EX-V1** 排期；对象存储任务在两项存储检查 PASSED 前保持提交阻断。
 
 真实连接、预检查和工具启动默认失败关闭。除本机 MVP/Agent 包启动器已持续授权的受控存储 TCP 探针外，它们只能在回环 Local MVP、显式运行开关、登记对象、受认证 Agent、固定任务信封及当次用户授权同时满足时发生；控制面不提供任意命令、SQL、路径浏览或远程 Shell。
 
@@ -49,7 +49,7 @@
 
 - **G3 仍未通过。** WI-03 低权限对象负例已通过；WI-04 CSV 特殊值已由两次独立正式 Agent 导出和测试负责人人工确认通过。长期不可达、跨目标环境、正式认证/备份恢复及其余 WI 收口仍待完成。
 - 终态日志补传协议已完成：只接受同一 Agent、原租约 epoch、重新计算的冻结信封摘要与 `RELEASED + SUCCEEDED/FAILED` 的持久化批次/缺口；它不恢复执行、不延长租约、不改变任务终态，且错误摘要、其他 Agent 与过期租约均拒绝。相关仓储测试已通过。
-- 已完成现场重启回归：此前实际终态任务留下的 1 个已 `fsync` 待确认批次，经当前源码构建的独立标准 Agent 重启补传后清至 0；账本末尾为 `RECOVERY_REPLAY_ATTEMPT`、`CONTROL_PLANE_CONFIRMED`。全程未启动工具、未重新连接数据库、未停止常驻 Agent，详见[Windows 终态日志补传重启验证](docs/03-technical/evidence/windows-terminal-log-replay-recovery-validation-2026-08-04.md)。
+- 已完成现场重启回归：此前实际终态任务留下的 1 个已 `fsync` 待确认批次，经当前源码构建的独立标准 Agent 重启补传后清至 0；账本末尾为 `RECOVERY_REPLAY_ATTEMPT`、`CONTROL_PLANE_CONFIRMED`。全程未启动工具、未重新连接数据库、未停止常驻 Agent，详见[Windows 终态日志补传重启验证](docs/03-technical/evidence/windows-validation.md#log-replay)。
 - 当前下一工程动作以任务地图为准。**EX-I6 三段、EX-I8 四段（含模板复用）均已交付（2026-08-14）**；EX-I8 模板链路已对真实本机数据端到端验证（保存/列表/建草稿 201、旧失败任务继续失败关闭）。**EX-V1 真实取证已授权并部分执行**：Agent 已装载存储连通性探测开关（`OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE=true`）；剩余项需真实材料——dump.ckpt 续跑取证（需大数据量/慢导出制造保存点）、两项存储探测真实端点执行、四类存储端到端导出（需用户提供各厂商真实 endpoint 与凭据）。EX-I7 第二批已完成产品接入与审查收口，但未完成的 TIME/TIMESTAMP/Oracle 行为、隐藏主键预检查和附加对象信息权限链不得据此解锁。对象存储草稿可以发起预检查；任务提交在 STORAGE_CONNECTIVITY/STORAGE_AUTH 两项均 PASSED 前保持失败关闭（STORAGE_PRECHECK_REQUIRED），不把存储 URI 伪装成本地路径。
 - WI-05 已完成第一阶段只读核对，但现场进程 argv 取证暂停；它保持未通过，并在对应能力进入 EX-V1 时继续。未取得新的真实工具启动授权前，不再次启动 OBDUMPER。
 - F3 的列表、详情和日志读取是已实现的只读能力，不替代 G3 结论。筛选、跨任务日志检索、下载、取消、重试和普通/旁路导入仍不在当前切片范围内。
@@ -58,7 +58,7 @@
 
 ### 本机二进制刷新（2026-08-14 晚，按 AGENTS.md 6.1 流程）
 
-新规则已写入根 `AGENTS.md` §6.1：Agent/控制面二进制变更必须“先停旧服务 → 删旧二进制 → 构建新二进制 → 按原开关重启并验证”，配套脚本 `scripts/start-local-mvp.ps1` 与 `scripts/build-local-mvp-agent-package.ps1` 已同步改造（停止后等待句柄释放并重试删除、删除校验、重启验证）。
+新规则已写入根 `AGENTS.md` §6.1：Agent/控制面二进制变更必须“先停旧服务 → 删旧二进制 → 构建新二进制 → 按原开关重启并验证”，旧配套脚本已由 DEC-048 的安装包单一“启动”入口替代，构建仅使用 `scripts/build-package.ps1`；当前整改与验证状态见 `docs/03-technical/deployment-operations.md`。
 
 本次按该流程完成全量刷新（停旧 → 删旧 → 重建 → 重启 → 验证）：
 
@@ -88,7 +88,7 @@ npm run build
 
 结果：Go 全量测试、`go vet`、密钥扫描、`gofmt`、`git diff --check`、Windows AMD64/Linux AMD64/Linux ARM64 无 CGO 构建与前端 lint/typecheck/18 文件 134 项测试/生产构建全部通过。完整 `scripts/verify.ps1` 仍会因运行中 Vite 占用原生 DLL 而在 `npm ci` 停止；若需要一条完整 clean-install 门禁记录，应先正常停止 Vite，再重新执行。
 
-本轮代码审查未重新连接真实数据库、未启动 OBDUMPER，也未新增真实执行证据；第二批行为结论沿用 [2026-08-13 受控实测证据](docs/03-technical/evidence/exi7-remaining-parameters-2026-08-13.md)。不能将合成测试、交叉构建或单一成功路径写成完整现场验收。
+本轮代码审查未重新连接真实数据库、未启动 OBDUMPER，也未新增真实执行证据；第二批行为结论沿用 [2026-08-13 受控实测证据](docs/03-technical/evidence/export-increment-validation.md#exi7-batch2)。不能将合成测试、交叉构建或单一成功路径写成完整现场验收。
 
 ## 工作区与协作边界
 

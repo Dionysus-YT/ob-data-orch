@@ -1,14 +1,14 @@
 import type { ExecutionNodeAgentAssociationStatus, ExecutionNodePlatform } from '@/api/browser'
 
-export function requiresAgentRegistration(status: ExecutionNodeAgentAssociationStatus, unavailableReasons: readonly string[]): boolean {
-  return status === 'PENDING' || unavailableReasons.includes('RUNTIME_CONFIGURATION_MISMATCH')
+export function requiresAgentRegistration(status: ExecutionNodeAgentAssociationStatus): boolean {
+  return status === 'PENDING'
 }
 
 export function agentRegistrationCommand(platform: ExecutionNodePlatform): string {
   if (platform === 'WINDOWS_AMD64') {
-    return '.\\agent.exe -register'
+    return '.\\启动.cmd'
   }
-  return './agent -register'
+  return './start.sh'
 }
 
 export function agentRegistrationCode(nodeId: string, enrollmentId: string, enrollmentMaterial: string): string {

@@ -18,7 +18,10 @@ import java.sql.SQLRecoverableException;
 import java.sql.SQLTimeoutException;
 import java.sql.SQLTransientConnectionException;
 import java.sql.Statement;
+import java.util.Locale;
 import java.util.Properties;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * ConnectionProbe 是固定用途的 OceanBase JDBC 连接探针。
@@ -27,10 +30,12 @@ import java.util.Properties;
 public final class ConnectionProbe {
     private static final int CONNECTION_PROTOCOL_VERSION = 1;
     private static final int PREFLIGHT_PROTOCOL_VERSION = 3;
+    private static final int CATALOG_PROTOCOL_VERSION = 4;
     private static final int MAX_HOST_BYTES = 253;
     private static final int MAX_USERNAME_BYTES = 256;
     private static final int MAX_PASSWORD_BYTES = 4096;
     private static final int MAX_IDENTIFIER_BYTES = 256;
+    private static final int MAX_KEYWORD_BYTES = 100;
     private static final int MAX_METADATA_CHARS = 256;
     private static final Charset UTF8 = StandardCharsets.UTF_8;
     private static final String OBJECT_ACCESSIBLE = "ACCESSIBLE";
@@ -53,7 +58,9 @@ public final class ConnectionProbe {
             properties.setProperty("user", input.usernameText());
             properties.setProperty("password", input.passwordText());
             try (Connection connection = DriverManager.getConnection(input.jdbcUrl(), properties)) {
-                if (input.isPreflight()) {
+                if (input.isCatalog()) {
+                    printCatalogSuccess(connection, input);
+                } else if (input.isPreflight()) {
                     printPreflightSuccess(connection, input);
                 } else {
                     printConnectionSuccess(connection.getMetaData());
@@ -79,6 +86,105 @@ public final class ConnectionProbe {
                 + "\",\"productVersion\":\"" + json(metadata.getDatabaseProductVersion())
                 + "\",\"driverName\":\"" + json(metadata.getDriverName())
                 + "\",\"driverVersion\":\"" + json(metadata.getDriverVersion()) + "\"}");
+    }
+
+    /** 固定元数据接口只列出当前账号可见的数据库，或指定命名空间内的表、视图。 */
+    private static void printCatalogSuccess(Connection connection, ProbeInput input) {
+        try {
+            DatabaseMetaData metadata = connection.getMetaData();
+            if ("DATABASE".equals(input.objectTypeText())) {
+                printDatabaseCatalogSuccess(metadata, input);
+                return;
+            }
+            String escape = metadata.getSearchStringEscape();
+            String escapedDatabase = metadataPattern(input.databaseText(), escape);
+            String escapedKeyword = metadataPattern(input.keywordText(), escape);
+            if (escapedDatabase == null || escapedKeyword == null) {
+                fail("CATALOG_UNAVAILABLE", 14);
+                return;
+            }
+            String catalog = input.isMySQL() ? input.databaseText() : null;
+            String schema = input.isOracle() ? escapedDatabase : null;
+            String pattern = "%" + escapedKeyword + "%";
+            StringBuilder result = new StringBuilder("{\"status\":\"SUCCESS\",\"objects\":[");
+            int count = 0;
+            boolean truncated = false;
+            try (ResultSet tables = metadata.getTables(catalog, schema, pattern, new String[] { input.objectTypeText() })) {
+                while (tables.next()) {
+                    String namespace = tables.getString(input.isMySQL() ? "TABLE_CAT" : "TABLE_SCHEM");
+                    String returnedType = tables.getString("TABLE_TYPE");
+                    if (!input.databaseText().equals(namespace) || !input.objectTypeText().equals(returnedType)) {
+                        fail("CATALOG_UNAVAILABLE", 14);
+                        return;
+                    }
+                    String name = tables.getString("TABLE_NAME");
+                    if (name == null || !validObjectName(name) ||
+                            !name.toLowerCase(Locale.ROOT).contains(input.keywordText().toLowerCase(Locale.ROOT))) {
+                        fail("CATALOG_UNAVAILABLE", 14);
+                        return;
+                    }
+                    if (count == 100) {
+                        truncated = true;
+                        break;
+                    }
+                    if (count > 0) {
+                        result.append(',');
+                    }
+                    result.append('"').append(json(name)).append('"');
+                    count++;
+                }
+            }
+            result.append("],\"truncated\":").append(truncated).append('}');
+            System.out.println(result.toString());
+        } catch (SQLException | RuntimeException exception) {
+            fail("CATALOG_UNAVAILABLE", 14);
+        }
+    }
+
+    /** 数据库目录只使用 JDBC 固定元数据方法；关键字在内存中筛选，至多返回 100 个名称。 */
+    private static void printDatabaseCatalogSuccess(DatabaseMetaData metadata, ProbeInput input) throws SQLException {
+        StringBuilder result = new StringBuilder("{\"status\":\"SUCCESS\",\"objects\":[");
+        Set<String> seen = new HashSet<String>();
+        int count = 0;
+        boolean truncated = false;
+        try (ResultSet databases = input.isMySQL() ? metadata.getCatalogs() : metadata.getSchemas()) {
+            while (databases.next()) {
+                String name = databases.getString(input.isMySQL() ? "TABLE_CAT" : "TABLE_SCHEM");
+                if (name == null || !validObjectName(name)) {
+                    fail("CATALOG_UNAVAILABLE", 14);
+                    return;
+                }
+                if (!name.toLowerCase(Locale.ROOT).contains(input.keywordText().toLowerCase(Locale.ROOT)) || !seen.add(name)) {
+                    continue;
+                }
+                if (count == 100) {
+                    truncated = true;
+                    break;
+                }
+                if (count > 0) {
+                    result.append(',');
+                }
+                result.append('"').append(json(name)).append('"');
+                count++;
+            }
+        }
+        result.append("],\"truncated\":").append(truncated).append('}');
+        System.out.println(result.toString());
+    }
+
+    private static boolean validObjectName(String value) {
+        if (value.length() == 0 || value.getBytes(UTF8).length > MAX_IDENTIFIER_BYTES || ProbeInput.boundaryWhitespace(value)
+                || value.indexOf('*') >= 0 || value.indexOf(',') >= 0) {
+            return false;
+        }
+        for (int offset = 0; offset < value.length();) {
+            int character = value.codePointAt(offset);
+            if (Character.isISOControl(character) || (character >= 0xD800 && character <= 0xDFFF)) {
+                return false;
+            }
+            offset += Character.charCount(character);
+        }
+        return true;
     }
 
     private static void printPreflightSuccess(Connection connection, ProbeInput input) {
@@ -213,8 +319,9 @@ public final class ConnectionProbe {
         private final byte[] compatibilityMode;
         private final byte[] database;
         private final byte[] table;
+		private final byte[] keyword;
 
-        private ProbeInput(int version, byte[] host, int port, byte[] username, byte[] password, byte[] compatibilityMode, byte[] database, byte[] table) {
+        private ProbeInput(int version, byte[] host, int port, byte[] username, byte[] password, byte[] compatibilityMode, byte[] database, byte[] table, byte[] keyword) {
             this.version = version;
             this.host = host;
             this.port = port;
@@ -223,6 +330,7 @@ public final class ConnectionProbe {
             this.compatibilityMode = compatibilityMode;
             this.database = database;
             this.table = table;
+            this.keyword = keyword;
         }
 
         static ProbeInput read(DataInputStream input) throws IOException {
@@ -232,24 +340,30 @@ public final class ConnectionProbe {
             byte[] compatibilityMode = null;
             byte[] database = null;
             byte[] table = null;
+            byte[] keyword = null;
             try {
                 int version = input.readInt();
                 host = readValue(input, MAX_HOST_BYTES);
                 int port = input.readInt();
                 username = readValue(input, MAX_USERNAME_BYTES);
                 password = readValue(input, MAX_PASSWORD_BYTES);
-                if (version == PREFLIGHT_PROTOCOL_VERSION) {
+                if (version == PREFLIGHT_PROTOCOL_VERSION || version == CATALOG_PROTOCOL_VERSION) {
                     compatibilityMode = readValue(input, 6);
                     database = readValue(input, MAX_IDENTIFIER_BYTES);
                     table = readValue(input, MAX_IDENTIFIER_BYTES);
+					if (version == CATALOG_PROTOCOL_VERSION) {
+						keyword = readValue(input, MAX_KEYWORD_BYTES);
+					}
                 }
-                if ((version != CONNECTION_PROTOCOL_VERSION && version != PREFLIGHT_PROTOCOL_VERSION)
+                if ((version != CONNECTION_PROTOCOL_VERSION && version != PREFLIGHT_PROTOCOL_VERSION && version != CATALOG_PROTOCOL_VERSION)
                         || port < 1 || port > 65535 || !validHost(host) || username.length == 0 || password.length == 0
                         || (version == PREFLIGHT_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validIdentifier(database) || !validIdentifier(table)))
+						|| (version == CATALOG_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validObjectType(table)
+								|| (isDatabaseType(table) ? database.length != 0 : !validIdentifier(database)) || !validKeyword(keyword)))
                         || input.read() != -1) {
                     throw new IllegalArgumentException();
                 }
-                return new ProbeInput(version, host, port, username, password, compatibilityMode, database, table);
+                return new ProbeInput(version, host, port, username, password, compatibilityMode, database, table, keyword);
             } catch (IOException exception) {
                 zero(host);
                 zero(username);
@@ -257,6 +371,7 @@ public final class ConnectionProbe {
                 zero(compatibilityMode);
                 zero(database);
                 zero(table);
+                zero(keyword);
                 throw exception;
             } catch (IllegalArgumentException exception) {
                 zero(host);
@@ -265,6 +380,7 @@ public final class ConnectionProbe {
                 zero(compatibilityMode);
                 zero(database);
                 zero(table);
+                zero(keyword);
                 throw exception;
             }
         }
@@ -322,6 +438,29 @@ public final class ConnectionProbe {
             return value != null && ("MYSQL".equals(new String(value, UTF8)) || "ORACLE".equals(new String(value, UTF8)));
         }
 
+        private static boolean validObjectType(byte[] value) {
+            return value != null && ("TABLE".equals(new String(value, UTF8)) || "VIEW".equals(new String(value, UTF8)) || isDatabaseType(value));
+        }
+
+        private static boolean isDatabaseType(byte[] value) {
+            return value != null && "DATABASE".equals(new String(value, UTF8));
+        }
+
+        private static boolean validKeyword(byte[] value) {
+            if (value == null) { return false; }
+            try {
+                String text = UTF8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(value)).toString();
+                if (text.length() > 0 && boundaryWhitespace(text)) { return false; }
+                for (int offset = 0; offset < text.length();) {
+                    int character = text.codePointAt(offset);
+                    if (Character.isISOControl(character)) { return false; }
+                    offset += Character.charCount(character);
+                }
+                return true;
+            } catch (CharacterCodingException exception) { return false; }
+        }
+
         private static boolean boundaryWhitespace(String value) {
             int first = value.codePointAt(0);
             int last = value.codePointBefore(value.length());
@@ -344,6 +483,12 @@ public final class ConnectionProbe {
         boolean isPreflight() {
             return version == PREFLIGHT_PROTOCOL_VERSION;
         }
+
+        boolean isCatalog() { return version == CATALOG_PROTOCOL_VERSION; }
+
+        String objectTypeText() { return new String(table, UTF8); }
+
+        String keywordText() { return new String(keyword, UTF8); }
 
         boolean isMySQL() {
             return "MYSQL".equals(new String(compatibilityMode, UTF8));
@@ -368,6 +513,7 @@ public final class ConnectionProbe {
             zero(compatibilityMode);
             zero(database);
             zero(table);
+            zero(keyword);
         }
 
         private static void zero(byte[] value) {

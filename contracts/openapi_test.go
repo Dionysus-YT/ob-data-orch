@@ -42,6 +42,7 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/tasks/{taskId}/logs/stream":                      {"get"},
 		"/api/v1/tasks/{taskId}/logs:download":                    {"post"},
 		"/agent/v1/enrollments:exchange":                          {"post"},
+		"/agent/v1/runtime-configuration:sync":                    {"post"},
 		"/agent/v1/heartbeats":                                    {"post"},
 		"/agent/v1/executions:claim":                              {"post"},
 		"/agent/v1/executions/{executionId}:acknowledge-lease":    {"post"},
@@ -74,6 +75,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/tasks/{taskId}:cancel":                                      {"post"},
 		"/api/v1/tasks/{taskId}:save-template":                               {"post"},
 		"/api/v1/export-config-templates/{templateId}:create-draft":          {"post"},
+		"/api/v1/data-sources/{dataSourceId}:search-export-objects":          {"post"},
+		"/api/v1/export-object-catalog-queries/{queryId}":                    {"get"},
 	}
 	paths := object(t, spec, "paths")
 	if len(paths) != len(expected) {
@@ -97,8 +100,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 69 {
-		t.Fatalf("operation count = %d, want 69", operationCount)
+	if operationCount != 72 {
+		t.Fatalf("operation count = %d, want 72", operationCount)
 	}
 }
 

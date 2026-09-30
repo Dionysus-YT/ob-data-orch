@@ -48,8 +48,8 @@ function onFocusIn(event: FocusEvent) {
 }
 
 // 嵌套确认框独占键盘；只在最后一个弹层关闭时恢复背景和滚动。
-export function activateModal(root: HTMLElement, initialFocus: HTMLElement, onEscape: () => void) {
-  const entry: ModalEntry = { root, initialFocus, onEscape, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null }
+export function activateModal(root: HTMLElement, initialFocus: HTMLElement, onEscape: () => void, returnFocus: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) {
+  const entry: ModalEntry = { root, initialFocus, onEscape, returnFocus }
   if (!stack.length) {
     previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'

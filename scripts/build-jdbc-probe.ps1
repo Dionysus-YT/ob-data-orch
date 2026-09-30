@@ -49,6 +49,10 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "JDBC 探针 Java 测试失败"
     }
+    & $java -cp $testClasspath com.obdataorch.jdbcprobe.ConnectionProbeDatabaseCatalogTest
+    if ($LASTEXITCODE -ne 0) {
+        throw "JDBC 数据库目录测试失败"
+    }
 } finally {
     Remove-Item -LiteralPath $classes -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testClasses -Recurse -Force -ErrorAction SilentlyContinue

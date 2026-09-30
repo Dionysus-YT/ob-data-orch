@@ -926,7 +926,18 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/export-object-catalog-queries/") {
+		queryID := strings.TrimPrefix(r.URL.Path, "/api/v1/export-object-catalog-queries/")
+		if validDataSourceConnectionTestPathID(queryID) {
+			s.getExportObjectCatalogQuery(w, r, principal, queryID)
+			return
+		}
+	}
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/data-sources/") {
+		if dataSourceID, ok := parseExportObjectCatalogAction(r.URL.Path); ok {
+			s.startExportObjectCatalogQuery(w, r, principal, dataSourceID)
+			return
+		}
 		if dataSourceID, ok := parseDataSourceConnectionTestAction(r.URL.Path); ok {
 			s.testDataSourceConnection(w, r, principal, dataSourceID)
 			return
@@ -2801,7 +2812,7 @@ func (s *Server) deleteDataSource(w http.ResponseWriter, r *http.Request, princi
 		return
 	}
 	if errors.Is(err, store.ErrDataSourceDeleteIneligible) {
-		s.writeDataSourceLifecycleConflict(w, r, dataSourceID, "DATA_SOURCE_DELETE_INELIGIBLE", "数据源存在历史引用，不能永久删除")
+		s.writeDataSourceLifecycleConflict(w, r, dataSourceID, "DATA_SOURCE_DELETE_INELIGIBLE", "数据源存在未完成或状态待核对的任务，请等待任务结束后删除")
 		return
 	}
 	if err != nil {
@@ -2982,6 +2993,10 @@ func (s *Server) getDataSourceConnectionTest(w http.ResponseWriter, r *http.Requ
 	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "AGENT_CONNECTION_TEST_UNAVAILABLE", "当前无法读取连接测试状态", true)
+		return
+	}
+	if run.OperationKind != "" && run.OperationKind != "CONNECTION_TEST" {
+		notFound(w, r)
 		return
 	}
 	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, run.DataSourceID) != nil {
@@ -4300,8 +4315,10 @@ type agentConnectionTestCompletionPayload struct {
 	Status        string `json:"status"`
 	EvidenceCode  string `json:"evidenceCode"`
 	// SysVerificationStatus/SysEvidenceCode 是可选的 sys 凭据验证结果（与数据库结果相互独立）。
-	SysVerificationStatus string `json:"sysVerificationStatus"`
-	SysEvidenceCode       string `json:"sysEvidenceCode"`
+	SysVerificationStatus string   `json:"sysVerificationStatus"`
+	SysEvidenceCode       string   `json:"sysEvidenceCode"`
+	CatalogObjects        []string `json:"catalogObjects"`
+	CatalogTruncated      bool     `json:"catalogTruncated"`
 }
 
 // authenticatedPrecheckAgent 使用独立机器凭据认证预检查请求。
@@ -4897,6 +4914,9 @@ func (s *Server) claimNextAuthenticatedConnectionTest(w http.ResponseWriter, r *
 			"connectionConfigDigest": grant.Binding.ConnectionConfigDigest, "credentialRevision": grant.Binding.CredentialRevision,
 			"nodeId": grant.Binding.NodeID, "nodeFactsRevision": grant.Binding.NodeFactsRevision,
 			"sysCredentialId": grant.Binding.SysCredentialID, "sysCredentialRevision": grant.Binding.SysCredentialRevision,
+			"operationKind": grant.Binding.OperationKind, "catalogDatabase": grant.Binding.CatalogDatabase,
+			"catalogCompatibilityMode": grant.Binding.CatalogCompatibilityMode,
+			"catalogObjectType":        grant.Binding.CatalogObjectType, "catalogKeyword": grant.Binding.CatalogKeyword,
 		},
 		"bindingDigest": grant.Binding.BindingDigest, "verificationSource": grant.Binding.VerificationSource,
 		"realExecutionEnabled": false,
@@ -5066,7 +5086,8 @@ func (s *Server) completeAuthenticatedConnectionTest(w http.ResponseWriter, r *h
 		LeaseEpoch: request.Payload.LeaseEpoch, BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
 		RequestDigest: agentConnectionTestRequestDigest("COMPLETE", request.agentConnectionTestEnvelope, connectionTestID, request.Payload),
 		Status:        request.Payload.Status, EvidenceCode: request.Payload.EvidenceCode, VerificationSource: run.VerificationSource,
-		SysVerificationStatus: request.Payload.SysVerificationStatus, SysResultCode: request.Payload.SysEvidenceCode, Now: time.Now().UTC(),
+		SysVerificationStatus: request.Payload.SysVerificationStatus, SysResultCode: request.Payload.SysEvidenceCode,
+		CatalogObjects: request.Payload.CatalogObjects, CatalogTruncated: request.Payload.CatalogTruncated, Now: time.Now().UTC(),
 	})
 	if err != nil {
 		writeAgentConnectionTestStoreError(w, err)
@@ -5140,6 +5161,10 @@ func parseAuthenticatedExecutionNodeEnvironmentCheckCompletion(path string) (str
 // agentEntry 让首次关联在没有既有机器凭据时到达受控交换端点。
 // 默认只开放 G2 固定能力；Windows 本机 MVP 显式执行模式才额外开放受租约约束的 OBDUMPER 导出路径。
 func (s *Server) agentEntry(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/runtime-configuration:sync" {
+		s.syncAgentConfiguration(w, r)
+		return
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/enrollments:exchange" {
 		s.exchangeAgentEnrollment(w, r)
 		return

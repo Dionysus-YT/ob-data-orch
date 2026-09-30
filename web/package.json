@@ -12,15 +12,21 @@
     "build": "vue-tsc -b && vite build",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
-    "typecheck": "vue-tsc -b --noEmit"
+    "typecheck": "vue-tsc -b --noEmit",
+    "test:browser": "playwright test",
+    "audit:platform": "node scripts/audit-platform.mjs",
+    "tokens:generate": "node scripts/generate-tokens.mjs",
+    "tokens:check": "node scripts/generate-tokens.mjs --check"
   },
   "dependencies": {
-    "@lucide/vue": "1.31.0",
+    "@ant-design/icons-vue": "7.0.1",
+    "ant-design-vue": "4.2.6",
     "vue": "3.5.40",
     "vue-router": "5.2.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.63.0",
     "@types/node": "26.1.1",
     "@vitejs/plugin-vue": "6.0.8",
     "eslint": "10.7.0",
@@ -29,7 +35,8 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0",
     "vite": "8.1.5",
-    "vitest": "4.1.10",
+    "vitest": "4.1.11",
     "vue-tsc": "3.3.7"
-  }
+  },
+  "packageManager": "npm@11.13.0"
 }

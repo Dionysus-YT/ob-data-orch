@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Alert as AAlert, Badge as ABadge, Button as AButton, Checkbox as ACheckbox, Collapse as ACollapse, CollapsePanel as ACollapsePanel, Descriptions as ADescriptions, DescriptionsItem as ADescriptionsItem, Empty as AEmpty, Form as AForm, FormItem as AFormItem, Input as AInput, List as AList, ListItem as AListItem, Modal as AModal, Radio as ARadio, RadioButton as ARadioButton, RadioGroup as ARadioGroup, Select as ASelect, SelectOptGroup as ASelectOptGroup, SelectOption as ASelectOption, Skeleton as ASkeleton, Spin as ASpin, Tag as ATag, Textarea as ATextarea } from 'ant-design-vue'
+import { CaretDownOutlined, CaretRightOutlined, CodeOutlined, DeleteOutlined, EyeOutlined, FileTextOutlined, OrderedListOutlined, SearchOutlined, TableOutlined } from '@ant-design/icons-vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { browserApi, dataSourceErrorMessage, exportDraftErrorMessage, storageCredentialErrorMessage, type CommandPreview, type CompressionAlgo, type CsvQuoteMode, type DataSourceSummary, type ExecutionNodeCandidate, type ExportContentKind, type ExportDataFormatKind, type ExportDraft, type ExportObjectType, type ExportOutputKind, type ExportScopeKind, type Precheck, type PrecheckResult, type StorageCredentialListItem } from '@/api/browser'
+import { browserApi, dataSourceErrorMessage, exportCatalogErrorMessage, exportDraftErrorMessage, storageCredentialErrorMessage, type CommandPreview, type CompressionAlgo, type CsvQuoteMode, type DataSourceSummary, type ExecutionNodeCandidate, type ExportContentKind, type ExportDataFormatKind, type ExportDraft, type ExportObjectCatalogQuery, type ExportObjectType, type ExportOutputKind, type ExportScopeKind, type Precheck, type StorageCredentialListItem } from '@/api/browser'
 import EmptyState from '@/components/EmptyState.vue'
 import WizardFrame from '@/components/WizardFrame.vue'
 import { isExportEligibleDataSource } from './exportDataSourceEligibility'
-import { validateExportDraftInput } from './exportDraftInput'
+import { BLOCK_SIZE_PATTERN, validateExportDraftInput } from './exportDraftInput'
 import { fixedPrecheckChecks, precheckCheckLabel, precheckResultBlocksSubmission, precheckResultDetail, precheckResultLabel } from './exportPrecheckPresentation'
 
 const api = browserApi()
+const fieldPrefix = useId()
+const submitCancelID = useId()
 const route = useRoute()
 const router = useRouter()
 const sources = ref<DataSourceSummary[]>([])
@@ -23,6 +27,7 @@ const draftNotice = ref('')
 const creatingDraft = ref(false)
 const createdDraftID = ref('')
 const currentDraft = ref<ExportDraft | null>(null)
+const draftDirty = ref(false)
 const loadingDraft = ref(false)
 const draftLoadFailure = ref('')
 const commandPreview = ref<CommandPreview | null>(null)
@@ -34,12 +39,51 @@ const startingPrecheck = ref(false)
 const precheckFailure = ref('')
 const submitting = ref(false)
 const submissionFailure = ref('')
+const submitConfirmationOpen = ref(false)
+let submitFocusTimer: ReturnType<typeof setTimeout> | undefined
+// 保存请求期间若表单继续变化，旧响应只能更新草稿版本，不能解锁预检查或提交。
+let formVersion = 0
+const attemptedStep = ref(0)
+const copyNotice = ref('')
 const selectedDataSourceID = ref('')
+const sourceKeyword = ref('')
+const sourceEnvironment = ref('')
 const selectedNodeID = ref('')
 const database = ref('')
+const databaseCatalogNames = ref<string[]>([])
+const databaseCatalogKeyword = ref('')
+const databaseCatalogLoading = ref(false)
+const databaseCatalogLoaded = ref(false)
+const databaseCatalogTruncated = ref(false)
+const databaseCatalogFailure = ref('')
+const manualDatabaseOpen = ref(false)
+const manualDatabaseInput = ref('')
+const manualDatabaseError = ref('')
+let databaseCatalogEpoch = 0
+let databaseCatalogTimer: ReturnType<typeof setTimeout> | undefined
+let databaseCatalogLoadTimer: ReturnType<typeof setTimeout> | undefined
+let databaseCatalogWaitResolve: (() => void) | undefined
 const scopeKind = ref<ExportScopeKind>('SPECIFIED')
 const objectType = ref<ExportObjectType>('TABLE')
 const objectNames = ref<string[]>([''])
+const candidateObjectNames = ref<string[]>([])
+const candidateGroupExpanded = ref(true)
+const selectedGroupExpanded = ref(true)
+const manualCandidateNames = ref<string[]>([])
+const candidateObjectInput = ref('')
+const candidateEditorPanels = ref<string[]>([])
+const candidateObjectKeyword = ref('')
+const candidateObjectError = ref('')
+const catalogKeywordTooLong = computed(() => new TextEncoder().encode(candidateObjectKeyword.value.trim()).length > 100)
+const catalogLoading = ref(false)
+const catalogLoaded = ref(false)
+const catalogTruncated = ref(false)
+const catalogFailure = ref('')
+let catalogEpoch = 0
+let catalogTimer: ReturnType<typeof setTimeout> | undefined
+let catalogLoadTimer: ReturnType<typeof setTimeout> | undefined
+let catalogWaitResolve: (() => void) | undefined
+const selectedObjectKeyword = ref('')
 const excludeTablesText = ref('')
 const contentKind = ref<ExportContentKind>('DATA_ONLY')
 // EX-I4：数据格式单选；默认 CSV 保持既有行为，切换时清空不适用格式的选项。
@@ -122,36 +166,53 @@ const nlsDateFormat = ref('')
 const nlsTimestampFormat = ref('')
 const nlsTimestampTzFormat = ref('')
 const dataOptionsActive = computed(() => contentKind.value !== 'DDL_ONLY')
+const excludeTablesSupported = computed(() => (scopeKind.value === 'ALL' && dataOptionsActive.value) || (scopeKind.value === 'SPECIFIED' && objectType.value === 'TABLE'))
 const whereSupported = computed(() => scopeKind.value === 'SPECIFIED' && objectType.value === 'TABLE')
 const partitionSupported = computed(() => contentKind.value !== 'DDL_ONLY' && scopeKind.value === 'SPECIFIED' && objectType.value === 'TABLE')
 const compactSchemaSupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || objectType.value === 'TABLE'))
-// EX-I4：序列化面板按数据格式适用；文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均有效。
-const hasFilterOptions = computed(() => Boolean(querySql.value.trim() || where.value.trim() || partition.value.trim() || excludeDataTypes.value.trim() || includeColumnNames.value.trim() || excludeColumnNames.value.trim() || excludeVirtualColumns.value || flashbackScn.value.trim() || flashbackTimestamp.value.trim() || snapshot.value))
-const hasPerformanceOptions = computed(() => Boolean(thread.value.trim() || pageSize.value.trim() || parallelMacro.value.trim() || fetchSize.value.trim() || jvmMemory.value.trim() || blockSize.value.trim()))
-const hasCsvOptions = computed(() => formatKind.value === 'CSV' && Boolean(skipHeader.value || withTrim.value || columnSeparator.value || columnQuote.value || columnQuoteMode.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
-const hasCutOptions = computed(() => formatKind.value === 'CUT' && Boolean(trailDelimiter.value || removeNewline.value || withTrim.value || escapeCharacter.value || lineSeparator.value || nullString.value || fileEncoding.value))
-const hasSqlOptions = computed(() => formatKind.value === 'SQL' && Boolean(lineSeparator.value || fileEncoding.value))
-const hasFileLayoutOptions = computed(() => Boolean(noNestedDir.value || maxFileSize.value || retainEmptyFiles.value))
-const hasCompressionOptions = computed(() => Boolean(compress.value || compressionAlgo.value))
-const optionPanelsActive = computed(() => Boolean(hasFilterOptions.value || hasPerformanceOptions.value || hasCsvOptions.value || hasCutOptions.value || hasSqlOptions.value || hasFileLayoutOptions.value || hasCompressionOptions.value))
-const optionPanelsMessage = computed(() => {
+const objectOptionsMessage = computed(() => {
   if (!dataOptionsActive.value) return ''
-  if (!optionPanelsActive.value) return ''
-  if (querySql.value.trim() && (flashbackScn.value.trim() || flashbackTimestamp.value.trim())) return '自定义查询与闪回参数互斥，只能选择其一。'
+  if (querySql.value.trim() && (where.value.trim() || partition.value.trim() || flashbackScn.value.trim() || flashbackTimestamp.value.trim())) return '自定义查询与条件、分区及闪回参数互斥，只能选择其一。'
   if (snapshot.value && (flashbackScn.value.trim() || flashbackTimestamp.value.trim())) return '一致性快照与闪回参数互斥，只能选择其一。'
   if (includeColumnNames.value.trim() && excludeColumnNames.value.trim()) return '包含列与排除列互斥，只能选择其一。'
+  return ''
+})
+const formatOptionsMessage = computed(() => {
+  if (dataOptionsActive.value && blockSize.value.trim() && !BLOCK_SIZE_PATTERN.test(blockSize.value.trim())) return '文件拆分必须为正整数（MB）或正整数+MB/ROW 后缀，例如 1024 或 256ROW。'
   if (compress.value && !compressionAlgo.value) return '启用压缩后请选择压缩算法。'
   return ''
 })
 const activeStep = computed(() => {
   const value = Number(route.query.step ?? '1')
-  return Number.isInteger(value) && value >= 1 && value <= 6 ? value : 1
+  return Number.isInteger(value) && value >= 1 && value <= 5 ? value : 1
 })
 
-const titles = ['选择数据源', '选择导出对象', '选择导出内容', '选择数据格式', '执行与输出', '预检查与命令']
+const titles = ['选择数据源', '导出内容与对象', '选择数据格式', '执行与输出', '预检查与命令']
+const enteredObjectCount = computed(() => objectNames.value.filter((name) => name.trim().length > 0).length)
+const selectedObjectRows = computed(() => objectNames.value.map((name, index) => ({ name: name.trim(), index })).filter((item) => item.name.length > 0))
+const visibleSelectedObjectRows = computed(() => selectedObjectRows.value.filter((item) => item.name.toLocaleLowerCase().includes(selectedObjectKeyword.value.trim().toLocaleLowerCase())))
+const visibleCandidateObjectNames = computed(() => candidateObjectNames.value.filter((name) => name.toLocaleLowerCase().includes(candidateObjectKeyword.value.trim().toLocaleLowerCase())))
+const visibleCandidateSelectedCount = computed(() => visibleCandidateObjectNames.value.filter((name) => objectNames.value.includes(name)).length)
+const objectCategories = [
+  { type: 'TABLE', label: '表', icon: TableOutlined },
+  { type: 'VIEW', label: '视图', icon: EyeOutlined },
+  { type: 'FUNCTION', label: '函数', icon: CodeOutlined },
+  { type: 'PROCEDURE', label: '存储过程', icon: FileTextOutlined },
+  { type: 'SEQUENCE', label: '序列', icon: OrderedListOutlined },
+] as const
 const eligibleSources = computed(() => sources.value.filter(isExportEligibleDataSource))
+const visibleSources = computed(() => eligibleSources.value.filter((source) =>
+  (!sourceEnvironment.value || source.environment === sourceEnvironment.value)
+  && (!sourceKeyword.value.trim() || source.displayName.toLocaleLowerCase().includes(sourceKeyword.value.trim().toLocaleLowerCase())),
+))
 const selectedSource = computed(() => eligibleSources.value.find((source) => source.id === selectedDataSourceID.value))
+const selectedSourceRevision = computed(() => selectedSource.value?.revision ?? 0)
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeID.value))
+const databaseOptions = computed(() => [...new Set([
+  ...databaseCatalogNames.value,
+  selectedSource.value?.defaultDatabase ?? '',
+  database.value,
+].filter(Boolean))].filter((name) => name.toLocaleLowerCase().includes(databaseCatalogKeyword.value.trim().toLocaleLowerCase())))
 // 仅 MySQL CSV/CUT 数据导出开放两个已验证时间格式；Oracle 的九个字段均保持关闭。
 const timestampFormatsSupported = computed(() => selectedSource.value?.compatibilityMode === 'MYSQL' && contentKind.value !== 'DDL_ONLY' && (formatKind.value === 'CSV' || formatKind.value === 'CUT'))
 const displayedDraftConfig = computed(() => currentDraft.value?.config)
@@ -198,21 +259,33 @@ const precheckRows = computed(() => {
   }))
 })
 const blockingPrecheckRows = computed(() => precheckRows.value.filter((row) => precheckResultBlocksSubmission(row.result)))
-const canSubmit = computed(() => activePrecheck.value?.status === 'SUCCEEDED' && activePrecheck.value.integrityStatus === 'COMPLETE' && Boolean(currentDraft.value) && !submitting.value)
+// 预检查和脱敏命令必须绑定当前草稿版本、指纹与节点；旧证据不能解锁提交。
+const canSubmit = computed(() => {
+  const draft = currentDraft.value
+  const precheck = activePrecheck.value
+  return Boolean(draft && precheck && commandPreview.value
+    && !draftDirty.value && !submitting.value
+    && precheck.status === 'SUCCEEDED' && precheck.integrityStatus === 'COMPLETE'
+    && precheck.draftId === draft.id && precheck.draftRevision === draft.revision
+    && precheck.configFingerprint === draft.configFingerprint && precheck.nodeId === draft.nodeId
+    && commandPreview.value.configFingerprint === draft.configFingerprint
+    && blockingPrecheckRows.value.length === 0)
+})
 const footerBaselineNote = computed(() => {
-	if (activeStep.value === 6) {
+	if (activeStep.value === 5) {
 		if (storageOutput.value && blockingPrecheckRows.value.some((row) => row.check === 'STORAGE_CONNECTIVITY' || row.check === 'STORAGE_AUTH')) {
 			return '对象存储输出需要存储端点连通性与凭据有效性两项预检查通过后才能提交；这两项探测尚未授权（归 EX-V1 排期），当前保持未完成。'
 		}
 		return canSubmit.value ? '预检查已通过。提交后，所选 Agent 将领取已冻结的导出任务并启动 OBDUMPER。' : (currentDraft.value ? '草稿已保存；请先完成当前版本的固定预检查，提交后才会启动 OBDUMPER。' : '尚未读取草稿；请返回上一步完成固定字段并创建草稿。')
 	}
-	return '仅在固定字段完整时才创建草稿；服务端会再次校验数据源和节点授权。'
+	if (currentStepError.value && (attemptedStep.value === activeStep.value || activeStep.value === 2)) return currentStepError.value
+	return activeStep.value === 4 ? '创建草稿时服务端会再次校验数据源和节点授权。' : '填写当前步骤后继续；进入下一步前会检查当前输入。'
 })
 const objectInputMessage = computed(() => {
-  if (!database.value.trim()) return '请填写默认数据库或 Schema。'
+  if (!database.value.trim()) return '请选择数据库或 Schema。'
   if (scopeKind.value === 'ALL') return ''
   const names = objectNames.value.map((name) => name.trim()).filter((name) => name.length > 0)
-  if (names.length === 0) return objectType.value === 'VIEW' ? '请至少填写一个视图名称。' : '请至少填写一个表名。'
+  if (names.length === 0) return objectType.value === 'VIEW' ? '请至少选择一个视图。' : '请至少选择一个表。'
   if (names.length > 100) return '对象数量不能超过 100 个。'
   if (names.some((name) => name.includes('*') || name.includes(',') || name.length > 256)) return '对象名称不能使用通配符或逗号，且不超过 256 个字符；多个对象请分行填写。'
   return ''
@@ -296,25 +369,40 @@ const draftValidation = computed(() => validateExportDraftInput({
   nlsTimestampFormat: nlsTimestampFormat.value,
   nlsTimestampTzFormat: nlsTimestampTzFormat.value,
 }))
-const draftInput = computed(() => draftValidation.value.valid ? draftValidation.value.input : undefined)
-const draftValidationMessage = computed(() => draftValidation.value.valid ? '' : draftValidation.value.message)
+const ordinaryFormat = computed(() => contentKind.value === 'DDL_ONLY' || ['CSV', 'CUT', 'SQL'].includes(formatKind.value))
+const draftInput = computed(() => ordinaryFormat.value && draftValidation.value.valid && !contentInputMessage.value && !objectInputMessage.value && !objectOptionsMessage.value && !formatOptionsMessage.value ? draftValidation.value.input : undefined)
+const draftValidationMessage = computed(() => !ordinaryFormat.value ? '当前格式仅保留历史任务读取；普通新建入口只开放 CSV、CUT 和 SQL。' : draftValidation.value.valid ? contentInputMessage.value || objectInputMessage.value || objectOptionsMessage.value || formatOptionsMessage.value : draftValidation.value.message)
 const derivedDraftBindingLocked = computed(() => currentDraft.value !== null && typeof route.query.draft === 'string' && route.query.draft === currentDraft.value.id)
 const canAdvance = computed(() => {
   if (activeStep.value === 1) return Boolean(selectedSource.value)
-  if (activeStep.value === 2) return Boolean(selectedSource.value) && !objectInputMessage.value
-  if (activeStep.value === 3) return Boolean(selectedSource.value) && !contentInputMessage.value
-  if (activeStep.value === 5) return Boolean(draftInput.value) && !creatingDraft.value
-  return Boolean(selectedSource.value) && activeStep.value < 5
+  if (activeStep.value === 2) return Boolean(selectedSource.value && selectedNode.value) && !contentInputMessage.value && !objectInputMessage.value && !objectOptionsMessage.value
+  if (activeStep.value === 3) return Boolean(selectedSource.value) && ordinaryFormat.value && !formatOptionsMessage.value
+  if (activeStep.value === 4) return Boolean(draftInput.value) && !creatingDraft.value
+  return Boolean(selectedSource.value) && activeStep.value < 4
 })
 const footerLabel = computed(() => {
-  if (activeStep.value === 5) return creatingDraft.value ? '正在创建草稿…' : '创建导出草稿'
-  if (activeStep.value === 6) {
+  if (activeStep.value === 4) return creatingDraft.value ? '正在保存草稿…' : currentDraft.value ? '保存并进入预检查' : '创建草稿并进入预检查'
+  if (activeStep.value === 5) {
     if (startingPrecheck.value) return '正在发起预检查…'
     if (precheckRunning.value) return '预检查进行中…'
     if (precheckID.value && !activePrecheck.value) return '重新读取预检查'
     return activePrecheck.value ? '重新执行预检查' : '执行预检查'
   }
-  return '下一步'
+  return `下一步：${titles[activeStep.value]}`
+})
+const currentStepError = computed(() => {
+  if (activeStep.value <= 3 && !selectedSource.value) return '请选择已启用且基础连接测试成功的数据源。'
+  if (activeStep.value === 2 && !selectedNode.value) return '请选择读取元数据并执行导出的节点。'
+  if (activeStep.value === 2) return contentInputMessage.value || objectInputMessage.value || objectOptionsMessage.value
+  if (activeStep.value === 3) return !ordinaryFormat.value ? draftValidationMessage.value : formatOptionsMessage.value
+  if (activeStep.value === 4) return draftValidationMessage.value
+  return ''
+})
+watch(activeStep, () => { attemptedStep.value = 0 })
+// 弹窗打开动画会重新设置焦点；动画结束后将焦点移到安全的取消操作。
+watch(submitConfirmationOpen, (open) => {
+  if (submitFocusTimer) clearTimeout(submitFocusTimer)
+  if (open) submitFocusTimer = setTimeout(() => document.getElementById(submitCancelID)?.focus(), 280)
 })
 const outputPathPlaceholder = computed(() => selectedNode.value?.platform === 'WINDOWS_AMD64'
   ? '例如 /E:/exports/daily'
@@ -357,10 +445,18 @@ function clearUnverifiedTimestampFormats() {
 watch(selectedSource, (source, previousSource) => {
   if (hydratingDerivedDraft) return
   if (source?.id === previousSource?.id) return
+  // 服务端不允许更新已保存草稿的数据源绑定；更换后下一次保存必须创建新草稿。
+  if (currentDraft.value && source?.id !== currentDraft.value.dataSourceId) clearDraftState()
   database.value = source?.defaultDatabase ?? ''
   scopeKind.value = 'SPECIFIED'
   objectType.value = 'TABLE'
   objectNames.value = ['']
+  candidateObjectNames.value = []
+  manualCandidateNames.value = []
+  candidateObjectInput.value = ''
+  candidateEditorPanels.value = []
+  candidateObjectKeyword.value = ''
+  candidateObjectError.value = ''
   excludeTablesText.value = ''
   contentKind.value = 'DATA_ONLY'
   clearGatedParameters()
@@ -368,9 +464,31 @@ watch(selectedSource, (source, previousSource) => {
   invalidateDraftState()
 })
 
+watch(selectedSourceRevision, (revision, previousRevision) => {
+  if (hydratingDerivedDraft || !previousRevision || revision === previousRevision) return
+  objectNames.value = ['']
+  candidateObjectNames.value = []
+  manualCandidateNames.value = []
+  candidateObjectKeyword.value = ''
+  selectedObjectKeyword.value = ''
+})
+
+watch(selectedNodeID, (nodeID) => {
+  if (hydratingDerivedDraft) return
+  // 执行节点绑定同样不可更新；清除旧草稿避免提交旧节点的预检查证据。
+  if (currentDraft.value && nodeID !== currentDraft.value.nodeId) clearDraftState()
+  if (scopeKind.value === 'SPECIFIED') {
+    objectNames.value = ['']
+    candidateObjectNames.value = []
+    manualCandidateNames.value = []
+    candidateObjectKeyword.value = ''
+    selectedObjectKeyword.value = ''
+  }
+})
+
 watch([database, scopeKind, objectType, objectNames, excludeTablesText, contentKind, formatKind, trailDelimiter, removeNewline, columnSplitter, selectedNodeID, filePath, logPath, skipCheckDir, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, tmpPath, storageCredentialID, controlFilePath, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir, maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema, compactSchema, addExtraMessage, partition, excludeDataTypes, enableHiddenPk, dateValueFormat, timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat, timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat], () => {
   if (hydratingDerivedDraft) return
-  // 任一配置变化都会作废已创建草稿并清除服务端错误提示。
+  // 任一配置变化都会清除旧预览和预检查；已有草稿保留标识，待保存时更新。
   invalidateDraftState()
 }, { deep: true })
 
@@ -382,7 +500,6 @@ watch(outputKind, () => {
 
 watch(scopeKind, (kind) => {
   if (hydratingDerivedDraft) return
-  if (kind === 'ALL') excludeTablesText.value = ''
   clearGatedParameters()
   // 条件筛选只可随指定表发送，切到全部对象或已选视图时清除残留。
   if (kind !== 'SPECIFIED' || objectType.value !== 'TABLE') {
@@ -391,22 +508,223 @@ watch(scopeKind, (kind) => {
   }
 })
 
-watch(objectType, (type, previousType) => {
+watch(objectType, (type) => {
   if (hydratingDerivedDraft) return
   clearGatedParameters()
+  // 切换对象类型时，旧名称不能被重新解释成另一种对象类型。
+  objectNames.value = ['']
+  candidateObjectNames.value = []
+  manualCandidateNames.value = []
+  candidateObjectInput.value = ''
+  candidateEditorPanels.value = []
+  candidateObjectKeyword.value = ''
+  candidateObjectError.value = ''
+  selectedObjectKeyword.value = ''
   if (type === 'VIEW') {
     where.value = ''
     partition.value = ''
     if (contentKind.value !== 'DDL_ONLY') contentKind.value = 'DDL_ONLY'
   }
-  // 视图被强制为仅 DDL 后切回表时，对称恢复默认的仅数据内容。
-  if (previousType === 'VIEW' && type === 'TABLE' && scopeKind.value === 'SPECIFIED' && contentKind.value === 'DDL_ONLY') contentKind.value = 'DATA_ONLY'
 })
+
+watch(database, (value, previousValue) => {
+  if (hydratingDerivedDraft || value === previousValue) return
+  // 候选与已选名称属于当前数据库；切库后不能把旧对象悄悄带入新范围。
+  objectNames.value = ['']
+  candidateObjectNames.value = []
+  manualCandidateNames.value = []
+  candidateObjectInput.value = ''
+  candidateEditorPanels.value = []
+  candidateObjectKeyword.value = ''
+  candidateObjectError.value = ''
+  selectedObjectKeyword.value = ''
+})
+
+watch(objectNames, (names) => {
+  // 恢复历史草稿时，将已选对象并入候选区，使两栏状态保持一致。
+  const missing = names.map((name) => name.trim()).filter((name) => name && !candidateObjectNames.value.includes(name))
+  if (missing.length > 0) candidateObjectNames.value = [...candidateObjectNames.value, ...missing]
+}, { deep: true })
+
+watch(candidateObjectInput, () => { candidateObjectError.value = '' })
+
+function stopCatalogQuery() {
+  catalogEpoch++
+  if (catalogTimer) clearTimeout(catalogTimer)
+  catalogWaitResolve?.()
+  catalogWaitResolve = undefined
+  if (catalogLoadTimer) clearTimeout(catalogLoadTimer)
+  catalogTimer = undefined
+  catalogLoadTimer = undefined
+  catalogLoading.value = false
+  catalogLoaded.value = false
+  catalogTruncated.value = false
+  catalogFailure.value = ''
+}
+
+function stopDatabaseCatalogQuery() {
+  databaseCatalogEpoch++
+  if (databaseCatalogTimer) clearTimeout(databaseCatalogTimer)
+  databaseCatalogWaitResolve?.()
+  databaseCatalogWaitResolve = undefined
+  if (databaseCatalogLoadTimer) clearTimeout(databaseCatalogLoadTimer)
+  databaseCatalogTimer = undefined
+  databaseCatalogLoadTimer = undefined
+  databaseCatalogLoading.value = false
+  databaseCatalogFailure.value = ''
+}
+
+async function loadDatabaseCatalog() {
+  if (databaseCatalogLoading.value) return
+  stopDatabaseCatalogQuery()
+  const epoch = databaseCatalogEpoch
+  const source = selectedSource.value
+  const nodeID = selectedNodeID.value
+  const keyword = databaseCatalogKeyword.value.trim()
+  if (new TextEncoder().encode(keyword).length > 100) {
+    databaseCatalogFailure.value = '数据库关键字最多 100 字节。'
+    return
+  }
+  if (activeStep.value !== 2 || !source || !nodeID) return
+  databaseCatalogLoading.value = true
+  try {
+    let query = await api.searchExportObjects(source.id, source.revision, { nodeId: nodeID, database: '', objectType: 'DATABASE', keyword })
+    if (epoch !== databaseCatalogEpoch) return
+    while (query.status === 'PENDING' || query.status === 'LEASED') {
+      await new Promise<void>((resolve) => { databaseCatalogWaitResolve = resolve; databaseCatalogTimer = setTimeout(resolve, 2000) })
+      databaseCatalogWaitResolve = undefined
+      if (epoch !== databaseCatalogEpoch) return
+      query = await api.getExportObjectCatalogQuery(query.id)
+      if (epoch !== databaseCatalogEpoch) return
+    }
+    if (query.dataSourceId !== source.id || query.nodeId !== nodeID || query.database !== '' || query.objectType !== 'DATABASE' || query.keyword !== keyword) {
+      databaseCatalogFailure.value = '数据库查询结果与当前条件不一致，请重新加载。'
+      return
+    }
+    if (query.status !== 'SUCCEEDED') {
+      databaseCatalogFailure.value = query.status === 'EXPIRED' ? '执行节点未及时完成数据库查询。可重新加载或手动输入。' : '执行节点未能读取数据库目录，可手动输入并由预检查确认。'
+      return
+    }
+    databaseCatalogNames.value = [...query.objects]
+    databaseCatalogLoaded.value = true
+    databaseCatalogTruncated.value = query.truncated
+  } catch (error) {
+    if (epoch === databaseCatalogEpoch) databaseCatalogFailure.value = exportCatalogErrorMessage(error)
+  } finally {
+    if (epoch === databaseCatalogEpoch) databaseCatalogLoading.value = false
+  }
+}
+
+function scheduleDatabaseCatalog(keyword: string) {
+  databaseCatalogKeyword.value = keyword
+  stopDatabaseCatalogQuery()
+  databaseCatalogNames.value = []
+  databaseCatalogLoaded.value = false
+  databaseCatalogTruncated.value = false
+  if (activeStep.value !== 2 || !selectedSource.value || !selectedNodeID.value) return
+  databaseCatalogLoadTimer = setTimeout(() => { void loadDatabaseCatalog() }, 500)
+}
+
+function onDatabaseDropdownVisibleChange(open: boolean) {
+  if (open && selectedNodeID.value && !databaseCatalogLoaded.value && !databaseCatalogLoading.value && !databaseCatalogFailure.value) {
+    void loadDatabaseCatalog()
+  }
+}
+
+function selectDatabaseOption(value: unknown) {
+  if (typeof value !== 'string') return
+  if (value === '__manual__') {
+    manualDatabaseInput.value = database.value
+    manualDatabaseError.value = ''
+    manualDatabaseOpen.value = true
+    return
+  }
+  database.value = value
+}
+
+function confirmManualDatabase() {
+  const name = manualDatabaseInput.value.trim()
+  if (!name || new TextEncoder().encode(name).length > 256 || /[*,\r\n\0]/.test(name)) {
+    manualDatabaseError.value = '请输入不含通配符和逗号、最多 256 字节的数据库或 Schema 名称。'
+    return
+  }
+  database.value = name
+  manualDatabaseOpen.value = false
+  manualDatabaseError.value = ''
+}
+
+watch([activeStep, selectedDataSourceID, selectedSourceRevision, selectedNodeID], () => {
+  stopDatabaseCatalogQuery()
+  databaseCatalogNames.value = []
+  databaseCatalogLoaded.value = false
+  databaseCatalogTruncated.value = false
+  databaseCatalogKeyword.value = ''
+  if (activeStep.value === 2 && selectedSource.value && selectedNodeID.value) {
+    databaseCatalogLoadTimer = setTimeout(() => { void loadDatabaseCatalog() }, 500)
+  }
+}, { flush: 'post' })
+
+function catalogMatches(query: ExportObjectCatalogQuery, sourceID: string, nodeID: string, schema: string, type: 'TABLE' | 'VIEW', keyword: string) {
+  return query.dataSourceId === sourceID && query.nodeId === nodeID && query.database === schema && query.objectType === type && query.keyword === keyword
+}
+
+async function loadCatalog() {
+  if (catalogLoading.value) return
+  stopCatalogQuery()
+  const epoch = catalogEpoch
+  const source = selectedSource.value
+  const nodeID = selectedNodeID.value
+  const schema = database.value.trim()
+  const type = objectType.value
+  const keyword = candidateObjectKeyword.value.trim()
+  if (catalogKeywordTooLong.value) { catalogFailure.value = '名称关键字最多 100 字节，请缩短后重试。'; return }
+  if (activeStep.value !== 2 || scopeKind.value !== 'SPECIFIED' || !source || !nodeID || !schema) return
+  catalogLoading.value = true
+  try {
+    let query = await api.searchExportObjects(source.id, source.revision, { nodeId: nodeID, database: schema, objectType: type, keyword })
+    if (epoch !== catalogEpoch || !catalogMatches(query, source.id, nodeID, schema, type, keyword)) return
+    while (query.status === 'PENDING' || query.status === 'LEASED') {
+      await new Promise<void>((resolve) => { catalogWaitResolve = resolve; catalogTimer = setTimeout(resolve, 2000) })
+      catalogWaitResolve = undefined
+      if (epoch !== catalogEpoch) return
+      query = await api.getExportObjectCatalogQuery(query.id)
+      if (epoch !== catalogEpoch || !catalogMatches(query, source.id, nodeID, schema, type, keyword)) return
+    }
+    if (query.status !== 'SUCCEEDED') {
+      catalogFailure.value = query.status === 'EXPIRED' ? '执行节点未及时领取或完成对象查询。请确认 Agent 在线后重试；也可手动添加对象。' : '节点未能读取对象元数据，请检查数据源连接与节点状态后重试。'
+      return
+    }
+    catalogLoaded.value = true
+    catalogTruncated.value = query.truncated
+    const selected = objectNames.value.map((name) => name.trim()).filter(Boolean)
+    manualCandidateNames.value = manualCandidateNames.value.filter((name) => !query.objects.includes(name))
+    candidateObjectNames.value = [...new Set([...query.objects, ...selected])]
+  } catch (error) {
+    if (epoch === catalogEpoch) catalogFailure.value = exportCatalogErrorMessage(error)
+  } finally {
+    if (epoch === catalogEpoch) catalogLoading.value = false
+  }
+}
+
+watch([activeStep, selectedDataSourceID, selectedSourceRevision, selectedNodeID, database, objectType, scopeKind], () => {
+  if (hydratingDerivedDraft) return
+  stopCatalogQuery()
+  if (activeStep.value !== 2 || scopeKind.value !== 'SPECIFIED' || !selectedSource.value || !selectedNodeID.value || !database.value.trim()) return
+  catalogLoadTimer = setTimeout(() => { void loadCatalog() }, 500)
+}, { flush: 'post' })
+
+watch(candidateObjectKeyword, () => { stopCatalogQuery() })
 
 // 紧凑 Schema 失去表 DDL 前提时立即清值，避免隐藏残留进入草稿构造。
 watch(compactSchemaSupported, (supported) => {
   if (hydratingDerivedDraft) return
   if (!supported) compactSchema.value = false
+})
+
+// 排除表失去适用范围时清值，避免折叠项隐藏后留下不可见的无效草稿参数。
+watch(excludeTablesSupported, (supported) => {
+  if (hydratingDerivedDraft) return
+  if (!supported) excludeTablesText.value = ''
 })
 
 // 分区筛选失去指定表数据前提时立即清值；时间格式仅保留 MySQL 的两个已验证字段。
@@ -457,6 +775,7 @@ watch(contentKind, (kind) => {
     columnSplitter.value = ''
     controlFilePath.value = ''
     noNestedDir.value = false
+    blockSize.value = ''
     maxFileSize.value = ''
     retainEmptyFiles.value = false
     compress.value = false
@@ -531,7 +850,12 @@ async function initializeWizard() {
   const derivedDraftID = typeof route.query.draft === 'string' ? route.query.draft : ''
   if (derivedDraftID) await loadDerivedDraft(derivedDraftID)
 }
-onBeforeUnmount(stopPrecheckPolling)
+onBeforeUnmount(() => {
+  stopPrecheckPolling()
+  stopCatalogQuery()
+  stopDatabaseCatalogQuery()
+  if (submitFocusTimer) clearTimeout(submitFocusTimer)
+})
 
 // loadDerivedDraft 加载派生草稿：回填向导表单（可编辑），并读取命令预览与草稿状态。
 async function loadDerivedDraft(draftID: string) {
@@ -550,6 +874,7 @@ async function loadDerivedDraft(draftID: string) {
     }
     createdDraftID.value = draftID
     currentDraft.value = draft
+    draftDirty.value = false
     draftNotice.value = '已加载来源任务派生的草稿；基于原配置新建可以修改参数，从头重新执行不允许修改参数（提交时由服务端复验）。'
     await loadCommandPreview(draft)
   } catch (error) {
@@ -569,6 +894,13 @@ function populateFormFromDraft(draft: ExportDraft) {
   objectType.value = config.objectScope.objectTypes?.[0] ?? 'TABLE'
   objectNames.value = (config.objectScope.expressions ?? []).map((expression) => expression.name)
   if (objectNames.value.length === 0) objectNames.value = ['']
+  candidateObjectNames.value = objectNames.value.filter(Boolean)
+  manualCandidateNames.value = candidateObjectNames.value.slice()
+  candidateObjectInput.value = ''
+  candidateEditorPanels.value = []
+  candidateObjectKeyword.value = ''
+  candidateObjectError.value = ''
+  selectedObjectKeyword.value = ''
   excludeTablesText.value = (config.objectScope.excludeTables ?? []).join(',')
   contentKind.value = config.contentSelection.contentKind
   formatKind.value = config.dataFormat?.formatKind ?? 'CSV'
@@ -715,36 +1047,68 @@ function previousStep() {
 }
 
 function nextStep() {
-  if (activeStep.value === 5) {
+  if (!canAdvance.value) {
+    attemptedStep.value = activeStep.value
+    return
+  }
+  if (activeStep.value === 4) {
+    if (currentDraft.value && !draftDirty.value) {
+      moveToStep(5)
+      return
+    }
     void createDraft()
     return
   }
-  if (activeStep.value < 5 && canAdvance.value) moveToStep(activeStep.value + 1)
+  if (activeStep.value < 4 && canAdvance.value) moveToStep(activeStep.value + 1)
 }
 
-async function createDraft() {
-  if (!draftInput.value) return
+async function copyCommand() {
+  if (!commandPreview.value) return
+  try {
+    await navigator.clipboard.writeText(commandPreview.value.command)
+    copyNotice.value = '已复制脱敏命令；密码占位符不能用于直接执行。'
+  } catch {
+    copyNotice.value = '复制失败，请检查浏览器剪贴板权限。'
+  }
+}
+
+async function createDraft(advance = true) {
+  const input = draftInput.value
+  if (!input || creatingDraft.value) return
   creatingDraft.value = true
   // EX-I8：已加载的派生草稿在步骤 5 保存时走更新路径，保留来源任务标记；
   // 全新草稿仍走创建路径。
   const existing = currentDraft.value
   if (existing) invalidateDraftState()
   else clearDraftState()
+  const savedVersion = formVersion
   try {
     if (existing) {
-      const updated = await api.updateExportDraft({ ...existing, dataSourceId: draftInput.value.dataSourceId, nodeId: draftInput.value.nodeId, config: draftInput.value.config })
+      const updated = await api.updateExportDraft({ ...existing, dataSourceId: input.dataSourceId, nodeId: input.nodeId, config: input.config })
+      if (updated.dataSourceId !== selectedDataSourceID.value || updated.nodeId !== selectedNodeID.value) {
+        clearDraftState()
+        draftNotice.value = '保存期间更换了数据源或执行节点；请为当前绑定创建新草稿。'
+        return
+      }
       createdDraftID.value = updated.id
       currentDraft.value = updated
-      draftNotice.value = '派生草稿已保存，正在重算命令预览。'
-      moveToStep(6)
+      draftDirty.value = formVersion !== savedVersion
+      draftNotice.value = draftDirty.value ? '保存期间配置又有变化；请再次保存当前配置。' : '草稿已保存，正在重算命令预览。'
+      if (draftDirty.value) return
+      if (advance) moveToStep(5)
       await loadCommandPreview(updated)
       return
     }
-    const draftID = await api.createExportDraft(draftInput.value)
+    const draftID = await api.createExportDraft(input)
+    if (input.dataSourceId !== selectedDataSourceID.value || input.nodeId !== selectedNodeID.value) {
+      clearDraftState()
+      draftNotice.value = '保存期间更换了数据源或执行节点；请为当前绑定创建新草稿。'
+      return
+    }
     createdDraftID.value = draftID
     draftNotice.value = '导出草稿已创建，正在读取服务端配置快照。'
-    moveToStep(6)
-    await loadCreatedDraft(draftID)
+    await loadCreatedDraft(draftID, savedVersion)
+    if (advance && currentDraft.value && !draftDirty.value) moveToStep(5)
   } catch (error) {
     draftFailure.value = exportDraftErrorMessage(error, '无法创建导出草稿，请检查当前配置后重试。')
   } finally {
@@ -756,30 +1120,34 @@ function clearDraftState() {
   stopPrecheckPolling()
   createdDraftID.value = ''
   currentDraft.value = null
+  draftDirty.value = false
   draftFailure.value = ''
   draftLoadFailure.value = ''
   draftNotice.value = ''
   commandPreview.value = null
   commandPreviewFailure.value = ''
+  copyNotice.value = ''
   activePrecheck.value = null
   precheckID.value = ''
   precheckFailure.value = ''
   submissionFailure.value = ''
+  submitConfirmationOpen.value = false
 }
 
-// invalidateDraftState 清除旧预览与预检查；派生草稿保留资源标识，后续保存必须走更新接口，
-// 否则编辑后会退化成无来源关系的新草稿。
+// invalidateDraftState 清除旧预览与预检查，同时保留草稿标识；后续保存更新同一草稿，
+// 派生草稿因此不会丢失来源关系，普通草稿也不会在每次编辑后生成孤立副本。
 function invalidateDraftState() {
+  formVersion += 1
   const draft = currentDraft.value
-  const preserveDerivedDraft = draft !== null && typeof route.query.draft === 'string' && route.query.draft === draft.id
   clearDraftState()
-  if (!preserveDerivedDraft || !draft) return
+  if (!draft) return
   createdDraftID.value = draft.id
   currentDraft.value = draft
-  draftNotice.value = '派生草稿包含未保存更改；保存后将保留来源任务关系并重算命令预览。'
+  draftDirty.value = true
+  draftNotice.value = '当前配置有未保存更改；保存后需重新生成命令预览与预检查。'
 }
 
-async function loadCreatedDraft(draftID = createdDraftID.value) {
+async function loadCreatedDraft(draftID = createdDraftID.value, savedVersion?: number) {
   if (!draftID) return
   loadingDraft.value = true
   draftLoadFailure.value = ''
@@ -788,8 +1156,15 @@ async function loadCreatedDraft(draftID = createdDraftID.value) {
   try {
     const draft = await api.getExportDraft(draftID)
     if (createdDraftID.value !== draftID) return
+    if (draft.dataSourceId !== selectedDataSourceID.value || draft.nodeId !== selectedNodeID.value) {
+      clearDraftState()
+      draftNotice.value = '读取草稿期间更换了数据源或执行节点；请为当前绑定创建新草稿。'
+      return
+    }
     currentDraft.value = draft
-    draftNotice.value = '导出草稿已从服务端读取。完整命令仅隐藏密码，其余参数由控制面生成并经本地校验后展示。'
+    draftDirty.value = savedVersion !== undefined && formVersion !== savedVersion
+    draftNotice.value = draftDirty.value ? '保存期间配置又有变化；请再次保存当前配置。' : '导出草稿已从服务端读取。完整命令仅隐藏密码，其余参数由控制面生成并经本地校验后展示。'
+    if (draftDirty.value) return
     await loadCommandPreview(draft)
   } catch (error) {
     if (createdDraftID.value !== draftID) return
@@ -804,10 +1179,11 @@ async function loadCommandPreview(draft = currentDraft.value) {
   if (!draft) return
   previewingCommand.value = true
   commandPreview.value = null
+  copyNotice.value = ''
   commandPreviewFailure.value = ''
   try {
     const preview = await api.previewExportCommand(draft)
-    if (currentDraft.value?.id !== draft.id || currentDraft.value.revision !== draft.revision) return
+    if (draftDirty.value || currentDraft.value?.id !== draft.id || currentDraft.value.revision !== draft.revision) return
     commandPreview.value = preview
   } catch (error) {
     if (currentDraft.value?.id !== draft.id || currentDraft.value.revision !== draft.revision) return
@@ -818,7 +1194,7 @@ async function loadCommandPreview(draft = currentDraft.value) {
 }
 
 async function startPrecheck() {
-  if (!currentDraft.value || startingPrecheck.value || precheckRunning.value) return
+  if (!currentDraft.value || draftDirty.value || !commandPreview.value || startingPrecheck.value || precheckRunning.value) return
   startingPrecheck.value = true
   precheckFailure.value = ''
   try {
@@ -853,12 +1229,23 @@ async function startPrecheck() {
   }
 }
 
-async function submitTask() {
+function submitTask() {
+	if (!canSubmit.value) return
+	submissionFailure.value = ''
+	submitConfirmationOpen.value = true
+}
+
+function closeSubmitConfirmation() {
+	if (!submitting.value) submitConfirmationOpen.value = false
+}
+
+async function confirmSubmitTask() {
 	if (!currentDraft.value || !activePrecheck.value || !canSubmit.value) return
 	submitting.value = true
 	submissionFailure.value = ''
 	try {
 		const taskID = await api.submitExportDraft(currentDraft.value, activePrecheck.value.id)
+		submitConfirmationOpen.value = false
 		await router.push(`/tasks/${encodeURIComponent(taskID)}`)
 	} catch (error) {
 		submissionFailure.value = exportDraftErrorMessage(error, '任务未能提交；请重新读取预检查后重试。')
@@ -915,11 +1302,6 @@ function precheckNotice(precheck: Precheck) {
 	return '预检查状态已失效；请重新创建草稿后再试。'
 }
 
-function precheckDotClass(result?: PrecheckResult) {
-  if (!result) return 'neutral'
-  return result.status === 'PASSED' ? 'success' : result.status === 'FAILED' ? 'danger' : 'neutral'
-}
-
 function precheckStatusLabel(status?: string) {
   return {
     PENDING: '等待 Agent 领取',
@@ -931,17 +1313,100 @@ function precheckStatusLabel(status?: string) {
   }[status ?? ''] ?? '尚未执行'
 }
 
-function addObjectNameRow() {
-  if (objectNames.value.length >= 100) return
-  objectNames.value = [...objectNames.value, '']
+function addCandidateObjects() {
+  const names = candidateObjectInput.value.split(/[\r\n,]+/).map((name) => name.trim()).filter(Boolean)
+  if (names.length === 0) {
+    candidateObjectError.value = '请输入至少一个对象名称。'
+    return
+  }
+  if (names.some((name) => name.length > 256 || name.includes('*'))) {
+    candidateObjectError.value = '对象名称不能使用通配符，且不超过 256 个字符。'
+    return
+  }
+  const added = [...new Set(names)].filter((name) => !candidateObjectNames.value.includes(name))
+  if (candidateObjectNames.value.length + added.length > 100) {
+    candidateObjectError.value = '候选对象最多 100 个。'
+    return
+  }
+  candidateObjectNames.value = [...candidateObjectNames.value, ...added]
+  manualCandidateNames.value = [...manualCandidateNames.value, ...added]
+  const selected = new Set(objectNames.value.map((name) => name.trim()).filter(Boolean))
+  for (const name of names) selected.add(name)
+  objectNames.value = [...selected]
+  candidateObjectInput.value = ''
+  candidateEditorPanels.value = []
+  candidateObjectError.value = ''
+}
+
+function toggleCandidate(name: string) {
+  const selected = new Set(objectNames.value.map((value) => value.trim()).filter(Boolean))
+  if (selected.has(name)) {
+    selected.delete(name)
+    forgetManualCandidates([name])
+  }
+  else if (selected.size < 100) selected.add(name)
+  else { candidateObjectError.value = '最多选择 100 个导出对象。'; return }
+  objectNames.value = selected.size > 0 ? [...selected] : ['']
+}
+
+function toggleVisibleCandidates() {
+  const selected = new Set(objectNames.value.map((name) => name.trim()).filter(Boolean))
+  const allVisibleSelected = visibleCandidateObjectNames.value.every((name) => selected.has(name))
+  for (const name of visibleCandidateObjectNames.value) {
+    if (allVisibleSelected) selected.delete(name)
+    else if (selected.size < 100) selected.add(name)
+  }
+  if (allVisibleSelected) forgetManualCandidates(visibleCandidateObjectNames.value)
+  if (!allVisibleSelected && selected.size === 100) candidateObjectError.value = '最多选择 100 个导出对象。'
+  objectNames.value = selected.size > 0 ? [...selected] : ['']
+}
+
+function chooseObjectCategory(type: string) {
+  if (type !== 'TABLE' && type !== 'VIEW') return
+  if (type === 'VIEW' && contentKind.value !== 'DDL_ONLY') return
+  if (type === objectType.value) {
+    candidateGroupExpanded.value = !candidateGroupExpanded.value
+    return
+  }
+  const switchType = () => {
+    objectType.value = type
+    candidateGroupExpanded.value = true
+    selectedGroupExpanded.value = true
+  }
+  if (enteredObjectCount.value === 0) {
+    switchType()
+    return
+  }
+  AModal.confirm({
+    title: `切换到${type === 'VIEW' ? '视图' : '表'}？`,
+    content: '当前已选对象会清空，切换后将重新读取该分类的元数据。',
+    okText: '切换并清空',
+    cancelText: '保留当前选择',
+    onOk: switchType,
+  })
 }
 
 function removeObjectNameRow(index: number) {
+  forgetManualCandidates([objectNames.value[index] ?? ''])
   if (objectNames.value.length <= 1) {
     objectNames.value = ['']
     return
   }
   objectNames.value = objectNames.value.filter((_, position) => position !== index)
+}
+
+function clearObjectNameRows() {
+  objectNames.value = ['']
+  selectedObjectKeyword.value = ''
+  forgetManualCandidates(manualCandidateNames.value)
+  candidateObjectInput.value = ''
+}
+
+function forgetManualCandidates(names: readonly string[]) {
+  const removed = new Set(names.filter((name) => manualCandidateNames.value.includes(name)))
+  if (removed.size === 0) return
+  manualCandidateNames.value = manualCandidateNames.value.filter((name) => !removed.has(name))
+  candidateObjectNames.value = candidateObjectNames.value.filter((name) => !removed.has(name))
 }
 
 function environmentLabel(value: string) {
@@ -959,563 +1424,461 @@ function lastTestLabel(source: DataSourceSummary) {
       <h1>新建导出任务</h1>
       <p>OBDUMPER 4.3.5 导出向导。支持全部/指定对象、仅数据、仅 DDL 与 DDL + 数据的已验证组合；预检查通过后可显式提交执行。</p>
     </div>
-    <span class="draft-status">{{ createdDraftID ? '草稿已创建' : '草稿尚未创建' }}</span>
+    <ATag :color="draftDirty ? 'warning' : createdDraftID ? 'success' : 'default'">{{ draftDirty ? '草稿有未保存更改' : createdDraftID ? '草稿已保存' : '草稿尚未创建' }}</ATag>
   </section>
-  <WizardFrame kind="export" :active-step="activeStep">
+  <WizardFrame kind="export" :active-step="activeStep" class="export-builder" @step-change="moveToStep">
+    <template #actions><AButton v-if="activeStep === 4 && draftInput" :loading="creatingDraft" @click="createDraft(false)">保存草稿</AButton></template>
     <template #default>
+      <AAlert v-if="attemptedStep === activeStep && currentStepError" class="export-step-error" type="error" show-icon :message="currentStepError" />
       <section v-if="activeStep === 1" class="form-section">
         <h2>选择已有数据源</h2>
         <p>向导只选择已启用、当前配置至少一次基础测试成功的数据源；不重复填写地址、用户名或密码。</p>
-        <p v-if="sourceLoadFailure" class="feedback feedback-error" role="alert">{{ sourceLoadFailure }} <button type="button" class="link-button" @click="loadSources">重试</button></p>
-        <div v-else-if="loadingSources" class="placeholder-control"><span>正在加载已授权数据源…</span></div>
+        <AForm layout="vertical" class="export-source-filter">
+          <AFormItem label="按名称筛选数据源"><AInput v-model:value="sourceKeyword" aria-label="按名称筛选数据源" placeholder="输入数据源名称" allow-clear /></AFormItem>
+          <AFormItem label="环境" :html-for="fieldPrefix + '-source-environment'"><ASelect :id="fieldPrefix + '-source-environment'" v-model:value="sourceEnvironment"><ASelectOption value="">全部环境</ASelectOption><ASelectOption value="DEVELOPMENT">开发</ASelectOption><ASelectOption value="TEST">测试</ASelectOption><ASelectOption value="STAGING">预生产</ASelectOption><ASelectOption value="PRODUCTION">生产</ASelectOption></ASelect></AFormItem>
+        </AForm>
+        <AAlert v-if="sourceLoadFailure" type="error" show-icon :message="sourceLoadFailure"><template #action><AButton type="link" @click="loadSources">重试</AButton></template></AAlert>
+        <ASkeleton v-else-if="loadingSources" active :paragraph="{ rows: 3 }" aria-label="正在加载已授权数据源" />
         <EmptyState v-else-if="eligibleSources.length === 0" title="没有可选数据源" :description="sources.length === 0 ? '当前授权范围内没有数据源。请先登记数据源并完成一次成功的基础连接测试。' : '当前已授权数据源均未同时满足已启用和成功测试条件。请在数据源管理中完成受控测试并启用数据源。'" action="前往数据源管理" @action="router.push('/data-sources')" />
-        <div v-else class="option-grid">
-          <label v-for="source in eligibleSources" :key="source.id" class="option-card" :class="{ selected: selectedDataSourceID === source.id }">
-            <input v-model="selectedDataSourceID" type="radio" name="data-source" :value="source.id" :disabled="derivedDraftBindingLocked" />
-            <strong>{{ source.displayName }}</strong>
-            <span>{{ environmentLabel(source.environment) }} · 私有 ODP · {{ source.host }}:{{ source.port }}</span>
-            <span>基础连接测试成功：{{ lastTestLabel(source) }}</span>
-          </label>
-        </div>
-        <p v-if="selectedSource && derivedDraftBindingLocked" class="section-hint">派生草稿固定使用来源任务的数据源；如需更换数据源，请退出派生流程后新建草稿。</p>
-        <p v-else-if="selectedSource" class="section-hint">已选择 {{ selectedSource.displayName }}。更换数据源会清除当前对象选择，并使已创建草稿不再代表当前页面配置。</p>
+        <EmptyState v-else-if="visibleSources.length === 0" title="当前筛选无可选数据源" description="清除名称或环境筛选后重试。" />
+        <ARadioGroup v-else v-model:value="selectedDataSourceID" class="export-source-list" aria-label="选择数据源" :disabled="derivedDraftBindingLocked">
+          <ARadio v-for="source in visibleSources" :key="source.id" :value="source.id" class="export-source-choice">
+            <span class="export-source-facts"><strong>{{ source.displayName }}</strong><span>{{ environmentLabel(source.environment) }} · {{ source.compatibilityMode }} · {{ source.host }}:{{ source.port }}</span><span>{{ source.clusterName || '未登记集群' }} / {{ source.tenantName }} · 基础连接测试成功：{{ lastTestLabel(source) }}</span></span>
+          </ARadio>
+        </ARadioGroup>
+        <AAlert v-if="selectedSource && derivedDraftBindingLocked" type="info" show-icon message="派生草稿固定使用来源任务的数据源；如需更换数据源，请退出派生流程后新建草稿。" />
+        <AAlert v-else-if="selectedSource" type="info" show-icon :message="`已选择 ${selectedSource.displayName}。更换数据源会清除当前对象选择；已保存草稿的数据源绑定不可更新，更换后需创建新草稿。`" />
         <p v-else-if="eligibleSources.length > 0" class="section-hint">请选择一个数据源后继续；任务级对象、权限、路径和空间检查仍将在预检查阶段执行。</p>
       </section>
 
       <section v-else-if="activeStep === 2" class="form-section">
-        <h2>选择导出对象</h2>
-        <p>支持全部对象或指定对象；指定对象时当前只开放表与视图两种类型，不支持通配符、多库前缀或其他对象类型。</p>
-        <details class="tree-node" open>
-          <summary>基础选项 · 功能选项 · 数据库对象类型</summary>
-          <div class="tree-body">
-            <div class="tree-row">
-              <span class="tree-label">默认数据库 / Schema <b>*</b></span>
-              <input v-model.trim="database" class="tree-input" autocomplete="off" placeholder="从数据源默认值回填，可按任务覆盖" />
+        <h2>导出内容与对象</h2>
+        <p>选择导出内容、数据库和对象范围。数据库与对象名称由所选执行节点读取；实际可访问性仍由预检查确认。</p>
+        <AForm layout="vertical" class="export-content-form">
+          <AFormItem label="导出内容" required>
+            <ARadioGroup v-model:value="contentKind" class="export-content-options" button-style="solid" role="radiogroup" aria-label="导出内容"><ARadioButton value="DDL_AND_DATA" :disabled="objectType === 'VIEW' && scopeKind === 'SPECIFIED'">导出结构和数据</ARadioButton><ARadioButton value="DATA_ONLY" :disabled="objectType === 'VIEW' && scopeKind === 'SPECIFIED'">仅导出数据</ARadioButton><ARadioButton value="DDL_ONLY">仅导出结构</ARadioButton></ARadioGroup>
+          </AFormItem>
+        </AForm>
+        <p class="section-hint">{{ contentKind === 'DDL_ONLY' ? '仅生成对象定义；数据格式和数据文件参数不参与任务。' : contentKind === 'DATA_ONLY' ? '仅导出表数据；视图等只支持结构的对象不可选。' : '同时生成对象定义与表数据；只支持结构的对象不会被标记为已导出数据。' }}</p>
+        <div class="export-field-group">
+          <h3>数据库与导出范围</h3>
+          <AForm layout="vertical" class="export-field-body">
+            <div class="export-database-grid">
+              <AFormItem label="读取元数据的执行节点" :html-for="fieldPrefix + '-catalog-node'" required :help="nodeLoadFailure || '选择节点后加载当前数据源的数据库目录；执行任务时使用同一节点。'">
+                <ASkeleton v-if="loadingNodes" active :paragraph="{ rows: 1 }" aria-label="正在加载已授权执行节点" />
+                <ASelect v-else :id="fieldPrefix + '-catalog-node'" v-model:value="selectedNodeID" aria-label="读取元数据的执行节点" :disabled="derivedDraftBindingLocked" placeholder="请选择执行节点"><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</ASelectOption></ASelect>
+              </AFormItem>
+              <AFormItem label="数据库 / Schema" :html-for="fieldPrefix + '-database'" required :validate-status="attemptedStep === 2 && !database.trim() ? 'error' : undefined" :help="attemptedStep === 2 && !database.trim() ? '请选择数据库或 Schema。' : `数据源：${selectedSource?.displayName ?? '尚未选择'}；可搜索已读取的数据库，或手动输入其他名称。`">
+                <ASelect :id="fieldPrefix + '-database'" :value="database || undefined" aria-label="数据库 / Schema" show-search :filter-option="false" :loading="databaseCatalogLoading" placeholder="请选择数据库 / Schema" @search="scheduleDatabaseCatalog" @select="selectDatabaseOption" @dropdown-visible-change="onDatabaseDropdownVisibleChange">
+                  <ASelectOption v-if="!selectedNodeID" value="__choose_node__" disabled>请先选择读取元数据的执行节点</ASelectOption>
+                  <ASelectOptGroup v-if="databaseOptions.length" :label="selectedSource?.displayName ?? '当前数据源'">
+                    <ASelectOption v-for="name in databaseOptions" :key="name" :value="name" :label="name">{{ name }}</ASelectOption>
+                  </ASelectOptGroup>
+                  <ASelectOption v-if="databaseCatalogLoading" value="__loading__" disabled>正在读取数据库目录…</ASelectOption>
+                  <ASelectOption v-else-if="databaseCatalogFailure" value="__unavailable__" disabled>目录暂不可用，可重试或手动输入</ASelectOption>
+                  <ASelectOption v-else-if="selectedNodeID && databaseCatalogLoaded && !databaseOptions.length" value="__empty__" disabled>没有匹配的数据库 / Schema</ASelectOption>
+                  <ASelectOption value="__manual__" label="手动输入其他数据库 / Schema">手动输入其他数据库 / Schema…</ASelectOption>
+                </ASelect>
+              </AFormItem>
             </div>
-            <div class="tree-row">
-              <span class="tree-label">导出范围 <b>*</b></span>
-              <label class="checkbox-label"><input v-model="scopeKind" type="radio" name="export-scope" value="ALL" />全部对象</label>
-              <label class="checkbox-label"><input v-model="scopeKind" type="radio" name="export-scope" value="SPECIFIED" />指定对象</label>
-            </div>
-            <template v-if="scopeKind === 'SPECIFIED'">
-              <div class="tree-row">
-                <span class="tree-label">对象类型 <b>*</b></span>
-                <label class="checkbox-label"><input v-model="objectType" type="radio" name="object-type" value="TABLE" />表</label>
-                <label class="checkbox-label"><input v-model="objectType" type="radio" name="object-type" value="VIEW" />视图（仅 DDL）</label>
+            <AAlert v-if="databaseCatalogFailure" type="warning" show-icon :message="databaseCatalogFailure"><template #action><AButton type="link" :disabled="!selectedNodeID" @click="loadDatabaseCatalog">重试</AButton></template></AAlert>
+            <p v-else-if="databaseCatalogTruncated" class="section-hint" role="status">仅显示前 100 个匹配数据库；输入关键字继续筛选。</p>
+            <p v-else-if="!selectedNodeID" class="section-hint">选择执行节点后加载数据库目录；已登记的默认数据库仍可直接选择。</p>
+            <AFormItem label="导出范围" required><ARadioGroup v-model:value="scopeKind" role="radiogroup" aria-label="导出范围"><ARadio value="SPECIFIED">部分导出</ARadio><ARadio value="ALL">整库导出</ARadio></ARadioGroup></AFormItem>
+            <p v-if="scopeKind === 'ALL'" class="section-hint">整库导出按当前数据库范围生成 --all；指定对象区已收起。</p>
+          </AForm>
+        </div>
+        <AModal :open="manualDatabaseOpen" title="手动输入数据库 / Schema" ok-text="使用此名称" cancel-text="取消" @ok="confirmManualDatabase" @cancel="manualDatabaseOpen = false">
+          <AInput v-model:value="manualDatabaseInput" aria-label="手动输入数据库 / Schema" autocomplete="off" :maxlength="256" @press-enter="confirmManualDatabase" />
+          <AAlert v-if="manualDatabaseError" type="error" show-icon :message="manualDatabaseError" />
+          <p class="section-hint">目录不可用时可填写明确名称，最终访问权限由预检查确认。</p>
+        </AModal>
+        <div v-if="scopeKind === 'SPECIFIED'" class="export-field-group export-object-group">
+          <div class="export-group-heading"><h3>导出对象</h3><span class="export-object-count" role="status">已选 {{ enteredObjectCount }} / 100 项</span></div>
+          <div class="export-object-workspace">
+            <section class="export-object-pane" aria-label="选择导出对象">
+              <div class="export-object-pane-heading"><h4>选择对象</h4></div>
+              <div class="export-object-search"><AInput v-model:value="candidateObjectKeyword" aria-label="搜索候选对象" placeholder="搜索关键字" :maxlength="100" allow-clear @press-enter="loadCatalog" /><AButton :loading="catalogLoading" :disabled="catalogLoading || !selectedNodeID || !database.trim() || catalogKeywordTooLong" aria-label="搜索或刷新对象" @click="loadCatalog"><template #icon><SearchOutlined aria-hidden="true" /></template></AButton></div>
+              <AAlert v-if="catalogKeywordTooLong" type="warning" show-icon message="名称关键字最多 100 字节。" />
+              <AAlert v-if="catalogFailure" type="error" show-icon :message="catalogFailure" />
+              <AAlert v-if="candidateObjectError" type="warning" show-icon :message="candidateObjectError" />
+              <AAlert v-else-if="catalogTruncated" type="info" show-icon message="仅显示前 100 个匹配对象；输入名称关键字继续筛选。" />
+              <p v-else-if="catalogLoading" class="section-hint" role="status">正在通过执行节点读取对象元数据…</p>
+              <div class="export-object-tree" aria-label="候选对象分类">
+                <template v-for="category in objectCategories" :key="category.type">
+                  <div class="export-object-tree-category" :class="{ 'is-active': category.type === objectType }">
+                    <AButton v-if="category.type === 'TABLE' || category.type === 'VIEW'" type="text" class="export-object-expand" :disabled="category.type === 'VIEW' && contentKind !== 'DDL_ONLY'" :aria-label="`${category.type === objectType && candidateGroupExpanded ? '收起' : '展开'}${category.label}分类`" @click="chooseObjectCategory(category.type)"><template #icon><CaretDownOutlined v-if="category.type === objectType && candidateGroupExpanded" aria-hidden="true" /><CaretRightOutlined v-else aria-hidden="true" /></template></AButton>
+                    <span v-else class="export-object-expand-placeholder" aria-hidden="true" />
+                    <ACheckbox v-if="category.type === objectType" :checked="visibleCandidateObjectNames.length > 0 && visibleCandidateSelectedCount === visibleCandidateObjectNames.length" :indeterminate="visibleCandidateSelectedCount > 0 && visibleCandidateSelectedCount < visibleCandidateObjectNames.length" :disabled="visibleCandidateObjectNames.length === 0" :aria-label="`选择全部可见${category.label}`" @change="toggleVisibleCandidates" />
+                    <ACheckbox v-else disabled :aria-label="`${category.label}分类尚不可勾选`" />
+                    <component :is="category.icon" class="export-object-kind-icon" aria-hidden="true" />
+                    <AButton v-if="category.type === 'TABLE' || category.type === 'VIEW'" type="link" class="export-object-category-name" :disabled="category.type === 'VIEW' && contentKind !== 'DDL_ONLY'" @click="chooseObjectCategory(category.type)">{{ category.label }}（{{ category.type === objectType ? (catalogLoaded || candidateObjectNames.length ? candidateObjectNames.length : '待加载') : '待加载' }}）</AButton>
+                    <span v-else class="export-object-category-name is-disabled">{{ category.label }}（未开放）</span>
+                    <span v-if="category.type === 'VIEW' && contentKind !== 'DDL_ONLY'" class="export-object-kind-note">仅结构</span>
+                  </div>
+                  <template v-if="category.type === objectType && candidateGroupExpanded">
+                    <AEmpty v-if="candidateObjectNames.length === 0 && !catalogLoading" class="export-object-tree-empty" :description="catalogFailure ? '自动读取失败，可重试或手动添加对象' : catalogLoaded ? '当前条件没有匹配对象' : '选择执行节点后加载对象'" />
+                    <AEmpty v-else-if="visibleCandidateObjectNames.length === 0" class="export-object-tree-empty" description="没有匹配的候选对象" />
+                    <AList v-else size="small" class="export-object-tree-children" :data-source="visibleCandidateObjectNames" aria-label="候选对象列表">
+                      <template #renderItem="{ item }"><AListItem><ACheckbox :checked="objectNames.includes(item)" @change="toggleCandidate(item)"><component :is="category.icon" class="export-object-kind-icon" aria-hidden="true" />{{ item }}</ACheckbox></AListItem></template>
+                    </AList>
+                  </template>
+                </template>
               </div>
-              <div v-for="(_name, index) in objectNames" :key="index" class="tree-row">
-                <span class="tree-label">{{ objectType === 'VIEW' ? '视图名称' : '表名' }} <b>*</b></span>
-                <input v-model.trim="objectNames[index]" class="tree-input" autocomplete="off" :placeholder="objectType === 'VIEW' ? '填写一个明确视图名' : '填写一个明确表名'" />
-                <button type="button" class="link-button" :disabled="objectNames.length <= 1" @click="removeObjectNameRow(index)">移除</button>
-              </div>
-              <div class="tree-row">
-                <button type="button" class="link-button" :disabled="objectNames.length >= 100" @click="addObjectNameRow">添加对象</button>
-              </div>
-              <div v-if="objectType === 'TABLE'" class="tree-row">
-                <span class="tree-label">排除表 <span class="muted">（专家配置，逗号分隔）</span></span>
-                <input v-model.trim="excludeTablesText" class="tree-input" autocomplete="off" placeholder="例如 tmp_a,tmp_b" />
-              </div>
-            </template>
-            <p v-else class="section-hint">全部对象将导出当前数据库内的全部对象定义与表数据；排除表不适用于全部范围。</p>
+              <ACollapse v-model:active-key="candidateEditorPanels" class="export-candidate-editor" :bordered="false">
+                <ACollapsePanel key="add" header="手动添加候选对象">
+                  <AForm layout="vertical">
+                    <AFormItem label="添加候选对象" :validate-status="candidateObjectError ? 'error' : undefined" :help="candidateObjectError || '每行一个名称，也可用逗号分隔；添加后自动选中。'">
+                      <ATextarea v-model:value="candidateObjectInput" aria-label="添加候选对象" :rows="2" autocomplete="off" :placeholder="objectType === 'VIEW' ? '例如 view_a' : '例如 orders'" />
+                    </AFormItem>
+                    <AButton :disabled="candidateObjectNames.length >= 100" @click="addCandidateObjects">添加并选中</AButton>
+                  </AForm>
+                </ACollapsePanel>
+              </ACollapse>
+            </section>
+            <section class="export-object-pane export-object-selected" aria-label="已选导出对象">
+              <div class="export-object-pane-heading"><h4>已选 {{ enteredObjectCount }} 项</h4><AButton type="link" :disabled="enteredObjectCount === 0" @click="clearObjectNameRows">清空</AButton></div>
+              <AInput v-model:value="selectedObjectKeyword" aria-label="搜索已选对象" placeholder="搜索关键字" allow-clear :disabled="enteredObjectCount === 0"><template #suffix><SearchOutlined aria-hidden="true" /></template></AInput>
+              <AEmpty v-if="enteredObjectCount === 0" description="尚未选择对象" />
+              <AEmpty v-else-if="visibleSelectedObjectRows.length === 0" description="没有匹配的已选对象" />
+              <template v-else>
+                <div class="export-object-tree-category export-object-selected-category"><AButton type="text" class="export-object-expand" :aria-label="`${selectedGroupExpanded ? '收起' : '展开'}已选${objectType === 'VIEW' ? '视图' : '表'}`" @click="selectedGroupExpanded = !selectedGroupExpanded"><template #icon><CaretDownOutlined v-if="selectedGroupExpanded" aria-hidden="true" /><CaretRightOutlined v-else aria-hidden="true" /></template></AButton><component :is="objectType === 'VIEW' ? EyeOutlined : TableOutlined" class="export-object-kind-icon" aria-hidden="true" /><span>{{ objectType === 'VIEW' ? '视图' : '表' }}（{{ enteredObjectCount }}）</span><AButton type="text" class="export-object-delete" :aria-label="`清空已选${objectType === 'VIEW' ? '视图' : '表'}`" @click="clearObjectNameRows"><template #icon><DeleteOutlined aria-hidden="true" /></template></AButton></div>
+                <AList v-if="selectedGroupExpanded" size="small" class="export-object-tree-children" :data-source="visibleSelectedObjectRows" aria-label="已选对象列表">
+                  <template #renderItem="{ item }"><AListItem><component :is="objectType === 'VIEW' ? EyeOutlined : TableOutlined" class="export-object-kind-icon" aria-hidden="true" /><span>{{ item.name }}</span><AButton type="text" class="export-object-delete" :aria-label="`移除已选对象 ${item.name}`" @click="removeObjectNameRow(item.index)"><template #icon><DeleteOutlined aria-hidden="true" /></template></AButton></AListItem></template>
+                </AList>
+              </template>
+            </section>
           </div>
-        </details>
-        <details class="tree-node" open>
-          <summary>高级选项 · 功能选项 · 黑白名单筛选 <span class="tree-note">列筛选，仅在导出数据时生效</span></summary>
-          <div class="tree-body">
-            <p class="section-hint">列筛选在步骤 3 选择“仅 DDL”时不参与生成；与对象范围参数相互独立。</p>
-            <div class="tree-row">
-              <span class="tree-label">包含列 <span class="muted">（逗号分隔）</span></span>
-              <input v-model.trim="includeColumnNames" class="tree-input" :disabled="Boolean(excludeColumnNames)" placeholder="例如 col_a,col_b" />
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">排除列 <span class="muted">（逗号分隔）</span></span>
-              <input v-model.trim="excludeColumnNames" class="tree-input" :disabled="Boolean(includeColumnNames)" placeholder="例如 col_c" />
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">排除生成列</span>
-              <label class="checkbox-label"><input v-model="excludeVirtualColumns" type="checkbox" />--exclude-virtual-columns</label>
-            </div>
-          </div>
-        </details>
-        <p v-if="objectInputMessage" class="feedback feedback-error" role="alert">{{ objectInputMessage }}</p>
-        <p v-else class="section-hint">对象存在性和实际权限不在此页推断，仍由后续固定预检查确认。</p>
+        </div>
+        <ACollapse class="export-advanced" :bordered="false">
+          <ACollapsePanel key="advanced" header="高级设置 · DDL、对象与数据筛选">
+            <AForm layout="vertical" class="export-advanced-form">
+              <template v-if="contentKind !== 'DATA_ONLY'">
+                <h3>DDL 与对象处理</h3>
+                <AFormItem><ACheckbox v-model:checked="dropObject">前置 DROP（--drop-object）</ACheckbox></AFormItem>
+                <p v-if="dropObject" class="section-hint">--drop-object 会在导入侧重建对象前删除同名对象，可能造成数据丢失，请确认已了解影响。</p>
+                <AFormItem v-if="compactSchemaSupported"><ACheckbox v-model:checked="compactSchema">紧凑 Schema（--compact-schema，使用 show create table 检索文本）</ACheckbox></AFormItem>
+                <AFormItem label="序列策略" :html-for="fieldPrefix + '-sequence-policy'" extra="--sequence-policy 待验证，当前保持关闭。"><ASelect :id="fieldPrefix + '-sequence-policy'" default-value="preserve（默认）" disabled><ASelectOption value="preserve（默认）">preserve（默认）</ASelectOption><ASelectOption value="restart">restart</ASelectOption></ASelect></AFormItem>
+                <AFormItem><ACheckbox v-model:checked="retainSchema">保留 Schema（--retain-schema，保留 schema.table 前缀）</ACheckbox></AFormItem>
+                <AFormItem extra="--add-extra-message 需当前 sys 权限预检查与秘密槽位绑定，当前保持关闭。"><ACheckbox disabled>附加对象信息</ACheckbox></AFormItem>
+              </template>
+              <h3 v-if="dataOptionsActive || excludeTablesSupported">对象排除与数据筛选</h3>
+              <AFormItem v-if="excludeTablesSupported" label="排除表（可选）" extra="多个表名以逗号分隔。"><AInput v-model:value.trim="excludeTablesText" aria-label="排除表" autocomplete="off" placeholder="例如 tmp_a,tmp_b" /></AFormItem>
+              <template v-if="dataOptionsActive">
+                <p class="section-hint">以下筛选仅在包含数据时生效；服务端将复核参数互斥和对象资格。</p>
+                <h3>列与类型筛选</h3>
+                <AFormItem label="包含列" extra="多个列名以逗号分隔。"><AInput v-model:value.trim="includeColumnNames" aria-label="包含列" :disabled="Boolean(excludeColumnNames)" placeholder="例如 col_a,col_b" /></AFormItem>
+                <AFormItem label="排除列" extra="多个列名以逗号分隔。"><AInput v-model:value.trim="excludeColumnNames" aria-label="排除列" :disabled="Boolean(includeColumnNames)" placeholder="例如 col_c" /></AFormItem>
+                <AFormItem><ACheckbox v-model:checked="excludeVirtualColumns">排除生成列（--exclude-virtual-columns）</ACheckbox></AFormItem>
+                <AFormItem label="排除数据类型"><AInput v-model:value.trim="excludeDataTypes" aria-label="排除数据类型" placeholder="例如 BLOB,TEXT" /></AFormItem>
+                <h3>数据筛选</h3>
+                <AFormItem label="自定义查询"><ATextarea v-model:value.trim="querySql" aria-label="自定义查询" :rows="2" :disabled="Boolean(where || partition || flashbackScn || flashbackTimestamp)" placeholder="仅允许固定 OBDUMPER 导出参数" /></AFormItem>
+                <p class="section-hint">自定义查询只作为 OBDUMPER 的 --query-sql 参数；与条件、分区和闪回参数互斥。</p>
+                <AFormItem v-if="whereSupported" label="条件筛选"><AInput v-model:value.trim="where" aria-label="条件筛选" :disabled="Boolean(querySql)" placeholder="例如 id &gt; 100" /></AFormItem>
+                <AFormItem v-if="partitionSupported" label="分区筛选"><AInput v-model:value.trim="partition" aria-label="分区筛选" :disabled="Boolean(querySql)" placeholder="例如 p0,p2" /></AFormItem>
+                <h3>一致性</h3>
+                <AFormItem label="闪回 SCN"><AInput v-model:value.trim="flashbackScn" aria-label="闪回 SCN" :disabled="Boolean(querySql) || snapshot" placeholder="正整数" /></AFormItem>
+                <AFormItem label="闪回时间点"><AInput v-model:value.trim="flashbackTimestamp" aria-label="闪回时间点" :disabled="Boolean(querySql) || snapshot" placeholder="例如 2026-08-06 00:00:00" /></AFormItem>
+                <p class="section-hint">隐藏主键仍需对象、版本与权限预检查，当前不提供启用入口。</p>
+              </template>
+            </AForm>
+          </ACollapsePanel>
+        </ACollapse>
+        <p class="section-hint">对象存在性和实际权限不在此页推断，仍由后续固定预检查确认。</p>
       </section>
 
       <section v-else-if="activeStep === 3" class="form-section">
-        <h2>选择导出内容</h2>
-        <div class="tree-row tree-row-root">
-          <span class="tree-label">导出内容 <b>*</b></span>
-          <label class="checkbox-label"><input v-model="contentKind" type="radio" name="content-kind" value="DATA_ONLY" :disabled="objectType === 'VIEW' && scopeKind === 'SPECIFIED'" />仅数据</label>
-          <label class="checkbox-label"><input v-model="contentKind" type="radio" name="content-kind" value="DDL_ONLY" />仅 DDL</label>
-          <label class="checkbox-label"><input v-model="contentKind" type="radio" name="content-kind" value="DDL_AND_DATA" :disabled="objectType === 'VIEW' && scopeKind === 'SPECIFIED'" />DDL + 数据</label>
-        </div>
-        <template v-if="contentKind !== 'DATA_ONLY'">
-          <details class="tree-node" open>
-            <summary>基础选项 · 功能选项 · 文件格式 <span class="tree-note">DDL 伴生参数</span></summary>
-            <div class="tree-body">
-              <div class="tree-row">
-                <span class="tree-label">前置 DROP</span>
-                <label class="checkbox-label"><input v-model="dropObject" type="checkbox" />--drop-object（高风险：在对象创建语句前追加 DROP）</label>
-              </div>
-              <p v-if="dropObject" class="section-hint">--drop-object 会在导入侧重建对象前删除同名对象，可能造成数据丢失，请确认已了解影响。</p>
-              <div v-if="compactSchemaSupported" class="tree-row">
-                <span class="tree-label">紧凑 Schema</span>
-                <label class="checkbox-label"><input v-model="compactSchema" type="checkbox" />--compact-schema（使用 show create table 检索文本，2026-08-11 受控实测）</label>
-              </div>
-              <!-- 附加对象信息依赖尚未完成的 sys 权限预检查，不能提供可提交的启用入口。 -->
-              <div class="tree-row pending">
-                <span class="tree-label">附加对象信息</span>
-                <span class="tree-note">--add-extra-message 需 sys 权限预检查，当前保持关闭</span>
-              </div>
-            </div>
-          </details>
-          <details class="tree-node">
-            <summary>基础选项 · 功能选项 · 数据库对象类型 <span class="tree-note">序列策略</span></summary>
-            <div class="tree-body">
-              <div class="tree-row pending">
-                <span class="tree-label">序列策略</span>
-                <select class="tree-input tree-select" disabled><option>preserve（默认）</option><option>restart</option></select>
-                <span class="tree-note">--sequence-policy，待验证</span>
-              </div>
-            </div>
-          </details>
-          <details class="tree-node">
-            <summary>高级选项 · 其他选项 <span class="tree-note">DDL 专属</span></summary>
-            <div class="tree-body">
-              <div class="tree-row">
-                <span class="tree-label">保留 Schema</span>
-                <label class="checkbox-label"><input v-model="retainSchema" type="checkbox" />--retain-schema（保留 schema.table 前缀）</label>
-              </div>
-              <div class="tree-row pending">
-                <span class="tree-label">附加对象信息</span>
-                <input type="checkbox" disabled />
-                <span class="tree-note">--add-extra-message 需当前 sys 权限预检查与秘密槽位绑定，当前保持关闭</span>
-              </div>
-            </div>
-          </details>
+        <h2>选择数据格式</h2>
+        <AAlert v-if="contentKind === 'DDL_ONLY'" type="info" show-icon message="无数据格式" description="仅 DDL 导出不生成数据文件，因此不选择数据格式。" />
+        <template v-else>
+          <div class="export-field-group">
+            <h3>数据文件设置</h3>
+            <AForm layout="vertical" class="export-field-body">
+              <AFormItem label="数据格式" required><ARadioGroup v-model:value="formatKind" role="radiogroup" aria-label="数据格式"><ARadio value="CSV">CSV</ARadio><ARadio value="CUT" :disabled="contentKind === 'DDL_AND_DATA'">CUT</ARadio><ARadio value="SQL" :disabled="contentKind === 'DDL_AND_DATA'">Insert SQL</ARadio></ARadioGroup></AFormItem>
+              <p class="section-hint">普通新建入口提供 CSV、CUT、Insert SQL；仅 DDL 时不生成数据格式参数。</p>
+              <AAlert v-if="!ordinaryFormat" type="warning" show-icon :message="draftValidationMessage" />
+              <template v-if="ordinaryFormat">
+                <div class="export-format-grid">
+                  <AFormItem label="文件编码"><AInput v-model:value.trim="fileEncoding" aria-label="文件编码" placeholder="默认 UTF-8" /></AFormItem>
+                  <AFormItem label="文件拆分（--block-size）" extra="正整数按 MB 拆分，也可使用 256ROW；留空继承官方默认。" :validate-status="attemptedStep === 3 && blockSize.trim() && !BLOCK_SIZE_PATTERN.test(blockSize.trim()) ? 'error' : undefined"><AInput v-model:value.trim="blockSize" aria-label="文件拆分" placeholder="例如 1024 或 256ROW" /></AFormItem>
+                </div>
+                <AFormItem class="export-common-choice" extra="导出最近一次合并版本快照；与高级设置中的闪回参数互斥。"><ACheckbox v-model:checked="snapshot" :disabled="Boolean((flashbackScn || flashbackTimestamp) && !snapshot)">一致性快照</ACheckbox></AFormItem>
+                <div class="export-format-core">
+                  <h3>{{ formatKind === 'SQL' ? 'Insert SQL 设置' : `${formatKind} 设置` }}</h3>
+                  <div class="export-format-grid">
+                    <AFormItem v-if="formatKind === 'CSV'" label="列分隔符"><AInput v-model:value.trim="columnSeparator" aria-label="列分隔符" placeholder="默认英文逗号；支持多字符" /></AFormItem>
+                    <AFormItem v-else-if="formatKind === 'CUT'" label="列分隔字符串"><AInput v-model:value.trim="columnSplitter" aria-label="列分隔字符串" placeholder="例如 |" /></AFormItem>
+                    <AFormItem label="行分隔符"><AInput v-model:value.trim="lineSeparator" aria-label="行分隔符" placeholder="按官方平台换行形式" /></AFormItem>
+                  </div>
+                  <AFormItem v-if="formatKind === 'CSV'" class="export-common-choice"><ACheckbox :checked="!skipHeader" @update:checked="skipHeader = !$event">包含列头</ACheckbox></AFormItem>
+                  <p v-if="formatKind === 'SQL'" class="section-hint">Insert SQL 格式只支持行分隔符与文件编码；CSV/CUT 专属选项不适用。</p>
+                </div>
+              </template>
+            </AForm>
+          </div>
+          <ACollapse class="export-advanced" :bordered="false">
+            <ACollapsePanel key="advanced" header="高级设置 · 序列化、日期时间与压缩">
+              <AForm layout="vertical" class="export-advanced-form">
+                <h3>序列化</h3>
+                <template v-if="formatKind === 'CSV'">
+                  <AFormItem label="列包围符"><AInput v-model:value.trim="columnQuote" aria-label="列包围符" placeholder="默认英文单引号" /></AFormItem>
+                  <AFormItem label="包围模式" :html-for="fieldPrefix + '-quote-mode'"><ASelect :id="fieldPrefix + '-quote-mode'" v-model:value="columnQuoteMode"><ASelectOption value="">继承官方默认</ASelectOption><ASelectOption value="all">all</ASelectOption><ASelectOption value="all_not_null">all_not_null</ASelectOption><ASelectOption value="minimal">minimal</ASelectOption><ASelectOption value="non_numeric">non_numeric</ASelectOption><ASelectOption value="none">none</ASelectOption></ASelect></AFormItem>
+                  <p class="section-hint">包围模式：all 全部包围、all_not_null 非空包围、minimal 最小包围、non_numeric 非数字包围、none 不包围。</p>
+                </template>
+                <AFormItem v-if="formatKind === 'CUT'"><ACheckbox v-model:checked="trailDelimiter">行尾追加分隔符（--trail-delimiter）</ACheckbox></AFormItem>
+                <AFormItem v-if="formatKind === 'CSV' || formatKind === 'CUT'" label="转义字符"><AInput v-model:value.trim="escapeCharacter" aria-label="转义字符" placeholder="仅支持单字符" /></AFormItem>
+                <AFormItem v-if="formatKind === 'CSV' || formatKind === 'CUT'" label="NULL 替换"><AInput v-model:value.trim="nullString" aria-label="NULL 替换" placeholder="默认 \N" /></AFormItem>
+                <AFormItem v-if="formatKind === 'CSV' || formatKind === 'CUT'"><ACheckbox v-model:checked="withTrim">去除左右空格（--with-trim）</ACheckbox></AFormItem>
+                <AFormItem v-if="formatKind === 'CUT'"><ACheckbox v-model:checked="removeNewline">删除换行（高风险，--remove-newline）</ACheckbox></AFormItem>
+                <p v-if="removeNewline" class="section-hint">--remove-newline 会删除导出数据中的换行并改变内容。</p>
+                <h3>日期时间</h3>
+                <template v-if="timestampFormatsSupported">
+                  <AFormItem label="DATETIME 值格式"><AInput v-model:value.trim="datetimeValueFormat" aria-label="DATETIME 值格式" placeholder="例如 yyyy-MM-dd HH:mm:ss" /></AFormItem>
+                  <AFormItem label="DATE 值格式"><AInput v-model:value.trim="dateValueFormat" aria-label="DATE 值格式" placeholder="例如 yyyy-MM-dd" /></AFormItem>
+                </template>
+                <p v-else class="section-hint">仅 MySQL CSV/CUT 数据导出支持已验证的 DATE 与 DATETIME 值格式。</p>
+                <h3>压缩</h3>
+                <AFormItem><ACheckbox v-model:checked="compress">启用压缩（--compress）</ACheckbox></AFormItem>
+                <AFormItem label="压缩算法" :html-for="fieldPrefix + '-compression-algo'"><ASelect :id="fieldPrefix + '-compression-algo'" v-model:value="compressionAlgo" :disabled="!compress"><ASelectOption value="">继承官方默认（zstd）</ASelectOption><ASelectOption value="zstd">zstd</ASelectOption><ASelectOption value="zlib">zlib</ASelectOption><ASelectOption value="gzip">gzip</ASelectOption><ASelectOption value="snappy">snappy</ASelectOption></ASelect></AFormItem>
+                <AFormItem v-if="compressionAlgo !== 'gzip' && compressionAlgo !== 'snappy'" label="压缩等级"><AInput v-model:value.trim="compressionLevel" aria-label="压缩等级" :disabled="!compress" :placeholder="compressionAlgo === 'zlib' ? '例如 5（zlib 支持 -1~9）' : '例如 3（zstd 支持 1~22）'" /></AFormItem>
+                <p class="section-hint">压缩等级按算法分范围：zstd 1~22、zlib -1~9；gzip/snappy 不支持指定等级。</p>
+              </AForm>
+            </ACollapsePanel>
+          </ACollapse>
         </template>
-        <p v-if="contentInputMessage" class="feedback feedback-error" role="alert">{{ contentInputMessage }}</p>
-        <p v-else class="section-hint">仅 DDL 不生成数据格式参数；DDL + 数据同时生成对象定义与数据文件。DDL 伴生参数按官方分类归属展示。</p>
       </section>
 
       <section v-else-if="activeStep === 4" class="form-section">
-        <h2>选择数据格式</h2>
-        <template v-if="contentKind === 'DDL_ONLY'">
-          <div class="fixed-field"><strong>无数据格式</strong><span>仅 DDL 导出不生成数据文件，因此不选择数据格式。</span></div>
-        </template>
-        <template v-else>
-          <details class="tree-node" open>
-            <summary>基础选项 · 功能选项 · 文件格式</summary>
-            <div class="tree-body">
-              <div class="tree-row">
-                <span class="tree-label">数据格式 <b>*</b></span>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="CSV" />CSV</label>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="CUT" />CUT</label>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="POS" />POS</label>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="SQL" />SQL</label>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="PARQUET" />Parquet</label>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="ORC" />ORC</label>
-                <label class="checkbox-label"><input v-model="formatKind" type="radio" name="data-format" value="AVRO" />Avro</label>
-              </div>
-              <p class="section-hint">CSV 生成逗号分隔文本，CUT 生成紧凑定界文本，POS 生成定长文本（需要控制文件定义列长度），SQL 生成 INSERT 语句，Parquet/ORC/Avro 生成列式结构化文件；均按官方 4.3.5 参数映射生成。POS 映射已于受控实测定版：独立 --pos + --ctl-path + 控制文件。</p>
-              <!-- 格式专属配置：按选中格式显示对应参数行 -->
-              <template v-if="formatKind === 'CSV'">
-                <div class="tree-row">
-                  <span class="tree-label">省略字段头</span>
-                  <label class="checkbox-label"><input v-model="skipHeader" type="checkbox" />--skip-header</label>
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">列分隔符</span>
-                  <input v-model.trim="columnSeparator" class="tree-input" placeholder="默认英文逗号；支持多字符" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">列包围符</span>
-                  <input v-model.trim="columnQuote" class="tree-input" placeholder="默认英文单引号" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">包围模式</span>
-                  <select v-model="columnQuoteMode" class="tree-input tree-select"><option value="">继承官方默认</option><option value="all">all</option><option value="all_not_null">all_not_null</option><option value="minimal">minimal</option><option value="non_numeric">non_numeric</option><option value="none">none</option></select>
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">转义字符</span>
-                  <input v-model.trim="escapeCharacter" class="tree-input" placeholder="仅支持单字符" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">行分隔符</span>
-                  <input v-model.trim="lineSeparator" class="tree-input" placeholder="按官方平台换行形式" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">NULL 替换</span>
-                  <input v-model.trim="nullString" class="tree-input" placeholder="默认 \N" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">文件编码</span>
-                  <input v-model.trim="fileEncoding" class="tree-input" placeholder="默认 UTF-8" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">去除左右空格</span>
-                  <label class="checkbox-label"><input v-model="withTrim" type="checkbox" />--with-trim</label>
-                </div>
-                <p class="section-hint">包围模式含义：all 全部包围、all_not_null 非空包围、minimal 最小包围、non_numeric 非数字包围、none 不包围。</p>
-              </template>
-              <template v-else-if="formatKind === 'CUT'">
-                <div class="tree-row">
-                  <span class="tree-label">行尾追加分隔符</span>
-                  <label class="checkbox-label"><input v-model="trailDelimiter" type="checkbox" />--trail-delimiter</label>
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">列分隔字符串</span>
-                  <input v-model.trim="columnSplitter" class="tree-input" placeholder="例如 |" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">转义字符</span>
-                  <input v-model.trim="escapeCharacter" class="tree-input" placeholder="默认反斜杠；仅支持单字符" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">行分隔符</span>
-                  <input v-model.trim="lineSeparator" class="tree-input" placeholder="按官方平台换行形式" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">NULL 替换</span>
-                  <input v-model.trim="nullString" class="tree-input" placeholder="默认 \N" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">文件编码</span>
-                  <input v-model.trim="fileEncoding" class="tree-input" placeholder="默认 UTF-8" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">去除左右空格</span>
-                  <label class="checkbox-label"><input v-model="withTrim" type="checkbox" />--with-trim</label>
-                </div>
-                <p class="section-hint">CUT 列分隔字符串（--column-splitter）已随 POS 定版解锁；日期时间值格式仍未完成受控实测，暂不开放。</p>
-              </template>
-              <template v-else-if="formatKind === 'POS'">
-                <div class="tree-row">
-                  <span class="tree-label">控制文件目录 <b>*</b></span>
-                  <input v-model.trim="controlFilePath" class="tree-input" placeholder="例如 /E:/workespace/ob-data-orch/tmp/controls" autocomplete="off" />
-                </div>
-                <p class="section-hint">POS 使用独立 --pos 并必须搭配 --ctl-path 控制文件目录：目录内为每张表提供 &lt;表名&gt;.ctrl（列名 + position(字节长度)）。目前先填写执行节点上的控制文件目录；自动生成来源将在后续版本开放。</p>
-              </template>
-              <template v-else-if="formatKind === 'SQL'">
-                <div class="tree-row">
-                  <span class="tree-label">行分隔符</span>
-                  <input v-model.trim="lineSeparator" class="tree-input" placeholder="按官方平台换行形式" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">文件编码</span>
-                  <input v-model.trim="fileEncoding" class="tree-input" placeholder="默认 UTF-8" />
-                </div>
-                <p class="section-hint">SQL 格式只支持行分隔符与文件编码；CSV/CUT 专属选项不适用。</p>
-              </template>
-              <template v-else-if="['PARQUET', 'ORC', 'AVRO'].includes(formatKind)">
-                <p v-if="formatKind === 'ORC'" class="section-hint">ORC 格式内存占用较高，请确保执行节点资源充足。</p>
-                <div class="tree-row">
-                  <span class="tree-label">文件编码</span>
-                  <input v-model.trim="fileEncoding" class="tree-input" placeholder="默认 UTF-8" />
-                </div>
-                <p class="section-hint">结构化格式按官方格式表只支持文件编码与闪回等读取层参数；压缩与序列化选项不适用。</p>
-              </template>
-              <!-- 闪回 SCN：官方归类为文件格式伴生参数 -->
-              <div class="tree-row">
-                <span class="tree-label">闪回 SCN <span class="muted">（格式伴生）</span></span>
-                <input v-model.trim="flashbackScn" class="tree-input" :disabled="Boolean(querySql) || snapshot" placeholder="正整数" />
-              </div>
-            </div>
-          </details>
-          <details class="tree-node" open>
-            <summary>基础选项 · 功能选项 · 压缩导出 <span class="tree-note">仅可读格式</span></summary>
-            <div class="tree-body">
-              <div class="tree-row">
-                <span class="tree-label">启用压缩</span>
-                <label class="checkbox-label"><input v-model="compress" type="checkbox" />--compress</label>
-              </div>
-              <div class="tree-row">
-                <span class="tree-label">压缩算法</span>
-                <select v-model="compressionAlgo" class="tree-input tree-select" :disabled="!compress"><option value="">继承官方默认（zstd）</option><option value="zstd">zstd</option><option value="zlib">zlib</option><option value="gzip">gzip</option><option value="snappy">snappy</option></select>
-              </div>
-              <div v-if="compressionAlgo !== 'gzip' && compressionAlgo !== 'snappy'" class="tree-row">
-                <span class="tree-label">压缩等级 <span class="muted">（--compression-level）</span></span>
-                <input v-model.trim="compressionLevel" class="tree-input" :disabled="!compress" :placeholder="compressionAlgo === 'zlib' ? '例如 5（zlib 支持 -1~9）' : '例如 3（zstd 支持 1~22）'" />
-              </div>
-              <p class="section-hint">压缩仅适用于 CSV/CUT/POS/SQL 可读格式；Parquet/ORC/Avro 结构化格式不适用。压缩等级按算法分范围：zstd 1~22、zlib -1~9；gzip/snappy 不支持指定等级。</p>
-            </div>
-          </details>
-        </template>
-        <p class="section-hint">所有已启用格式（CSV/CUT/POS/SQL/Parquet/ORC/Avro）均可在此页选择；未完成映射定版的格式不能选择。</p>
-      </section>
-
-      <section v-else-if="activeStep === 5" class="form-section">
         <h2>执行与输出配置</h2>
-        <p class="section-hint">本页按 OBDUMPER 官方选项分类组织：基础选项（存储路径）与高级选项（错误处理、时间戳格式、黑白名单筛选、性能选项）；执行节点为产品扩展。压缩导出与闪回 SCN 已在步骤 4 配置。</p>
-        <details class="tree-node" open>
-          <summary>基础选项 · 功能选项 · 存储路径</summary>
-          <div class="tree-body">
-            <div class="tree-row">
-              <span class="tree-label">输出类型 <span class="muted">（产品扩展）</span></span>
-              <label class="checkbox-label"><input v-model="outputKind" type="radio" name="output-kind" value="LOCAL" />本地路径</label>
-              <label class="checkbox-label"><input v-model="outputKind" type="radio" name="output-kind" value="OSS" />OSS</label>
-              <label class="checkbox-label"><input v-model="outputKind" type="radio" name="output-kind" value="S3" />S3</label>
-              <label class="checkbox-label"><input v-model="outputKind" type="radio" name="output-kind" value="COS" />COS</label>
-              <label class="checkbox-label"><input v-model="outputKind" type="radio" name="output-kind" value="OBS" />OBS</label>
-            </div>
-            <p class="section-hint">对象存储输出使用受控 URI（仅 Bucket/路径/Endpoint/Region）；存储凭据走任务级安全槽位，不会进入命令、日志或快照。</p>
-            <details v-if="outputKind === 'LOCAL'" class="tree-node" open>
-              <summary>本地路径</summary>
-              <div class="tree-body">
-                <p class="section-hint">导出路径和日志路径均为所选执行节点上的完整绝对路径；Windows 必须使用 /E:/exports 形式，平台不会追加子目录或转换路径格式。</p>
-                <div class="tree-row">
-                  <span class="tree-label">导出路径 <b>*</b></span>
-                  <input v-model.trim="filePath" class="tree-input" :placeholder="outputPathPlaceholder" autocomplete="off" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">日志路径 <span class="muted">（可选）</span></span>
-                  <input v-model.trim="logPath" class="tree-input" :placeholder="outputPathPlaceholder" autocomplete="off" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">扁平目录</span>
-                  <label class="checkbox-label"><input v-model="noNestedDir" type="checkbox" />--no-nested-dir</label>
-                </div>
-                <p class="section-hint">填写日志路径时生成 `--log-path`；留空则保留 OBDUMPER 的默认日志目录行为。</p>
-              </div>
-            </details>
-            <details v-else class="tree-node" open>
-              <summary>对象存储</summary>
-              <div class="tree-body">
-                <p class="section-hint">对象路径以 / 开头；Endpoint 与 Region 至少填写一项。存储凭据（AccessKey/SecretKey）由任务级安全槽位提供，此处不收集。</p>
-                <div class="tree-row">
-                  <span class="tree-label">Bucket <b>*</b></span>
-                  <input v-model.trim="storageBucket" class="tree-input" placeholder="例如 my-bucket" autocomplete="off" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">对象路径 <b>*</b></span>
-                  <input v-model.trim="storagePath" class="tree-input" placeholder="例如 /exports/daily" autocomplete="off" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">Endpoint</span>
-                  <input v-model.trim="storageEndpoint" class="tree-input" placeholder="例如 oss-cn-hangzhou-internal.aliyuncs.com" autocomplete="off" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">Region</span>
-                  <input v-model.trim="storageRegion" class="tree-input" placeholder="例如 cn-hangzhou" autocomplete="off" />
-                </div>
-                <div class="tree-row">
-                  <span class="tree-label">存储凭据 <span class="muted">（可选）</span></span>
-                  <p v-if="storageCredentialLoadFailure" class="feedback feedback-error" role="alert">{{ storageCredentialLoadFailure }} <button type="button" class="link-button" @click="loadStorageCredentials">重试</button></p>
-                  <span v-else-if="loadingStorageCredentials" class="placeholder-control short">正在加载存储凭据…</span>
-                  <select v-else v-model="storageCredentialID" class="tree-input tree-select"><option value="">不指定（依赖执行节点 Hadoop 标准配置链）</option><option v-for="credential in matchingStorageCredentials" :key="credential.id" :value="credential.id">{{ credential.displayName }} · 修订 {{ credential.currentRevision }}</option></select>
-                </div>
-                <p v-if="matchingStorageCredentials.length === 0 && !loadingStorageCredentials && !storageCredentialLoadFailure" class="section-hint">当前没有 {{ outputKind }} 类型的存储凭据，可在「平台设置 · 存储凭据」中创建；不指定则依赖执行节点的 Hadoop 标准配置链。</p>
-                <p class="section-hint">所选凭据只以标识与当前修订写入草稿；密钥由任务级安全槽位在受控执行中短时解析，不会进入命令、日志或快照。</p>
-                <div class="tree-row">
-                  <span class="tree-label">本地临时分块目录 <span class="muted">（高级，可选）</span></span>
-                  <input v-model.trim="tmpPath" class="tree-input" :placeholder="outputPathPlaceholder" autocomplete="off" />
-                </div>
-                <p class="section-hint">对象存储 Multipart 上传使用本地临时分块目录（--tmp-path）；不填写时继承 OBDUMPER 默认行为。</p>
-              </div>
-            </details>
-          </div>
-        </details>
-        <details class="tree-node" open>
-          <summary>执行节点 <span class="tree-note">产品扩展</span></summary>
-          <div class="tree-body">
-            <p v-if="nodeLoadFailure" class="feedback feedback-error" role="alert">{{ nodeLoadFailure }} <button type="button" class="link-button" @click="loadNodeCandidates">重试</button></p>
-            <div v-else-if="loadingNodes" class="placeholder-control short"><span>正在加载已授权执行节点…</span></div>
-            <EmptyState v-else-if="nodes.length === 0" title="没有可选执行节点" description="当前授权范围内没有已启用节点。节点在线、工具、路径和空间事实仍需在后续预检查中确认。" />
-            <div v-else class="tree-row">
-              <span class="tree-label">执行节点 <b>*</b></span>
-              <select v-model="selectedNodeID" class="tree-input tree-select" :disabled="derivedDraftBindingLocked"><option value="" disabled>请选择执行节点</option><option v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</option></select>
-            </div>
-            <p v-if="selectedNode && derivedDraftBindingLocked" class="section-hint">派生草稿固定使用来源任务的执行节点；节点在线、工具、路径和空间事实仍由预检查确认。</p>
-            <p v-else-if="selectedNode" class="section-hint">已选择 {{ selectedNode.displayName }}。此处只表示已授权且已启用，不代表节点在线、输出路径可写或任务已经预检查通过。</p>
-          </div>
-        </details>
-        <details v-if="dataOptionsActive" class="tree-node">
-          <summary>高级选项 · 功能选项 · 错误处理</summary>
-          <div class="tree-body">
-            <div v-if="outputKind === 'LOCAL'" class="tree-row">
-              <span class="tree-label">跳过目录空性检查</span>
-              <label class="checkbox-label"><input v-model="skipCheckDir" type="checkbox" />--skip-check-dir</label>
-            </div>
-            <p v-if="skipCheckDir" class="section-hint">将生成 `--skip-check-dir`。仍会检查导出路径和日志路径可写、位于允许根目录内，以及导出路径可用空间。</p>
-            <div class="tree-row">
-              <span class="tree-label">导出总量上限 <span class="muted">（Byte）</span></span>
-              <input v-model.trim="maxFileSize" class="tree-input" placeholder="正整数，例如 1048576" />
-            </div>
-            <div v-if="formatKind === 'CUT'" class="tree-row">
-              <span class="tree-label">删除换行 <span class="muted">（高风险）</span></span>
-              <label class="checkbox-label"><input v-model="removeNewline" type="checkbox" />--remove-newline</label>
-            </div>
-            <p v-if="removeNewline" class="section-hint">--remove-newline 会删除导出数据内的换行并改变数据内容，请确认可接受后再开启。</p>
-          </div>
-        </details>
-        <details v-if="dataOptionsActive" class="tree-node">
-          <summary>高级选项 · 功能选项 · 时间戳格式</summary>
-          <div class="tree-body">
-            <div class="tree-row">
-              <span class="tree-label">闪回时间点 <span class="muted">（仅 Oracle）</span></span>
-              <input v-model.trim="flashbackTimestamp" class="tree-input" :disabled="Boolean(querySql) || snapshot" placeholder="例如 2026-08-06 00:00:00" />
-            </div>
-            <!-- 仅 MySQL 的 DATE/DATETIME 已完成当前验证；Oracle 的九个字段均不能显示或提交。 -->
-            <template v-if="timestampFormatsSupported">
-              <div class="tree-row">
-                <span class="tree-label">DATETIME 值格式 <span class="muted">（--datetime-value-format）</span></span>
-                <input v-model.trim="datetimeValueFormat" class="tree-input" placeholder="例如 yyyy-MM-dd HH:mm:ss" />
-              </div>
-              <div class="tree-row">
-                <span class="tree-label">DATE 值格式 <span class="muted">（--date-value-format）</span></span>
-                <input v-model.trim="dateValueFormat" class="tree-input" placeholder="例如 yyyy-MM-dd" />
-              </div>
-              <p class="section-hint">仅 MySQL CSV/CUT 数据导出可使用 DATE 与 DATETIME 值格式；格式串只接受时间格式符号和 ASCII 空格。</p>
+        <AAlert v-if="draftNotice" type="info" show-icon :message="draftNotice" />
+        <p>填写已选执行节点上的完整输出路径。路径资格、目录空性、空间和工具环境由后续预检查确认。</p>
+        <AForm layout="vertical" class="export-form">
+          <AFormItem label="执行节点" required :validate-status="attemptedStep === 4 && !selectedNodeID ? 'error' : undefined" :help="attemptedStep === 4 && !selectedNodeID ? '请返回导出内容与对象选择执行节点。' : '已与数据库和对象目录绑定；节点在线及工具可用性由预检查确认。'">
+            <AAlert v-if="nodeLoadFailure" type="error" show-icon :message="nodeLoadFailure"><template #action><AButton type="link" @click="loadNodeCandidates">重试</AButton></template></AAlert>
+            <ASkeleton v-else-if="loadingNodes" active :paragraph="{ rows: 1 }" aria-label="正在加载已授权执行节点" />
+            <template v-else>
+              <span>{{ selectedNode ? `${selectedNode.displayName} · ${selectedNode.platform}` : '尚未选择' }}</span>
+              <AButton v-if="!derivedDraftBindingLocked" type="link" @click="moveToStep(2)">返回内容与对象修改节点</AButton>
             </template>
-            <p v-else class="section-hint">时间格式当前只支持 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME；Oracle 的九个时间格式字段待兼容性验证完成前保持关闭。--flashback-scn 已在步骤 4 文件格式节点配置。</p>
-          </div>
-        </details>
-        <details v-if="dataOptionsActive" class="tree-node">
-          <summary>高级选项 · 功能选项 · 黑白名单筛选</summary>
-          <div class="tree-body">
-            <div class="tree-row">
-              <span class="tree-label">自定义查询 <span class="muted">（专家受限）</span></span>
-              <textarea v-model.trim="querySql" class="tree-input tree-textarea" rows="2" placeholder="例如 SELECT * FROM t WHERE id > 0" />
-            </div>
-            <p v-if="querySql" class="section-hint">自定义查询为受限专家能力：不提供 SQL 编辑器，服务端只把已确认文本作为 --query-sql 生成；结果不能直接导入。</p>
-            <div v-if="whereSupported" class="tree-row">
-              <span class="tree-label">条件筛选 <span class="muted">（--where）</span></span>
-              <input v-model.trim="where" class="tree-input" :disabled="Boolean(querySql)" placeholder="例如 id > 100 AND status = 'active'" />
-            </div>
-            <!-- EX-I7 剩余参数第二批（2026-08-13 受控实测定版）：分区筛选仅指定表数据；与自定义查询互斥 -->
-            <div v-if="partitionSupported" class="tree-row">
-              <span class="tree-label">分区筛选 <span class="muted">（--partition）</span></span>
-              <input v-model.trim="partition" class="tree-input" :disabled="Boolean(querySql)" placeholder="例如 p0 或 p0,p2" />
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">排除数据类型 <span class="muted">（--exclude-data-types）</span></span>
-              <input v-model.trim="excludeDataTypes" class="tree-input" placeholder="例如 BLOB,TEXT（逗号分隔）" />
-            </div>
-            <!-- 隐藏主键依赖对象、版本与权限预检查，不能提供可提交的启用入口。 -->
-            <div class="tree-row pending">
-              <span class="tree-label">使用隐藏主键 <span class="muted">（--enable-hidden-pk）</span></span>
-              <span class="tree-note">需对象、版本与权限预检查，当前保持关闭</span>
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">一致性 <span class="muted">（2026-08-11 实测）</span></span>
-              <label class="checkbox-label"><input v-model="snapshot" type="checkbox" :disabled="Boolean((flashbackScn || flashbackTimestamp) && !snapshot)" />--snapshot（导出最近一次合并版本快照）</label>
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">保留空结果文件</span>
-              <label class="checkbox-label"><input v-model="retainEmptyFiles" type="checkbox" />--retain-empty-files</label>
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">游标抓取行数 <span class="muted">（Oracle）</span></span>
-              <input v-model.trim="fetchSize" class="tree-input" placeholder="继承 1000" />
-            </div>
-            <p class="section-hint">包含列、排除列与排除生成列已在步骤 2 配置；官方把 --fetch-size 归入列黑白名单筛选节，其语义为 Oracle 模式游标抓取行数。</p>
-          </div>
-        </details>
-        <details v-if="dataOptionsActive" class="tree-node">
-          <summary>高级选项 · 性能选项</summary>
-          <div class="tree-body">
-            <div class="tree-row">
-              <span class="tree-label">导出线程</span>
-              <input v-model.trim="thread" class="tree-input" placeholder="继承官方默认" />
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">分页大小</span>
-              <input v-model.trim="pageSize" class="tree-input" placeholder="继承 1,000,000" />
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">每线程宏块数</span>
-              <input v-model.trim="parallelMacro" class="tree-input" placeholder="继承 8" />
-            </div>
-            <div class="tree-row">
-              <span class="tree-label">JVM 内存</span>
-              <input v-model.trim="jvmMemory" class="tree-input" placeholder="例如 4G（K/M/G/T）" />
-            </div>
-            <div v-if="!['PARQUET', 'ORC', 'AVRO'].includes(formatKind)" class="tree-row">
-              <span class="tree-label">文件拆分 <span class="muted">（--block-size）</span></span>
-              <input v-model.trim="blockSize" class="tree-input" placeholder="例如 1024（MB）或 256ROW" />
-            </div>
-            <p v-if="['PARQUET', 'ORC', 'AVRO'].includes(formatKind)" class="section-hint">文件拆分（--block-size）对 Parquet/ORC 官方不生效，Avro 未取证，结构化格式不适用。</p>
-          </div>
-        </details>
-        <p v-if="optionPanelsMessage" class="feedback feedback-error" role="alert">{{ optionPanelsMessage }}</p>
-        <p v-if="draftValidationMessage" class="feedback feedback-error" role="alert">{{ draftValidationMessage }}</p>
-        <p v-if="draftFailure" class="feedback feedback-error" role="alert">{{ draftFailure }}</p>
+          </AFormItem>
+          <AAlert v-if="selectedNode && derivedDraftBindingLocked" type="info" show-icon message="派生草稿固定使用来源任务的执行节点；节点状态仍由预检查确认。" />
+          <template v-if="outputKind === 'LOCAL'">
+            <AFormItem label="导出路径" required :validate-status="attemptedStep === 4 && !filePath.trim() ? 'error' : undefined" :help="attemptedStep === 4 && !filePath.trim() ? '请填写与节点平台匹配的完整绝对路径。' : '平台原样传递此路径，不追加目录或转换平台格式。'">
+              <AInput v-model:value.trim="filePath" aria-label="导出路径" :placeholder="outputPathPlaceholder" autocomplete="off" />
+            </AFormItem>
+          </template>
+          <AAlert v-if="outputKind !== 'LOCAL'" type="warning" show-icon message="对象存储输出仍需端点连通性与凭据有效性预检查；未取得通过证据时不能提交。" />
+        </AForm>
+        <ACollapse class="export-advanced" :bordered="false" :default-active-key="outputKind === 'LOCAL' ? [] : ['advanced']">
+          <ACollapsePanel key="advanced" header="高级设置 · 文件布局、性能与对象存储">
+            <AForm layout="vertical" class="export-advanced-form">
+              <h3>文件布局与生成</h3>
+              <AFormItem label="日志路径（可选）" extra="留空时继承 OBDUMPER 默认日志目录。"><AInput v-model:value.trim="logPath" aria-label="日志路径" :placeholder="outputPathPlaceholder" autocomplete="off" /></AFormItem>
+              <AFormItem v-if="outputKind === 'LOCAL'"><ACheckbox v-model:checked="skipCheckDir">跳过导出目录空性检查（--skip-check-dir）</ACheckbox></AFormItem>
+              <AAlert v-if="skipCheckDir && outputKind === 'LOCAL'" type="warning" show-icon message="可能覆盖同名文件；路径可写性与可用空间仍会检查。" />
+              <AFormItem><ACheckbox v-model:checked="noNestedDir">扁平目录（--no-nested-dir）</ACheckbox></AFormItem>
+              <AFormItem v-if="dataOptionsActive" label="导出总量上限（Byte）"><AInput v-model:value.trim="maxFileSize" aria-label="导出总量上限" placeholder="正整数，例如 1048576" /></AFormItem>
+              <AFormItem v-if="dataOptionsActive"><ACheckbox v-model:checked="retainEmptyFiles">保留空结果文件（--retain-empty-files）</ACheckbox></AFormItem>
+              <p class="section-hint">保留空结果文件适用于空表，以及筛选后的空分区或空结果；同时省略 CSV 表头时会生成空文件。</p>
+              <h3>性能与资源</h3>
+              <div v-if="dataOptionsActive" class="export-field-grid">
+                <AFormItem label="导出线程"><AInput v-model:value.trim="thread" aria-label="导出线程" placeholder="继承官方默认" /></AFormItem>
+                <AFormItem label="分页大小"><AInput v-model:value.trim="pageSize" aria-label="分页大小" placeholder="继承 1,000,000" /></AFormItem>
+                <AFormItem label="每线程宏块数"><AInput v-model:value.trim="parallelMacro" aria-label="每线程宏块数" placeholder="继承 8" /></AFormItem>
+                <AFormItem label="游标抓取行数（Oracle）"><AInput v-model:value.trim="fetchSize" aria-label="游标抓取行数" placeholder="继承 1000" /></AFormItem>
+                <AFormItem label="JVM 内存"><AInput v-model:value.trim="jvmMemory" aria-label="JVM 内存" placeholder="例如 4G" /></AFormItem>
+              </div>
+              <h3>对象存储（当前门控）</h3>
+              <AAlert type="info" show-icon message="OSS、S3、COS、OBS 按受控 URI 配置；凭据只使用安全槽位。未授权的真实探测保持未完成。" />
+              <AFormItem label="输出类型">
+                <ARadioGroup v-model:value="outputKind" role="radiogroup" aria-label="输出类型"><ARadio value="LOCAL">本地路径</ARadio><ARadio value="OSS">OSS</ARadio><ARadio value="S3">S3</ARadio><ARadio value="COS">COS</ARadio><ARadio value="OBS">OBS</ARadio></ARadioGroup>
+              </AFormItem>
+              <template v-if="outputKind !== 'LOCAL'">
+                <div class="export-field-grid">
+                  <AFormItem label="Bucket" required><AInput v-model:value.trim="storageBucket" aria-label="Bucket" autocomplete="off" /></AFormItem>
+                  <AFormItem label="对象路径" required><AInput v-model:value.trim="storagePath" aria-label="对象路径" placeholder="/exports/daily" autocomplete="off" /></AFormItem>
+                  <AFormItem label="Endpoint"><AInput v-model:value.trim="storageEndpoint" aria-label="Endpoint" autocomplete="off" /></AFormItem>
+                  <AFormItem label="Region"><AInput v-model:value.trim="storageRegion" aria-label="Region" autocomplete="off" /></AFormItem>
+                </div>
+                <AFormItem label="存储凭据（可选）" :html-for="fieldPrefix + '-storage-credential'" extra="只保存凭据标识与修订，不在页面读取密钥。">
+                  <AAlert v-if="storageCredentialLoadFailure" type="error" show-icon :message="storageCredentialLoadFailure"><template #action><AButton type="link" @click="loadStorageCredentials">重试</AButton></template></AAlert>
+                  <ASkeleton v-else-if="loadingStorageCredentials" active :paragraph="{ rows: 1 }" aria-label="正在加载存储凭据" />
+                  <ASelect v-else :id="fieldPrefix + '-storage-credential'" v-model:value="storageCredentialID"><ASelectOption value="">不指定（依赖执行节点 Hadoop 配置）</ASelectOption><ASelectOption v-for="credential in matchingStorageCredentials" :key="credential.id" :value="credential.id">{{ credential.displayName }} · 修订 {{ credential.currentRevision }}</ASelectOption></ASelect>
+                </AFormItem>
+                <AFormItem label="本地临时分块目录（可选）" extra="Multipart 上传的本地分块目录；留空则继承官方默认。"><AInput v-model:value.trim="tmpPath" aria-label="本地临时分块目录" :placeholder="outputPathPlaceholder" autocomplete="off" /></AFormItem>
+              </template>
+            </AForm>
+          </ACollapsePanel>
+        </ACollapse>
+        <AAlert v-if="draftFailure" type="error" show-icon :message="draftFailure" />
       </section>
 
       <section v-else class="form-section">
         <h2>参数预检查与完整命令</h2>
-        <p v-if="draftNotice" class="feedback" :class="activePrecheck?.status === 'FAILED' ? 'feedback-error' : 'feedback-notice'" :role="activePrecheck?.status === 'FAILED' ? 'alert' : 'status'">{{ draftNotice }}</p>
-        <p v-if="loadingDraft" class="section-hint" role="status">正在读取已创建草稿的服务端配置快照…</p>
-        <p v-if="draftLoadFailure" class="feedback feedback-error" role="alert">{{ draftLoadFailure }} <button type="button" class="link-button" @click="loadCreatedDraft()">重新读取草稿</button></p>
+        <AAlert v-if="draftNotice" :type="activePrecheck?.status === 'FAILED' ? 'error' : 'info'" show-icon :message="draftNotice" />
+        <ASpin v-if="loadingDraft" tip="正在读取已创建草稿的服务端配置快照…"><span class="export-loading-space" /></ASpin>
+        <AAlert v-if="draftLoadFailure" type="error" show-icon :message="draftLoadFailure"><template #action><AButton type="link" @click="loadCreatedDraft()">重新读取草稿</AButton></template></AAlert>
         <section class="configuration-summary">
           <h3>任务配置摘要</h3>
-          <dl>
-            <div><dt>数据源</dt><dd>{{ displayedSource?.displayName ?? (currentDraft ? '草稿数据源当前不可用' : '尚未读取草稿') }}</dd></div>
-            <div><dt>对象与内容</dt><dd>{{ displayedDraftConfig ? `${draftScopeSummary} · ${draftContentLabel}` : '尚未读取草稿' }}</dd></div>
-            <div><dt>导出、日志与节点</dt><dd>{{ displayedDraftConfig && displayedNode ? `${displayedNode.displayName} · 导出：${displayedDraftConfig.outputConfig.filePath}${displayedDraftConfig.outputConfig.logPath ? ` · 日志：${displayedDraftConfig.outputConfig.logPath}` : ''}${displayedDraftConfig.outputConfig.skipCheckDir ? ' · 已跳过目录空性检查' : ''}` : '尚未读取草稿' }}</dd></div>
-          </dl>
+          <ADescriptions class="export-facts" size="small" :column="1">
+            <ADescriptionsItem label="数据源">{{ displayedSource?.displayName ?? (currentDraft ? '草稿数据源当前不可用' : '尚未读取草稿') }}</ADescriptionsItem>
+            <ADescriptionsItem label="对象与内容">{{ displayedDraftConfig ? `${draftScopeSummary} · ${draftContentLabel}` : '尚未读取草稿' }}</ADescriptionsItem>
+            <ADescriptionsItem label="导出、日志与节点">{{ displayedDraftConfig && displayedNode ? `${displayedNode.displayName} · 导出：${displayedDraftConfig.outputConfig.filePath}${displayedDraftConfig.outputConfig.logPath ? ` · 日志：${displayedDraftConfig.outputConfig.logPath}` : ''}${displayedDraftConfig.outputConfig.skipCheckDir ? ' · 已跳过目录空性检查' : ''}` : '尚未读取草稿' }}</ADescriptionsItem>
+          </ADescriptions>
         </section>
         <section class="precheck-list">
           <h3>预检查结果</h3>
           <p class="section-hint">预检查由已选择的 Agent 执行：确认数据源连接、当前草稿所选对象可读取（全部范围按数据库级可达性投影）、OB Loader/Dumper 与专用 Java 8 配置、导出目录及已填写日志目录可写、导出目录空性，以及至少 1 GiB 可用空间。对象存储输出额外检查端点连通性与凭据有效性（未授权探测保持未完成）。勾选跳过选项时，仅目录空性检查会被跳过。它不会启动 OBDUMPER 或创建导出文件。</p>
-          <p v-if="storageOutput" class="feedback feedback-notice" role="status">对象存储输出需要「存储端点连通性」与「存储凭据有效性」两项检查通过后才能提交；这两项真实探测尚未授权（归 EX-V1 排期），当前保持未完成。</p>
-          <p v-if="precheckFailure" class="feedback feedback-error" role="alert">{{ precheckFailure }}</p>
-          <p v-if="activePrecheck" class="precheck-current-status" :class="{ 'is-failed': activePrecheck.status === 'FAILED' }" :role="activePrecheck.status === 'FAILED' ? 'alert' : 'status'">当前状态：<strong>{{ precheckStatusLabel(activePrecheck.status) }}</strong></p>
-          <section v-if="activePrecheck?.status === 'FAILED'" class="precheck-failure-summary" role="alert">
-            <strong>预检查未通过</strong>
-            <p>以下 {{ blockingPrecheckRows.length }} 项检查未通过或未完成。请修正后重新执行预检查。</p>
-            <ul>
-              <li v-for="row in blockingPrecheckRows" :key="row.check">
-                <strong>{{ precheckCheckLabel(row.check) }}</strong>
-                <span>{{ precheckResultDetail(row.result) }}</span>
-                <code>原因码：{{ row.result?.evidenceCode }}</code>
-              </li>
-            </ul>
-          </section>
-          <div v-for="row in precheckRows" :key="row.check" class="precheck-item" :class="{ 'is-failed': row.result?.status === 'FAILED' }">
-            <span class="status-dot" :class="precheckDotClass(row.result)" />
-            <strong>{{ precheckCheckLabel(row.check) }}</strong>
-            <span><b class="precheck-result-status" :class="{ 'is-failed': row.result?.status === 'FAILED' }">{{ precheckResultLabel(row.result, precheckRunning) }}</b><small v-if="precheckResultDetail(row.result)">{{ precheckResultDetail(row.result) }}</small><code v-if="precheckResultBlocksSubmission(row.result)">原因码：{{ row.result?.evidenceCode }}</code></span>
-          </div>
+          <AAlert v-if="storageOutput" type="warning" show-icon message="对象存储的端点连通性与凭据有效性检查必须通过才能提交；未授权探测保持未完成。" />
+          <AAlert v-if="precheckFailure" type="error" show-icon :message="precheckFailure" />
+          <ASpin v-if="precheckRunning" tip="预检查进行中…"><span class="export-loading-space" /></ASpin>
+          <p v-if="activePrecheck" role="status">当前状态：<ATag :color="activePrecheck.status === 'FAILED' ? 'error' : activePrecheck.status === 'SUCCEEDED' ? 'success' : 'processing'">{{ precheckStatusLabel(activePrecheck.status) }}</ATag></p>
+          <AAlert v-if="activePrecheck?.status === 'FAILED'" type="error" show-icon message="预检查未通过" :description="`以下 ${blockingPrecheckRows.length} 项检查未通过或未完成。请修正后重新执行预检查。`" />
+          <AList v-if="activePrecheck?.status === 'FAILED'" size="small" :data-source="blockingPrecheckRows" aria-label="预检查阻断原因">
+            <template #renderItem="{ item: row }"><AListItem><div class="export-precheck-detail"><strong>{{ precheckCheckLabel(row.check) }}</strong><span>{{ precheckResultDetail(row.result) }}</span><code>原因码：{{ row.result?.evidenceCode }}</code></div></AListItem></template>
+          </AList>
+          <AList size="small" :data-source="precheckRows" aria-label="预检查结果">
+            <template #renderItem="{ item: row }">
+              <AListItem><div class="export-precheck-row"><ABadge :status="!row.result ? 'default' : row.result.status === 'PASSED' ? 'success' : row.result.status === 'FAILED' ? 'error' : 'default'" /><strong>{{ precheckCheckLabel(row.check) }}</strong><span><b>{{ precheckResultLabel(row.result, precheckRunning) }}</b><small v-if="precheckResultDetail(row.result)">{{ precheckResultDetail(row.result) }}</small><code v-if="precheckResultBlocksSubmission(row.result)">原因码：{{ row.result?.evidenceCode }}</code></span></div></AListItem>
+            </template>
+          </AList>
         </section>
         <section class="command-empty">
-          <div><h3>完整命令（仅隐藏密码）</h3><button type="button" class="button button-secondary" disabled>复制命令</button></div>
-          <p v-if="previewingCommand" role="status">控制面正在重算命令预览…</p>
-          <p v-else-if="commandPreviewFailure" class="feedback feedback-error" role="alert">{{ commandPreviewFailure }} <button type="button" class="link-button" @click="loadCommandPreview()">重新生成命令</button></p>
+          <div><h3>完整命令（仅隐藏密码）</h3><AButton :disabled="!commandPreview" @click="copyCommand">复制脱敏命令</AButton></div>
+          <ASpin v-if="previewingCommand" tip="控制面正在重算命令预览…"><span class="export-loading-space" /></ASpin>
+          <AAlert v-else-if="commandPreviewFailure" type="error" show-icon :message="commandPreviewFailure"><template #action><AButton type="link" @click="loadCommandPreview()">重新生成命令</AButton></template></AAlert>
           <pre v-else-if="commandPreview"><code>{{ commandPreview.command }}</code></pre>
           <pre v-else><code>命令只会由控制面根据已读取的草稿快照生成；密码始终不会显示或由浏览器自行拼接。</code></pre>
           <p v-if="commandPreview">`-p ******` 仅为密码占位；实际运行从官方安全文件读取密码，不把密码放入进程参数。</p>
           <p v-if="commandPreview">草稿版本 rev-{{ currentDraft?.revision }} · 配置指纹 {{ commandPreview.configFingerprint }}</p>
+          <AAlert v-if="copyNotice" type="success" show-icon :message="copyNotice" />
         </section>
-        <p v-if="submissionFailure" class="feedback feedback-error" role="alert">{{ submissionFailure }}</p>
+        <AAlert v-if="submissionFailure" type="error" show-icon :message="submissionFailure" />
       </section>
     </template>
 
     <template #summary>
       <h2>配置总览</h2>
-      <dl class="summary-definition">
-        <div><dt>当前步骤</dt><dd>{{ titles[activeStep - 1] }}</dd></div>
-        <div><dt>数据源</dt><dd>{{ displayedSource?.displayName ?? '尚未选择' }}</dd></div>
-        <div><dt>导出范围</dt><dd>{{ displayedDraftConfig ? draftScopeSummary : (database ? `${database} · ${scopeKind === 'ALL' ? '全部对象' : '指定对象'}` : '尚未配置') }}</dd></div>
-        <div><dt>导出内容</dt><dd>{{ contentKind === 'DDL_ONLY' ? '仅 DDL' : contentKind === 'DDL_AND_DATA' ? 'DDL + 数据' : '仅数据' }}</dd></div>
-        <div><dt>数据格式</dt><dd>{{ contentKind === 'DDL_ONLY' ? '无数据格式' : formatKind }}</dd></div>
-        <div><dt>执行节点</dt><dd>{{ displayedNode?.displayName ?? '尚未选择' }}</dd></div>
-        <div><dt>预检查</dt><dd>{{ precheckStatusLabel(activePrecheck?.status) }}</dd></div>
-      </dl>
+      <ADescriptions class="export-facts" size="small" :column="1">
+        <ADescriptionsItem label="当前步骤">{{ titles[activeStep - 1] }}</ADescriptionsItem>
+        <ADescriptionsItem label="数据源">{{ displayedSource?.displayName ?? '尚未选择' }}</ADescriptionsItem>
+        <ADescriptionsItem label="导出范围">{{ displayedDraftConfig ? draftScopeSummary : (database ? `${database} · ${scopeKind === 'ALL' ? '全部对象' : '指定对象'}` : '尚未配置') }}</ADescriptionsItem>
+        <ADescriptionsItem label="导出内容">{{ contentKind === 'DDL_ONLY' ? '仅 DDL' : contentKind === 'DDL_AND_DATA' ? 'DDL + 数据' : '仅数据' }}</ADescriptionsItem>
+        <ADescriptionsItem label="数据格式">{{ contentKind === 'DDL_ONLY' ? '无数据格式' : formatKind }}</ADescriptionsItem>
+        <ADescriptionsItem label="执行节点">{{ displayedNode?.displayName ?? '尚未选择' }}</ADescriptionsItem>
+        <ADescriptionsItem label="预检查">{{ precheckStatusLabel(activePrecheck?.status) }}</ADescriptionsItem>
+      </ADescriptions>
       <p class="aside-note">草稿创建和命令预览不启动 Agent、工具或数据库连接。预检查通过后，点击“提交并启动导出”才会由 Agent 领取冻结任务并启动 OBDUMPER。</p>
     </template>
 
     <template #footer>
       <footer class="wizard-footer">
-        <button type="button" class="button button-secondary" :disabled="activeStep === 1 || creatingDraft" @click="previousStep">上一步</button>
+        <AButton :disabled="activeStep === 1 || creatingDraft" @click="previousStep">上一步</AButton>
         <span class="wizard-baseline-note">{{ footerBaselineNote }}</span>
         <span class="footer-grow" />
-        <button v-if="activeStep < 6" type="button" class="button button-primary" :disabled="!canAdvance" @click="nextStep">{{ footerLabel }}</button>
+        <AButton v-if="activeStep < 5" :loading="creatingDraft" :disabled="loadingSources || loadingNodes && activeStep === 4 || activeStep === 2 && !canAdvance" type="primary" @click="nextStep">{{ footerLabel }}</AButton>
         <div v-else class="footer-actions">
-          <button type="button" class="button button-secondary" :disabled="!currentDraft || startingPrecheck || precheckRunning || submitting" @click="startPrecheck">{{ footerLabel }}</button>
-          <button type="button" class="button button-primary" :disabled="!canSubmit" @click="submitTask">{{ submitting ? '正在提交任务…' : '提交并启动导出' }}</button>
+          <AButton :disabled="!currentDraft || draftDirty || !commandPreview || startingPrecheck || precheckRunning || submitting" @click="startPrecheck">{{ footerLabel }}</AButton>
+          <AButton :disabled="!canSubmit" type="primary" @click="submitTask">{{ submitting ? '正在提交任务…' : '提交并启动导出' }}</AButton>
         </div>
       </footer>
     </template>
   </WizardFrame>
+  <AModal :open="submitConfirmationOpen" title="确认提交导出任务" :closable="!submitting" :mask-closable="!submitting" :keyboard="!submitting" @cancel="closeSubmitConfirmation">
+    <div class="export-submit-facts">
+      <p>提交后配置冻结，所选 Agent 领取任务并启动 OBDUMPER；已提交任务不能原地修改参数。</p>
+      <ADescriptions class="export-facts" size="small" :column="1"><ADescriptionsItem label="数据源">{{ displayedSource?.displayName ?? '当前不可用' }}</ADescriptionsItem><ADescriptionsItem label="导出范围">{{ draftScopeSummary }}</ADescriptionsItem><ADescriptionsItem label="输出位置">{{ displayedDraftConfig?.outputConfig.filePath ?? '未读取' }}</ADescriptionsItem></ADescriptions>
+      <AAlert v-if="displayedSource?.environment === 'PRODUCTION' || dropObject || removeNewline" type="warning" show-icon message="请确认生产环境与高风险参数的影响。" :description="[displayedSource?.environment === 'PRODUCTION' ? '生产数据源' : '', dropObject ? 'DDL 包含前置 DROP' : '', removeNewline ? '删除导出数据中的换行' : ''].filter(Boolean).join('；')" />
+      <AAlert v-if="submissionFailure" type="error" show-icon :message="submissionFailure" />
+    </div>
+    <template #footer><AButton :id="submitCancelID" :disabled="submitting" @click="closeSubmitConfirmation">返回检查</AButton><AButton type="primary" :loading="submitting" @click="confirmSubmitTask">确认提交并启动导出</AButton></template>
+  </AModal>
 </template>
+
+<style scoped>
+.export-source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ob-foundation-space-3);
+  margin-block: var(--ob-foundation-space-4);
+}
+.export-source-filter > :first-child { flex: 1 1 240px; min-inline-size: 0; }
+.export-source-filter > :last-child { inline-size: 180px; }
+.export-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--ob-foundation-space-2); inline-size: 100%; margin-block: var(--ob-foundation-space-4); }
+.export-source-choice { display: flex; align-items: flex-start; min-inline-size: 0; margin-inline-end: 0; padding: var(--ob-foundation-space-3); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); background: var(--ob-color-surface); }
+.export-source-facts { display: grid; min-inline-size: 0; gap: var(--ob-foundation-space-1); overflow-wrap: anywhere; }
+.export-source-facts span { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+.export-field-group { margin-block: var(--ob-foundation-space-4); }
+.export-object-group { container-type: inline-size; }
+.export-content-form { margin-block-start: var(--ob-foundation-space-4); }
+.export-content-options { display: flex; flex-wrap: wrap; max-inline-size: 100%; }
+.export-field-group h3,
+.export-advanced h3 {
+  margin: var(--ob-foundation-space-4) 0 var(--ob-foundation-space-2);
+  color: var(--ob-color-form-text);
+  font-size: var(--ob-product-typography-section-size);
+  font-weight: var(--ob-product-typography-weight);
+}
+.export-field-group h3:first-child,
+.export-advanced h3:first-child { margin-block-start: 0; }
+.export-field-body { padding-block: var(--ob-foundation-space-2); }
+.export-database-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-inline-size: 740px; gap: var(--ob-foundation-space-4); }
+.export-database-grid :deep(.ant-form-item) { min-inline-size: 0; }
+.export-group-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
+.export-group-heading h3 { margin-block-end: 0; }
+.export-object-count { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+.export-object-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-block-start: var(--ob-foundation-space-3); overflow: hidden; border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
+.export-object-pane { min-inline-size: 0; min-block-size: 360px; padding: 0 var(--ob-foundation-space-3) var(--ob-foundation-space-3); }
+.export-object-pane h4 { margin: 0; color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); font-weight: var(--ob-product-typography-weight); }
+.export-object-selected { border-inline-start: 1px solid var(--ob-color-border); background: var(--ob-color-subtle); }
+.export-object-pane-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-2); min-block-size: 44px; margin-inline: calc(-1 * var(--ob-foundation-space-3)); margin-block-end: var(--ob-foundation-space-3); padding-inline: var(--ob-foundation-space-3); border-block-end: 1px solid var(--ob-color-border); }
+.export-candidate-editor { margin-block-start: var(--ob-foundation-space-4); }
+.export-object-search { display: flex; gap: 0; }
+.export-object-search :deep(.ant-input-affix-wrapper) { flex: 1; min-inline-size: 0; }
+.export-object-search :deep(.ant-btn) { border-start-start-radius: 0; border-end-start-radius: 0; }
+.export-object-search :deep(.ant-input-affix-wrapper) { border-start-end-radius: 0; border-end-end-radius: 0; }
+.export-candidate-editor :deep(.ant-collapse-header) { padding-inline: 0; }
+.export-candidate-editor :deep(.ant-collapse-content-box) { padding-inline: 0; }
+.export-object-tree { margin-block-start: var(--ob-foundation-space-3); }
+.export-object-tree-category { display: flex; align-items: center; gap: var(--ob-foundation-space-2); min-block-size: 29px; min-inline-size: 0; }
+.export-object-expand { flex: none; inline-size: 20px; min-inline-size: 20px; padding: 0; }
+.export-object-expand-placeholder { flex: none; inline-size: 20px; }
+.export-object-kind-icon { flex: none; color: var(--ob-color-secondary); }
+.export-object-category-name { min-inline-size: 0; padding: 0; text-align: start; color: var(--ob-color-form-text); }
+.export-object-category-name.is-disabled, .export-object-kind-note { color: var(--ob-color-secondary); }
+.export-object-kind-note { margin-inline-start: auto; font-size: var(--ob-component-field-helper-size); }
+.export-object-tree-children { margin-inline-start: 36px; }
+.export-object-tree-children :deep(.ant-list-item) { min-block-size: 28px; padding-block: 2px; border-block-end: 0; }
+.export-object-tree-children :deep(.ant-checkbox-wrapper) { display: flex; align-items: center; gap: var(--ob-foundation-space-2); }
+.export-object-tree-children :deep(.ant-checkbox-wrapper > span:last-child) { display: inline-flex; align-items: center; gap: var(--ob-foundation-space-2); min-inline-size: 0; }
+.export-object-tree-empty :deep(.ant-empty-description) { font-size: var(--ob-component-field-helper-size); }
+.export-object-pane :deep(.ant-checkbox-wrapper) { min-inline-size: 0; overflow-wrap: anywhere; }
+.export-object-pane :deep(.ant-list-item) { min-inline-size: 0; }
+.export-object-selected > .ant-input-affix-wrapper { margin-block-end: var(--ob-foundation-space-3); }
+.export-object-selected-category { margin-block-start: var(--ob-foundation-space-2); }
+.export-object-delete { margin-inline-start: auto; padding-inline: var(--ob-foundation-space-1); color: var(--ob-color-secondary); }
+.export-object-selected :deep(.ant-list-item) { display: flex; align-items: center; gap: var(--ob-foundation-space-2); }
+.export-object-selected :deep(.ant-list-item > span) { min-inline-size: 0; overflow-wrap: anywhere; }
+.export-form { display: grid; max-inline-size: 720px; gap: var(--ob-foundation-space-3); margin-block: var(--ob-foundation-space-4); }
+.export-advanced-form { max-inline-size: 720px; margin-block: var(--ob-foundation-space-3); }
+.export-format-core { margin-block-start: var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4); background: var(--ob-color-subtle); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
+.export-format-core h3 { margin-block-start: 0; }
+.export-format-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); }
+.export-format-grid :deep(.ant-form-item) { margin-block-end: 0; }
+.export-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); }
+@container (max-width: 800px) { .export-database-grid, .export-object-workspace { grid-template-columns: minmax(0, 1fr); } .export-object-selected { border-inline-start: 0; border-block-start: 1px solid var(--ob-color-border); } }
+.export-advanced { margin-block-start: var(--ob-foundation-space-4); }
+.export-step-error { margin-block-end: var(--ob-foundation-space-4); }
+.export-loading-space { display: block; min-block-size: var(--ob-foundation-space-8); }
+.export-facts { min-inline-size: 0; overflow-wrap: anywhere; }
+.export-precheck-row { display: grid; grid-template-columns: 16px minmax(140px, 200px) minmax(0, 1fr); align-items: start; gap: var(--ob-foundation-space-3); inline-size: 100%; min-inline-size: 0; overflow-wrap: anywhere; }
+.export-precheck-row small, .export-precheck-row code { display: block; margin-block-start: var(--ob-foundation-space-1); }
+.export-precheck-detail { display: grid; gap: var(--ob-foundation-space-1); min-inline-size: 0; overflow-wrap: anywhere; }
+.export-builder :deep(.ant-select) { min-inline-size: 0; }
+@media (max-width: 800px) {
+  .export-field-grid { grid-template-columns: minmax(0, 1fr); }
+  .export-precheck-row { grid-template-columns: 16px minmax(0, 1fr); }
+  .export-precheck-row > :last-child { grid-column: 2; }
+  .export-source-filter > :last-child { flex: 1 1 180px; }
+}
+</style>

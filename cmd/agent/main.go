@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -8,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"ob-data-orch/internal/servicehost"
 	"os"
-	"os/signal"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"ob-data-orch/internal/agentconnectiontest"
@@ -34,14 +37,47 @@ func main() {
 }
 
 func run() error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	return runWithContext(ctx, os.Args[1:], os.Stdin, os.Stdout, os.LookupEnv)
+	lookup, err := bundledExecutionSettings(os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "-version" || os.Args[1] == "--version") {
+		return runWithContext(context.Background(), os.Args[1:], os.Stdin, os.Stdout, lookup)
+	}
+	return servicehost.Run("OBDataOrchAgent", func(ctx context.Context) error {
+		if slices.Contains(os.Args[1:], "-dev-watch") {
+			// 开发模式只增加正常停止入口，真实能力仍由包配置及现有执行门禁控制。
+			executable, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			var cancel context.CancelFunc
+			ctx, cancel = servicehost.DevelopmentContext(ctx, filepath.Dir(executable))
+			defer cancel()
+		}
+		directory, err := loadAgentStateDirectory(lookup)
+		if err != nil {
+			return err
+		}
+		output, closeLog, err := servicehost.LogOutput(directory)
+		if err != nil {
+			return err
+		}
+		defer closeLog()
+		err = runWithContext(ctx, os.Args[1:], os.Stdin, output, lookup)
+		if err != nil {
+			slog.Error("Agent 停止", "error", err)
+		}
+		return err
+	})
 }
 
 func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, lookupEnv func(string) (string, bool)) error {
 	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
+	flags.Bool("dev-watch", false, "供开发入口使用的正常停止标记监听")
 	flags.SetOutput(io.Discard)
+	initialize := flags.Bool("initialize", false, "仅完成首次关联")
+	install := flags.Bool("install-service", false, "安装开机自启服务")
 	showVersion := flags.Bool("version", false, "print version and exit")
 	checkRuntime := flags.Bool("check-runtime", false, "verify local Java and OBDUMPER runtime")
 	register := flags.Bool("register", false, "register with a one-time code from standard input")
@@ -56,6 +92,14 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 		info := buildinfo.Current()
 		_, _ = fmt.Fprintf(stdout, "ob-data-orch agent %s (%s, %s)\n", info.Version, info.Commit, info.BuildTime)
 		return nil
+	}
+	if *install {
+		password, err := bufio.NewReader(io.LimitReader(stdin, 1024)).ReadBytes('\n')
+		if err != nil {
+			return err
+		}
+		defer credential.Zero(password)
+		return servicehost.Install("OBDataOrchAgent", password)
 	}
 	if *register && *enroll {
 		return errors.New("agent register and enroll modes are mutually exclusive")
@@ -81,6 +125,19 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 	stateStore, err := agentwire.OpenStateStore(stateDirectory)
 	if err != nil {
 		return errors.New("agent identity configuration is invalid")
+	}
+	if !*register && !*enroll && !*checkRuntime {
+		found, stateErr := stateStore.HasIdentity()
+		if stateErr != nil {
+			return stateErr
+		}
+		if !found {
+			registrationControlPlane, err = loadSimpleRegistrationControlPlane(lookupEnv)
+			if err != nil {
+				return err
+			}
+			*register = true
+		}
 	}
 	operatingSystem, architecture, err := agentPlatform()
 	if err != nil {
@@ -122,6 +179,9 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 		if err := prepareSimpleRegistration(stateStore, registrationControlPlane, stdin); err != nil {
 			return err
 		}
+	}
+	if *initialize {
+		return stateStore.EnsureEnrollment(ctx)
 	}
 	interval, err := config.LoadAgentHeartbeatInterval(lookupEnv)
 	if err != nil {
@@ -179,7 +239,7 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 	return runHeartbeatLoop(ctx, stateStore, protocolWork, bootID, operatingSystem, architecture, interval, *once, logger, environmentCheckWorker)
 }
 
-// environmentRuntimeValidator 只从首次关联后加密保存的本机配置构造固定运行时核验器。
+// environmentRuntimeValidator 从最近应用并加密保存的本机配置构造固定运行时核验器。
 // 配置缺失、平台漂移或本机复核失败都返回不可用，绝不回退到环境变量中的工具或 Java 路径。
 func environmentRuntimeValidator(stateStore *agentwire.StateStore, lookupEnv func(string) (string, bool), operatingSystem, architecture string) agentlocalpreflight.RuntimeValidator {
 	return agentlocalpreflight.RuntimeValidatorFunc(func(ctx context.Context) error {
@@ -197,7 +257,7 @@ func environmentRuntimeValidator(stateStore *agentwire.StateStore, lookupEnv fun
 	})
 }
 
-// agentRuntimeFromState 仅使用首次关联写入加密状态的路径配置，并验证当前 Agent 平台与节点声明一致。
+// agentRuntimeFromState 使用已应用的加密路径配置，并验证当前 Agent 平台与节点声明一致。
 func agentRuntimeFromState(stateStore *agentwire.StateStore, lookupEnv func(string) (string, bool), operatingSystem, architecture string) (config.AgentRuntime, commandgen.Platform, error) {
 	if stateStore == nil {
 		return config.AgentRuntime{}, "", errors.New("agent runtime state is unavailable")
@@ -315,6 +375,11 @@ func runAgentProtocolLoop(ctx context.Context, heartbeat heartbeatProtocol, conn
 		if err := heartbeat.EnsureEnrollment(ctx); err != nil {
 			return err
 		}
+		if synchronizer, ok := heartbeat.(interface{ SyncRuntimeConfiguration(context.Context) error }); ok {
+			if err := synchronizer.SyncRuntimeConfiguration(ctx); err != nil {
+				return err
+			}
+		}
 		now := time.Now().UTC()
 		facts := agentwire.EnvironmentFacts{
 			OperatingSystem: operatingSystem,
@@ -323,6 +388,12 @@ func runAgentProtocolLoop(ctx context.Context, heartbeat heartbeatProtocol, conn
 			ObservedAt:      now,
 			CapacityTotal:   1,
 			CapacityUsed:    0,
+		}
+		// 配置身份不依赖磁盘采样成功；目录不可用时仍须明确报告已应用的版本摘要。
+		if reader, ok := heartbeat.(agenttelemetry.RuntimeConfigurationReader); ok {
+			if configuration, err := reader.RuntimeConfiguration(); err == nil {
+				facts.RuntimeConfigurationDigest = configuration.Digest
+			}
 		}
 		if telemetry != nil {
 			if snapshot, telemetryErr := telemetry.Sample(); telemetryErr == nil {

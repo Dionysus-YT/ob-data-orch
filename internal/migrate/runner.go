@@ -168,6 +168,21 @@ func applyOne(ctx context.Context, db *sql.DB, item migration) error {
 	if _, err := tx.ExecContext(ctx, item.sql); err != nil {
 		return fmt.Errorf("apply migration %04d: %w", item.version, err)
 	}
+	// 表重建可延迟外键检查，但只能在整库引用完整时清除旧表的延迟计数。
+	// 始终保留 foreign_keys=ON，任何悬空引用都回滚整个迁移。
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("check migration foreign keys: %w", err)
+	}
+	invalid := rows.Next()
+	checkErr := rows.Err()
+	rows.Close()
+	if invalid || checkErr != nil {
+		return fmt.Errorf("migration %04d foreign key integrity failed", item.version)
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("finish migration foreign key check: %w", err)
+	}
 	appliedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)`,

@@ -28,6 +28,11 @@ type configuredExportExecutionRunner struct {
 }
 
 func (r configuredExportExecutionRunner) RunNext(ctx context.Context) (agentexecution.Outcome, bool, error) {
+	if r.stateStore == nil {
+		return agentexecution.Outcome{}, false, agentexecution.ErrInvalidConfiguration
+	}
+	release := r.stateStore.HoldRuntimeConfiguration()
+	defer release()
 	if r.operatingSystem != "WINDOWS" || r.architecture != "AMD64" {
 		return agentexecution.Outcome{}, false, agentexecution.ErrInvalidConfiguration
 	}

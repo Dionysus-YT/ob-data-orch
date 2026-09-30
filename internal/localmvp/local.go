@@ -44,6 +44,11 @@ func PrepareStore(ctx context.Context, database *store.Store) error {
 // 参数元数据无法加载时必须阻止启动，避免导出草稿在缺少确定性命令规则时继续处理。
 // 两个布尔开关均必须由本机启动入口显式传入；真实执行仍只能在回环 TLS MVP 与受认证 Agent 组合中启用。
 func Dependencies(database *store.Store, keyring *credential.Keyring, agentJDBCConnectionTestEnabled, realExecutionEnabled bool) (controlplane.Dependencies, error) {
+	return DependenciesWithLogs(database, keyring, agentJDBCConnectionTestEnabled, realExecutionEnabled, "var/local-mvp-logs")
+}
+
+// DependenciesWithLogs 复用业务依赖装配；正式入口必须替换测试身份、授权及 CSRF，且显式传入持久日志目录。
+func DependenciesWithLogs(database *store.Store, keyring *credential.Keyring, agentJDBCConnectionTestEnabled, realExecutionEnabled bool, logDirectory string) (controlplane.Dependencies, error) {
 	generator, err := commandgen.NewDefault()
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("加载本机 MVP 导出命令生成器: %w", err)
@@ -53,7 +58,7 @@ func Dependencies(database *store.Store, keyring *credential.Keyring, agentJDBCC
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("加载本机 MVP 泛化导出命令生成器: %w", err)
 	}
-	persistentLogs, err := logstream.NewPersistentStore("var/local-mvp-logs", database)
+	persistentLogs, err := logstream.NewPersistentStore(logDirectory, database)
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("初始化本机 MVP 日志段存储: %w", err)
 	}

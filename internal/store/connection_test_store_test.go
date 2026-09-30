@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+func Test数据库目录绑定范围失败关闭(t *testing.T) {
+	for _, test := range []struct {
+		database   string
+		objectType string
+		valid      bool
+	}{
+		{"", "DATABASE", true},
+		{"synthetic_db", "DATABASE", false},
+		{"synthetic_db", "VIEW", true},
+		{"", "VIEW", false},
+		{"", "SCHEMA", false},
+	} {
+		if got := validCatalogScope(test.database, test.objectType); got != test.valid {
+			t.Fatalf("目录绑定 %q/%q = %v", test.database, test.objectType, got)
+		}
+	}
+}
+
 func Test数据源连接测试G2合成闭环不写回数据源(t *testing.T) {
 	store, _ := openTestStore(t)
 	seedBaseFixture(t, store)
@@ -340,6 +358,103 @@ func Test数据源连接测试AgentJDBC写回与过期失败关闭(t *testing.T)
 		RequestID: "connection-test-enable-jdbc", ChangedAt: testTime.Add(9 * time.Minute),
 	}); err != nil {
 		t.Fatalf("ChangeDataSourceState() after AGENT_JDBC success = %v", err)
+	}
+}
+
+func Test导出对象目录受控租约与结果隔离(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	resetConnectionTestFacts(t, store)
+	prepareConnectionTestAgentFacts(t, store)
+	ctx := context.Background()
+	input := syntheticDataSourceConnectionTestInput("catalog-1", "AGENT_JDBC")
+	input.OperationKind, input.CatalogDatabase, input.CatalogObjectType, input.CatalogKeyword = "EXPORT_OBJECT_CATALOG", "appdb", "TABLE", "order"
+	if _, err := store.RequestDataSourceConnectionTest(ctx, input); !errors.Is(err, ErrDataSourceConnectionTestInvalid) {
+		t.Fatalf("未启用数据源不应允许查询对象，得到 %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE data_sources SET state = 'ENABLED', last_test_status = 'SUCCEEDED', last_test_source = NULL WHERE data_source_id = 'source-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RequestDataSourceConnectionTest(ctx, input); !errors.Is(err, ErrDataSourceConnectionTestInvalid) {
+		t.Fatalf("缺少真实 JDBC 来源不能作为元数据查询准入，得到 %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE data_sources SET last_test_source = 'AGENT_JDBC' WHERE data_source_id = 'source-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RequestDataSourceConnectionTest(ctx, input); err != nil {
+		t.Fatalf("创建对象查询: %v", err)
+	}
+	run, err := store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || run.OperationKind != "EXPORT_OBJECT_CATALOG" {
+		t.Fatalf("查询绑定 = %#v, %v", run, err)
+	}
+	grant := claimAndAcknowledgeDataSourceConnectionTest(t, store, input.ConnectionTestID, testTime.Add(5*time.Second))
+	if grant.Binding.CatalogCompatibilityMode != "MYSQL" {
+		t.Fatalf("兼容模式未冻结: %q", grant.Binding.CatalogCompatibilityMode)
+	}
+	completion := AgentDataSourceConnectionTestCompletion{
+		AgentID: "agent-1", ConnectionTestID: input.ConnectionTestID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "catalog-complete", RequestDigest: strings.Repeat("f", 64),
+		Status: "SUCCEEDED", EvidenceCode: "DATABASE_CONNECTED", VerificationSource: "AGENT_JDBC",
+		SysVerificationStatus: "NOT_CONFIGURED", CatalogObjects: []string{"orders"}, Now: testTime.Add(2 * time.Minute),
+	}
+	invalid := completion
+	invalid.CatalogObjects = []string{"orders", "orders"}
+	if _, err := store.CompleteAgentDataSourceConnectionTest(ctx, invalid); !errors.Is(err, ErrDataSourceConnectionTestLeaseRejected) {
+		t.Fatalf("重复对象名应拒绝，得到 %v", err)
+	}
+	if _, err := store.CompleteAgentDataSourceConnectionTest(ctx, completion); err != nil {
+		t.Fatalf("完成对象查询: %v", err)
+	}
+	run, err = store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || len(run.CatalogObjects) != 1 || run.CatalogObjects[0] != "orders" {
+		t.Fatalf("对象结果 = %#v, %v", run, err)
+	}
+	var source string
+	if err := store.db.QueryRow(`SELECT last_test_source FROM data_sources WHERE data_source_id = 'source-1'`).Scan(&source); err != nil || source != "AGENT_JDBC" {
+		t.Fatalf("对象查询改写了基础连接事实: %q, %v", source, err)
+	}
+	if _, err := store.ExpireDataSourceConnectionTests(ctx, testTime.Add(11*time.Minute)); err != nil {
+		t.Fatalf("清理过期对象结果: %v", err)
+	}
+	run, err = store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || len(run.CatalogObjects) != 0 {
+		t.Fatalf("过期对象名未清理: %#v, %v", run.CatalogObjects, err)
+	}
+}
+
+func Test导出对象目录未领取时及时过期且禁止迟到领取(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	resetConnectionTestFacts(t, store)
+	prepareConnectionTestAgentFacts(t, store)
+	ctx := context.Background()
+	if _, err := store.db.Exec(`UPDATE data_sources SET state = 'ENABLED', last_test_status = 'SUCCEEDED', last_test_source = 'AGENT_JDBC' WHERE data_source_id = 'source-1'`); err != nil {
+		t.Fatal(err)
+	}
+	input := syntheticDataSourceConnectionTestInput("catalog-pending-timeout", "AGENT_JDBC")
+	input.OperationKind, input.CatalogDatabase, input.CatalogObjectType = "EXPORT_OBJECT_CATALOG", "appdb", "TABLE"
+	if _, err := store.RequestDataSourceConnectionTest(ctx, input); err != nil {
+		t.Fatalf("创建对象查询: %v", err)
+	}
+	count, err := store.ExpireDataSourceConnectionTests(ctx, testTime.Add(ExportObjectCatalogClaimTimeout-time.Nanosecond))
+	if err != nil || count != 0 {
+		t.Fatalf("期限前不应过期: %d, %v", count, err)
+	}
+	count, err = store.ExpireDataSourceConnectionTests(ctx, testTime.Add(ExportObjectCatalogClaimTimeout))
+	if err != nil || count != 1 {
+		t.Fatalf("未领取对象查询应及时过期: %d, %v", count, err)
+	}
+	grant, found, err := store.ClaimNextDataSourceConnectionTest(ctx, DataSourceConnectionTestClaimNext{
+		AgentID: "agent-1", NodeID: "node-1", LeaseID: "lease-catalog-late", RequestID: "catalog-late-claim",
+		RequestDigest: strings.Repeat("b", 64), LeaseTTL: time.Minute, Now: testTime.Add(ExportObjectCatalogClaimTimeout + time.Second),
+	})
+	if err != nil || found || grant.ConnectionTestID != "" {
+		t.Fatalf("迟到 Agent 不应领取过期查询: %#v, %t, %v", grant, found, err)
+	}
+	run, err := store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || run.Status != "EXPIRED" || run.ResultCode != "LEASE_EXPIRED" {
+		t.Fatalf("过期查询状态 = %#v, %v", run, err)
 	}
 }
 

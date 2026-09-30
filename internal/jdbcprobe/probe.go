@@ -31,6 +31,7 @@ const (
 
 	connectionProtocolVersion = 1
 	preflightProtocolVersion  = 3
+	catalogProtocolVersion    = 4
 )
 
 var (
@@ -76,6 +77,21 @@ type PreflightRequest struct {
 	Table             string
 }
 
+// CatalogRequest 只允许列举有界数据库名，或指定数据库内的表和视图名。
+type CatalogRequest struct {
+	Connection        Request
+	CompatibilityMode CompatibilityMode
+	Database          string
+	ObjectType        string
+	Keyword           string
+}
+
+// CatalogResult 是固定元数据 API 返回的最多 100 个对象名。
+type CatalogResult struct {
+	Objects   []string
+	Truncated bool
+}
+
 // CompatibilityMode 是已冻结数据源的 OceanBase 兼容模式。
 // 它只决定固定元数据 API 的命名空间参数和零行读取中的标识符引用方式，不能由 Agent 本地配置覆盖。
 type CompatibilityMode string
@@ -111,13 +127,78 @@ type Result struct {
 }
 
 type probeResponse struct {
-	Status         string `json:"status"`
-	Code           string `json:"code"`
-	ProductName    string `json:"productName"`
-	ProductVersion string `json:"productVersion"`
-	DriverName     string `json:"driverName"`
-	DriverVersion  string `json:"driverVersion"`
-	ObjectAccess   string `json:"objectAccess"`
+	Status         string   `json:"status"`
+	Code           string   `json:"code"`
+	ProductName    string   `json:"productName"`
+	ProductVersion string   `json:"productVersion"`
+	DriverName     string   `json:"driverName"`
+	DriverVersion  string   `json:"driverVersion"`
+	ObjectAccess   string   `json:"objectAccess"`
+	Objects        []string `json:"objects"`
+	Truncated      *bool    `json:"truncated"`
+}
+
+// ListObjectsInWorkspace 安装已核验探针后执行一次固定元数据查询。
+func ListObjectsInWorkspace(ctx context.Context, workspace credential.Workspace, runtime Runtime, request CatalogRequest) (CatalogResult, error) {
+	probePath, probeDigest, err := Install(workspace)
+	if err != nil {
+		return CatalogResult{}, err
+	}
+	runtime.ProbePath, runtime.ProbeSHA256 = probePath, probeDigest
+	return ListObjects(ctx, runtime, request)
+}
+
+// ListObjects 使用探针协议 v4；请求和响应均受长度约束，不接受 SQL。
+func ListObjects(ctx context.Context, runtime Runtime, request CatalogRequest) (CatalogResult, error) {
+	if !validRuntime(runtime) {
+		return CatalogResult{}, ErrInvalidRuntime
+	}
+	if !validRequest(request.Connection) || !validCompatibilityMode(request.CompatibilityMode) ||
+		!validCatalogRequestScope(request.Database, request.ObjectType) ||
+		len(request.Keyword) > 100 || !utf8.ValidString(request.Keyword) || request.Keyword != strings.TrimSpace(request.Keyword) {
+		return CatalogResult{}, ErrInvalidRequest
+	}
+	for _, character := range request.Keyword {
+		if unicode.IsControl(character) {
+			return CatalogResult{}, ErrInvalidRequest
+		}
+	}
+	input := encodeProbeRequest(catalogProtocolVersion, request.Connection, [][]byte{[]byte(request.CompatibilityMode), []byte(request.Database), []byte(request.ObjectType), []byte(request.Keyword)})
+	defer zero(input)
+	output, err := runProbeLimited(ctx, runtime, input, 64*1024)
+	if err != nil {
+		return CatalogResult{}, err
+	}
+	defer zero(output)
+	return parseCatalogResponse(output)
+}
+
+// validCatalogRequestScope 与控制面冻结条件保持一致，防止探针接收任意元数据范围。
+func validCatalogRequestScope(database, objectType string) bool {
+	if objectType == "DATABASE" {
+		return database == ""
+	}
+	return (objectType == "TABLE" || objectType == "VIEW") && validObjectIdentifier(database)
+}
+
+func parseCatalogResponse(output []byte) (CatalogResult, error) {
+	response, err := decodeResponse(output)
+	if err != nil {
+		return CatalogResult{}, ErrProbeFailed
+	}
+	if response.Status != "SUCCESS" || response.Code != "" || response.ObjectAccess != "" ||
+		response.ProductName != "" || response.ProductVersion != "" || response.DriverName != "" || response.DriverVersion != "" ||
+		response.Objects == nil || response.Truncated == nil || len(response.Objects) > 100 {
+		return CatalogResult{}, ErrProbeFailed
+	}
+	seen := map[string]bool{}
+	for _, name := range response.Objects {
+		if !validObjectIdentifier(name) || strings.ContainsAny(name, "*,") || seen[name] {
+			return CatalogResult{}, ErrProbeFailed
+		}
+		seen[name] = true
+	}
+	return CatalogResult{Objects: response.Objects, Truncated: *response.Truncated}, nil
 }
 
 // TestConnectionInWorkspace 在预检查专属工作区中释放固定探针后执行基础连接测试。
@@ -183,6 +264,10 @@ func TestPreflight(ctx context.Context, runtime Runtime, request PreflightReques
 }
 
 func runProbe(ctx context.Context, runtime Runtime, input []byte) ([]byte, error) {
+	return runProbeLimited(ctx, runtime, input, maxOutputBytes)
+}
+
+func runProbeLimited(ctx context.Context, runtime Runtime, input []byte, maximum int) ([]byte, error) {
 	bounded, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	arguments := []string{"-cp", runtime.ProbePath + string(os.PathListSeparator) + runtime.ConnectorPath, probeMainClass}
@@ -220,7 +305,7 @@ func runProbe(ctx context.Context, runtime Runtime, input []byte) ([]byte, error
 	var outputErr error
 	go func() {
 		defer group.Done()
-		output, outputErr = readLimited(stdout, maxOutputBytes)
+		output, outputErr = readLimited(stdout, maximum)
 	}()
 	go func() {
 		defer group.Done()
@@ -355,7 +440,7 @@ func readLimited(reader io.Reader, maximum int) ([]byte, error) {
 
 func parseResponse(output []byte) (Result, error) {
 	response, err := decodeResponse(output)
-	if err != nil || response.ObjectAccess != "" {
+	if err != nil || response.ObjectAccess != "" || response.Objects != nil || response.Truncated != nil {
 		return Result{}, ErrProbeFailed
 	}
 	return parseConnectionResponse(response)
@@ -364,6 +449,9 @@ func parseResponse(output []byte) (Result, error) {
 func parsePreflightResponse(output []byte) (PreflightResult, error) {
 	response, err := decodeResponse(output)
 	if err != nil {
+		return PreflightResult{}, ErrProbeFailed
+	}
+	if response.Objects != nil || response.Truncated != nil {
 		return PreflightResult{}, ErrProbeFailed
 	}
 	connection, err := parseConnectionResponse(response)

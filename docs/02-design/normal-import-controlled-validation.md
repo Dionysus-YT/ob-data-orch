@@ -1,10 +1,10 @@
 # 普通导入参数最小受控验证计划
 
-> 文档状态：计划已形成，尚未执行  
-> 目标程序：OBLOADER 4.3.5-RELEASE  
-> 更新日期：2026-07-17  
-> 参数事实依据：[普通导入参数映射基线](normal-import-parameter-mapping.md)  
-> 字段规则依据：[普通导入字段与条件矩阵](normal-import-field-rules.md)
+> 文档状态：计划已形成，尚未执行\
+> 目标程序：OBLOADER 4.3.5-RELEASE\
+> 更新日期：2026-07-17\
+> 参数事实依据：[普通导入参数映射基线](normal-import-parameter-mapping.md)\
+> 字段规则依据：[普通导入字段与条件矩阵](normal-import-module.md#field-rules)
 
 ## 1. 目的
 
@@ -148,7 +148,7 @@ P2 参数只有在当前版本官方语义、适用条件和行为证据均齐�
 ## 9. 回写规则
 
 1. [参数映射基线](normal-import-parameter-mapping.md)：更新含义、默认值、适用范围、来源和用例 ID。
-2. [字段与条件矩阵](normal-import-field-rules.md)：更新显示、默认、清值、派生和阻断规则。
+2. [字段与条件矩阵](normal-import-module.md#field-rules)：更新显示、默认、清值、派生和阻断规则。
 3. [普通导入模块](normal-import-module.md)：更新内容、格式、约束、风险和待确认项。
 4. [用户流程](user-flow.md)：只在核心步骤或失败路径变化时更新。
 5. [关键决策](../01-product/decisions.md)：只有用户确认产品建议后记录，验证事实不自动升级为产品决策。
@@ -165,4 +165,3 @@ P2 参数只有在当前版本官方语义、适用条件和行为证据均齐�
 - 固定执行节点、工具版本和隔离文件目录；
 - 如验证对象存储，提供专用 bucket/前缀和临时最小权限凭据；
 - 明确测试结果、日志、输入文件和临时对象的复核与清理责任人。
-

@@ -1,0 +1,372 @@
+/* 数据源产品工作面与事实呈现；不定义 Primitive。 */
+
+.orch-ui * {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+.orch-ui *::before {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+.orch-ui *::after {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+.orch-ui :is(code) {
+  font: var(--ob-component-field-helper-size)/var(--ob-component-field-helper-line-height) var(--ob-foundation-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.orch-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.orch-source-workspace {
+  min-width: 0;
+  container: orch-workspace / inline-size;
+}
+.orch-page-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ob-foundation-space-3);
+}
+.orch-filter {
+  position: relative;
+  display: inline-flex;
+  height: var(--ob-component-control-height);
+  flex: none;
+  align-items: center;
+}
+.orch-identity-cell > div {
+  min-width: 0;
+}
+.orch-secondary-fact {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--ob-color-muted);
+  font-size: var(--ob-component-field-helper-size);
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orch-endpoint {
+  display: block;
+  overflow: hidden;
+  color: var(--ob-color-form-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orch-fact-value {
+  display: block;
+  overflow: hidden;
+  color: var(--ob-color-form-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orch-endpoint > span {
+  color: var(--ob-color-form-secondary);
+}
+.orch-inline-mode {
+  display: none;
+}
+
+.orch-row-actions > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ob-foundation-space-1);
+}
+.orch-row-test {
+  color: var(--ob-color-form-secondary);
+}
+
+.orch-editor-scroll {
+  min-height: 0;
+  flex: 1;
+  padding: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-6);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 20px;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+.orch-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.orch-form-section {
+  padding-block: var(--ob-foundation-space-6);
+  border-bottom: 1px solid var(--ob-color-border);
+}
+.orch-form-section h3 {
+  margin: 0 0 var(--ob-foundation-space-4);
+  color: var(--ob-color-form-text);
+  font-size: var(--ob-product-typography-section-size);
+  font-weight: 500;
+  line-height: 24px;
+}
+.orch-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ob-foundation-space-4);
+}
+.orch-span-all {
+  grid-column: 1 / -1;
+}
+.orch-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--ob-foundation-space-2);
+  margin-top: var(--ob-foundation-space-4);
+  color: var(--ob-color-form-secondary);
+  font-size: var(--ob-component-field-label-size);
+}
+.orch-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ob-foundation-space-3);
+}
+.orch-editor-actions > span {
+  flex: 1;
+}
+
+.orch-evidence-facts {
+  margin-top: var(--ob-foundation-space-6);
+  padding-top: var(--ob-foundation-space-3);
+  border-top: 1px solid var(--ob-color-border);
+}
+.orch-evidence-facts > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: var(--ob-foundation-space-3);
+  margin-top: var(--ob-foundation-space-2);
+  font-size: var(--ob-component-field-label-size);
+}
+.orch-evidence-facts dt {
+  color: var(--ob-color-muted);
+}
+.orch-evidence-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ob-color-form-text);
+}
+@container orch-workspace (max-width: 1120px) {
+.orch-mode-cell {
+  display: none;
+}
+.orch-inline-mode {
+  display: inline;
+}
+.orch-row-test {
+  display: none;
+}
+.orch-toolbar {
+  gap: var(--ob-foundation-space-2);
+}
+}
+@container orch-workspace (max-width: 900px) {
+.orch-context-label {
+  display: none;
+}
+}
+@media (max-width: 640px) {
+.orch-preview-note {
+  align-items: flex-start;
+}
+.orch-page-header {
+  min-height: 76px;
+}
+.orch-page-title h1 {
+  font-size: var(--ob-product-typography-title-size);
+  line-height: 32px;
+}
+.orch-table-meta {
+  min-height: 64px;
+  flex-wrap: wrap;
+  gap: var(--ob-foundation-space-2);
+  padding: var(--ob-foundation-space-3);
+}
+.orch-table-meta h2 {
+  font-size: var(--ob-component-control-font-size);
+}
+.orch-page-actions {
+  gap: var(--ob-foundation-space-1);
+}
+.orch-toolbar {
+  gap: var(--ob-foundation-space-2);
+  padding: var(--ob-foundation-space-3) var(--ob-foundation-space-3);
+}
+.orch-filter {
+  max-width: 100%;
+}
+.orch-table-footer {
+  padding-inline: var(--ob-foundation-space-3);
+}
+.orch-editor-scroll {
+  padding-inline: var(--ob-foundation-space-4);
+}
+}
+@media (max-width: 420px) {
+.orch-form-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.orch-span-all {
+  grid-column: auto;
+}
+.orch-editor-actions {
+  gap: var(--ob-foundation-space-1);
+}
+}
+.orch-page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ob-foundation-space-4);
+  margin: 0 0 var(--ob-foundation-space-6);
+  min-height: 0;
+  align-items: flex-start;
+}
+.orch-page-title {
+  min-width: 0;
+  align-items: center;
+  display: grid;
+  gap: var(--ob-foundation-space-1);
+}
+.orch-context-label {
+  padding-left: var(--ob-foundation-space-4);
+  border-left: 1px solid var(--ob-color-border-strong);
+  padding: 0;
+  border: 0;
+  color: var(--ob-color-form-secondary);
+  font-size: var(--ob-component-field-label-size);
+}
+.orch-preview-note {
+  display: flex;
+  align-items: center;
+  gap: var(--ob-foundation-space-2);
+  margin-top: var(--ob-foundation-space-3);
+  font-size: var(--ob-component-field-helper-size);
+  line-height: 18px;
+  min-height: 0;
+  margin: -8px 0 var(--ob-foundation-space-4);
+  color: var(--ob-color-muted);
+}
+.orch-preview-note > span {
+  flex: none;
+  border-radius: 3px;
+  font-weight: 500;
+  padding: 0;
+  border: 0;
+  color: var(--ob-color-primary-active);
+}
+.orch-mode {
+  font-size: var(--ob-component-field-label-size);
+  border: 0;
+  border-radius: 2px;
+  color: var(--ob-color-form-secondary);
+  background: var(--ob-color-subtle);
+}
+.orch-table-footer .source-pagination {
+  margin-left: auto;
+}
+.orch-toolbar .orch-filter {
+  flex: 0 1 auto;
+}
+
+.orch-toolbar {
+  display: flex;
+  min-height: 72px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ob-foundation-space-2);
+  padding: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-4);
+  border-top: 1px solid var(--ob-color-border);
+  background: var(--ob-color-surface);
+  padding-inline: var(--ob-foundation-space-6);
+}
+
+@media (min-width: 1060px) and (max-height: 800px) {
+.orch-ui .orch-form-section {
+  padding-block: var(--ob-foundation-space-4);
+}
+}
+@media (max-width: 480px) {
+.orch-page-title h1 {
+  font-size: var(--ob-product-typography-title-size);
+  line-height: 32px;
+}
+.orch-table-meta {
+  padding-inline: var(--ob-foundation-space-4);
+}
+.orch-toolbar {
+  padding-inline: var(--ob-foundation-space-4);
+}
+.orch-preview-note {
+  flex-wrap: wrap;
+}
+}
+.orch-table-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ob-foundation-space-4);
+  min-height: 64px;
+  border-bottom: 0;
+  background: var(--ob-color-surface);
+  padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6);
+}
+.orch-ui {
+  color: var(--ob-color-form-text);
+  font: var(--ob-component-control-font-size)/var(--ob-component-control-line-height) var(--ob-foundation-font-ui);
+  font-synthesis: none;
+  letter-spacing: 0;
+  color-scheme: light;
+  font-family: var(--ob-foundation-font-ui);
+}
+.orch-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  color: var(--ob-product-navigation-icon);
+  min-height: 64px;
+  padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6);
+  font-size: var(--ob-component-control-font-size);
+  line-height: 22px;
+  gap: var(--ob-foundation-space-3);
+  flex-wrap: wrap;
+}
+.orch-page-title h1 {
+  margin: 0;
+  letter-spacing: 0;
+  color: var(--ob-color-text);
+  font-size: var(--ob-product-typography-title-size);
+  font-weight: var(--ob-product-typography-weight);
+  line-height: 32px;
+}
+.orch-table-meta h2 {
+  margin: 0;
+  color: var(--ob-color-text);
+  font-size: var(--ob-product-typography-section-size);
+  font-weight: var(--ob-product-typography-weight);
+  line-height: 1.5714285714;
+}
+.orch-management {
+  min-width: 0;
+  border: 1px solid var(--ob-color-border);
+  background: var(--ob-color-surface);
+  box-shadow: var(--ob-foundation-surface-shadow);
+  border-radius: var(--ob-component-table-radius);
+  overflow: hidden;
+}
+
+/* 产品组件仅保留在工作面中的间距，基础视觉由 Ant 主题负责。 */
+.orch-feedback { margin-block: var(--ob-foundation-space-4); }
+.orch-empty-region { padding-block: var(--ob-foundation-space-8); }

@@ -1,10 +1,10 @@
 # 旁路导入参数最小受控验证计划
 
-> 文档状态：计划已形成，尚未执行  
-> 目标程序：OBLOADER 4.3.5-RELEASE Direct Load  
-> 更新日期：2026-07-17  
-> 参数事实依据：[旁路导入参数映射基线](direct-load-parameter-mapping.md)  
-> 字段规则依据：[旁路导入字段与条件矩阵](direct-load-field-rules.md)
+> 文档状态：计划已形成，尚未执行\
+> 目标程序：OBLOADER 4.3.5-RELEASE Direct Load\
+> 更新日期：2026-07-17\
+> 参数事实依据：[旁路导入参数映射基线](direct-load-parameter-mapping.md)\
+> 字段规则依据：[旁路导入字段与条件矩阵](direct-load-module.md#field-rules)
 
 ## 1. 目的
 
@@ -158,7 +158,7 @@
 ## 9. 回写规则
 
 1. [参数映射基线](direct-load-parameter-mapping.md)：更新适用状态、含义、来源和 DLV 用例。
-2. [字段与条件矩阵](direct-load-field-rules.md)：更新显示、派生、默认、风险和失效规则。
+2. [字段与条件矩阵](direct-load-module.md#field-rules)：更新显示、派生、默认、风险和失效规则。
 3. [旁路导入模块](direct-load-module.md)：更新格式、连接、结构、模式和失败边界。
 4. [用户流程](user-flow.md)与[全局交互规范](interaction-spec.md)：只在核心流程或三模块统一规则变化时更新。
 5. [关键决策](../01-product/decisions.md)：只有用户确认产品建议后记录；实测事实不自动升级为产品决策。

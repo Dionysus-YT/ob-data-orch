@@ -16,10 +16,6 @@ import TaskDetailView from '@/views/TaskDetailView.vue'
 import TemplateCenterView from '@/views/TemplateCenterView.vue'
 import SystemSettingsView from '@/views/SystemSettingsView.vue'
 
-const visualFoundationRoutes = import.meta.env.DEV
-  ? [{ path: '/__visual-foundation/:page?', name: 'visual-foundation-lab', component: () => import('@/visual-foundation/VisualFoundationLab.vue'), meta: { title: 'Visual Foundation Lab', visualFoundationLab: true } }]
-  : []
-
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -41,7 +37,6 @@ export const router = createRouter({
     { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },
     { path: '/settings/access-control', name: 'access-control', component: AccessControlView, meta: { title: '权限配置' } },
     { path: '/settings/storage-credentials', name: 'storage-credentials', component: StorageCredentialsView, meta: { title: '存储凭据' } },
-    ...visualFoundationRoutes,
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: '页面不存在' } },
   ],
 })

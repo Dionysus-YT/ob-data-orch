@@ -24,14 +24,19 @@ type DataSourceConnectionTestClaimNext struct {
 // SysCredentialID/SysCredentialRevision 是可选的 sys 凭据引用（--sys-user/--sys-password），
 // 大于 0 表示本次测试需要额外验证 sys 租户连接。
 type DataSourceConnectionTestBinding struct {
-	ConnectionTestID       string
-	DataSourceID           string
-	ConnectionConfigDigest string
-	CredentialRevision     int64
-	NodeID                 string
-	NodeFactsRevision      int64
-	SysCredentialID        string
-	SysCredentialRevision  int64
+	ConnectionTestID         string
+	DataSourceID             string
+	ConnectionConfigDigest   string
+	CredentialRevision       int64
+	NodeID                   string
+	NodeFactsRevision        int64
+	SysCredentialID          string
+	SysCredentialRevision    int64
+	OperationKind            string
+	CatalogDatabase          string
+	CatalogCompatibilityMode string
+	CatalogObjectType        string
+	CatalogKeyword           string
 }
 
 // DataSourceConnectionTestVerificationSource 区分 G2 合成闭环与节点本地 JDBC 探针。
@@ -136,6 +141,8 @@ type DataSourceConnectionTestCompletion struct {
 	VerificationSource    DataSourceConnectionTestVerificationSource
 	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus
 	SysEvidenceCode       string
+	CatalogObjects        []string
+	CatalogTruncated      bool
 	SentAt                time.Time
 }
 
@@ -206,17 +213,24 @@ type dataSourceConnectionTestCompletionPayload struct {
 	EvidenceCode          string                                        `json:"evidenceCode"`
 	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus `json:"sysVerificationStatus"`
 	SysEvidenceCode       string                                        `json:"sysEvidenceCode"`
+	CatalogObjects        []string                                      `json:"catalogObjects,omitempty"`
+	CatalogTruncated      bool                                          `json:"catalogTruncated,omitempty"`
 }
 
 type dataSourceConnectionTestBindingPayload struct {
-	ConnectionTestID       string `json:"connectionTestId"`
-	DataSourceID           string `json:"dataSourceId"`
-	ConnectionConfigDigest string `json:"connectionConfigDigest"`
-	CredentialRevision     int64  `json:"credentialRevision"`
-	NodeID                 string `json:"nodeId"`
-	NodeFactsRevision      int64  `json:"nodeFactsRevision"`
-	SysCredentialID        string `json:"sysCredentialId,omitempty"`
-	SysCredentialRevision  int64  `json:"sysCredentialRevision,omitempty"`
+	ConnectionTestID         string `json:"connectionTestId"`
+	DataSourceID             string `json:"dataSourceId"`
+	ConnectionConfigDigest   string `json:"connectionConfigDigest"`
+	CredentialRevision       int64  `json:"credentialRevision"`
+	NodeID                   string `json:"nodeId"`
+	NodeFactsRevision        int64  `json:"nodeFactsRevision"`
+	SysCredentialID          string `json:"sysCredentialId,omitempty"`
+	SysCredentialRevision    int64  `json:"sysCredentialRevision,omitempty"`
+	OperationKind            string `json:"operationKind,omitempty"`
+	CatalogDatabase          string `json:"catalogDatabase,omitempty"`
+	CatalogCompatibilityMode string `json:"catalogCompatibilityMode,omitempty"`
+	CatalogObjectType        string `json:"catalogObjectType,omitempty"`
+	CatalogKeyword           string `json:"catalogKeyword,omitempty"`
 }
 
 type dataSourceConnectionTestClaimResponsePayload struct {
@@ -548,6 +562,7 @@ func (c *httpsClient) completeDataSourceConnectionTest(ctx context.Context, stat
 			LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch, BindingDigest: input.BindingDigest,
 			Status: input.Status, EvidenceCode: input.EvidenceCode,
 			SysVerificationStatus: input.SysVerificationStatus, SysEvidenceCode: input.SysEvidenceCode,
+			CatalogObjects: input.CatalogObjects, CatalogTruncated: input.CatalogTruncated,
 		},
 	}
 	requestBody, err := json.Marshal(request)
@@ -583,6 +598,8 @@ func (p dataSourceConnectionTestBindingPayload) toBinding() DataSourceConnection
 		ConnectionTestID: p.ConnectionTestID, DataSourceID: p.DataSourceID, ConnectionConfigDigest: p.ConnectionConfigDigest,
 		CredentialRevision: p.CredentialRevision, NodeID: p.NodeID, NodeFactsRevision: p.NodeFactsRevision,
 		SysCredentialID: p.SysCredentialID, SysCredentialRevision: p.SysCredentialRevision,
+		OperationKind: p.OperationKind, CatalogDatabase: p.CatalogDatabase, CatalogCompatibilityMode: p.CatalogCompatibilityMode,
+		CatalogObjectType: p.CatalogObjectType, CatalogKeyword: p.CatalogKeyword,
 	}
 }
 

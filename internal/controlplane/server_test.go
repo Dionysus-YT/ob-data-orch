@@ -557,7 +557,7 @@ func TestDeleteDataSourceIneligibleReturnsCurrentLifecycleEligibility(t *testing
 		LifecycleEligibility: store.DataSourceLifecycleEligibility{
 			Enable:  store.DataSourceLifecycleActionEligibility{ReasonCode: "ALREADY_ENABLED", Reason: "数据源当前已启用。"},
 			Disable: store.DataSourceLifecycleActionEligibility{Allowed: true},
-			Delete:  store.DataSourceLifecycleActionEligibility{ReasonCode: "HISTORICAL_REFERENCES_EXIST", Reason: "存在历史引用，不能永久删除。", ReferenceCount: 3},
+			Delete:  store.DataSourceLifecycleActionEligibility{ReasonCode: "UNFINISHED_TASKS_EXIST", Reason: "存在未完成任务，请等待任务结束后删除。"},
 			Archive: store.DataSourceLifecycleActionEligibility{Allowed: true, ReferenceCount: 3},
 		},
 	}}}
@@ -569,7 +569,7 @@ func TestDeleteDataSourceIneligibleReturnsCurrentLifecycleEligibility(t *testing
 	request.Header.Set("If-Match", `"rev-1"`)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"DATA_SOURCE_DELETE_INELIGIBLE"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"referenceCount":3`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"archive":{"allowed":true`)) {
+	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte(`"code":"DATA_SOURCE_DELETE_INELIGIBLE"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"reasonCode":"UNFINISHED_TASKS_EXIST"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"archive":{"allowed":true`)) {
 		t.Fatalf("delete conflict response=%d body=%s", response.Code, response.Body.String())
 	}
 }

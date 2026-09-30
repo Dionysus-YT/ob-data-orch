@@ -9,7 +9,7 @@
   "x-development-gate": "G2_CONTRACT_ONLY",
   "x-real-execution-enabled": false,
   "x-schema-completeness": "STRUCTURAL_BASELINE",
-  "x-authentication-blocker": "Browser identity provider, initial administrator and recovery identity remain deployment blockers.",
+  "x-authentication-blocker": "Initial administrator is initialized by the single startup entry; cross-machine recovery validation remains pending.",
   "tags": [
     { "name": "Session" },
     { "name": "ExecutionNodes" },
@@ -26,6 +26,7 @@
     { "name": "StorageCredentials" }
   ],
   "paths": {
+    "/agent/v1/runtime-configuration:sync": {"post": {"operationId": "syncAgentRuntimeConfiguration", "tags": ["AgentHeartbeat"], "security": [{"AgentCredential": []}], "description": "仅返回当前机器身份绑定节点的结构化配置；不接收节点标识或任意操作。Agent 空闲时验证并应用，保留身份；运行中的执行继续使用原配置。", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["protocolVersion"], "properties": {"protocolVersion": {"const": "agent-v1"}}}}}}, "responses": {"200": {"description": "当前节点配置", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["requestId", "serverTime", "status", "payload"], "properties": {"requestId": {"type": "string"}, "serverTime": {"type": "string", "format": "date-time"}, "status": {"const": "CONFIGURED"}, "payload": {"type": "object", "additionalProperties": false, "required": ["platform", "toolHome", "javaPath", "allowedRoots", "revision", "digest"], "properties": {"platform": {"type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"]}, "toolHome": {"type": "string", "minLength": 1, "maxLength": 4096}, "javaPath": {"type": "string", "minLength": 1, "maxLength": 4096}, "allowedRoots": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}, "revision": {"type": "integer", "minimum": 1}, "digest": {"$ref": "#/components/schemas/SHA256Digest"}}}}}}}}, "default": {"$ref": "#/components/responses/Error"}}}},
     "/api/v1/session": {
       "get": { "operationId": "getSession", "tags": ["Session"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
@@ -77,7 +78,7 @@
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
       "get": { "operationId": "getDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "读取范围内返回最小详情；只有同一对象管理范围也被确认时，item.username 才出现。它只是不带租户和集群后缀的普通业务用户名。", "responses": { "200": { "$ref": "#/components/responses/DataSourceDetail" }, "default": { "$ref": "#/components/responses/Error" } } },
       "patch": { "operationId": "updateDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceWrite" }, "responses": { "200": { "$ref": "#/components/responses/DataSourceDetail" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "deleteDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "永久删除。服务端在事务内复验历史引用；存在引用时返回 DATA_SOURCE_DELETE_INELIGIBLE 和最新 lifecycleEligibility，绝不自动归档。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "delete": { "operationId": "deleteDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "description": "永久删除。页面二次确认后提交。服务端在事务内复验活动任务；等待调度、STARTING、RUNNING、CANCELLING 或状态待核对时返回 DATA_SOURCE_DELETE_INELIGIBLE 和最新 lifecycleEligibility（UNFINISHED_TASKS_EXIST），绝不自动归档。历史引用不阻止删除，配置和凭据清理，历史记录保留，未完成连接测试及可用预检查失效。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/DataSourceDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-sources/{dataSourceId}:archive": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
@@ -86,6 +87,13 @@
     "/api/v1/data-sources/{dataSourceId}:test-connection": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
       "post": { "operationId": "testDataSourceConnection", "tags": ["DataSources", "AgentConnectionTests"], "security": [{ "BrowserSession": [] }], "description": "浏览器只选择已授权的执行节点。控制面冻结数据源、凭据修订、节点事实和受认证 Agent 绑定，不直接连接数据库。G2 合成结果不能启用数据源。", "x-idempotency": "REQUIRED", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/DataSourceConnectionTestRequest" }, "responses": { "200": { "$ref": "#/components/responses/DataSourceConnectionTestAccepted" }, "202": { "$ref": "#/components/responses/DataSourceConnectionTestAccepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/data-sources/{dataSourceId}:search-export-objects": {
+      "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
+      "post": { "operationId": "searchExportObjects", "tags": ["DataSources", "Exports"], "security": [{ "BrowserSession": [] }], "description": "在已授权执行节点的短租约内读取最多 100 个数据库/Schema 名或指定数据库内的表/视图名；DATABASE 类型要求 database 为空。仅使用固定 JDBC 元数据 API，不接受 SQL 或连接材料。需要数据源、节点权限及真实 AGENT_JDBC 连接成功事实。", "x-idempotency": "REQUIRED", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportObjectCatalogQuery" }, "responses": { "200": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "202": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/export-object-catalog-queries/{queryId}": {
+      "get": { "operationId": "getExportObjectCatalogQuery", "tags": ["Exports"], "security": [{ "BrowserSession": [] }], "description": "仅原发起主体且仍有数据源读取和节点使用权限时可读取短时结果。", "responses": { "200": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/data-source-connection-tests/{connectionTestId}": {
       "parameters": [{ "$ref": "#/components/parameters/ConnectionTestId" }],
@@ -260,7 +268,7 @@
   },
   "components": {
     "securitySchemes": {
-      "BrowserSession": { "type": "apiKey", "in": "cookie", "name": "__Host-ob_data_orch_session", "description": "Secure, HttpOnly, SameSite browser session. Identity provider and initial administrator integration are not defined by this contract." },
+      "BrowserSession": { "type": "apiKey", "in": "cookie", "name": "__Host-ob_data_orch_session", "description": "Secure, HttpOnly, SameSite browser session. Initial admin login uses a salted PBKDF2-SHA256 verifier and an expiring server-side session." },
       "AgentCredential": { "type": "http", "scheme": "bearer", "bearerFormat": "Opaque-Agent-Credential", "description": "Revocable opaque machine credential generated and protected by the Agent. Never accepted in a URL." }
     },
     "parameters": {
@@ -287,6 +295,7 @@
       "ExecutionNodeWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeWrite" } } } },
       "DataSourceWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceWrite" } } } },
       "DataSourceConnectionTestRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestRequest" } } } },
+      "ExportObjectCatalogQuery": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportObjectCatalogQueryRequest" } } } },
       "ExportDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportDraftWrite" } } } },
       "ExportTaskSubmit": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportTaskSubmit" } } } },
       "ExportConfigTemplateWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportConfigTemplateWrite" } } } },
@@ -326,6 +335,7 @@
       "PrecheckRead": { "description": "Authorized fixed precheck state with six redacted result codes. A pending lease projects all checks as UNKNOWN and never implies success or real execution.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrecheckReadEnvelope" } } } },
       "DataSourceConnectionTestAccepted": { "description": "Node-bound connection test accepted or safely replayed. It is only a G2 protocol request until an AGENT_JDBC terminal result is recorded.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestMutationEnvelope" } } } },
       "DataSourceConnectionTestRead": { "description": "Authorized, node-specific connection test state without connection identity, JDBC metadata, exception text or secret data.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceConnectionTestReadEnvelope" } } } },
+      "ExportObjectCatalogQuery": { "description": "短时、有界且仅原发起者可见的导出对象目录查询结果。PENDING 超过 30 秒未被 Agent 领取时投影为 EXPIRED，迟到 Agent 不得再执行。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportObjectCatalogQueryEnvelope" } } } },
       "AgentOk": { "description": "Machine-authenticated protocol response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResponseEnvelope" } } } },
       "AgentExecutionLogAppendAccepted": { "description": "A confirmed or idempotently duplicated log batch. The response echoes the exact stream, sequence range and digest that the Agent must match before deleting its local batch.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentExecutionLogAppendResponseEnvelope" } } } },
       "AgentExecutionLogGapAccepted": { "description": "A confirmed or idempotently duplicated no-body log gap. The response echoes the exact source range and normalized gap digest before the Agent may delete its local gap entry.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentExecutionLogGapResponseEnvelope" } } } },
@@ -471,6 +481,23 @@
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" }
         },
         "description": "浏览器只能选择一个已授权的候选执行节点。连接地址、用户名、密码、URL、命令和 SQL 不属于此请求。"
+      },
+      "ExportObjectCatalogQueryRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["nodeId", "database", "objectType", "keyword"],
+        "properties": { "nodeId": { "$ref": "#/components/schemas/OpaqueId" }, "database": { "type": "string", "maxLength": 256 }, "objectType": { "enum": ["DATABASE", "TABLE", "VIEW"] }, "keyword": { "type": "string", "maxLength": 100 } },
+        "if": { "properties": { "objectType": { "const": "DATABASE" } } },
+        "then": { "properties": { "database": { "const": "" } } },
+        "else": { "properties": { "database": { "minLength": 1 } } }
+      },
+      "ExportObjectCatalogQuery": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "dataSourceId", "nodeId", "database", "objectType", "keyword", "objects", "truncated", "validUntil"],
+        "properties": { "id": { "$ref": "#/components/schemas/OpaqueId" }, "status": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] }, "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" }, "nodeId": { "$ref": "#/components/schemas/OpaqueId" }, "database": { "type": "string" }, "objectType": { "enum": ["DATABASE", "TABLE", "VIEW"] }, "keyword": { "type": "string" }, "objects": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 256 } }, "truncated": { "type": "boolean" }, "validUntil": { "type": "string", "format": "date-time" } }
+      },
+      "ExportObjectCatalogQueryEnvelope": {
+        "type": "object", "additionalProperties": false, "required": ["requestId", "item"],
+        "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/ExportObjectCatalogQuery" } }
       },
       "DataSourceConnectionTestRun": {
         "type": "object",
@@ -781,7 +808,9 @@
           "status": { "enum": ["SUCCEEDED", "FAILED", "UNKNOWN"] },
           "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] },
           "sysVerificationStatus": { "enum": ["NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"] },
-          "sysEvidenceCode": { "enum": ["", "SYS_CONNECTED", "SYS_HOST_UNRESOLVABLE", "SYS_TCP_REFUSED", "SYS_TCP_TIMEOUT", "SYS_TCP_UNREACHABLE", "SYS_CONNECTION_FAILED", "SYS_CONNECTION_UNAVAILABLE"] }
+          "sysEvidenceCode": { "enum": ["", "SYS_CONNECTED", "SYS_HOST_UNRESOLVABLE", "SYS_TCP_REFUSED", "SYS_TCP_TIMEOUT", "SYS_TCP_UNREACHABLE", "SYS_CONNECTION_FAILED", "SYS_CONNECTION_UNAVAILABLE"] },
+          "catalogObjects": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 256 } },
+          "catalogTruncated": { "type": "boolean" }
         },
         "description": "控制面会依据被冻结的 verificationSource 再次核验状态与证据码组合。"
       },
@@ -797,8 +826,16 @@
           "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
           "nodeFactsRevision": { "type": "integer", "minimum": 1 },
           "sysCredentialId": { "$ref": "#/components/schemas/OpaqueId" },
-          "sysCredentialRevision": { "type": "integer", "minimum": 1 }
-        }
+          "sysCredentialRevision": { "type": "integer", "minimum": 1 },
+          "operationKind": { "enum": ["CONNECTION_TEST", "EXPORT_OBJECT_CATALOG"] },
+          "catalogDatabase": { "type": "string", "maxLength": 256 },
+          "catalogCompatibilityMode": { "enum": ["MYSQL", "ORACLE"] },
+          "catalogObjectType": { "enum": ["DATABASE", "TABLE", "VIEW"] },
+          "catalogKeyword": { "type": "string", "maxLength": 100 }
+        },
+        "if": { "properties": { "catalogObjectType": { "const": "DATABASE" } }, "required": ["catalogObjectType"] },
+        "then": { "properties": { "catalogDatabase": { "const": "" } } },
+        "else": { "properties": { "catalogDatabase": { "minLength": 1 } } }
       },
       "AgentPrecheckClaimNext": {
         "type": "object",

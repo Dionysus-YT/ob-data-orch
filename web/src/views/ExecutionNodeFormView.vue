@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { Form as AForm, FormItem as AFormItem } from 'ant-design-vue'
+import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Textarea as ATextarea } from 'ant-design-vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { browserApi, executionNodeErrorMessage, type ApiError, type ExecutionNodeDetail, type ExecutionNodePlatform, type ExecutionNodeWrite } from '@/api/browser'
@@ -11,10 +13,11 @@ const api = browserApi()
 const route = useRoute()
 const router = useRouter()
 const node = ref<ExecutionNodeDetail>()
-const loading = ref(false)
+const loading = ref(route.name !== 'node-new')
 const busy = ref(false)
 const failure = ref('')
 const notice = ref('')
+const errorSummary = ref<HTMLElement>()
 const formErrors = reactive<NodeFormErrors>({})
 const form = reactive({
   displayName: '',
@@ -29,11 +32,17 @@ const isNew = computed(() => route.name === 'node-new')
 const rootPlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? '/E:/ob-data/exports' : '/var/lib/ob-data-orch/exports')
 const toolHomePlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? 'E:\\tools\\ob-loader-dumper-4.3.5-RELEASE' : '/opt/ob-loader-dumper-4.3.5-RELEASE')
 const javaPathPlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? 'C:\\Program Files\\Java\\jdk8\\bin\\java.exe' : '/usr/lib/jvm/java-8/bin/java')
-const platformLabel = computed(() => {
-  if (form.platform === 'WINDOWS_AMD64') return 'Windows AMD64'
-  if (form.platform === 'LINUX_AMD64') return 'Kylin Linux AMD64'
-  return 'Kylin Linux ARM64'
-})
+const fieldLabels: Record<NodeFormField, string> = {
+  displayName: '节点名称', platform: '目标平台', allowedRoots: '导出数据目录白名单',
+  toolHome: 'OB Loader/Dumper 安装目录', javaPath: '工具专用 Java 8 路径',
+}
+const fieldIds: Record<NodeFormField, string> = {
+  displayName: 'node-display-name', platform: 'node-platform', allowedRoots: 'node-allowed-roots',
+  toolHome: 'node-tool-home', javaPath: 'node-java-path',
+}
+const errorEntries = computed(() => (Object.keys(formErrors) as NodeFormField[])
+  .filter((field) => Boolean(formErrors[field]))
+  .map((field) => ({ field, id: fieldIds[field], label: fieldLabels[field], message: formErrors[field] })))
 
 onMounted(() => {
   if (!isNew.value) void loadNode()
@@ -94,7 +103,12 @@ async function save() {
   const input = writeInput()
   const validation = validate(input)
   setErrors(validation)
-  if (Object.keys(validation).length) return
+  if (Object.keys(validation).length) {
+    await nextTick()
+    errorSummary.value?.focus()
+    return
+  }
+  if (!isNew.value && !node.value) return
   busy.value = true
   failure.value = ''
   notice.value = ''
@@ -107,10 +121,14 @@ async function save() {
     if (!node.value) return
     node.value = await api.updateExecutionNode(node.value.id, node.value.revision, input)
     fillForm(node.value)
-    notice.value = '节点配置已保存。工具或目录配置变更后，请重新生成注册码并在目标机器重新关联 Agent。'
+    notice.value = '节点配置已保存，Agent 将在空闲时自动同步并检查环境，无需重新注册。'
   } catch (error) {
     applyApiErrors(error)
     if (!Object.keys(formErrors).length) failure.value = executionNodeErrorMessage(error, '执行节点保存失败。')
+    else {
+      await nextTick()
+      errorSummary.value?.focus()
+    }
   } finally {
     busy.value = false
   }
@@ -138,15 +156,21 @@ function setErrors(errors: NodeFormErrors) {
   clearErrors()
   Object.assign(formErrors, errors)
 }
+
+function validateField(field: NodeFormField) {
+  const message = validate(writeInput())[field]
+  if (message) formErrors[field] = message
+  else delete formErrors[field]
+}
 </script>
 
 <template>
-  <section class="page-heading">
+  <section class="page-heading node-form-heading">
     <div>
       <h1>{{ isNew ? '注册执行节点' : '编辑执行节点' }}</h1>
-      <p>在这里登记目标机器上的工具、Java 和导出数据目录，再进入 Agent 一次性关联。节点 IP 和主机名不参与注册或控制面连接。</p>
+      <p>登记目标平台与本机路径。保存后由目标机器上的 Agent 回写运行事实，管理字段不能代替环境检查。</p>
     </div>
-    <RouterLink class="button button-secondary" to="/nodes">返回执行节点</RouterLink>
+    <RouterLink v-slot="{ href, navigate }" to="/nodes" custom><AButton :href="href" @click="navigate">返回执行节点</AButton></RouterLink>
   </section>
 
   <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }}</p>
@@ -156,75 +180,71 @@ function setErrors(errors: NodeFormErrors) {
   <section v-else-if="!isNew && !node" class="content-card empty-state">
     <h2>无法打开执行节点</h2>
     <p>{{ failure || '节点详情不可用。' }}</p>
-    <button type="button" class="button button-secondary" @click="loadNode">重试</button>
+    <AButton @click="loadNode">重试</AButton>
   </section>
 
-  <div v-else class="form-layout">
-    <form class="content-card form-card" @submit.prevent="save">
-      <h2>节点管理信息</h2>
-      <div class="form-grid">
-        <label class="field-label">
-          节点名称 <b>*</b>
-          <input v-model.trim="form.displayName" maxlength="200" :aria-invalid="formErrors.displayName ? 'true' : undefined" @input="clearError('displayName')" />
-          <span v-if="formErrors.displayName" class="field-error" role="alert">{{ formErrors.displayName }}</span>
-        </label>
-        <label class="field-label">
-          目标平台 <b>*</b>
-          <select v-model="form.platform" :aria-invalid="formErrors.platform ? 'true' : undefined" @change="clearError('platform')">
-            <option value="WINDOWS_AMD64">Windows AMD64</option>
-            <option value="LINUX_AMD64">Kylin Linux AMD64</option>
-            <option value="LINUX_ARM64">Kylin Linux ARM64</option>
-          </select>
-          <span class="field-help">这是任务路由声明；实际操作系统与架构以后续 Agent 上报为准。</span>
-          <span v-if="formErrors.platform" class="field-error" role="alert">{{ formErrors.platform }}</span>
-        </label>
-        <label class="field-label">
-          OB Loader/Dumper 安装目录 <b>*</b>
-          <input v-model.trim="form.toolHome" :placeholder="toolHomePlaceholder" :aria-invalid="formErrors.toolHome ? 'true' : undefined" @input="clearError('toolHome')" />
-          <span class="field-help">填写目标执行机上的工具安装根目录；首次关联后由 Agent 在本机核验。</span>
-          <span v-if="formErrors.toolHome" class="field-error" role="alert">{{ formErrors.toolHome }}</span>
-        </label>
-        <label class="field-label">
-          工具专用 Java 8 路径 <b>*</b>
-          <input v-model.trim="form.javaPath" :placeholder="javaPathPlaceholder" :aria-invalid="formErrors.javaPath ? 'true' : undefined" @input="clearError('javaPath')" />
-          <span class="field-help">填写 Java 可执行文件的绝对路径；不会读取系统 PATH，也不修改机器环境变量。</span>
-          <span v-if="formErrors.javaPath" class="field-error" role="alert">{{ formErrors.javaPath }}</span>
-        </label>
-        <label class="field-label field-span">
-          导出数据目录白名单 <b>*</b>
-          <textarea v-model="form.allowedRootsText" rows="5" :placeholder="rootPlaceholder" :aria-invalid="formErrors.allowedRoots ? 'true' : undefined" @input="clearError('allowedRoots')" />
-          <span class="field-help">每行一个目标执行机上的绝对目录。Windows 使用 /E:/exports 形式；导出文件只能写入这些目录，首次关联与任务提交时都由 Agent 复核路径、可写性和空间。</span>
-          <span v-if="formErrors.allowedRoots" class="field-error" role="alert">{{ formErrors.allowedRoots }}</span>
-        </label>
+  <div v-else class="node-form-workspace">
+    <AForm :model="form" :disabled="busy" layout="vertical" class="node-form-surface" @submit.prevent="save">
+      <div v-if="errorEntries.length" ref="errorSummary" class="node-error-summary" role="alert" tabindex="-1">
+        <strong>请检查以下字段</strong>
+        <ul><li v-for="entry in errorEntries" :key="entry.field"><a :href="`#${entry.id}`">{{ entry.label }}：{{ entry.message }}</a></li></ul>
       </div>
-      <div class="inline-actions">
-        <button type="submit" class="button button-primary" :disabled="busy">{{ busy ? '正在保存…' : isNew ? '保存并继续 Agent 关联' : '保存修改' }}</button>
-        <RouterLink class="button button-secondary" to="/nodes">取消</RouterLink>
+      <section class="node-form-section" aria-labelledby="node-basics-title">
+        <h2 id="node-basics-title">节点标识</h2>
+        <p>名称用于任务和日志中识别节点；目标平台决定 Agent 安装包与路径格式。</p>
+        <div class="node-form-grid">
+          <AFormItem label="节点名称" name="displayName" html-for="node-display-name" required :validate-status="formErrors.displayName ? 'error' : undefined" :help="formErrors.displayName">
+            <AInput id="node-display-name" v-model:value.trim="form.displayName" :aria-invalid="Boolean(formErrors.displayName)" :maxlength="200" @input="clearError('displayName')" @blur="validateField('displayName')" />
+          </AFormItem>
+          <AFormItem label="目标平台" name="platform" html-for="node-platform" required :validate-status="formErrors.platform ? 'error' : undefined" :help="formErrors.platform" extra="这是任务路由声明；实际操作系统与架构以后续 Agent 上报为准。">
+            <ASelect id="node-platform" v-model:value="form.platform" :aria-invalid="Boolean(formErrors.platform)" @change="clearError('platform')">
+              <ASelectOption value="WINDOWS_AMD64">Windows AMD64</ASelectOption>
+              <ASelectOption value="LINUX_AMD64">Kylin Linux AMD64</ASelectOption>
+              <ASelectOption value="LINUX_ARM64">Kylin Linux ARM64</ASelectOption>
+            </ASelect>
+          </AFormItem>
+        </div>
+      </section>
+      <section class="node-form-section" aria-labelledby="node-runtime-title">
+        <h2 id="node-runtime-title">工具运行时</h2>
+        <p>路径只作为目标机器上的声明配置；Agent 同步后会在本机核验。</p>
+        <div class="node-form-grid">
+          <AFormItem label="OB Loader/Dumper 安装目录" name="toolHome" html-for="node-tool-home" required :validate-status="formErrors.toolHome ? 'error' : undefined" :help="formErrors.toolHome" extra="填写目标执行机上的工具安装根目录；首次关联后由 Agent 在本机核验。">
+            <AInput id="node-tool-home" v-model:value.trim="form.toolHome" :aria-invalid="Boolean(formErrors.toolHome)" :placeholder="toolHomePlaceholder" @input="clearError('toolHome')" @blur="validateField('toolHome')" />
+          </AFormItem>
+          <AFormItem label="工具专用 Java 8 路径" name="javaPath" html-for="node-java-path" required :validate-status="formErrors.javaPath ? 'error' : undefined" :help="formErrors.javaPath" extra="填写 Java 可执行文件的绝对路径；不会读取系统 PATH，也不修改机器环境变量。">
+            <AInput id="node-java-path" v-model:value.trim="form.javaPath" :aria-invalid="Boolean(formErrors.javaPath)" :placeholder="javaPathPlaceholder" @input="clearError('javaPath')" @blur="validateField('javaPath')" />
+          </AFormItem>
+        </div>
+      </section>
+      <section class="node-form-section" aria-labelledby="node-roots-title">
+        <h2 id="node-roots-title">导出数据目录</h2>
+        <p>只允许导出写入列出的节点侧目录；具体任务还会独立复核路径与空间。</p>
+        <AFormItem label="导出数据目录白名单" name="allowedRoots" html-for="node-allowed-roots" required :validate-status="formErrors.allowedRoots ? 'error' : undefined" :help="formErrors.allowedRoots" extra="每行一个绝对目录。Windows 使用 /E:/exports 形式；Linux 使用 / 开头的绝对路径。">
+          <ATextarea id="node-allowed-roots" v-model:value="form.allowedRootsText" :aria-invalid="Boolean(formErrors.allowedRoots)" :rows="4" :placeholder="rootPlaceholder" @input="clearError('allowedRoots')" @blur="validateField('allowedRoots')" />
+        </AFormItem>
+      </section>
+      <div class="node-form-boundary" role="note">{{ isNew ? '新节点固定为已禁用、待关联。保存后进入一次性 Agent 关联。' : '修改配置后保留当前管理状态；Agent 空闲时同步配置并重新检查环境。' }}未取得有效环境事实前，节点不能接收新任务。</div>
+      <div class="node-form-actions">
+        <AButton :loading="busy" html-type="submit" type="primary">{{ isNew ? '保存并继续 Agent 关联' : '保存修改' }}</AButton>
+        <RouterLink v-slot="{ href, navigate }" to="/nodes" custom><AButton :href="href" @click="navigate">取消</AButton></RouterLink>
       </div>
-    </form>
-
-    <aside class="detail-aside">
-      <section class="content-card">
-        <h2>登记边界</h2>
-        <dl>
-          <div><dt>目标平台</dt><dd>{{ platformLabel }}</dd></div>
-          <div><dt>初始管理状态</dt><dd>已禁用</dd></div>
-          <div><dt>Agent 关联</dt><dd>待关联</dd></div>
-          <div><dt>工具运行时</dt><dd>待 Agent 本机核验</dd></div>
-        </dl>
-      </section>
-      <section class="content-card node-form-note">
-        <h2>后续准入</h2>
-        <p>保存后的路径只是管理员声明。首次关联 Agent 会在目标机器验证工具、Java 和数据目录；未取得这些事实时，节点不会被列为可接收新任务。</p>
-      </section>
-    </aside>
+    </AForm>
   </div>
 </template>
 
 <style scoped>
-.field-error { display: block; margin: 0; color: #b42318; font-size: 12px; line-height: 1.5; }
-.field-help { color: #7a899c; font-size: 12px; line-height: 1.5; }
-.field-label input[aria-invalid='true'], .field-label select[aria-invalid='true'], .field-label textarea[aria-invalid='true'] { border-color: #d94841; box-shadow: 0 0 0 2px rgb(217 72 65 / 12%); }
-.node-form-note { padding: 17px; }
-.node-form-note p { margin: 0; color: #738195; font-size: 13px; line-height: 1.65; }
+.node-form-workspace { max-width: 960px; }
+.node-form-surface { border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-table-radius); background: var(--ob-color-surface); }
+.node-form-section { padding: var(--ob-foundation-space-6); }
+.node-form-section + .node-form-section { border-top: 1px solid var(--ob-color-border); }
+.node-form-section h2 { margin: 0 0 var(--ob-foundation-space-1); color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); }
+.node-form-section > p { margin: 0 0 var(--ob-foundation-space-4); color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-label-size); line-height: 1.6; }
+.node-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--ob-foundation-space-4); }
+.node-form-boundary { margin: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-4); padding: var(--ob-foundation-space-3); color: var(--ob-color-form-secondary); background: var(--ob-color-subtle); font-size: var(--ob-component-field-label-size); line-height: 1.6; }
+.node-form-actions { display: flex; flex-wrap: wrap; gap: var(--ob-foundation-space-2); padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6); border-top: 1px solid var(--ob-color-border); }
+.node-error-summary { margin: var(--ob-foundation-space-6) var(--ob-foundation-space-6) 0; padding: var(--ob-foundation-space-3); border: 1px solid var(--ob-foundation-danger-border); color: var(--ob-color-danger); background: var(--ob-foundation-danger-surface); }
+.node-error-summary ul { margin: var(--ob-foundation-space-2) 0 0; padding-left: var(--ob-foundation-space-6); }
+.node-error-summary a { color: inherit; }
+@media (max-width: 720px) { .node-form-grid { grid-template-columns: 1fr; }.node-form-section { padding: var(--ob-foundation-space-4); }.node-form-boundary { margin-inline: var(--ob-foundation-space-4); }.node-form-actions { padding-inline: var(--ob-foundation-space-4); } }
 </style>

@@ -19,7 +19,7 @@ describe('隔离的视觉验证数据源适配器', () => {
   })
   it('创建只保留公开投影，初始不可用且未经测试', async () => {
     const api = createVisualSourceGateway([])
-    const id = await api.createDataSource({ ...blankSourceForm(), displayName: 'visual-validation-created', username: 'visual-user', password: 'synthetic-primary-only', sysUser: 'visual-sys', sysPassword: 'synthetic-sys-only' })
+    const id = await api.createDataSource({ ...blankSourceForm(), environment: 'TEST', displayName: 'visual-validation-created', username: 'visual-user', password: 'synthetic-primary-only', sysUser: 'visual-sys', sysPassword: 'synthetic-sys-only' })
     const result = await api.getDataSource(id)
     expect(result).toMatchObject({ state: 'DISABLED', sysCredentialState: 'AVAILABLE' })
     expect(result).not.toHaveProperty('lastTestStatus')

@@ -2,8 +2,8 @@
 
 > 文档状态：历史首条纵向切片专项契约；当前 Export v1 以[通用导出技术契约](export-general-contract.md)和[导出模块 Canonical](../02-design/export-module.md)为准
 > 适用范围：OBDUMPER 4.3.5，私有 ODP、单表 CSV 导出历史证据
-> 对应门禁：VS-P0-08、VS-P0-09  
-> 评审结论：PC-R01～PC-R15 已于 2026-07-21 确认  
+> 对应门禁：VS-P0-08、VS-P0-09\
+> 评审结论：PC-R01～PC-R15 已于 2026-07-21 确认\
 > 实现状态：参数元数据 `v4` 与确定性生成器已通过隔离契约测试；Agent、安全文件全链路与真实执行仍阻断
 > 更新日期：2026-08-22
 
@@ -45,7 +45,7 @@
 
 - [导出模块 Canonical](../02-design/export-module.md)
 - [通用导出技术契约](export-general-contract.md)
-- [首条纵向切片](first-vertical-slice.md)
+- [首条纵向切片](development-readiness-closure.md#first-slice)
 - [首条纵向切片 P0 执行记录](evidence/first-vertical-slice-p0-2026-07-21.md)
 - [技术架构首版](architecture.md)
 

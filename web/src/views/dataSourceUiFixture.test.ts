@@ -34,10 +34,10 @@ describe('数据源列表开发界面样本', () => {
     expect(DATA_SOURCE_UI_FIXTURES.filter((source) => !source.lastTestStatus)).toHaveLength(1)
   })
 
-  it('为有历史任务引用的数据源提供服务端生命周期资格样本', () => {
+  it('为有未完成任务的数据源提供服务端生命周期资格样本', () => {
     const source = DATA_SOURCE_UI_FIXTURES.find((item) => item.displayName === 'Production finance reporting')
     expect(source?.lifecycleEligibility).toMatchObject({
-      delete: { allowed: false, reasonCode: 'HISTORICAL_REFERENCES_EXIST', referenceCount: 3 },
+      delete: { allowed: false, reasonCode: 'UNFINISHED_TASKS_EXIST' },
       archive: { allowed: true, referenceCount: 3 },
     })
   })

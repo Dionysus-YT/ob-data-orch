@@ -1,0 +1,65 @@
+/* 产品语义层，不重写 Ant 的基础输入、弹层定位或焦点算法。 */
+:root { --ob-product-shell-current-navigation-width: var(--ob-product-shell-navigation-width); }
+@media (max-width: 1280px) { :root { --ob-product-shell-current-navigation-width: var(--ob-product-shell-collapsed-width); } }
+@media (max-width: 480px) { :root { --ob-product-shell-current-navigation-width: 0px; } }
+.orch-icon-action { width: var(--ob-component-action-icon-size); height: var(--ob-component-action-icon-size); padding: 0; }
+/* 产品显式图标仅用现有两档 Canonical 尺寸；Ant 负责内部布局与 currentColor。 */
+.product-icon.anticon { font-size: var(--ob-component-control-font-size); }
+.ant-btn .product-icon.anticon,
+.nav-icon.product-icon.anticon,
+.orch-source-actions .product-icon.anticon,
+.empty-mark .product-icon.anticon,
+.context-note .product-icon.anticon { font-size: var(--ob-foundation-space-4); }
+.orch-confirmation-body { max-height: calc(100dvh - 240px); overflow-y: auto; overflow-wrap: anywhere; }
+.orch-confirmation-body p:last-child { margin-bottom: 0; }
+.product-header .navigation-toggle { display: none; }
+@media (max-width: 480px) { .product-header .navigation-toggle { display: inline-flex; } }
+.filter-bar label > .ant-select { min-width: 168px; }
+.tree-row > :is(.ant-input, .ant-select, .ant-input-affix-wrapper) { flex: 1 1 220px; min-width: 0; }
+.storage-credential-filter .ant-select { width: 100%; }
+.storage-credential-form .ant-select { width: 100%; }
+.task-pagination .ant-select { min-width: 84px; }
+.orch-action-reason { display: block; max-width: 240px; white-space: normal; color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+.orch-source-actions { min-width: 160px; }
+.orch-toolbar .ant-select { min-width: 132px; }
+.orch-toolbar .source-search { flex: 1 1 240px; min-width: 0; }
+.orch-toolbar .source-search > .ant-input-affix-wrapper { width: 100%; }
+.orch-inspector .orch-editor-actions { display: flex; gap: var(--ob-foundation-space-2); }
+/* Ant Vue 4.2.6 无表头高度、分区 padding 与斑马行 token；仅在产品表格边界补齐冻结几何。 */
+.orch-operational-table { min-width: 0; overflow-x: auto; border-radius: var(--ob-component-table-radius); }
+.orch-operational-table .ant-table-title { padding: 0; }
+.orch-operational-table .ant-table-thead > tr > th { height: var(--ob-component-table-header-height); padding: var(--ob-component-table-padding-block) var(--ob-component-table-padding-inline); background: var(--ob-color-surface); font-weight: 400; border-bottom-color: var(--ob-foundation-header-border); }
+.orch-operational-table .ant-table-tbody > tr > td { height: var(--ob-component-table-row-height); padding: var(--ob-component-table-padding-block) var(--ob-component-table-padding-inline); }
+.orch-operational-table .ant-table-thead > tr > th::before { display: none; }
+.orch-operational-table .ant-table-tbody > tr:nth-child(even) > td { background: var(--ob-foundation-row-alternate); }
+.orch-operational-table .ant-table-tbody > tr:hover > td { background: var(--ob-foundation-row-hover); }
+.orch-operational-table .ant-table-tbody > tr.is-selected > td { background: var(--ob-color-selected); }
+.orch-operational-table .ant-table-tbody > tr.is-selected > td:first-child { box-shadow: inset 2px 0 0 var(--ob-color-primary); }
+.orch-operational-table .ant-table-thead > tr > th { white-space: nowrap; }
+.orch-operational-table .ant-table-thead > tr > th.orch-short-fact,
+.orch-operational-table .ant-table-tbody > tr > td.orch-short-fact { padding-inline: var(--ob-foundation-space-4); }
+.orch-operational-table .orch-fact-link { height: auto; min-height: 0; max-width: 100%; padding: 0; border: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--ob-component-control-line-height); border-radius: 0; }
+.orch-operational-table :is(.orch-endpoint, .orch-fact-value, .orch-mode) { font-family: var(--ob-foundation-font-ui); font-size: var(--ob-component-control-font-size); line-height: var(--ob-component-control-line-height); }
+.orch-operational-table .orch-secondary-fact { font-size: var(--ob-component-table-metadata-size); line-height: var(--ob-component-table-metadata-line-height); color: var(--ob-color-secondary); }
+.orch-operational-table .orch-short-fact > .orch-secondary-fact { white-space: normal; overflow: visible; }
+.orch-operational-table .orch-mode { background: transparent; padding: 0; }
+.orch-confirmation .ant-modal-footer .ant-btn { min-width: 112px; height: var(--ob-component-action-confirm-height); }
+.orch-task-builder { display: grid; grid-template-columns: var(--ob-product-task-rail-width) minmax(0, 1fr); gap: var(--ob-foundation-space-6); align-items: start; }
+.orch-task-step-rail { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--ob-foundation-space-2); }
+.orch-task-step-rail li { display: flex; align-items: flex-start; gap: var(--ob-foundation-space-3); padding: var(--ob-foundation-space-3); color: var(--ob-color-secondary); border-left: 2px solid transparent; }
+.orch-task-step-rail li > span { width: var(--ob-foundation-space-6); height: var(--ob-foundation-space-6); border: 1px solid var(--ob-color-border-strong); border-radius: 50%; text-align: center; flex: none; }
+.orch-task-step-rail small { display: block; font-size: var(--ob-component-field-helper-size); }
+.orch-task-step-rail .is-current { color: var(--ob-color-primary); border-left-color: currentColor; background: var(--ob-color-selected); }
+.orch-task-step-rail .is-current > span { color: var(--ob-color-surface); background: var(--ob-color-primary); border-color: var(--ob-color-primary); }
+.orch-task-decision { min-width: 0; }
+.orch-task-context { display: flex; justify-content: flex-end; align-items: center; gap: var(--ob-foundation-space-3); margin-bottom: var(--ob-foundation-space-4); flex-wrap: wrap; }
+.orch-task-workspace { min-width: 0; padding: var(--ob-foundation-space-6); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-table-radius); background: var(--ob-color-surface); box-shadow: var(--ob-foundation-surface-shadow); }
+.orch-task-actions { grid-column: 2; position: sticky; bottom: 0; min-width: 0; background: var(--ob-color-page); z-index: 10; }
+.orch-task-summary { padding: var(--ob-foundation-space-6); }
+@media (max-width: 1440px) { .orch-task-builder { grid-template-columns: var(--ob-product-task-compact-rail-width) minmax(0, 1fr); } }
+@media (max-width: 800px) { .orch-task-builder { grid-template-columns: minmax(0, 1fr); } .orch-task-step-rail { grid-template-columns: repeat(3, minmax(0, 1fr)); } .orch-task-step-rail li { padding: var(--ob-foundation-space-2); } .orch-task-actions { grid-column: 1; } }
+@media (max-width: 480px) { .orch-task-step-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } .orch-task-workspace { padding: var(--ob-foundation-space-4); } }
+:where(button, a, input, textarea, [tabindex]):focus-visible { outline: var(--ob-component-focus-width) solid var(--ob-color-primary); outline-offset: var(--ob-component-focus-offset); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; scroll-behavior: auto !important; }
+}

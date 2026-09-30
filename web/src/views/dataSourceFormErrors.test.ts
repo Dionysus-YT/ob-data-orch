@@ -41,6 +41,10 @@ describe('数据源表单字段错误', () => {
     expect(validateDataSourceForm({ ...validInput, clusterName: '' }, true)).toEqual({})
   })
 
+  it('未选择环境时不能保存，默认提示不是环境值', () => {
+    expect(validateDataSourceForm({ ...validInput, environment: undefined }, true)).toEqual({ environment: '请选择环境。' })
+  })
+
   it('编辑时仍要求保留结构化用户名，但允许不修改密码', () => {
     expect(validateDataSourceForm({ ...validInput, username: '', password: '' }, false)).toEqual({
       username: '请输入用户名。',

@@ -1,0 +1,26 @@
+import { expect, test } from '@playwright/test'
+
+test('Ant Design Vue 在当前 Vue / TS / Vite 组合中保持受控输入与弹层交互', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('/tests/fixtures/qualification.html')
+  await page.getByRole('textbox', { name: '名称', exact: true }).fill('已修改的合成配置')
+  await expect(page.getByRole('textbox', { name: '多行输入' })).toHaveValue('已修改的合成配置')
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('已保存 1 次')
+  await expect(page.getByRole('cell', { name: '已修改的合成配置' })).toBeVisible()
+  const control = page.getByRole('textbox', { name: '名称', exact: true })
+  expect(await control.evaluate((element) => element.getBoundingClientRect().height)).toBe(36)
+  await page.getByRole('switch', { name: '可用状态' }).click()
+  await expect(page.getByRole('switch', { name: '可用状态' })).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('button', { name: '打开抽屉' }).click()
+  await expect(page.getByRole('dialog', { name: '编辑合成配置' })).toBeVisible()
+  await page.getByRole('textbox', { name: '抽屉输入' }).focus()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: '编辑合成配置' })).not.toBeVisible()
+  await page.getByRole('button', { name: '打开确认' }).click()
+  await expect(page.getByRole('dialog', { name: '确认合成动作' })).toBeVisible()
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '确认合成动作' })).not.toBeVisible()
+  expect(errors).toEqual([])
+})

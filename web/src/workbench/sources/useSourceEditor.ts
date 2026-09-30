@@ -74,11 +74,13 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
     if (busy.value) return false
     errors.value = validateDataSourceForm(form, isNew.value)
     if (Object.keys(errors.value).length) return false
+    const environment = form.environment
+    if (!environment) return false
     saving.value = true; failure.value = ''; feedback.value = ''
     try {
       let updated: DataSourceDetail
       if (!activeId.value) {
-        const id = await api.createDataSource({ ...form, displayName: form.displayName.trim(), host: form.host.trim(), clusterName: form.clusterName.trim(), tenantName: form.tenantName.trim(), username: form.username.trim(), defaultDatabase: form.compatibilityMode === 'MYSQL' ? form.defaultDatabase || undefined : undefined, sysUser: form.sysUser?.trim() || undefined, sysPassword: form.sysPassword || undefined })
+        const id = await api.createDataSource({ ...form, environment, displayName: form.displayName.trim(), host: form.host.trim(), clusterName: form.clusterName.trim(), tenantName: form.tenantName.trim(), username: form.username.trim(), defaultDatabase: form.compatibilityMode === 'MYSQL' ? form.defaultDatabase || undefined : undefined, sysUser: form.sysUser?.trim() || undefined, sysPassword: form.sysPassword || undefined })
         // 创建成功立即清空秘密；详情读取失败时保留 ID，重试不能重复创建。
         activeId.value = id; form.password = ''; form.sysPassword = ''; form.sysUser = ''; parserInput.value = ''
         onSaved(id)

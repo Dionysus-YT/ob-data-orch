@@ -64,6 +64,67 @@ func (r configuredJDBCConnectionTestRunner) RunConnectionTest(ctx context.Contex
 	return jdbcConnectionTestRunner{resolver: r.stateStore, workspaceRoot: runtimeConfig.WorkspaceRoot, runtime: jdbcRuntime, bootID: r.bootID}.RunConnectionTest(ctx, grant)
 }
 
+// RunCatalog 只在本机配置可复核时委托固定 JDBC 元数据探针。
+func (r configuredJDBCConnectionTestRunner) RunCatalog(ctx context.Context, grant agentwire.DataSourceConnectionTestGrant) agentconnectiontest.Outcome {
+	runtimeConfig, _, err := agentRuntimeFromState(r.stateStore, r.lookupEnv, r.operatingSystem, r.architecture)
+	if err != nil {
+		return jdbcConnectionTestRunner{resolver: r.stateStore, bootID: r.bootID}.RunCatalog(ctx, grant)
+	}
+	jdbcRuntime, err := jdbcprobe.DiscoverRuntime(runtimeConfig.JavaPath, runtimeConfig.ToolHome, runtimeConfig.Environment)
+	if err != nil {
+		return jdbcConnectionTestRunner{resolver: r.stateStore, bootID: r.bootID}.RunCatalog(ctx, grant)
+	}
+	return jdbcConnectionTestRunner{resolver: r.stateStore, workspaceRoot: runtimeConfig.WorkspaceRoot, runtime: jdbcRuntime, bootID: r.bootID}.RunCatalog(ctx, grant)
+}
+
+// RunCatalog 在已确认的短租约内解析一次数据库槽位并列出最多 100 个对象名。
+func (r jdbcConnectionTestRunner) RunCatalog(ctx context.Context, grant agentwire.DataSourceConnectionTestGrant) (outcome agentconnectiontest.Outcome) {
+	outcome = agentconnectiontest.Outcome{
+		ConnectionTestID: grant.ConnectionTestID, Status: agentwire.DataSourceConnectionTestUnknown,
+		EvidenceCode: "DATABASE_CONNECTION_UNAVAILABLE", VerificationSource: agentwire.DataSourceConnectionTestAgentJDBC,
+		SysVerificationStatus: agentwire.DataSourceConnectionTestSysNotConfigured,
+	}
+	if r.resolver == nil || r.workspaceRoot == "" || r.bootID == "" || grant.Binding.OperationKind != "EXPORT_OBJECT_CATALOG" ||
+		grant.VerificationSource != agentwire.DataSourceConnectionTestAgentJDBC {
+		return outcome
+	}
+	workspace, err := credential.CreateWorkspace(r.workspaceRoot, "export-catalog-"+grant.ConnectionTestID)
+	if err != nil {
+		return outcome
+	}
+	defer func() {
+		if workspace.Cleanup() != nil {
+			outcome.Status = agentwire.DataSourceConnectionTestUnknown
+			outcome.EvidenceCode = "DATABASE_CONNECTION_UNAVAILABLE"
+			outcome.CatalogObjects = nil
+			outcome.CatalogTruncated = false
+		}
+	}()
+	slot, err := r.resolver.ResolveDataSourceConnectionTestDatabaseConnection(ctx, agentwire.DataSourceConnectionTestSecretSlotRequest{
+		BootID: r.bootID, ConnectionTestID: grant.ConnectionTestID, LeaseID: grant.LeaseID,
+		LeaseEpoch: grant.LeaseEpoch, BindingDigest: grant.BindingDigest, SentAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return outcome
+	}
+	defer slot.Destroy()
+	result, err := jdbcprobe.ListObjectsInWorkspace(ctx, workspace, r.runtime, jdbcprobe.CatalogRequest{
+		Connection:        jdbcprobe.Request{Host: slot.Host, Port: slot.Port, Username: slot.Username, Password: slot.Password},
+		CompatibilityMode: jdbcprobe.CompatibilityMode(grant.Binding.CatalogCompatibilityMode),
+		Database:          grant.Binding.CatalogDatabase, ObjectType: grant.Binding.CatalogObjectType, Keyword: grant.Binding.CatalogKeyword,
+	})
+	if err == nil {
+		outcome.Status = agentwire.DataSourceConnectionTestSucceeded
+		outcome.EvidenceCode = "DATABASE_CONNECTED"
+		outcome.CatalogObjects = result.Objects
+		outcome.CatalogTruncated = result.Truncated
+	} else if errors.Is(err, jdbcprobe.ErrConnectionFailed) {
+		outcome.Status = agentwire.DataSourceConnectionTestFailed
+		outcome.EvidenceCode = "DATABASE_CONNECTION_FAILED"
+	}
+	return outcome
+}
+
 // RunConnectionTest 在单个私有工作区中解析一次槽位并调用固定 JDBC 探针。
 // 只有明确的 JDBC 连接拒绝会映射为 FAILED；运行时、槽位、探针或清理异常一律映射为 UNKNOWN。
 func (r jdbcConnectionTestRunner) RunConnectionTest(ctx context.Context, grant agentwire.DataSourceConnectionTestGrant) (outcome agentconnectiontest.Outcome) {

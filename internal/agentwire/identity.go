@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"ob-data-orch/internal/credential"
@@ -96,6 +97,8 @@ type AgentIdentity struct {
 // StateStore 管理仅属于本机 Agent 的受保护身份状态。
 // 机器凭据和一次性关联材料始终位于 AES-GCM 密文中，根密钥由平台受保护载体保存。
 type StateStore struct {
+	// runtimeMu 保证工具领取与执行期间的配置不会被心跳同步替换。
+	runtimeMu   sync.RWMutex
 	directory   string
 	statePath   string
 	rootKeyPath string
@@ -280,7 +283,7 @@ func (s *StateStore) AgentIdentity() (AgentIdentity, error) {
 	return AgentIdentity{AgentID: state.AgentID, NodeID: state.NodeID}, nil
 }
 
-// RuntimeConfiguration 返回首次关联时固化的工具、Java 和导出数据目录配置。
+// RuntimeConfiguration 返回最近一次受认证同步并应用的工具、Java 和导出数据目录配置。
 // 空配置仅为旧状态兼容而保留；调用方必须将它视为不可用，不能回退到环境变量或系统 PATH。
 func (s *StateStore) RuntimeConfiguration() (RuntimeConfiguration, error) {
 	state, found, err := s.loadState()

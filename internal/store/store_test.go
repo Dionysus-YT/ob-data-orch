@@ -1477,14 +1477,8 @@ func TestDataSourceLifecycleActionsPreserveHistoryAndReleaseUnusedName(t *testin
 	ctx := context.Background()
 
 	eligibility, err := store.GetDataSourceSummary(ctx, "source-1")
-	if err != nil || eligibility.LifecycleEligibility.Delete.Allowed || !eligibility.LifecycleEligibility.Archive.Allowed || eligibility.LifecycleEligibility.Delete.ReferenceCount != 2 {
+	if err != nil || !eligibility.LifecycleEligibility.Delete.Allowed || !eligibility.LifecycleEligibility.Archive.Allowed || eligibility.LifecycleEligibility.Archive.ReferenceCount != 2 {
 		t.Fatalf("referenced source lifecycle eligibility = %#v, %v", eligibility.LifecycleEligibility, err)
-	}
-	if _, err := store.DeleteDataSource(ctx, DataSourceDeletion{
-		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
-		RequestID: "request-delete-referenced", DeletedAt: testTime.Add(time.Minute),
-	}); !errors.Is(err, ErrDataSourceDeleteIneligible) {
-		t.Fatalf("DeleteDataSource(referenced) error = %v, want ErrDataSourceDeleteIneligible", err)
 	}
 	archived, err := store.ArchiveDataSource(ctx, DataSourceArchive{
 		DataSourceID: "source-1", ActorSubjectID: "subject-1", ExpectedRevision: 1,
@@ -1538,9 +1532,10 @@ func TestDataSourceLifecycleActionsPreserveHistoryAndReleaseUnusedName(t *testin
 	if _, err := store.DeleteDataSource(ctx, DataSourceDeletion{
 		DataSourceID: unused.DataSourceID, ActorSubjectID: "subject-1", ExpectedRevision: 1,
 		RequestID: "request-stale-delete", DeletedAt: testTime.Add(4 * time.Minute),
-	}); !errors.Is(err, ErrDataSourceDeleteIneligible) {
-		t.Fatalf("DeleteDataSource(stale reference) error = %v, want ErrDataSourceDeleteIneligible", err)
+	}); err != nil {
+		t.Fatalf("DeleteDataSource(draft history) error = %v", err)
 	}
+	assertCount(t, store.db, "SELECT COUNT(*) FROM export_drafts WHERE draft_id = 'draft-stale-delete'", 1)
 
 	deletable := unused
 	deletable.DataSourceID, deletable.CredentialID = "source-unused-delete", "credential-unused-delete"
@@ -1560,7 +1555,7 @@ func TestDataSourceLifecycleActionsPreserveHistoryAndReleaseUnusedName(t *testin
 	assertCount(t, store.db, "SELECT COUNT(*) FROM data_sources WHERE data_source_id = 'source-unused-delete'", 0)
 	assertCount(t, store.db, "SELECT COUNT(*) FROM credential_revisions WHERE data_source_id = 'source-unused-delete'", 0)
 	assertCount(t, store.db, "SELECT COUNT(*) FROM request_idempotency WHERE resource_id = 'source-unused-delete'", 1)
-	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'DATA_SOURCE_DELETED'", 1)
+	assertCount(t, store.db, "SELECT COUNT(*) FROM audit_events WHERE action = 'DATA_SOURCE_DELETED'", 2)
 	replayed, err := store.CreateDataSource(ctx, deletable)
 	if err != nil || !replayed.Replayed || replayed.DataSourceID != deletable.DataSourceID {
 		t.Fatalf("CreateDataSource(deleted replay) = %#v, %v", replayed, err)

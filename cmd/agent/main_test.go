@@ -346,3 +346,21 @@ func sameAgentCalls(left, right []string) bool {
 	}
 	return true
 }
+
+// telemetryFailureHeartbeat 验证目录采样失败不能抹掉已应用配置摘要。
+type telemetryFailureHeartbeat struct{ heartbeatProtocolStub }
+
+func (s *telemetryFailureHeartbeat) RuntimeConfiguration() (agentwire.RuntimeConfiguration, error) {
+	return agentwire.RuntimeConfiguration{Platform: "WINDOWS_AMD64", ToolHome: `E:\synthetic-missing\tools`, JavaPath: `C:\synthetic-missing\java.exe`, AllowedRoots: []string{`Z:\synthetic-nonexistent-root`}, Revision: 1, Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil
+}
+func TestHeartbeatReportsConfigurationWhenTelemetryFails(t *testing.T) {
+	calls := []string{}
+	heartbeat := &telemetryFailureHeartbeat{heartbeatProtocolStub{calls: &calls}}
+	runner := &connectionTestRunnerStub{calls: &calls}
+	if err := runAgentProtocolLoop(context.Background(), heartbeat, runner, "boot-1", "WINDOWS", "AMD64", time.Minute, time.Second, true, testLogger()); err != nil {
+		t.Fatal(err)
+	}
+	if heartbeat.input.Facts.RuntimeConfigurationDigest != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatal("采样失败丢失配置摘要")
+	}
+}

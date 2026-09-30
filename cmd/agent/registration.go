@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"ob-data-orch/internal/agentwire"
@@ -22,6 +23,36 @@ const (
 	defaultLocalControlPlaneURL = "https://127.0.0.1:8080"
 )
 
+// bundledExecutionSettings 从已安装配置统一读取固定能力开关，日常启动不再依赖多组环境变量。
+func bundledExecutionSettings(lookup func(string) (string, bool)) (func(string) (string, bool), error) {
+	path, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(path), agentBundleConfigFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return lookup, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > 4096 {
+		return nil, errors.New("Agent 安装配置过大")
+	}
+	var bundle bundledAgentConfig
+	if json.Unmarshal(content, &bundle) != nil || bundle.FormatVersion != "agent-bundle-config-v1" {
+		return nil, errors.New("Agent 安装配置无效")
+	}
+	return func(key string) (string, bool) {
+		switch key {
+		case "OB_DATA_ORCH_ENABLE_REAL_EXECUTION", "OB_DATA_ORCH_ENABLE_AGENT_JDBC_CONNECTION_TEST", "OB_DATA_ORCH_ENABLE_AGENT_EXPORT_PREFLIGHT", "OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE":
+			return strconv.FormatBool(bundle.RealExecutionEnabled), true
+		default:
+			return lookup(key)
+		}
+	}, nil
+}
+
 type registrationCodePayload struct {
 	FormatVersion      string `json:"formatVersion"`
 	NodeID             string `json:"nodeId"`
@@ -30,10 +61,11 @@ type registrationCodePayload struct {
 }
 
 type bundledAgentConfig struct {
-	FormatVersion      string `json:"formatVersion"`
-	ControlPlaneURL    string `json:"controlPlaneUrl"`
-	ControlPlaneCAFile string `json:"controlPlaneCaFile"`
-	StateDirectory     string `json:"stateDirectory"`
+	RealExecutionEnabled bool   `json:"realExecutionEnabled,omitempty"`
+	FormatVersion        string `json:"formatVersion"`
+	ControlPlaneURL      string `json:"controlPlaneUrl"`
+	ControlPlaneCAFile   string `json:"controlPlaneCaFile"`
+	StateDirectory       string `json:"stateDirectory"`
 }
 
 func prepareSimpleRegistration(stateStore *agentwire.StateStore, controlPlane config.AgentControlPlane, stdin io.Reader) error {
@@ -139,7 +171,7 @@ func loadBundledAgentControlPlane(bundleDirectory string, lookupEnv func(string)
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var bundle bundledAgentConfig
-	if err := decoder.Decode(&bundle); err != nil || decoder.Decode(&struct{}{}) != io.EOF || bundle.FormatVersion != "agent-bundle-config-v1" || bundle.ControlPlaneURL != defaultLocalControlPlaneURL {
+	if err := decoder.Decode(&bundle); err != nil || decoder.Decode(&struct{}{}) != io.EOF || bundle.FormatVersion != "agent-bundle-config-v1" {
 		return config.AgentControlPlane{}, errors.New("agent bundle configuration is invalid")
 	}
 	caFile, err := bundledPath(bundleDirectory, bundle.ControlPlaneCAFile, true)

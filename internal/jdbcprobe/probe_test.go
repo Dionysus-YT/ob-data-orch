@@ -142,3 +142,39 @@ func Test预检查响应只接受固定对象安全投影(t *testing.T) {
 		t.Fatalf("v1 解析器接受了 v2 对象响应: %v", err)
 	}
 }
+
+func Test导出对象目录响应必须有界且完整(t *testing.T) {
+	result, err := parseCatalogResponse([]byte(`{"status":"SUCCESS","objects":["orders","users"],"truncated":false}`))
+	if err != nil || len(result.Objects) != 2 || result.Truncated {
+		t.Fatalf("目录响应 = %#v, %v", result, err)
+	}
+	for _, body := range []string{
+		`{"status":"SUCCESS","objects":["orders"]}`,
+		`{"status":"SUCCESS","truncated":false}`,
+		`{"status":"SUCCESS","objects":["orders","orders"],"truncated":false}`,
+		`{"status":"SUCCESS","objects":["unsafe,name"],"truncated":false}`,
+		`{"status":"SUCCESS","objects":[],"truncated":false,"productName":"leaked"}`,
+	} {
+		if _, err := parseCatalogResponse([]byte(body)); !errors.Is(err, ErrProbeFailed) {
+			t.Fatalf("非法目录响应 %q 得到 %v", body, err)
+		}
+	}
+}
+
+func Test数据库目录探针范围失败关闭(t *testing.T) {
+	for _, test := range []struct {
+		database   string
+		objectType string
+		valid      bool
+	}{
+		{"", "DATABASE", true},
+		{"synthetic_db", "DATABASE", false},
+		{"synthetic_db", "TABLE", true},
+		{"", "TABLE", false},
+		{"", "SCHEMA", false},
+	} {
+		if got := validCatalogRequestScope(test.database, test.objectType); got != test.valid {
+			t.Fatalf("目录范围 %q/%q = %v", test.database, test.objectType, got)
+		}
+	}
+}

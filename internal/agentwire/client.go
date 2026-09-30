@@ -84,7 +84,7 @@ type enrollmentPayload struct {
 	RuntimeConfiguration RuntimeConfiguration `json:"runtimeConfiguration"`
 }
 
-// RuntimeConfiguration 是首次关联时由控制面返回、随后仅由 Agent 本机状态持有的固定工具配置。
+// RuntimeConfiguration 是由受认证注册或配置同步返回、保存在 Agent 本机状态的固定工具配置。
 // 它没有秘密，但任何空值或非法值都不能让 Agent 退化为读取环境变量或系统 PATH。
 type RuntimeConfiguration struct {
 	Platform     string   `json:"platform"`

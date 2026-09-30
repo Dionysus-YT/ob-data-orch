@@ -137,6 +137,8 @@ func (控制面 *受控重启补传控制面) 处理请求(writer http.ResponseW
 	switch request.URL.Path {
 	case "/agent/v1/enrollments:exchange":
 		控制面.处理关联(writer, request)
+	case "/agent/v1/runtime-configuration:sync":
+		http.NotFound(writer, request)
 	case "/agent/v1/heartbeats":
 		控制面.处理心跳(writer, request)
 	case "/agent/v1/data-source-connection-tests:claim-next", "/agent/v1/prechecks:claim-next", "/agent/v1/executions:claim-next":

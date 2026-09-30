@@ -285,6 +285,12 @@ v5 元数据继续作为 `export-odp-single-table-csv-v1` 的冻结基线；v6 �
 
 ---
 
+### 2.5 EX-D0 冻结边界的承接
+
+原 EX-D0 盘点已由本节与现役契约承接：旧草稿、任务快照及计划命令不原地改写；已发布元数据不可变。旧 CSV 能力的 argv 顺序、秘密槽位结构、配置指纹算法与 tokenEvidence 位置追踪保持兼容。预检查只接受协议定义的固定项目，新增项目须同步协议、证据码和负例；身份隔离、双层脱敏及控制面/Agent 职责不得因泛化降级。
+
+冻结元数据中的 `sourceDocuments` 可能记录已删除的历史文档路径，这是版本来源记录，不是运行时文件依赖；原文按 [Git 历史说明](../README.md#history) 查询，不修改已发布资源来更新链接。当前产品/字段规则见 Export 模块，参数和命令以本契约及绑定版本的资源为准。
+
 ## 3. OpenAPI 与 SQLite 契约
 
 ### 3.1 迁移脚本 0014_export_generalization.sql
@@ -584,7 +590,7 @@ type ExportConfigTemplate struct {
 
 **现行分类体系**（9 类）：
 
-> 元数据 `category` 是命令发射顺序的技术标识（与 `order` 配合驱动 plannedArgv 排序），不是产品分类。产品与文档按 OBDUMPER 官方选项分类组织（基础选项：连接/功能/其他；高级选项：功能/性能/其他）；109 参数研究与分类表保留在 `docs/archive/export/research/`。
+> 元数据 `category` 是命令发射顺序的技术标识（与 `order` 配合驱动 plannedArgv 排序），不是产品分类。产品与文档按 OBDUMPER 官方选项分类组织（基础选项：连接/功能/其他；高级选项：功能/性能/其他）；109 参数研究与分类表的原文按 [Git 历史](../README.md#history)查询。
 
 | 序号 | 分类标识 | 含义 |
 |---|---|---|
