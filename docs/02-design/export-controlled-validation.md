@@ -29,6 +29,7 @@
 | OSS / S3 / COS / OBS | SYNTHETIC_ONLY，提交受门禁 | [EX-I6 存储预检查框架](../03-technical/evidence/export-increment-validation.md#exi6-storage) | 真实 endpoint、凭据探测、四类 provider 端到端和远端结果事实 |
 | `dump.ckpt` 继续 | SYNTHETIC_ONLY | [EX-I8 结果与恢复](../03-technical/evidence/export-increment-validation.md#exi8-recovery) | 慢导出/中断产生保存点后的真实继续任务 |
 | `--query-sql` | IMPLEMENTED，EVIDENCE_PENDING | 普通高级参数：NORMAL、普通任务授权、无 capability/二次确认；已覆盖直接文本、file:// 拒绝、互斥、预检查与提交回归 | 真实工具行为仍按 EX-V1 授权验证 |
+| 结果集范围与条数上限 | SYNTHETIC_ONLY | 步骤 2 输入、`QUERY_RESULT` 范围、无对象参数命令预览、MySQL/Oracle 外层限行及失败组合的合成测试 | 授权后分别验证两种兼容模式及 CSV/CUT/SQL 的真实输出，确认最多返回条数；固定预检查不执行用户 SQL |
 
 “正式支持候选”表示产品范围可以继续评审，不表示当前已通过 EX-V1 或 G3。每一行的状态必须由相应证据、契约测试和发布门禁共同更新。
 
@@ -46,7 +47,7 @@
 | Export 取消与结果证据 | `internal/store/store_test.go`、`internal/agentexecution/worker_test.go`、`web/src/api/browser.test.ts` | 排队/运行中取消、期限、幂等、固定错误码和浏览器投影失败关闭；真实工具树终止仍需 EX-V1 |
 | API/OpenAPI 与预检查契约 | `contracts/openapi_test.go`、`internal/precheckcontract/*_test.go`、`internal/agentwire/precheck_test.go` | 浏览器/Agent 契约和预检查绑定不漂移 |
 | 前端预检查与摘要投影 | `web/src/views/exportPrecheckPresentation.test.ts` | 预检查结果、风险摘要和提交前展示保持稳定 |
-| query-sql 向导呈现 | `web/src/views/exportDraftInput.test.ts`、`ExportWizardView.vue` | 步骤 3 可直接编辑，冲突项即时禁用；提交不再依赖敏感确认 |
+| query-sql 向导呈现 | `web/src/views/exportDraftInput.test.ts`、`ExportWizardView.vue` | 步骤 2 普通高级输入及结果集专用输入可编辑，冲突项即时禁用；结果集默认 1000 条，提交不依赖敏感确认 |
 
 本轮实际执行的基线命令及结果：
 

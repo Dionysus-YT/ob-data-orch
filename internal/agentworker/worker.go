@@ -207,6 +207,7 @@ func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflig
 		CompatibilityMode: grant.Context.CompatibilityMode,
 		Database:          grant.Context.Database,
 		Objects:           append([]string(nil), grant.Context.Objects...),
+		ObjectTypes:       append([]string(nil), grant.Context.ObjectTypes...),
 		ContentKind:       grant.Context.ContentKind,
 		TargetPlatform:    grant.Context.TargetPlatform,
 		OutputPath:        grant.Context.OutputPath,
@@ -260,7 +261,7 @@ func checkSetForKind(kind agentpreflight.OutputKind, checkSet []agentpreflight.C
 }
 
 func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) bool {
-	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || (executionContext.ContentKind != "DATA_ONLY" && executionContext.ContentKind != "DDL_ONLY" && executionContext.ContentKind != "DDL_AND_DATA") || len(executionContext.Objects) > 100 || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
+	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || (executionContext.ContentKind != "DATA_ONLY" && executionContext.ContentKind != "DDL_ONLY" && executionContext.ContentKind != "DDL_AND_DATA") || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
 		return false
 	}
 	// EX-I6：缺省输出类型保持本地语义；对象存储输出必须携带受控存储目标段。

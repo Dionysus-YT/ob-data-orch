@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ob-data-orch/internal/catalogresult"
 )
 
 func Test数据库目录绑定范围失败关闭(t *testing.T) {
@@ -420,6 +422,82 @@ func Test导出对象目录受控租约与结果隔离(t *testing.T) {
 	run, err = store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
 	if err != nil || len(run.CatalogObjects) != 0 {
 		t.Fatalf("过期对象名未清理: %#v, %v", run.CatalogObjects, err)
+	}
+}
+
+func Test数据库目录在现役SQLite约束下完成租约与结果回读(t *testing.T) {
+	store, _ := openTestStore(t)
+	seedBaseFixture(t, store)
+	resetConnectionTestFacts(t, store)
+	prepareConnectionTestAgentFacts(t, store)
+	ctx := context.Background()
+	if _, err := store.db.Exec(`UPDATE data_sources SET state = 'ENABLED', last_test_status = 'SUCCEEDED', last_test_source = 'AGENT_JDBC' WHERE data_source_id = 'source-1'`); err != nil {
+		t.Fatal(err)
+	}
+	input := syntheticDataSourceConnectionTestInput("catalog-database", "AGENT_JDBC")
+	input.OperationKind, input.CatalogObjectType = "EXPORT_OBJECT_CATALOG", "DATABASE"
+	if _, err := store.RequestDataSourceConnectionTest(ctx, input); err != nil {
+		t.Fatalf("创建数据库目录查询: %v", err)
+	}
+	var storedType sql.NullString
+	if err := store.db.QueryRow(`SELECT catalog_object_type FROM data_source_connection_test_runs WHERE connection_test_id = ?`, input.ConnectionTestID).Scan(&storedType); err != nil || storedType.Valid {
+		t.Fatalf("数据库目录应以 NULL 存储对象类型: %#v, %v", storedType, err)
+	}
+	run, err := store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || run.CatalogObjectType != "DATABASE" {
+		t.Fatalf("数据库目录读取未还原类型: %#v, %v", run, err)
+	}
+	grant := claimAndAcknowledgeDataSourceConnectionTest(t, store, input.ConnectionTestID, testTime.Add(5*time.Second))
+	if grant.Binding.CatalogObjectType != "DATABASE" || grant.Binding.BindingDigest != run.BindingDigest {
+		t.Fatalf("数据库目录租约绑定不一致: %#v", grant.Binding)
+	}
+	if _, err := store.CompleteAgentDataSourceConnectionTest(ctx, AgentDataSourceConnectionTestCompletion{
+		AgentID: "agent-1", ConnectionTestID: input.ConnectionTestID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch,
+		BindingDigest: grant.Binding.BindingDigest, RequestID: "catalog-database-complete", RequestDigest: strings.Repeat("f", 64),
+		Status: "SUCCEEDED", EvidenceCode: "DATABASE_CONNECTED", VerificationSource: "AGENT_JDBC",
+		SysVerificationStatus: "NOT_CONFIGURED", CatalogObjects: []string{"synthetic_db"}, Now: testTime.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("完成数据库目录查询: %v", err)
+	}
+	run, err = store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || run.CatalogObjectType != "DATABASE" || len(run.CatalogObjects) != 1 || run.CatalogObjects[0] != "synthetic_db" {
+		t.Fatalf("数据库目录结果 = %#v, %v", run, err)
+	}
+}
+
+func Test五类批量目录在现役SQLite约束下回读(t *testing.T) {
+	database, _ := openTestStore(t)
+	seedBaseFixture(t, database)
+	resetConnectionTestFacts(t, database)
+	prepareConnectionTestAgentFacts(t, database)
+	ctx := context.Background()
+	if _, err := database.db.Exec(`UPDATE data_sources SET state = 'ENABLED', last_test_status = 'SUCCEEDED', last_test_source = 'AGENT_JDBC' WHERE data_source_id = 'source-1'`); err != nil {
+		t.Fatal(err)
+	}
+	input := syntheticDataSourceConnectionTestInput("catalog-all", "AGENT_JDBC")
+	input.OperationKind, input.CatalogDatabase, input.CatalogObjectType = "EXPORT_OBJECT_CATALOG", "appdb", "ALL"
+	if _, err := database.RequestDataSourceConnectionTest(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || run.CatalogObjectType != "ALL" {
+		t.Fatalf("批量类型回读失败：%#v, %v", run, err)
+	}
+	grant := claimAndAcknowledgeDataSourceConnectionTest(t, database, input.ConnectionTestID, testTime.Add(5*time.Second))
+	groups := []catalogresult.Group{{ObjectType: "TABLE", Objects: []string{"orders"}}, {ObjectType: "VIEW", Objects: []string{}}, {ObjectType: "FUNCTION", Objects: []string{}}, {ObjectType: "PROCEDURE", Objects: []string{}}, {ObjectType: "SEQUENCE", Objects: []string{}, Unavailable: true}}
+	completion := AgentDataSourceConnectionTestCompletion{AgentID: "agent-1", ConnectionTestID: input.ConnectionTestID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, BindingDigest: grant.Binding.BindingDigest, RequestID: "catalog-all-complete", RequestDigest: strings.Repeat("f", 64), Status: "SUCCEEDED", EvidenceCode: "DATABASE_CONNECTED", VerificationSource: "AGENT_JDBC", SysVerificationStatus: "NOT_CONFIGURED", CatalogGroups: groups, Now: testTime.Add(2 * time.Minute)}
+	invalid := completion
+	invalid.CatalogGroups = append([]catalogresult.Group(nil), groups...)
+	invalid.CatalogGroups[4].Objects = []string{"hidden"}
+	if _, err := database.CompleteAgentDataSourceConnectionTest(ctx, invalid); !errors.Is(err, ErrDataSourceConnectionTestLeaseRejected) {
+		t.Fatalf("不可用序列泄露未拒绝：%v", err)
+	}
+	if _, err := database.CompleteAgentDataSourceConnectionTest(ctx, completion); err != nil {
+		t.Fatal(err)
+	}
+	run, err = database.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
+	if err != nil || len(run.CatalogGroups) != 5 || run.CatalogGroups[0].Objects[0] != "orders" || !run.CatalogGroups[4].Unavailable {
+		t.Fatalf("批量目录回读失败：%#v, %v", run, err)
 	}
 }
 

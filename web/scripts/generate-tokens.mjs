@@ -16,5 +16,6 @@ const output = `/* 由 scripts/generate-tokens.mjs 从 tokens.ts 生成；禁止
 ].join('\n')}\n}\n`
 const path = fileURLToPath(new URL('../src/platform/tokens.css', import.meta.url))
 if (process.argv.includes('--check')) {
-  if (readFileSync(path, 'utf8') !== output) throw new Error('Canonical Token CSS 未同步，请运行 npm run tokens:generate')
+  // Git 在 Windows 检出时可使用 CRLF；只忽略换行编码，值或声明漂移仍须阻断。
+  if (readFileSync(path, 'utf8').replaceAll('\r\n', '\n') !== output) throw new Error('Canonical Token CSS 未同步，请运行 npm run tokens:generate')
 } else writeFileSync(path, output)

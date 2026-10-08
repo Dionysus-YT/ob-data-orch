@@ -6,6 +6,8 @@ package store
 import (
 	"errors"
 	"time"
+
+	"ob-data-orch/internal/catalogresult"
 )
 
 var (
@@ -918,12 +920,12 @@ type ExportConfig struct {
 	DDLBehavior       DDLBehavior       `json:"ddlBehavior"`
 }
 
-// ObjectScope 表达导出对象范围：全部对象或指定对象列表。
-// Database 是对象所在数据库（--database），全部与指定范围均必填；
+// ObjectScope 表达导出对象范围：全部对象、指定对象或查询结果集。
+// Database 是对象所在数据库（--database），三种范围均必填；
 // 表达式的可选 schema 前缀只允许缺省或与 Database 一致，跨库未取证。
 type ObjectScope struct {
 	Database      string             `json:"database,omitempty"`
-	ScopeKind     string             `json:"scopeKind"` // ALL | SPECIFIED
+	ScopeKind     string             `json:"scopeKind"` // ALL | SPECIFIED | QUERY_RESULT
 	ObjectTypes   []string           `json:"objectTypes"`
 	Expressions   []ObjectExpression `json:"expressions"`
 	ExcludeTables []string           `json:"excludeTables"`
@@ -933,9 +935,10 @@ type ObjectScope struct {
 // Name 为对象名称或通配表达式。RawInput 只允许由控制面按 schema.name 生成规范值，
 // 浏览器提交的自由文本不得持久化，避免借此写入秘密或任意内容。
 type ObjectExpression struct {
-	Schema   string `json:"schema,omitempty"`
-	Name     string `json:"name"`
-	RawInput string `json:"rawInput,omitempty"`
+	Schema     string `json:"schema,omitempty"`
+	ObjectType string `json:"objectType,omitempty"`
+	Name       string `json:"name"`
+	RawInput   string `json:"rawInput,omitempty"`
 }
 
 // ContentSelection 表达导出内容类型。
@@ -1037,7 +1040,9 @@ type PerformanceConfig struct {
 
 // FilterConfig 表达筛选与一致性参数。
 type FilterConfig struct {
-	QuerySql              string   `json:"querySql,omitempty"`
+	QuerySql string `json:"querySql,omitempty"`
+	// QueryResultLimit 是查询结果集模式的行数上限；控制面按兼容模式包装 SELECT，不映射为独立工具参数。
+	QueryResultLimit      *int64   `json:"queryResultLimit,omitempty"`
 	Where                 string   `json:"where,omitempty"`
 	Partition             string   `json:"partition,omitempty"`
 	IncludeColumnNames    []string `json:"includeColumnNames,omitempty"`
@@ -1277,6 +1282,7 @@ type PrecheckExecutionContext struct {
 	CompatibilityMode string
 	Database          string
 	Objects           []string
+	ObjectTypes       []string
 	ContentKind       string // DATA_ONLY | DDL_ONLY | DDL_AND_DATA
 	OutputPath        string
 	LogPath           string
@@ -1444,6 +1450,7 @@ type DataSourceConnectionTestRun struct {
 	CatalogObjectType string
 	CatalogKeyword    string
 	CatalogObjects    []string
+	CatalogGroups     []catalogresult.Group
 	CatalogTruncated  bool
 	ValidUntil        time.Time
 	CreatedAt         time.Time
@@ -1614,6 +1621,7 @@ type AgentDataSourceConnectionTestCompletion struct {
 	SysVerificationStatus string
 	SysResultCode         string
 	CatalogObjects        []string
+	CatalogGroups         []catalogresult.Group
 	CatalogTruncated      bool
 	Now                   time.Time
 }

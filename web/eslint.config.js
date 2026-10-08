@@ -24,6 +24,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/views/*WizardView.vue', 'src/workbench/{export,import}/**/steps/*.vue'],
+    rules: {
+      'no-restricted-globals': ['error',
+        { name: 'fetch', message: '向导网络请求经 api 边界与业务异步管理器处理。' },
+        { name: 'XMLHttpRequest', message: '向导网络请求经 api 边界与业务异步管理器处理。' },
+      ],
+    },
+  },
+  {
     files: ['**/*.vue'],
     languageOptions: {
       parser: vueParser,

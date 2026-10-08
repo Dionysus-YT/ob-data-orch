@@ -97,6 +97,7 @@ func (r jdbcConnectionTestRunner) RunCatalog(ctx context.Context, grant agentwir
 			outcome.Status = agentwire.DataSourceConnectionTestUnknown
 			outcome.EvidenceCode = "DATABASE_CONNECTION_UNAVAILABLE"
 			outcome.CatalogObjects = nil
+			outcome.CatalogGroups = nil
 			outcome.CatalogTruncated = false
 		}
 	}()
@@ -117,6 +118,7 @@ func (r jdbcConnectionTestRunner) RunCatalog(ctx context.Context, grant agentwir
 		outcome.Status = agentwire.DataSourceConnectionTestSucceeded
 		outcome.EvidenceCode = "DATABASE_CONNECTED"
 		outcome.CatalogObjects = result.Objects
+		outcome.CatalogGroups = result.Groups
 		outcome.CatalogTruncated = result.Truncated
 	} else if errors.Is(err, jdbcprobe.ErrConnectionFailed) {
 		outcome.Status = agentwire.DataSourceConnectionTestFailed

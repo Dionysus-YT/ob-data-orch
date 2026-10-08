@@ -71,9 +71,36 @@ func NewGeneralized() (*Generator, error) {
 	if err != nil {
 		return nil, err
 	}
+	objectCatalog, err := parammeta.LoadObjectSelection()
+	if err != nil {
+		return nil, err
+	}
+	objectGenerator, err := newGenerator(objectCatalog)
+	if err != nil {
+		return nil, err
+	}
+	combinedCatalog, err := parammeta.LoadCombinedObjectSelection()
+	if err != nil {
+		return nil, err
+	}
+	combinedGenerator, err := newGenerator(combinedCatalog)
+	if err != nil {
+		return nil, err
+	}
+	ddlTextCatalog, err := parammeta.LoadDDLTextFormats()
+	if err != nil {
+		return nil, err
+	}
+	ddlTextGenerator, err := newGenerator(ddlTextCatalog)
+	if err != nil {
+		return nil, err
+	}
 	current.versions = map[string]*Generator{
-		current.metadataVersion: current,
-		legacy.metadataVersion:  legacy,
+		current.metadataVersion:           current,
+		legacy.metadataVersion:            legacy,
+		objectGenerator.metadataVersion:   objectGenerator,
+		combinedGenerator.metadataVersion: combinedGenerator,
+		ddlTextGenerator.metadataVersion:  ddlTextGenerator,
 	}
 	return current, nil
 }

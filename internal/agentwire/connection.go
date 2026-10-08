@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/credential"
 )
 
@@ -142,6 +143,7 @@ type DataSourceConnectionTestCompletion struct {
 	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus
 	SysEvidenceCode       string
 	CatalogObjects        []string
+	CatalogGroups         []catalogresult.Group
 	CatalogTruncated      bool
 	SentAt                time.Time
 }
@@ -214,6 +216,7 @@ type dataSourceConnectionTestCompletionPayload struct {
 	SysVerificationStatus DataSourceConnectionTestSysVerificationStatus `json:"sysVerificationStatus"`
 	SysEvidenceCode       string                                        `json:"sysEvidenceCode"`
 	CatalogObjects        []string                                      `json:"catalogObjects,omitempty"`
+	CatalogGroups         []catalogresult.Group                         `json:"catalogGroups,omitempty"`
 	CatalogTruncated      bool                                          `json:"catalogTruncated,omitempty"`
 }
 
@@ -562,7 +565,7 @@ func (c *httpsClient) completeDataSourceConnectionTest(ctx context.Context, stat
 			LeaseID: input.LeaseID, LeaseEpoch: input.LeaseEpoch, BindingDigest: input.BindingDigest,
 			Status: input.Status, EvidenceCode: input.EvidenceCode,
 			SysVerificationStatus: input.SysVerificationStatus, SysEvidenceCode: input.SysEvidenceCode,
-			CatalogObjects: input.CatalogObjects, CatalogTruncated: input.CatalogTruncated,
+			CatalogObjects: input.CatalogObjects, CatalogGroups: input.CatalogGroups, CatalogTruncated: input.CatalogTruncated,
 		},
 	}
 	requestBody, err := json.Marshal(request)

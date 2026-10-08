@@ -1098,6 +1098,33 @@ func TestGeneralizedFingerprintDiffersAcrossCapabilities(t *testing.T) {
 	}
 }
 
+// TestDDLTextFormatCapabilities 验证组合能力只接受对应数据格式及其参数。
+func TestDDLTextFormatCapabilities(t *testing.T) {
+	generator := mustGeneralizedGenerator(t)
+	for _, testCase := range []struct {
+		capability string
+		flag       string
+		other      string
+	}{
+		{"export-odp-ddl-cut-v1", "--cut", "--sql"},
+		{"export-odp-ddl-sql-v1", "--sql", "--cut"},
+	} {
+		request := validGeneralizedRequest(PlatformWindowsAMD64, testCase.capability)
+		request.MetadataVersion = "obdumper-4.3.5-slice-v10-ddl-text-formats"
+		request.Fields = append(request.Fields,
+			stringField("--table", SourceUser, "synthetic_table"),
+			FieldInput{Name: "--ddl", Source: SourceFormat, Value: Value{Kind: ValueBoolean, Boolean: true}},
+			FieldInput{Name: testCase.flag, Source: SourceFormat, Value: Value{Kind: ValueBoolean, Boolean: true}},
+		)
+		result, err := generator.Generate(request)
+		if err != nil || !containsToken(result.ArgvTemplate, "--ddl") || !containsToken(result.ArgvTemplate, testCase.flag) {
+			t.Fatalf("组合格式生成失败：capability=%s result=%#v err=%v", testCase.capability, result.ArgvTemplate, err)
+		}
+		request.Fields = append(request.Fields, FieldInput{Name: testCase.other, Source: SourceFormat, Value: Value{Kind: ValueBoolean, Boolean: true}})
+		assertValidationIssue(t, generator, request, "UNKNOWN_PARAMETER", testCase.other)
+	}
+}
+
 func validRequest(platform Platform) Request {
 	return Request{
 		Tool:                  "OBDUMPER",

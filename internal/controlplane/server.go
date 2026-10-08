@@ -17,11 +17,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"ob-data-orch/internal/agentpreflight"
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/buildinfo"
+	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/exportdomain"
@@ -1249,7 +1251,7 @@ type exportDraftV5Config struct {
 
 // storedDraftConfigV6 是 v6 草稿持久化的标准文档：同时内嵌扁平投影键与泛化配置。
 // 扁平键供预检查上下文与任务投影使用，不能作为额外命令输入来源。
-// Table 存逗号连接的对象清单（ALL 为空），Format 取 CSV | DDL | DDL_CSV。
+// Table 存逗号连接的对象清单（ALL 为空），Format 按内容与数据格式投影。
 type storedDraftConfigV6 struct {
 	ConfigVersion string              `json:"configVersion"`
 	DataSourceID  string              `json:"dataSourceId"`
@@ -1268,18 +1270,17 @@ type storedDraftConfigV6 struct {
 // normalizedExportDraft 保留控制面旧名称，实际模型归属 exportdomain，避免 HTTP 适配层重新定义领域事实。
 type normalizedExportDraft = exportdomain.Draft
 
-// maxExportObjectExpressions 限制单个草稿的对象、排除表、分区和类型列表数量，
-// 防止无限条目进入命令、预检查探测与快照。
-const maxExportObjectExpressions = 100
+// maxExportOptionEntries 限制高级筛选参数的条目数；导出对象选择不受此上限约束。
+const maxExportOptionEntries = 100
 
 // draftCapability 按归一结果推导泛化能力版本。
-// EX-I4：DATA_ONLY 按数据格式返回对应能力；CUT/SQL 无 DDL 组合能力，DDL 内容仍只走 CSV。
+// DATA_ONLY 按数据格式选择能力；结构与数据组合按 CSV/CUT/SQL 选择独立能力。
 func draftCapability(n normalizedExportDraft) string {
 	return exportdomain.CapabilityFor(n.ContentKind, n.Format)
 }
 
 // draftDisplayFormat 返回快照与摘要投影使用的格式标识。
-// DDL_ONLY 无数据格式；DDL_AND_DATA 固定为 CSV 组合；DATA_ONLY 按实际数据格式投影。
+// DDL_ONLY 无数据格式；DDL_AND_DATA 与 DATA_ONLY 按实际数据格式投影。
 func draftDisplayFormat(contentKind, format string) string {
 	return exportdomain.DisplayFormat(contentKind, format)
 }
@@ -1346,14 +1347,14 @@ func normalizeExportDraftRequest(request exportDraftWriteRequest) (normalizedExp
 // 多库 schema 前缀、通配符、门禁对象类型与任何尚未验证的选项均失败关闭。
 // 参数元数据版本由草稿单独冻结，不能从 configVersion 推断为历史 v6 或当前 v7。
 func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID string) (normalizedExportDraft, error) {
-	selection, err := exportdomain.NormalizeSelection(config, maxExportObjectExpressions, validateExportObjectName)
+	selection, err := exportdomain.NormalizeSelection(config, validateExportObjectName)
 	if err != nil {
 		return normalizedExportDraft{}, err
 	}
 	normalized := normalizedExportDraft{
 		DataSourceID: dataSourceID, NodeID: nodeID,
 		Database: selection.Database, ScopeKind: selection.ScopeKind, ObjectType: selection.ObjectType,
-		Objects: selection.Objects, ExcludeTables: selection.ExcludeTables,
+		Objects: selection.Objects, ObjectsByType: selection.ObjectsByType, ExcludeTables: selection.ExcludeTables,
 		ContentKind: selection.ContentKind, Format: selection.Format,
 	}
 	output := config.OutputConfig
@@ -1474,6 +1475,7 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	normalized.Where = filter.Where
 	normalized.Snapshot = filter.Snapshot != nil && *filter.Snapshot
 	normalized.QuerySql = filter.QuerySql
+	normalized.QueryResultLimit = filter.QueryResultLimit
 	normalized.ExcludeVirtualColumns = filter.ExcludeVirtualColumns != nil && *filter.ExcludeVirtualColumns
 	normalized.FlashbackScn, normalized.FlashbackTimestamp = filter.FlashbackScn, filter.FlashbackTimestamp
 	normalized.Partition = filter.Partition
@@ -1496,6 +1498,21 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 			return normalizedExportDraft{}, errors.New("v6 query sql conflicts with partition option")
 		}
 	}
+	if normalized.ScopeKind == "QUERY_RESULT" {
+		if normalized.QueryResultLimit == nil {
+			return normalizedExportDraft{}, errors.New("v6 query result scope requires a row limit")
+		}
+		query, err := exportdomain.NormalizeResultQuery(normalized.QuerySql, *normalized.QueryResultLimit)
+		if err != nil {
+			return normalizedExportDraft{}, err
+		}
+		normalized.QuerySql = query
+		if normalized.Where != "" || normalized.Partition != "" || normalized.Snapshot || len(filter.IncludeColumnNames) != 0 || len(filter.ExcludeColumnNames) != 0 || len(filter.ExcludeDataTypes) != 0 || filter.ExcludeVirtualColumns != nil || filter.EnableHiddenPk != nil || filter.FlashbackScn != nil || filter.FlashbackTimestamp != "" || filter.WeakRead != nil {
+			return normalizedExportDraft{}, errors.New("v6 query result scope cannot carry object filters or consistency options")
+		}
+	} else if normalized.QueryResultLimit != nil {
+		return normalizedExportDraft{}, errors.New("v6 row limit requires query result scope")
+	}
 	if normalized.Where != "" && validateOptionText(normalized.Where, 64<<10) != nil {
 		return normalizedExportDraft{}, errors.New("v6 where option is invalid")
 	}
@@ -1510,12 +1527,12 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		if normalized.ContentKind == "DDL_ONLY" || normalized.ScopeKind != "SPECIFIED" || normalized.ObjectType != "TABLE" {
 			return normalizedExportDraft{}, errors.New("v6 partition option requires specified table data scope")
 		}
-		if len(normalized.Partition) > 4096 || len(strings.Split(normalized.Partition, ",")) > maxExportObjectExpressions || !partitionPattern.MatchString(normalized.Partition) {
+		if len(normalized.Partition) > 4096 || len(strings.Split(normalized.Partition, ",")) > maxExportOptionEntries || !partitionPattern.MatchString(normalized.Partition) {
 			return normalizedExportDraft{}, errors.New("v6 partition option is invalid")
 		}
 	}
 	// EX-F075：--exclude-data-types 类型排除（2026-08-13 实测：decimal 列被排除生效），只配合数据内容。
-	if len(normalized.ExcludeDataTypes) > maxExportObjectExpressions {
+	if len(normalized.ExcludeDataTypes) > maxExportOptionEntries {
 		return normalizedExportDraft{}, errors.New("v6 exclude data types exceed the supported limit")
 	}
 	for _, dataType := range normalized.ExcludeDataTypes {
@@ -1731,7 +1748,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-// validateCsvOptions 校验 CSV 序列化选项的枚举与边界；escape-character 官方仅支持单字符。
+// validateCsvOptions 校验 CSV 序列化选项的枚举与边界；4.3.5 的字段分隔符、包围符和转义符均仅支持单字符。
 func validateCsvOptions(options store.CsvOptions) error {
 	for _, option := range []struct {
 		name  string
@@ -1749,6 +1766,9 @@ func validateCsvOptions(options store.CsvOptions) error {
 	}
 	if options.ColumnQuoteMode != "" && !containsString(csvQuoteModeValues, options.ColumnQuoteMode) {
 		return errors.New("v6 column quote mode is unsupported")
+	}
+	if (options.ColumnSeparator != "" && utf8.RuneCountInString(options.ColumnSeparator) != 1) || (options.ColumnQuote != "" && utf8.RuneCountInString(options.ColumnQuote) != 1) {
+		return errors.New("v6 csv column separator and quote must be a single character")
 	}
 	if options.EscapeCharacter != "" && (len(options.EscapeCharacter) != 1 || strings.ContainsAny(options.EscapeCharacter, "\x00\r\n")) {
 		return errors.New("v6 escape character must be a single character")
@@ -2603,9 +2623,12 @@ func decodeBrowserJSON(w http.ResponseWriter, r *http.Request, target any) bool 
 }
 
 const (
-	exportMetadataV5 = "obdumper-4.3.5-slice-v5"
-	exportMetadataV6 = "obdumper-4.3.5-slice-v6"
-	exportMetadataV7 = "obdumper-4.3.5-slice-v7"
+	exportMetadataV5              = "obdumper-4.3.5-slice-v5"
+	exportMetadataV6              = "obdumper-4.3.5-slice-v6"
+	exportMetadataV7              = "obdumper-4.3.5-slice-v7"
+	exportMetadataObjectSelection = "obdumper-4.3.5-slice-v8-object-selection"
+	exportMetadataCombinedObjects = "obdumper-4.3.5-slice-v9-combined-object-selection"
+	exportMetadataDDLTextFormats  = "obdumper-4.3.5-slice-v10-ddl-text-formats"
 )
 
 // errGeneralizedGeneratorUnavailable 表示泛化能力请求缺少对应的生成器依赖，必须失败关闭。
@@ -2624,9 +2647,22 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if source.State != "ENABLED" || source.LastTestStatus != "SUCCEEDED" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export data source is not eligible")
 	}
+	if input.ScopeKind == "QUERY_RESULT" {
+		if input.QueryResultLimit == nil {
+			return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export query result row limit is missing")
+		}
+		query, queryErr := exportdomain.WrapResultQuery(source.CompatibilityMode, input.QuerySql, *input.QueryResultLimit)
+		if queryErr != nil {
+			return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, queryErr
+		}
+		input.QuerySql = query
+	}
 	// 闪回时间点仅适用于 Oracle 兼容模式（EX-F079），MySQL 模式失败关闭。
 	if input.FlashbackTimestamp != "" && source.CompatibilityMode != "ORACLE" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("flashback timestamp requires oracle compatibility mode")
+	}
+	if input.FetchSize != nil && source.CompatibilityMode != "ORACLE" {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("fetch size requires oracle compatibility mode")
 	}
 	if input.TimestampFormats != (store.TimestampFormatConfig{}) && source.CompatibilityMode != "MYSQL" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("enabled timestamp formats require mysql compatibility mode")
@@ -2682,8 +2718,21 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	}
 	fields := append(append([]commandgen.FieldInput(nil), connectionFields...), generalizedFields...)
 	switch metadataVersion {
-	case "", exportMetadataV7:
+	case "":
 		requestBase.MetadataVersion = exportMetadataV7
+		if input.ContentKind == "DDL_AND_DATA" && input.Format != "CSV" {
+			requestBase.MetadataVersion = exportMetadataDDLTextFormats
+		} else if input.ObjectsByType != nil || (input.ScopeKind == "SPECIFIED" && input.ObjectType != "TABLE" && input.ObjectType != "VIEW") {
+			requestBase.MetadataVersion = exportMetadataCombinedObjects
+		}
+	case exportMetadataV7:
+		requestBase.MetadataVersion = exportMetadataV7
+	case exportMetadataObjectSelection:
+		requestBase.MetadataVersion = exportMetadataObjectSelection
+	case exportMetadataCombinedObjects:
+		requestBase.MetadataVersion = exportMetadataCombinedObjects
+	case exportMetadataDDLTextFormats:
+		requestBase.MetadataVersion = exportMetadataDDLTextFormats
 	case exportMetadataV6:
 		requestBase.MetadataVersion = exportMetadataV6
 	default:
@@ -4315,10 +4364,11 @@ type agentConnectionTestCompletionPayload struct {
 	Status        string `json:"status"`
 	EvidenceCode  string `json:"evidenceCode"`
 	// SysVerificationStatus/SysEvidenceCode 是可选的 sys 凭据验证结果（与数据库结果相互独立）。
-	SysVerificationStatus string   `json:"sysVerificationStatus"`
-	SysEvidenceCode       string   `json:"sysEvidenceCode"`
-	CatalogObjects        []string `json:"catalogObjects"`
-	CatalogTruncated      bool     `json:"catalogTruncated"`
+	SysVerificationStatus string                `json:"sysVerificationStatus"`
+	SysEvidenceCode       string                `json:"sysEvidenceCode"`
+	CatalogObjects        []string              `json:"catalogObjects"`
+	CatalogGroups         []catalogresult.Group `json:"catalogGroups"`
+	CatalogTruncated      bool                  `json:"catalogTruncated"`
 }
 
 // authenticatedPrecheckAgent 使用独立机器凭据认证预检查请求。
@@ -4609,7 +4659,7 @@ func (s *Server) claimNextAuthenticatedPrecheck(w http.ResponseWriter, r *http.R
 func precheckExecutionContextPayload(context store.PrecheckExecutionContext) map[string]any {
 	payload := map[string]any{
 		"compatibilityMode": context.CompatibilityMode,
-		"database":          context.Database, "objects": context.Objects,
+		"database":          context.Database, "objects": context.Objects, "objectTypes": context.ObjectTypes,
 		"contentKind": context.ContentKind,
 		"outputPath":  context.OutputPath, "targetPlatform": context.TargetPlatform,
 		"logPath": context.LogPath, "skipCheckDir": context.SkipCheckDir,
@@ -5087,7 +5137,7 @@ func (s *Server) completeAuthenticatedConnectionTest(w http.ResponseWriter, r *h
 		RequestDigest: agentConnectionTestRequestDigest("COMPLETE", request.agentConnectionTestEnvelope, connectionTestID, request.Payload),
 		Status:        request.Payload.Status, EvidenceCode: request.Payload.EvidenceCode, VerificationSource: run.VerificationSource,
 		SysVerificationStatus: request.Payload.SysVerificationStatus, SysResultCode: request.Payload.SysEvidenceCode,
-		CatalogObjects: request.Payload.CatalogObjects, CatalogTruncated: request.Payload.CatalogTruncated, Now: time.Now().UTC(),
+		CatalogObjects: request.Payload.CatalogObjects, CatalogGroups: request.Payload.CatalogGroups, CatalogTruncated: request.Payload.CatalogTruncated, Now: time.Now().UTC(),
 	})
 	if err != nil {
 		writeAgentConnectionTestStoreError(w, err)

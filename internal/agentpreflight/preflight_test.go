@@ -4,11 +4,37 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
 )
+
+func TestValidateRequestAcceptsMoreThanOneHundredObjects(t *testing.T) {
+	request := validRequest()
+	request.Objects = make([]string, 101)
+	for index := range request.Objects {
+		request.Objects[index] = "table_" + strconv.Itoa(index)
+	}
+	if err := validateRequest(request); err != nil {
+		t.Fatalf("101 个冻结对象应通过预检查输入校验：%v", err)
+	}
+}
+
+func TestValidateRequestMixedObjectContentBoundary(t *testing.T) {
+	request := validRequest()
+	request.Objects = []string{"synthetic_table", "synthetic_view"}
+	request.ObjectTypes = []string{"TABLE", "VIEW"}
+	request.ContentKind = "DDL_AND_DATA"
+	if err := validateRequest(request); err != nil {
+		t.Fatalf("结构与数据混合导出应接受非表对象定义：%v", err)
+	}
+	request.ContentKind = "DATA_ONLY"
+	if err := validateRequest(request); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("仅数据不得接受非表对象：%v", err)
+	}
+}
 
 func Test固定预检查执行完整清单且不接收自定义操作(t *testing.T) {
 	probe := &syntheticProbe{}

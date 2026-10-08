@@ -3,9 +3,9 @@ package agentjdbc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"ob-data-orch/internal/agentpreflight"
@@ -24,9 +24,9 @@ func TestPrecheckProbeUsesOneConnectionForDatabaseAndObjectAndClearsBuffers(t *t
 	probe := &PrecheckProbe{
 		WorkspaceRoot: root,
 		Resolver:      resolver,
-		Run: func(_ context.Context, workspace credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+		RunBatch: func(_ context.Context, workspace credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
 			runCalls++
-			if filepath.Dir(workspace.RuntimeDirectory()) != filepath.Join(root, "executions", "precheck-1") || string(request.Connection.Password) != "synthetic-password" || request.CompatibilityMode != jdbcprobe.CompatibilityModeMySQL || request.Database != "synthetic_db" || request.Table != "synthetic_table" {
+			if filepath.Dir(workspace.RuntimeDirectory()) != filepath.Join(root, "executions", "precheck-1") || string(request.Connection.Password) != "synthetic-password" || request.CompatibilityMode != jdbcprobe.CompatibilityModeMySQL || request.Database != "synthetic_db" || len(request.Objects) != 1 || request.Objects[0] != (jdbcprobe.PreflightObject{Type: "TABLE", Name: "synthetic_table"}) {
 				t.Fatal("预检查没有使用私有工作区、冻结对象或短时连接输入")
 			}
 			return jdbcprobe.PreflightResult{Connection: jdbcprobe.Result{ProductName: "OceanBase"}, ObjectAccess: jdbcprobe.ObjectAccessible}, nil
@@ -71,7 +71,7 @@ func TestPrecheckProbeFailsClosedForUnavailableOrUnreachableObject(t *testing.T)
 			probe := &PrecheckProbe{
 				WorkspaceRoot: t.TempDir(),
 				Resolver:      &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}},
-				Run: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+				RunBatch: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
 					return jdbcprobe.PreflightResult{ObjectAccess: test.access}, test.runnerError
 				},
 			}
@@ -93,7 +93,7 @@ func TestPrecheckProbeDoesNotResolveSlotForObjectFirstOrMismatchedRequest(t *tes
 	probe := &PrecheckProbe{
 		WorkspaceRoot: t.TempDir(),
 		Resolver:      resolver,
-		Run: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+		RunBatch: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
 			runCalls++
 			return jdbcprobe.PreflightResult{ObjectAccess: jdbcprobe.ObjectAccessible}, nil
 		},
@@ -113,6 +113,28 @@ func TestPrecheckProbeDoesNotResolveSlotForObjectFirstOrMismatchedRequest(t *tes
 	}
 }
 
+func TestPrecheckProbeDoesNotReuseResultForAmbiguousObjectNames(t *testing.T) {
+	probe := &PrecheckProbe{
+		WorkspaceRoot: t.TempDir(),
+		Resolver: &countingResolver{connection: Connection{
+			Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password"),
+		}},
+		RunBatch: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
+			return jdbcprobe.PreflightResult{ObjectAccess: jdbcprobe.ObjectAccessible}, nil
+		},
+	}
+	first := validRequest()
+	first.Objects = []string{"table_one", "table_two"}
+	if result, err := probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, first); err != nil || result.Status != agentpreflight.StatusPassed {
+		t.Fatalf("首个冻结清单结果 = %#v, %v", result, err)
+	}
+	second := validRequest()
+	second.Objects = []string{"table_one,table_two"}
+	if result, err := probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, second); err != nil || result.Status != agentpreflight.StatusUnknown {
+		t.Fatalf("歧义对象名复用了已有结果：%#v, %v", result, err)
+	}
+}
+
 func TestPrecheckProbeRejectsOtherChecks(t *testing.T) {
 	_, err := (&PrecheckProbe{}).Probe(context.Background(), agentpreflight.CheckToolEnvironment, validRequest())
 	if !errors.Is(err, ErrUnsupportedCheck) {
@@ -120,15 +142,30 @@ func TestPrecheckProbeRejectsOtherChecks(t *testing.T) {
 	}
 }
 
-// TestPrecheckProbeExploresEachFrozenObjectOnce 验证 SPECIFIED 多对象逐个运行冻结探针，且只解析一次秘密槽位。
+// TestPrecheckProbeExploresEachFrozenObjectOnce 验证 SPECIFIED 多对象共用一次冻结探针和秘密槽位。
 func TestPrecheckProbeExploresEachFrozenObjectOnce(t *testing.T) {
 	resolver := &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}}
-	var probed []string
+	runCalls := 0
 	probe := &PrecheckProbe{
 		WorkspaceRoot: t.TempDir(),
 		Resolver:      resolver,
-		Run: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
-			probed = append(probed, request.Table)
+		RunBatch: func(_ context.Context, workspace credential.Workspace, runtime jdbcprobe.Runtime, request jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
+			runCalls++
+			if runtime.ProbePath != filepath.Join(workspace.RuntimeDirectory(), "ob-data-orch-jdbc-probe.jar") || runtime.ProbeSHA256 == "" {
+				t.Fatal("多对象预检查没有复用已安装的固定探针")
+			}
+			if _, _, err := jdbcprobe.Install(workspace); !errors.Is(err, jdbcprobe.ErrProbeFailed) {
+				t.Fatalf("固定探针资产允许重复安装: %v", err)
+			}
+			want := []jdbcprobe.PreflightObject{{Type: "TABLE", Name: "table_one"}, {Type: "TABLE", Name: "table_two"}, {Type: "TABLE", Name: "view_one"}}
+			if len(request.Objects) != len(want) {
+				t.Fatalf("冻结对象数量 = %d", len(request.Objects))
+			}
+			for index := range want {
+				if request.Objects[index] != want[index] {
+					t.Fatalf("冻结对象[%d] = %#v", index, request.Objects[index])
+				}
+			}
 			return jdbcprobe.PreflightResult{Connection: jdbcprobe.Result{ProductName: "OceanBase"}, ObjectAccess: jdbcprobe.ObjectAccessible}, nil
 		},
 	}
@@ -143,8 +180,8 @@ func TestPrecheckProbeExploresEachFrozenObjectOnce(t *testing.T) {
 	if err != nil || object.Status != agentpreflight.StatusPassed || object.EvidenceCode != EvidenceObjectAccessible {
 		t.Fatalf("多对象结果 = %#v, %v", object, err)
 	}
-	if strings.Join(probed, ",") != "table_one,table_two,view_one" || resolver.calls != 1 {
-		t.Fatalf("探测序列/槽位解析 = %#v / %d", probed, resolver.calls)
+	if runCalls != 1 || resolver.calls != 1 {
+		t.Fatalf("批量探针/槽位解析调用 = %d/%d", runCalls, resolver.calls)
 	}
 }
 
@@ -153,9 +190,9 @@ func TestPrecheckProbeFailsClosedWhenAnyObjectInaccessible(t *testing.T) {
 	probe := &PrecheckProbe{
 		WorkspaceRoot: t.TempDir(),
 		Resolver:      &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}},
-		Run: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+		RunBatch: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
 			access := jdbcprobe.ObjectAccessible
-			if request.Table == "table_two" {
+			if len(request.Objects) == 2 && request.Objects[1].Name == "table_two" {
 				access = jdbcprobe.ObjectNotAccessible
 			}
 			return jdbcprobe.PreflightResult{ObjectAccess: access}, nil
@@ -172,6 +209,49 @@ func TestPrecheckProbeFailsClosedWhenAnyObjectInaccessible(t *testing.T) {
 	}
 }
 
+// TestPrecheckProbeMixedObjectTypesUsesFrozenBatch 验证五类冻结对象一次传入并对缺失对象失败关闭。
+func TestPrecheckProbeMixedObjectTypesUsesFrozenBatch(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprint("missing=", missing), func(t *testing.T) {
+			runCalls := 0
+			probe := &PrecheckProbe{
+				WorkspaceRoot: t.TempDir(),
+				Resolver:      &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}},
+				RunBatch: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, request jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
+					runCalls++
+					wantTypes := []string{"TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"}
+					if len(request.Objects) != len(wantTypes) {
+						t.Fatalf("混合对象数量 = %d", len(request.Objects))
+					}
+					for index, kind := range wantTypes {
+						if request.Objects[index].Type != kind {
+							t.Fatalf("混合对象类型[%d] = %s", index, request.Objects[index].Type)
+						}
+					}
+					access := jdbcprobe.ObjectAccessible
+					if missing {
+						access = jdbcprobe.ObjectNotAccessible
+					}
+					return jdbcprobe.PreflightResult{ObjectAccess: access}, nil
+				},
+			}
+			request := validRequest()
+			request.Objects = []string{"table_one", "view_one", "fn_one", "proc_one", "seq_one"}
+			request.ObjectTypes = []string{"TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"}
+			request.ContentKind = "DDL_ONLY"
+			_, _ = probe.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, request)
+			object, err := probe.Probe(context.Background(), agentpreflight.CheckObjectAccess, request)
+			want := agentpreflight.StatusPassed
+			if missing {
+				want = agentpreflight.StatusFailed
+			}
+			if err != nil || object.Status != want || runCalls != 1 {
+				t.Fatalf("冻结分类预检查 = %#v, %v; calls=%d", object, err, runCalls)
+			}
+		})
+	}
+}
+
 // TestPrecheckProbeAllScopeProjectsDatabaseLevelAccess 验证 ALL 范围只运行连接探测并按可达性投影对象结论。
 func TestPrecheckProbeAllScopeProjectsDatabaseLevelAccess(t *testing.T) {
 	resolver := &countingResolver{connection: Connection{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")}}
@@ -180,7 +260,7 @@ func TestPrecheckProbeAllScopeProjectsDatabaseLevelAccess(t *testing.T) {
 	probe := &PrecheckProbe{
 		WorkspaceRoot: t.TempDir(),
 		Resolver:      resolver,
-		Run: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error) {
+		RunBatch: func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
 			preflightCalls++
 			return jdbcprobe.PreflightResult{ObjectAccess: jdbcprobe.ObjectAccessible}, nil
 		},

@@ -10,7 +10,7 @@ import { FileAddOutlined, EditOutlined, ReloadOutlined, DeleteOutlined } from '@
 import { browserApi, dataSourceErrorMessage, exportDraftErrorMessage, taskDetailErrorMessage, type DataSourceSummary, type ExecutionNodeCandidate, type ExportConfigTemplateItem } from '@/api/browser'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { isExportEligibleDataSource } from './exportDataSourceEligibility'
+import { isExportEligibleDataSource } from '@/workbench/export/exportDataSourceEligibility'
 
 const api = browserApi()
 const router = useRouter()

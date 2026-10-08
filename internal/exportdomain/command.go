@@ -45,12 +45,26 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 	switch input.ScopeKind {
 	case "ALL":
 		appendBool("--all", true)
+	case "QUERY_RESULT":
+		// --query-sql 独立指定结果集，不发射 --all 或任何对象参数。
 	case "SPECIFIED":
-		objectParameter := "--table"
-		if input.ObjectType == "VIEW" {
-			objectParameter = "--view"
+		if len(input.ObjectsByType) != 0 {
+			for objectType := range input.ObjectsByType {
+				if !supportedObjectType(objectType) {
+					return nil, errors.New("export draft object type is unsupported")
+				}
+			}
+			for _, objectType := range []string{"TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"} {
+				if names := input.ObjectsByType[objectType]; len(names) != 0 {
+					appendString(objectParameterName(objectType), strings.Join(names, ","))
+				}
+			}
+		} else {
+			if !supportedObjectType(input.ObjectType) {
+				return nil, errors.New("export draft object type is unsupported")
+			}
+			appendString(objectParameterName(input.ObjectType), strings.Join(input.Objects, ","))
 		}
-		appendString(objectParameter, strings.Join(input.Objects, ","))
 	default:
 		return nil, errors.New("export draft scope is unsupported")
 	}
@@ -86,13 +100,20 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 			Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true},
 		})
 	case "DDL_AND_DATA":
+		formatParameter := "--csv"
+		switch input.Format {
+		case "CUT":
+			formatParameter = "--cut"
+		case "SQL":
+			formatParameter = "--sql"
+		}
 		fields = append(fields,
 			commandgen.FieldInput{
 				Name: "--ddl", Source: commandgen.SourceFormat,
 				Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true},
 			},
 			commandgen.FieldInput{
-				Name: "--csv", Source: commandgen.SourceFormat,
+				Name: formatParameter, Source: commandgen.SourceFormat,
 				Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: true},
 			},
 		)
@@ -209,4 +230,20 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 	appendString("--block-size", input.BlockSize)
 
 	return fields, nil
+}
+
+// objectParameterName 把已验证的对象类型映射到 OBDUMPER 固定参数名。
+func objectParameterName(objectType string) string {
+	switch objectType {
+	case "VIEW":
+		return "--view"
+	case "FUNCTION":
+		return "--function"
+	case "PROCEDURE":
+		return "--procedure"
+	case "SEQUENCE":
+		return "--sequence"
+	default:
+		return "--table"
+	}
 }

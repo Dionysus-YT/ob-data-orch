@@ -1205,6 +1205,11 @@ func newGeneralizedFlowHandler(t *testing.T, drafts *recordingDraftStore, preche
 
 // newGeneralizedFlowHandlerWithStorageCredentials 为对象存储引用测试额外装配受控凭据读取边界。
 func newGeneralizedFlowHandlerWithStorageCredentials(t *testing.T, drafts *recordingDraftStore, prechecks ExportPrecheckStore, tasks *recordingTaskStore, storageCredentials StorageCredentialStore) http.Handler {
+	return newGeneralizedFlowHandlerWithDataSources(t, drafts, prechecks, tasks, storageCredentials, staticDataSourceReader{})
+}
+
+// newGeneralizedFlowHandlerWithDataSources 为租户互斥参数测试注入合成兼容模式。
+func newGeneralizedFlowHandlerWithDataSources(t *testing.T, drafts *recordingDraftStore, prechecks ExportPrecheckStore, tasks *recordingTaskStore, storageCredentials StorageCredentialStore, sources DataSourceReader) http.Handler {
 	t.Helper()
 	generator, err := commandgen.NewDefault()
 	if err != nil {
@@ -1219,7 +1224,7 @@ func newGeneralizedFlowHandlerWithStorageCredentials(t *testing.T, drafts *recor
 		t.Fatalf("NewCoordinator() error = %v", err)
 	}
 	return NewHandlerWithDependencies(buildinfo.Info{Version: "test"}, Dependencies{
-		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: staticDataSourceReader{},
+		Identity: browserOnlyIdentityProvider{}, Authorizer: sliceAuthorizer{}, DataSources: sources,
 		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts, Prechecks: prechecks, Tasks: tasks,
 		StorageCredentials: storageCredentials, Generator: generator, GeneralizedGenerator: generalized, PrecheckTTL: time.Minute, Coordinator: coordinator, CSRF: allowedCSRF{},
 	})
@@ -1378,6 +1383,50 @@ func TestExportDraftV6DDLOnlyFlow(t *testing.T) {
 	}
 }
 
+// TestExportDraftV6MixedObjectTypesDDLFlow 验证跨分类草稿到命令预览、预检查及快照的完整合成链路。
+func TestExportDraftV6MixedObjectTypesDDLFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE","VIEW","FUNCTION","PROCEDURE","SEQUENCE"],"expressions":[{"objectType":"TABLE","name":"table_one"},{"objectType":"VIEW","name":"view_one"},{"objectType":"FUNCTION","name":"fn_one"},{"objectType":"PROCEDURE","name":"proc_one"},{"objectType":"SEQUENCE","name":"seq_one"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}}}`
+	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "mixed-ddl")
+	if drafts.created.MetadataVersion != exportMetadataCombinedObjects {
+		t.Fatalf("混合对象元数据版本 = %s", drafts.created.MetadataVersion)
+	}
+	for _, fragment := range []string{`"--table","table_one"`, `"--view","view_one"`, `"--function","fn_one"`, `"--procedure","proc_one"`, `"--sequence","seq_one"`} {
+		if !strings.Contains(previewBody, fragment) {
+			t.Fatalf("混合对象参数缺失 %s：%s", fragment, previewBody)
+		}
+	}
+	if !strings.Contains(drafts.created.ObjectScopeJSON, `"objectTypes":["TABLE","VIEW","FUNCTION","PROCEDURE","SEQUENCE"]`) || tasks.input.SnapshotJSON != drafts.created.ConfigJSON || !strings.Contains(snapshotBody, exportMetadataCombinedObjects) {
+		t.Fatalf("混合对象持久化或快照丢失分类：%s / %s", drafts.created.ObjectScopeJSON, snapshotBody)
+	}
+}
+
+// TestExportDraftV6MixedObjectsWithTableDataFlow 验证表数据与其他对象定义可一同进入预览和冻结快照。
+func TestExportDraftV6MixedObjectsWithTableDataFlow(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE","VIEW","SEQUENCE"],"expressions":[{"objectType":"TABLE","name":"table_one"},{"objectType":"VIEW","name":"view_one"},{"objectType":"SEQUENCE","name":"seq_one"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"}}}`
+	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "mixed-ddl-csv")
+	if drafts.created.MetadataVersion != exportMetadataCombinedObjects || drafts.created.CapabilityVersion != "export-odp-ddl-csv-v1" {
+		t.Fatalf("组合草稿版本错误：%s / %s", drafts.created.MetadataVersion, drafts.created.CapabilityVersion)
+	}
+	for _, fragment := range []string{`"--table","table_one"`, `"--view","view_one"`, `"--sequence","seq_one"`, `"--ddl"`, `"--csv"`} {
+		if !strings.Contains(previewBody, fragment) {
+			t.Fatalf("组合参数缺失 %s：%s", fragment, previewBody)
+		}
+	}
+	if !strings.Contains(snapshotBody, exportMetadataCombinedObjects) {
+		t.Fatalf("组合快照缺少元数据版本：%s", snapshotBody)
+	}
+}
+
 func TestExportDraftV6DDLAndCSVFlow(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
@@ -1394,6 +1443,38 @@ func TestExportDraftV6DDLAndCSVFlow(t *testing.T) {
 	}
 	if !strings.Contains(snapshotBody, `"format":"DDL_CSV"`) {
 		t.Fatalf("ddl-csv snapshot unexpected: %s", snapshotBody)
+	}
+}
+
+// TestExportDraftV6DDLTextFormatsFlow 验证结构与 CUT/SQL 数据组合的草稿、预览和冻结快照。
+func TestExportDraftV6DDLTextFormatsFlow(t *testing.T) {
+	for _, testCase := range []struct {
+		format     string
+		capability string
+		flag       string
+	}{
+		{format: "CUT", capability: "export-odp-ddl-cut-v1", flag: "--cut"},
+		{format: "SQL", capability: "export-odp-ddl-sql-v1", flag: "--sql"},
+	} {
+		t.Run(testCase.format, func(t *testing.T) {
+			drafts := &recordingDraftStore{}
+			prechecks := &recordingPrecheckStore{}
+			tasks := &recordingTaskStore{}
+			handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
+			body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE","VIEW"],"expressions":[{"objectType":"TABLE","name":"table_one"},{"objectType":"VIEW","name":"view_one"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"` + testCase.format + `","csvOptions":{"fileEncoding":"UTF-8"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"},"performanceConfig":{"blockSize":"512"}}}`
+			previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "ddl-"+strings.ToLower(testCase.format))
+			if drafts.created.MetadataVersion != exportMetadataDDLTextFormats || drafts.created.CapabilityVersion != testCase.capability {
+				t.Fatalf("组合草稿版本错误：%s / %s", drafts.created.MetadataVersion, drafts.created.CapabilityVersion)
+			}
+			for _, fragment := range []string{`"--table","table_one"`, `"--view","view_one"`, `"--ddl"`, `"` + testCase.flag + `"`, `"--file-encoding","UTF-8"`, `"--block-size","512"`} {
+				if !strings.Contains(previewBody, fragment) {
+					t.Fatalf("组合参数缺失 %s：%s", fragment, previewBody)
+				}
+			}
+			if strings.Contains(previewBody, `"--csv"`) || strings.Contains(snapshotBody, `"format":"DDL_CSV"`) || !strings.Contains(snapshotBody, `"format":"DDL_`+testCase.format+`"`) {
+				t.Fatalf("组合格式投影错误：%s / %s", previewBody, snapshotBody)
+			}
+		})
 	}
 }
 
@@ -1519,6 +1600,52 @@ func TestExportDraftAcceptsOrdinaryQuerySQL(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated || drafts.created.DraftID == "" {
 		t.Fatalf("query-sql ordinary response=%d draft=%#v body=%s", response.Code, drafts.created, response.Body.String())
+	}
+}
+
+// TestExportDraftQueryResultScope 验证结果集模式不需要对象参数，且条数上限进入固定命令预览。
+func TestExportDraftQueryResultScope(t *testing.T) {
+	t.Parallel()
+	drafts := &recordingDraftStore{}
+	handler := newGeneralizedFlowHandler(t, drafts, &recordingPrecheckStore{}, &recordingTaskStore{})
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"QUERY_RESULT"},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"querySql":"SELECT id FROM synthetic_table","queryResultLimit":1000}}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+	request.Header.Set("Idempotency-Key", "synthetic-query-result-draft-key-000")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, request)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create response=%d body=%s", created.Code, created.Body.String())
+	}
+	preview := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts/draft-synthetic:preview-command", nil)
+	preview.Header.Set("If-Match", `"rev-1"`)
+	previewed := httptest.NewRecorder()
+	handler.ServeHTTP(previewed, preview)
+	if previewed.Code != http.StatusOK || !strings.Contains(previewed.Body.String(), "LIMIT 1000") || !strings.Contains(previewed.Body.String(), "--query-sql") || strings.Contains(previewed.Body.String(), "--table") || strings.Contains(previewed.Body.String(), "--all") {
+		t.Fatalf("query result preview=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+}
+
+// TestExportDraftQueryResultRejectsInvalidCombinations 验证范围、内容及 SQL 限制由服务端复核。
+func TestExportDraftQueryResultRejectsInvalidCombinations(t *testing.T) {
+	t.Parallel()
+	handler := newGeneralizedFlowHandler(t, &recordingDraftStore{}, &recordingPrecheckStore{}, &recordingTaskStore{})
+	base := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"QUERY_RESULT"},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"querySql":"SELECT id FROM synthetic_table","queryResultLimit":1000}}}`
+	cases := map[string]string{
+		"缺少条数上限":     strings.Replace(base, `,"queryResultLimit":1000`, "", 1),
+		"多条 SQL":     strings.Replace(base, "SELECT id FROM synthetic_table", "SELECT 1; SELECT 2", 1),
+		"仅结构":        strings.Replace(base, `"DATA_ONLY"`, `"DDL_ONLY"`, 1),
+		"携带对象":       strings.Replace(base, `"scopeKind":"QUERY_RESULT"`, `"scopeKind":"QUERY_RESULT","objectTypes":["TABLE"]`, 1),
+		"携带筛选":       strings.Replace(base, `"queryResultLimit":1000`, `"queryResultLimit":1000,"where":"id > 0"`, 1),
+		"普通范围携带条数上限": strings.Replace(base, `"scopeKind":"QUERY_RESULT"`, `"scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]`, 1),
+	}
+	for name, body := range cases {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
+		request.Header.Set("Idempotency-Key", "synthetic-query-result-reject-key-000")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s response=%d body=%s", name, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -1712,12 +1839,12 @@ func TestExportDraftV6CSVOptionsFlow(t *testing.T) {
 	prechecks := &recordingPrecheckStore{}
 	tasks := &recordingTaskStore{}
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
-	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"skipHeader":true,"columnSeparator":"|","columnQuote":"'","columnQuoteMode":"minimal","escapeCharacter":"\\","lineSeparator":"\\r\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true,"compress":true,"compressionAlgo":"zstd"},"filterConfig":{"includeColumnNames":["col_a","col_b"],"excludeVirtualColumns":true,"flashbackScn":100},"performanceConfig":{"thread":4,"pageSize":1000,"parallelMacro":8,"fetchSize":100,"jvmMemory":"4G"}}}`
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"skipHeader":true,"columnSeparator":"|","columnQuote":"'","columnQuoteMode":"minimal","escapeCharacter":"\\","lineSeparator":"\\r\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true,"compress":true,"compressionAlgo":"zstd"},"filterConfig":{"includeColumnNames":["col_a","col_b"],"excludeVirtualColumns":true,"flashbackScn":100},"performanceConfig":{"thread":4,"pageSize":1000,"parallelMacro":8,"jvmMemory":"4G"}}}`
 	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi3-options")
 	if drafts.created.CapabilityVersion != "export-odp-full-csv-v1" {
 		t.Fatalf("options draft capability=%s", drafts.created.CapabilityVersion)
 	}
-	for _, token := range []string{`"--skip-header"`, `"--column-separator"`, `"|"`, `"--column-quote-mode"`, `"minimal"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--include-column-names"`, `"col_a,col_b"`, `"--exclude-virtual-columns"`, `"--flashback-scn"`, `"100"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--parallel-macro"`, `"8"`, `"--fetch-size"`, `"100"`, `"--mem"`, `"4G"`} {
+	for _, token := range []string{`"--skip-header"`, `"--column-separator"`, `"|"`, `"--column-quote-mode"`, `"minimal"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--include-column-names"`, `"col_a,col_b"`, `"--exclude-virtual-columns"`, `"--flashback-scn"`, `"100"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--parallel-macro"`, `"8"`, `"--mem"`, `"4G"`} {
 		if !strings.Contains(previewBody, token) {
 			t.Fatalf("EX-I3 preview missing %s: %s", token, previewBody)
 		}
@@ -1749,6 +1876,9 @@ func TestExportDraftV6CSVOptionsFailClosed(t *testing.T) {
 	}{
 		"非法包围模式":          {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"columnQuoteMode":"bogus"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"转义字符多字符":         {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"escapeCharacter":"ab"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
+		"CSV 分隔符多字符":      {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"columnSeparator":"||"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
+		"CSV 包围符多字符":      {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","csvOptions":{"columnQuote":"''"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
+		"MySQL 游标抓取行数":    {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"fetchSize":100}}}`},
 		"仅 DDL 携带 CSV 选项": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"csvOptions":{"skipHeader":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"算法未启用压缩":         {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compressionAlgo":"zstd"}}}`},
 		"非法压缩算法":          {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out","compress":true,"compressionAlgo":"brotli"}}}`},
@@ -1779,12 +1909,12 @@ func TestExportDraftV6CUTFlow(t *testing.T) {
 	prechecks := &recordingPrecheckStore{}
 	tasks := &recordingTaskStore{}
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
-	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CUT","cutOptions":{"trailDelimiter":true,"removeNewline":true},"csvOptions":{"escapeCharacter":"\\","lineSeparator":"\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"zstd","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true},"filterConfig":{"includeColumnNames":["col_a","col_b"]},"performanceConfig":{"thread":4,"pageSize":1000,"jvmMemory":"4G"}}}`
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CUT","cutOptions":{"trailDelimiter":true,"removeNewline":true},"csvOptions":{"columnSplitter":"||","escapeCharacter":"\\","lineSeparator":"\\n","nullString":"NULL","fileEncoding":"UTF-8","withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"zstd","noNestedDir":true,"maxFileSize":1048576,"retainEmptyFiles":true},"filterConfig":{"includeColumnNames":["col_a","col_b"]},"performanceConfig":{"thread":4,"pageSize":1000,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-cut")
 	if drafts.created.CapabilityVersion != "export-odp-cut-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("cut draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
-	for _, token := range []string{`"--cut"`, `"--trail-delimiter"`, `"--remove-newline"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--include-column-names"`, `"col_a,col_b"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--mem"`, `"4G"`} {
+	for _, token := range []string{`"--cut"`, `"--column-splitter"`, `"||"`, `"--trail-delimiter"`, `"--remove-newline"`, `"--escape-character"`, `"--line-separator"`, `"--null-string"`, `"NULL"`, `"--file-encoding"`, `"UTF-8"`, `"--with-trim"`, `"--compress"`, `"--compression-algo"`, `"zstd"`, `"--no-nested-dir"`, `"--max-file-size"`, `"1048576"`, `"--retain-empty-files"`, `"--include-column-names"`, `"col_a,col_b"`, `"--thread"`, `"4"`, `"--page-size"`, `"1000"`, `"--mem"`, `"4G"`} {
 		if !strings.Contains(previewBody, token) {
 			t.Fatalf("cut preview missing %s: %s", token, previewBody)
 		}
@@ -1806,12 +1936,12 @@ func TestExportDraftV6SQLFlow(t *testing.T) {
 	prechecks := &recordingPrecheckStore{}
 	tasks := &recordingTaskStore{}
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
-	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"SQL","csvOptions":{"lineSeparator":"\\n","fileEncoding":"UTF-8"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"gzip","retainEmptyFiles":true},"filterConfig":{"flashbackScn":100,"excludeColumnNames":["col_c"]},"performanceConfig":{"thread":4,"fetchSize":100,"jvmMemory":"4G"}}}`
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"SQL","csvOptions":{"lineSeparator":"\\n","fileEncoding":"UTF-8"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output","compress":true,"compressionAlgo":"gzip","retainEmptyFiles":true},"filterConfig":{"flashbackScn":100,"excludeColumnNames":["col_c"]},"performanceConfig":{"thread":4,"jvmMemory":"4G"}}}`
 	previewBody, snapshotBody := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi4-sql")
 	if drafts.created.CapabilityVersion != "export-odp-sql-v1" || drafts.created.MetadataVersion != "obdumper-4.3.5-slice-v7" {
 		t.Fatalf("sql draft capability=%s metadata=%s", drafts.created.CapabilityVersion, drafts.created.MetadataVersion)
 	}
-	for _, token := range []string{`"--sql"`, `"--line-separator"`, `"--file-encoding"`, `"UTF-8"`, `"--compress"`, `"--compression-algo"`, `"gzip"`, `"--retain-empty-files"`, `"--flashback-scn"`, `"100"`, `"--exclude-column-names"`, `"col_c"`, `"--thread"`, `"4"`, `"--fetch-size"`, `"100"`, `"--mem"`, `"4G"`} {
+	for _, token := range []string{`"--sql"`, `"--line-separator"`, `"--file-encoding"`, `"UTF-8"`, `"--compress"`, `"--compression-algo"`, `"gzip"`, `"--retain-empty-files"`, `"--flashback-scn"`, `"100"`, `"--exclude-column-names"`, `"col_c"`, `"--thread"`, `"4"`, `"--mem"`, `"4G"`} {
 		if !strings.Contains(previewBody, token) {
 			t.Fatalf("sql preview missing %s: %s", token, previewBody)
 		}
@@ -2086,9 +2216,10 @@ func TestExportDraftV6CUTSQLFailClosed(t *testing.T) {
 		"CUT 携带 CSV 专属选项": {`{` + base + `,"dataFormat":{"formatKind":"CUT","csvOptions":{"skipHeader":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"CSV 携带 CUT 专属选项": {`{` + base + `,"dataFormat":{"formatKind":"CSV","cutOptions":{"trailDelimiter":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"SQL 携带修剪选项":      {`{` + base + `,"dataFormat":{"formatKind":"SQL","csvOptions":{"withTrim":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
+		"SQL 携带 NULL 替换":  {`{` + base + `,"dataFormat":{"formatKind":"SQL","csvOptions":{"nullString":"NULL"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"SQL 携带转义字符":      {`{` + base + `,"dataFormat":{"formatKind":"SQL","csvOptions":{"escapeCharacter":"\\"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"SQL 携带 CUT 专属选项": {`{` + base + `,"dataFormat":{"formatKind":"SQL","cutOptions":{"removeNewline":true}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
-		"DDL 与数据固定 CSV":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"CUT"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
+		"DDL 与数据拒绝 POS":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"仅 DDL 声明数据格式":    {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"formatKind":"SQL"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 		"POS 缺少控制文件":      {`{` + base + `,"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`},
 	}
@@ -2135,6 +2266,25 @@ func TestExportDraftV6FlashbackTimestampRequiresOracle(t *testing.T) {
 	}
 }
 
+// TestExportDraftV6OracleFetchSizeFlow 验证 Oracle 租户可发送游标抓取行数，而 MySQL 负例由 CSV 选项门禁覆盖。
+func TestExportDraftV6OracleFetchSizeFlow(t *testing.T) {
+	t.Parallel()
+	source, err := (staticDataSourceReader{}).GetDataSourceSummary(context.Background(), "source-allowed")
+	if err != nil {
+		t.Fatalf("GetDataSourceSummary() error = %v", err)
+	}
+	source.CompatibilityMode = "ORACLE"
+	drafts := &recordingDraftStore{}
+	prechecks := &recordingPrecheckStore{}
+	tasks := &recordingTaskStore{}
+	handler := newGeneralizedFlowHandlerWithDataSources(t, drafts, prechecks, tasks, nil, staticDataSources{summaries: []store.DataSourceSummary{source}})
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"fetchSize":100}}}`
+	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "oracle-fetch-size")
+	if !strings.Contains(previewBody, `"--fetch-size"`) || !strings.Contains(previewBody, `"100"`) {
+		t.Fatalf("oracle preview missing fetch size: %s", previewBody)
+	}
+}
+
 func TestExportDraftV6ViewDDLFlow(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
@@ -2173,7 +2323,7 @@ func TestExportDraftVersionRoutingFailsClosed(t *testing.T) {
 		"全部对象范围":         {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"ALL","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"POS 缺少控制文件":     {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"未声明数据格式":        {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
-		"DDL+数据声明 CUT":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"CUT"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
+		"DDL+数据声明 POS":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_AND_DATA"},"dataFormat":{"formatKind":"POS"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"仅 DDL 内容声明无效格式": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"formatKind":"CUT"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"对象存储输出":         {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"OSS","filePath":"oss://bucket/out?access-key=x&secret-key=y"}}}`, http.StatusUnprocessableEntity},
 		// EX-F072 分区筛选（2026-08-13 实测定版）已启用：仅拒绝非表范围、DDL 内容与非法分区名。

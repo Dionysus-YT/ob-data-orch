@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/agentwire"
+	"ob-data-orch/internal/catalogresult"
 )
 
 var (
@@ -58,6 +59,7 @@ type Outcome struct {
 	SysVerificationStatus agentwire.DataSourceConnectionTestSysVerificationStatus
 	SysEvidenceCode       string
 	CatalogObjects        []string
+	CatalogGroups         []catalogresult.Group
 	CatalogTruncated      bool
 }
 
@@ -186,7 +188,7 @@ func validCatalogGrantScope(database, objectType string) bool {
 	if objectType == "DATABASE" {
 		return database == ""
 	}
-	return (objectType == "TABLE" || objectType == "VIEW") && database != ""
+	return (objectType == "ALL" || objectType == "TABLE" || objectType == "VIEW" || objectType == "FUNCTION" || objectType == "PROCEDURE" || objectType == "SEQUENCE") && database != ""
 }
 
 // testOutcome 将来源固定到唯一可接受的结果集合，避免运行器将异常文本或任意结果写入控制面。
@@ -232,7 +234,7 @@ func completion(bootID string, grant agentwire.DataSourceConnectionTestGrant, ou
 		LeaseEpoch: grant.LeaseEpoch, BindingDigest: grant.BindingDigest, Status: outcome.Status,
 		EvidenceCode: outcome.EvidenceCode, VerificationSource: outcome.VerificationSource,
 		SysVerificationStatus: outcome.SysVerificationStatus, SysEvidenceCode: outcome.SysEvidenceCode,
-		CatalogObjects: outcome.CatalogObjects, CatalogTruncated: outcome.CatalogTruncated, SentAt: sentAt,
+		CatalogObjects: outcome.CatalogObjects, CatalogGroups: outcome.CatalogGroups, CatalogTruncated: outcome.CatalogTruncated, SentAt: sentAt,
 	}
 }
 
@@ -249,7 +251,9 @@ func validJDBCOutcome(grant agentwire.DataSourceConnectionTestGrant, outcome Out
 	}
 	if grant.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
 		if outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured || len(outcome.CatalogObjects) > 100 ||
-			(outcome.Status != agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated)) {
+			(outcome.Status != agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || len(outcome.CatalogGroups) != 0 || outcome.CatalogTruncated)) ||
+			(grant.Binding.CatalogObjectType == "ALL" && outcome.Status == agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated || !catalogresult.ValidGroups(outcome.CatalogGroups))) ||
+			(grant.Binding.CatalogObjectType != "ALL" && len(outcome.CatalogGroups) != 0) {
 			return false
 		}
 		for _, name := range outcome.CatalogObjects {
@@ -257,7 +261,7 @@ func validJDBCOutcome(grant agentwire.DataSourceConnectionTestGrant, outcome Out
 				return false
 			}
 		}
-	} else if len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated {
+	} else if len(outcome.CatalogObjects) != 0 || len(outcome.CatalogGroups) != 0 || outcome.CatalogTruncated {
 		return false
 	}
 	return (outcome.Status == agentwire.DataSourceConnectionTestSucceeded && outcome.EvidenceCode == "DATABASE_CONNECTED") ||

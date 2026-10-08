@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/store"
 )
@@ -140,7 +141,7 @@ func validExportCatalogRequest(request exportObjectCatalogRequest) bool {
 	if request.ObjectType == "DATABASE" {
 		return request.Database == ""
 	}
-	return (request.ObjectType == "TABLE" || request.ObjectType == "VIEW") && validCatalogInput(request.Database, 256, false)
+	return (request.ObjectType == "ALL" || request.ObjectType == "TABLE" || request.ObjectType == "VIEW" || request.ObjectType == "FUNCTION" || request.ObjectType == "PROCEDURE" || request.ObjectType == "SEQUENCE") && validCatalogInput(request.Database, 256, false)
 }
 
 // getExportObjectCatalogQuery 仅向发起者和当前仍可读取该数据源的主体返回短时对象名结果。
@@ -165,15 +166,17 @@ func catalogQueryResponse(run store.DataSourceConnectionTestRun, now time.Time) 
 		status = "EXPIRED"
 	}
 	objects := []string{}
+	groups := []catalogresult.Group{}
 	truncated := false
 	if status == "SUCCEEDED" {
 		objects = append(objects, run.CatalogObjects...)
+		groups = append(groups, run.CatalogGroups...)
 		truncated = run.CatalogTruncated
 	}
 	return map[string]any{
 		"id": run.ConnectionTestID, "status": status, "dataSourceId": run.DataSourceID,
 		"nodeId": run.NodeID, "database": run.CatalogDatabase, "objectType": run.CatalogObjectType,
-		"keyword": run.CatalogKeyword, "objects": objects, "truncated": truncated,
+		"keyword": run.CatalogKeyword, "objects": objects, "groups": groups, "truncated": truncated,
 		"validUntil": run.ValidUntil.UTC().Format(time.RFC3339Nano),
 	}
 }

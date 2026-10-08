@@ -46,6 +46,7 @@ const completeValues: ExportDraftFormValues = {
   compressionAlgo: '',
   compressionLevel: '',
   querySql: '',
+  queryResultLimit: '',
   where: '',
   includeColumnNames: '',
   excludeColumnNames: '',
@@ -78,8 +79,65 @@ const completeValues: ExportDraftFormValues = {
 }
 
 describe('泛化导出草稿输入', () => {
+  it('整库排除表不会在草稿转换时丢失', () => {
+    const result = validateExportDraftInput({ ...completeValues, scopeKind: 'ALL', objectNames: [], excludeTables: ['synthetic_excluded'] })
+    expect(result).toMatchObject({ valid: true })
+    if (result.valid) expect(result.input.config.objectScope).toEqual({ database: 'synthetic_db', scopeKind: 'ALL', excludeTables: ['synthetic_excluded'] })
+  })
+
+  it('自动压缩显式冻结为 zstd 并校验该算法等级', () => {
+    const result = validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: '', compressionLevel: '5' })
+    expect(result).toMatchObject({ valid: true })
+    if (result.valid) expect(result.input.config.outputConfig).toMatchObject({ compress: true, compressionAlgo: 'zstd', compressionLevel: 5 })
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: '', compressionLevel: '23' })).toMatchObject({ valid: false })
+  })
+
+  it('保留分隔字符串和 NULL 表示的字面空格', () => {
+    const result = validateExportDraftInput({ ...completeValues, formatKind: 'CUT', columnSplitter: ' | ', nullString: ' NULL ' })
+    expect(result).toMatchObject({ valid: true })
+    if (result.valid) expect(result.input.config.dataFormat?.csvOptions).toMatchObject({ columnSplitter: ' | ', nullString: ' NULL ' })
+  })
+
+  it('表级选项根据完整对象集合判断，不依赖当前分类', () => {
+    const objects = [{ objectType: 'TABLE' as const, name: 'synthetic_table' }, { objectType: 'FUNCTION' as const, name: 'synthetic_function' }]
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', objectSelections: objects, where: 'id > 1' })).toMatchObject({ valid: false })
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', objectSelections: objects, compactSchema: true })).toMatchObject({ valid: false })
+    expect(validateExportDraftInput({ ...completeValues, objectType: 'VIEW', objectSelections: [objects[0]!], where: 'id > 1' })).toMatchObject({ valid: true })
+  })
+
+  it('将单条 SELECT 结果集和条数上限写入独立范围，不携带已选对象', () => {
+    const result = validateExportDraftInput({ ...completeValues, scopeKind: 'QUERY_RESULT', querySql: 'SELECT id FROM synthetic_table', queryResultLimit: '1000' })
+    expect(result).toMatchObject({ valid: true })
+    if (result.valid) {
+      expect(result.input.config.objectScope).toEqual({ database: 'synthetic_db', scopeKind: 'QUERY_RESULT' })
+      expect(result.input.config.filterConfig).toEqual({ querySql: 'SELECT id FROM synthetic_table', queryResultLimit: 1000 })
+    }
+  })
+
+  it.each([
+    { querySql: 'DELETE FROM synthetic_table', queryResultLimit: '1000' },
+    { querySql: 'SELECT 1; SELECT 2', queryResultLimit: '1000' },
+    { querySql: 'SELECT 1 -- comment', queryResultLimit: '1000' },
+    { querySql: 'SELECT 1', queryResultLimit: '0' },
+    { querySql: 'SELECT 1', queryResultLimit: '2147483648' },
+  ])('阻断无效结果集输入 $querySql / $queryResultLimit', ({ querySql, queryResultLimit }) => {
+    expect(validateExportDraftInput({ ...completeValues, scopeKind: 'QUERY_RESULT', querySql, queryResultLimit })).toMatchObject({ valid: false })
+  })
+
+  it('阻断结果集与对象筛选及仅结构组合', () => {
+    expect(validateExportDraftInput({ ...completeValues, scopeKind: 'QUERY_RESULT', querySql: 'SELECT 1', queryResultLimit: '1000', where: 'id > 0' })).toMatchObject({ valid: false })
+    expect(validateExportDraftInput({ ...completeValues, scopeKind: 'QUERY_RESULT', querySql: 'SELECT 1', queryResultLimit: '1000', contentKind: 'DDL_ONLY' })).toMatchObject({ valid: false })
+  })
+
+  it('允许选择超过 100 个目录对象并完整写入草稿', () => {
+    const objectNames = Array.from({ length: 101 }, (_, index) => `table_${index}`)
+    const result = validateExportDraftInput({ ...completeValues, objectNames })
+    expect(result.valid).toBe(true)
+    if (result.valid) expect(result.input.config.objectScope.expressions).toHaveLength(101)
+  })
+
   it('为指定单表 DATA_ONLY 生成冻结能力兼容的 v6 输入', () => {
-    expect(validateExportDraftInput(completeValues)).toEqual({
+    expect(validateExportDraftInput(completeValues)).toMatchObject({
       valid: true,
       input: {
         configVersion: 'v6',
@@ -90,7 +148,7 @@ describe('泛化导出草稿输入', () => {
             database: 'synthetic_db',
             scopeKind: 'SPECIFIED',
             objectTypes: ['TABLE'],
-            expressions: [{ name: 'synthetic_table' }],
+            expressions: [{ name: 'synthetic_table', objectType: 'TABLE' }],
             excludeTables: undefined,
           },
           contentSelection: { contentKind: 'DATA_ONLY' },
@@ -105,9 +163,9 @@ describe('泛化导出草稿输入', () => {
     const multiTable = validateExportDraftInput({ ...completeValues, objectNames: ['table_one', 'table_two'], excludeTables: ['tmp_a'], contentKind: 'DDL_AND_DATA' })
     expect(multiTable).toMatchObject({ valid: true })
     if (multiTable.valid) {
-      expect(multiTable.input.config.objectScope.expressions).toEqual([{ name: 'table_one' }, { name: 'table_two' }])
+      expect(multiTable.input.config.objectScope.expressions).toEqual([{ name: 'table_one', objectType: 'TABLE' }, { name: 'table_two', objectType: 'TABLE' }])
       expect(multiTable.input.config.objectScope.excludeTables).toEqual(['tmp_a'])
-      expect(multiTable.input.config.dataFormat).toEqual({ formatKind: 'CSV' })
+      expect(multiTable.input.config.dataFormat).toMatchObject({ formatKind: 'CSV' })
     }
     const allScope = validateExportDraftInput({ ...completeValues, scopeKind: 'ALL', objectNames: [] })
     expect(allScope).toMatchObject({ valid: true })
@@ -119,6 +177,23 @@ describe('泛化导出草稿输入', () => {
     if (ddlOnly.valid) {
       expect(ddlOnly.input.config.dataFormat).toBeUndefined()
     }
+  })
+
+  it('保留五类对象混合选择并阻止非表对象导出数据', () => {
+    const objectSelections = [
+      { objectType: 'TABLE', name: 'table_one' },
+      { objectType: 'VIEW', name: 'view_one' },
+      { objectType: 'FUNCTION', name: 'fn_one' },
+      { objectType: 'PROCEDURE', name: 'proc_one' },
+      { objectType: 'SEQUENCE', name: 'seq_one' },
+    ] as const
+    const ddl = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', objectSelections })
+    expect(ddl).toMatchObject({ valid: true })
+    if (ddl.valid) {
+      expect(ddl.input.config.objectScope.objectTypes).toEqual(['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE'])
+      expect(ddl.input.config.objectScope.expressions).toEqual(objectSelections)
+    }
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DATA_ONLY', objectSelections })).toMatchObject({ valid: false, message: expect.stringContaining('仅 DDL') })
   })
 
   it('支持 EX-I3 全量选项并执行互斥与边界校验', () => {
@@ -139,7 +214,6 @@ describe('泛化导出草稿输入', () => {
       flashbackScn: '100',
       thread: '4',
       pageSize: '1000',
-      fetchSize: '100',
       jvmMemory: '4G',
     })
     expect(withOptions).toMatchObject({ valid: true })
@@ -147,13 +221,18 @@ describe('泛化导出草稿输入', () => {
       expect(withOptions.input.config.dataFormat?.csvOptions).toMatchObject({ skipHeader: true, columnSeparator: '|', columnQuoteMode: 'minimal', escapeCharacter: '\\', withTrim: true })
       expect(withOptions.input.config.outputConfig).toMatchObject({ noNestedDir: true, maxFileSize: 1048576, retainEmptyFiles: true, compress: true, compressionAlgo: 'zstd' })
       expect(withOptions.input.config.filterConfig).toMatchObject({ includeColumnNames: ['col_a', 'col_b'], excludeVirtualColumns: true, flashbackScn: 100 })
-      expect(withOptions.input.config.performanceConfig).toMatchObject({ thread: 4, pageSize: 1000, fetchSize: 100, jvmMemory: '4G' })
+      expect(withOptions.input.config.performanceConfig).toMatchObject({ thread: 4, pageSize: 1000, jvmMemory: '4G' })
     }
     // 互斥与边界失败关闭。
     expect(validateExportDraftInput({ ...completeValues, querySql: 'select 1', flashbackScn: '100' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
     expect(validateExportDraftInput({ ...completeValues, includeColumnNames: 'a', excludeColumnNames: 'b' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
-    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: '' })).toMatchObject({ valid: false, message: expect.stringContaining('压缩算法') })
-    expect(validateExportDraftInput({ ...completeValues, escapeCharacter: 'ab' })).toMatchObject({ valid: false, message: expect.stringContaining('单字符') })
+    expect(validateExportDraftInput({ ...completeValues, compress: true, compressionAlgo: '' })).toMatchObject({ valid: true })
+    expect(validateExportDraftInput({ ...completeValues, escapeCharacter: 'ab' })).toMatchObject({ valid: false, message: expect.stringContaining('ASCII') })
+    expect(validateExportDraftInput({ ...completeValues, columnSeparator: '||' })).toMatchObject({ valid: false, message: expect.stringContaining('单字符') })
+    expect(validateExportDraftInput({ ...completeValues, columnQuote: "''" })).toMatchObject({ valid: false, message: expect.stringContaining('单字符') })
+    expect(validateExportDraftInput({ ...completeValues, fetchSize: '100' })).toMatchObject({ valid: false, message: expect.stringContaining('Oracle') })
+    expect(validateExportDraftInput({ ...completeValues, flashbackTimestamp: '2026-08-06 00:00:00' })).toMatchObject({ valid: false, message: expect.stringContaining('Oracle') })
+    expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', fetchSize: '100' })).toMatchObject({ valid: true })
     expect(validateExportDraftInput({ ...completeValues, maxFileSize: '0' })).toMatchObject({ valid: false, message: expect.stringContaining('正整数') })
     expect(validateExportDraftInput({ ...completeValues, jvmMemory: '4GX' })).toMatchObject({ valid: false, message: expect.stringContaining('K/M/G/T') })
     // 仅 DDL 时数据选项不进入请求。
@@ -172,7 +251,7 @@ describe('泛化导出草稿输入', () => {
       formatKind: 'CUT',
       trailDelimiter: true,
       removeNewline: true,
-      columnSplitter: '|',
+      columnSplitter: '||',
       escapeCharacter: '\\',
       lineSeparator: '\\n',
       nullString: 'NULL',
@@ -193,7 +272,7 @@ describe('泛化导出草稿输入', () => {
       expect(cut.input.config.dataFormat).toMatchObject({
         formatKind: 'CUT',
         cutOptions: { trailDelimiter: true, removeNewline: true },
-        csvOptions: { columnSplitter: '|', escapeCharacter: '\\', lineSeparator: '\\n', nullString: 'NULL', fileEncoding: 'UTF-8', withTrim: true },
+        csvOptions: { columnSplitter: '||', escapeCharacter: '\\', lineSeparator: '\\n', nullString: 'NULL', fileEncoding: 'UTF-8', withTrim: true },
       })
       expect(cut.input.config.dataFormat?.csvOptions).not.toHaveProperty('skipHeader')
       // 官方复核：文件布局、筛选与性能选项不限定格式，CUT 下同样发送。
@@ -202,7 +281,9 @@ describe('泛化导出草稿输入', () => {
       expect(cut.input.config.performanceConfig).toMatchObject({ thread: 4, pageSize: 1000, jvmMemory: '4G' })
     }
     // CUT 转义字符仍限单字符；文本选项长度受限。
-    expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', escapeCharacter: 'ab' })).toMatchObject({ valid: false, message: expect.stringContaining('单字符') })
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', escapeCharacter: 'ab' })).toMatchObject({ valid: false, message: expect.stringContaining('ASCII') })
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', escapeCharacter: '中' })).toMatchObject({ valid: false, message: expect.stringContaining('ASCII') })
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', columnSplitter: 'x'.repeat(257) })).toMatchObject({ valid: false, message: expect.stringContaining('256') })
     expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', lineSeparator: 'x'.repeat(257) })).toMatchObject({ valid: false, message: expect.stringContaining('256') })
     // CUT 下 CSV 专属选项不发送；压缩与通用选项互斥校验仍然生效。
     const cutWithCsvOnly = validateExportDraftInput({ ...completeValues, formatKind: 'CUT', skipHeader: true, columnSeparator: '|', columnQuoteMode: 'minimal' })
@@ -210,7 +291,7 @@ describe('泛化导出草稿输入', () => {
     if (cutWithCsvOnly.valid) {
       expect(cutWithCsvOnly.input.config.dataFormat?.csvOptions).toBeUndefined()
     }
-    expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', compress: true, compressionAlgo: '' })).toMatchObject({ valid: false, message: expect.stringContaining('压缩算法') })
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', compress: true, compressionAlgo: '' })).toMatchObject({ valid: true })
     expect(validateExportDraftInput({ ...completeValues, formatKind: 'CUT', querySql: 'select 1', flashbackScn: '100' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
   })
 
@@ -229,7 +310,6 @@ describe('泛化导出草稿输入', () => {
       flashbackScn: '100',
       excludeColumnNames: 'col_c',
       thread: '4',
-      fetchSize: '100',
       jvmMemory: '4G',
     })
     expect(sql).toMatchObject({ valid: true })
@@ -239,7 +319,7 @@ describe('泛化导出草稿输入', () => {
       // 官方复核：文件布局、筛选与性能选项不限定格式，SQL 下同样发送。
       expect(sql.input.config.outputConfig).toMatchObject({ retainEmptyFiles: true, compress: true, compressionAlgo: 'gzip' })
       expect(sql.input.config.filterConfig).toMatchObject({ flashbackScn: 100, excludeColumnNames: ['col_c'] })
-      expect(sql.input.config.performanceConfig).toMatchObject({ thread: 4, fetchSize: 100, jvmMemory: '4G' })
+      expect(sql.input.config.performanceConfig).toMatchObject({ thread: 4, jvmMemory: '4G' })
     }
     // SQL 下转义字符、NULL 替换与去除空格不参与校验也不发送。
     const sqlIgnored = validateExportDraftInput({ ...completeValues, formatKind: 'SQL', escapeCharacter: 'ab', nullString: 'NULL', withTrim: true })
@@ -249,7 +329,7 @@ describe('泛化导出草稿输入', () => {
     }
     // SQL 文本选项长度受限；压缩与通用选项互斥校验仍然生效。
     expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', fileEncoding: 'x'.repeat(257) })).toMatchObject({ valid: false, message: expect.stringContaining('256') })
-    expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', compress: true, compressionAlgo: '' })).toMatchObject({ valid: false, message: expect.stringContaining('压缩算法') })
+    expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', compress: true, compressionAlgo: '' })).toMatchObject({ valid: true })
     expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', includeColumnNames: 'a', excludeColumnNames: 'b' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
     expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', maxFileSize: '0' })).toMatchObject({ valid: false, message: expect.stringContaining('正整数') })
   })
@@ -363,7 +443,7 @@ describe('泛化导出草稿输入', () => {
 
   it('拒绝空字段、非法对象名、视图导出数据和不匹配平台的输出路径', () => {
     expect(validateExportDraftInput({ ...completeValues, dataSourceId: '' })).toMatchObject({ valid: false, message: expect.stringContaining('数据源') })
-    expect(validateExportDraftInput({ ...completeValues, objectNames: [''] })).toMatchObject({ valid: false, message: expect.stringContaining('至少填写') })
+    expect(validateExportDraftInput({ ...completeValues, objectNames: [''] })).toMatchObject({ valid: false, message: expect.stringContaining('至少选择') })
     expect(validateExportDraftInput({ ...completeValues, objectNames: ['table_*'] })).toMatchObject({ valid: false, message: expect.stringContaining('通配符') })
     expect(validateExportDraftInput({ ...completeValues, objectNames: ['a,b'] })).toMatchObject({ valid: false, message: expect.stringContaining('通配符') })
     expect(validateExportDraftInput({ ...completeValues, objectType: 'VIEW', contentKind: 'DATA_ONLY' })).toMatchObject({ valid: false, message: expect.stringContaining('视图') })
@@ -392,13 +472,16 @@ describe('泛化导出草稿输入', () => {
     }
   })
 
-  it('CUT → DDL_AND_DATA 回退后页面校验阻断（DDL + 数据只支持 CSV）', () => {
-    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', formatKind: 'CUT', columnSplitter: '|' })).toMatchObject({
+  it('结构和数据支持 CSV/CUT/SQL，其他格式仍被阻断', () => {
+    for (const formatKind of ['CSV', 'CUT', 'SQL'] as const) {
+      const result = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', formatKind })
+      expect(result).toMatchObject({ valid: true })
+      if (result.valid) expect(result.input.config.dataFormat?.formatKind).toBe(formatKind)
+    }
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', formatKind: 'POS' })).toMatchObject({
       valid: false,
-      message: expect.stringContaining('DDL + 数据只支持 CSV'),
+      message: expect.stringContaining('仅支持 CSV、CUT 或 SQL'),
     })
-    // DDL + 数据保持 CSV 时正常通过。
-    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', formatKind: 'CSV' })).toMatchObject({ valid: true })
   })
 
   it('EX-I7 DDL 行为：仅 DDL 内容发送 drop-object/retain-schema，仅数据内容阻断', () => {

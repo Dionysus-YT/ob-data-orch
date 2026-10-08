@@ -46,6 +46,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
     npm run lint
     if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed with exit code $LASTEXITCODE" }
+    npm run audit:wizards
+    if ($LASTEXITCODE -ne 0) { throw "Wizard architecture audit failed with exit code $LASTEXITCODE" }
     npm run typecheck
     if ($LASTEXITCODE -ne 0) { throw "Frontend typecheck failed with exit code $LASTEXITCODE" }
     npm run test

@@ -141,6 +141,55 @@ func Test预检查响应只接受固定对象安全投影(t *testing.T) {
 	if _, err := parseResponse(body); !errors.Is(err, ErrProbeFailed) {
 		t.Fatalf("v1 解析器接受了 v2 对象响应: %v", err)
 	}
+	if _, err := parsePreflightResponse([]byte(`{"status":"SUCCESS","objectAccess":"ACCESSIBLE","groups":[]}`)); !errors.Is(err, ErrProbeFailed) {
+		t.Fatalf("预检查解析器接受了目录响应字段: %v", err)
+	}
+}
+
+func Test批量预检查V5帧包含全部冻结对象且拒绝非法分类(t *testing.T) {
+	request := BatchPreflightRequest{
+		Connection:        Request{Host: "synthetic.example", Port: 2883, Username: []byte("user"), Password: []byte("password")},
+		CompatibilityMode: CompatibilityModeMySQL, Database: "synthetic_db",
+		Objects: []PreflightObject{{Type: "TABLE", Name: "table_one"}, {Type: "VIEW", Name: "view_one"}, {Type: "SEQUENCE", Name: "seq_one"}},
+	}
+	if !validBatchPreflightRequest(request) {
+		t.Fatal("有效的五类冻结对象请求被拒绝")
+	}
+	encoded := encodeBatchPreflightRequest(request)
+	defer zero(encoded)
+	reader := bytes.NewReader(encoded)
+	readInt := func() int {
+		var value uint32
+		if err := binary.Read(reader, binary.BigEndian, &value); err != nil {
+			t.Fatal(err)
+		}
+		return int(value)
+	}
+	readBytes := func() string {
+		length := readInt()
+		value := make([]byte, length)
+		if _, err := reader.Read(value); err != nil {
+			t.Fatal(err)
+		}
+		return string(value)
+	}
+	if readInt() != batchPreflightProtocolVersion || readBytes() != request.Connection.Host || readInt() != request.Connection.Port || readBytes() != "user" || readBytes() != "password" || readBytes() != "MYSQL" || readBytes() != request.Database || readInt() != len(request.Objects) {
+		t.Fatal("批量预检查固定帧头不匹配")
+	}
+	for _, object := range request.Objects {
+		if readBytes() != object.Type || readBytes() != object.Name {
+			t.Fatal("批量预检查冻结对象顺序或分类不匹配")
+		}
+	}
+	if reader.Len() != 0 {
+		t.Fatal("批量预检查请求包含额外字段")
+	}
+	for _, invalid := range []PreflightObject{{Type: "TRIGGER", Name: "synthetic"}, {Type: "TABLE", Name: "bad,name"}, {Type: "TABLE", Name: "bad\nname"}} {
+		request.Objects = []PreflightObject{invalid}
+		if validBatchPreflightRequest(request) {
+			t.Fatalf("非法冻结对象被接受：%#v", invalid)
+		}
+	}
 }
 
 func Test导出对象目录响应必须有界且完整(t *testing.T) {
@@ -158,6 +207,17 @@ func Test导出对象目录响应必须有界且完整(t *testing.T) {
 		if _, err := parseCatalogResponse([]byte(body)); !errors.Is(err, ErrProbeFailed) {
 			t.Fatalf("非法目录响应 %q 得到 %v", body, err)
 		}
+	}
+}
+
+func Test批量目录响应按五类验证(t *testing.T) {
+	body := []byte(`{"status":"SUCCESS","objects":[],"truncated":false,"groups":[{"objectType":"TABLE","objects":["orders"],"truncated":false,"unavailable":false},{"objectType":"VIEW","objects":[],"truncated":false,"unavailable":false},{"objectType":"FUNCTION","objects":[],"truncated":false,"unavailable":true},{"objectType":"PROCEDURE","objects":[],"truncated":false,"unavailable":false},{"objectType":"SEQUENCE","objects":["seq_id"],"truncated":false,"unavailable":false}]}`)
+	result, err := parseCatalogResponseForType(body, "ALL")
+	if err != nil || len(result.Groups) != 5 || result.Groups[4].Objects[0] != "seq_id" {
+		t.Fatalf("批量目录解析失败：%#v, %v", result, err)
+	}
+	if _, err := parseCatalogResponseForType(body, "TABLE"); !errors.Is(err, ErrProbeFailed) {
+		t.Fatalf("单类查询接受批量目录：%v", err)
 	}
 }
 

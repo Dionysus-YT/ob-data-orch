@@ -26,8 +26,21 @@
 3. host、port、组合用户名、密码引用、字符集、逻辑库和会话配置只能来自 `DATA_SOURCE`、`NODE` 或 `SECURITY` 派生事实；浏览器任务表单不得提交同名可编辑字段。
 4. `filterConfig.querySql` 的敏感性为 `NORMAL`，使用普通导出任务授权，不要求 `CAP_SENSITIVE_COMMAND`、平台敏感开关、风险指纹或提交级二次确认。服务端仍须拒绝 `file://`，并复验它与 where、partition、flashback SCN、flashback timestamp 的互斥关系。
 5. `outputConfig.retainEmptyFiles` 对 `DATA_ONLY`、`DDL_AND_DATA` 的 CSV/CUT/SQL 活动，对 `DDL_ONLY` 不活动；它不依赖 where 或 partition 才能配置。CSV 与 skipHeader 同时决定空文件是否保留表头。
-6. MySQL/Oracle 不适用项由同一参数元数据投影为“可见但禁用 + 原因”；浏览器提示不是可信校验，服务端规范化仍按兼容模式、数据库版本、权限和证据状态失败关闭。
-7. 每个业务步骤最多一个高级设置容器；分类只用于页面组织和错误定位，不进入命令指纹。第 1 步没有任务级高级字段，第 6 步没有可编辑字段。
+6. MySQL/Oracle 不适用项不提供可编辑入口，未验证参数保留原因说明；浏览器提示不是可信校验，服务端规范化仍按兼容模式、数据库版本、权限和证据状态失败关闭。
+7. 每个业务步骤最多一个高级设置容器；分类只用于页面组织和错误定位，不进入命令指纹。第 1 步没有任务级高级字段，第 5 步没有可编辑字段。
+8. OBDUMPER 4.3.5 的 CSV `columnSeparator` 和 `columnQuote` 均仅接受单字符，CUT `columnSplitter` 仍是独立的字符串参数。`flashbackTimestamp` 与 `fetchSize` 仅 Oracle 兼容模式可配置；当前活动的 DATE/DATETIME 值格式只支持已验证的 MySQL CSV/CUT 组合。新建草稿与预览均由服务端复核这些边界，不能仅依赖页面禁用态。
+
+### 0.2 2026-10-08 向导实现与刷新恢复
+
+本轮只调整前端职责和恢复管理，五步流程沿用 DEC-049；不改变本文的领域字段、参数适用条件、API、冻结配置或权限边界。三类向导组织与状态所有权以[前端平台基线](frontend-platform-baseline.md#复杂向导架构与开发规范)为准，导出实现位置见[维护索引](../../web/src/workbench/export/README.md)。
+
+- 每个挂载的向导实例拥有唯一业务表单；步骤卸载不删除仍合法的跨步骤输入。失效、互斥和转换由业务能力统一处理，步骤不能自行保存、预检查或提交任务。
+- 保留当前历史项内步骤 2 选择恢复的会话、数据源修订和节点门禁。普通草稿保存后，历史项另保存草稿标识和会话指纹；刷新须重新通过服务端授权读取最后保存的配置，不能从浏览器历史恢复可信草稿、命令或预检查。未保存的步骤 3/4 参数不保证刷新后保留。
+- 普通恢复不设置派生草稿绑定锁；任务派生入口继续使用 `?draft=` 及既有服务端约束。数据源/节点切换清除原保存引用，绑定不可更新时创建新草稿。
+- 编辑立即使旧命令、预检查和提交确认失效。保存中编辑接纳服务端新修订但保持 dirty；迟到目录/草稿/预览/预检响应不能覆盖当前绑定或重新启用提交。重复操作受对应生命周期忙状态约束。
+- 页面卸载终止 HTTP 等待、目录定时器和预检轮询，并拒绝旧响应写回；这不代表取消已被服务端接受的任务。目录没有逐查询服务端取消接口，不新增该契约。
+
+这些结论只经前端合成验证，不扩展真实数据库、凭据、Agent 或 OBDUMPER 支持状态；[验收证据](evidence/frontend-wizard-refactor-2026-10-08.md)明确区分通过项与仍阻断的既有平台检查。
 
 ---
 
@@ -59,10 +72,12 @@ ExportConfig {
 
 **ObjectScope（对象范围）**
 
+2026-10-06 指定对象接入增量：当前新建只开放 `TABLE`、`VIEW`、`FUNCTION`、`PROCEDURE`、`SEQUENCE`，可同时选择；其余下列枚举仍是设计基线，未开放。混合类型的每个 `ObjectExpression` 必须携带 `objectType`，单一类型历史草稿可缺省。`DATA_ONLY` 只允许表；`DDL_AND_DATA` 允许表数据与其他已选对象定义并存，`DDL_ONLY` 只生成定义。命令按表、视图、函数、存储过程、序列的固定顺序发射对应参数。新草稿使用 `obdumper-4.3.5-slice-v9-combined-object-selection` 元数据版本，既有 v8 及更早版本仍按冻结版本重放。非表对象的 `OBJECT_ACCESS` 由固定 JDBC 元数据核对，元数据不可用时失败关闭。
+
 ```text
 ObjectScope {
-  database:      string            // 对象所在数据库（--database），全部与指定范围均必填
-  scopeKind:       ALL | SPECIFIED     // 全部/指定
+  database:      string            // 对象所在数据库（--database），三种范围均必填
+  scopeKind:       ALL | SPECIFIED | QUERY_RESULT // 全部/指定/结果集
   objectTypes:     [ObjectType]        // 对象类型列表（表/视图/触发器/...）
   expressions:     [ObjectExpression]  // 对象表达式（可选 schema 前缀只允许缺省或与 database 一致，跨库未取证）
   excludeTables:   [string]            // 排除表表达式
@@ -139,7 +154,8 @@ PerformanceConfig {
 
 ```text
 FilterConfig {
-  querySql:            string?   // 受限专家能力
+  querySql:            string?   // OBDUMPER 普通高级参数；QUERY_RESULT 时为单条直接 SELECT
+  queryResultLimit:    int64?    // 仅 QUERY_RESULT，1～2147483647；按租户兼容模式包裹 SELECT
   where:               string?
   partition:           string?
   includeColumnNames:  [string]?
@@ -231,8 +247,10 @@ export-odp-{scope}-{format}-v{N}
 | `export-odp-full-csv-v1` | 全对象 CSV（含 all/多表/多对象类型） | ENABLED（已实现，EX-I2） |
 | `export-odp-ddl-v1` | 纯 DDL 导出 | ENABLED（已实现，EX-I2） |
 | `export-odp-ddl-csv-v1` | DDL + CSV 数据 | ENABLED（已实现，EX-I2） |
+| `export-odp-ddl-cut-v1` | DDL + CUT 数据 | ENABLED（合成链路，真实输出待验证） |
+| `export-odp-ddl-sql-v1` | DDL + SQL 数据 | ENABLED（合成链路，真实输出待验证） |
 | `export-odp-cut-v1` | CUT 格式 | ENABLED（已实现，EX-I4） |
-| `export-odp-sql-v1` | Insert SQL 格式 | ENABLED（已实现，EX-I4） |
+| `export-odp-sql-v1` | SQL 格式 | ENABLED（已实现，EX-I4） |
 | `export-odp-parquet-v1` | Parquet 格式 | VALIDATION_GATED |
 | `export-odp-orc-v1` | ORC 格式 | VALIDATION_GATED |
 | `export-odp-avro-v1` | Avro 格式 | VALIDATION_GATED |
@@ -438,7 +456,7 @@ type ExportConfig struct {
 }
 
 type ObjectScope struct {
-    ScopeKind      string             `json:"scopeKind"`      // ALL | SPECIFIED
+    ScopeKind      string             `json:"scopeKind"`      // ALL | SPECIFIED | QUERY_RESULT
     ObjectTypes    []string           `json:"objectTypes"`
     Expressions    []ObjectExpression `json:"expressions"`
     ExcludeTables  []string           `json:"excludeTables"`
@@ -502,6 +520,7 @@ type PerformanceConfig struct {
 
 type FilterConfig struct {
     QuerySql           string   `json:"querySql,omitempty"` // 普通高级参数；不使用敏感命令 capability，拒绝 file:// 并复验互斥
+    QueryResultLimit   *int64   `json:"queryResultLimit,omitempty"` // 仅 QUERY_RESULT，按兼容模式写入外层查询
     Where              string   `json:"where,omitempty"`
     Partition          string   `json:"partition,omitempty"`
     IncludeColumnNames []string `json:"includeColumnNames,omitempty"`
@@ -671,7 +690,7 @@ type ExportConfigTemplate struct {
 - `export-odp-ddl-v1`：层 1/2/3/4/5/6/9/10/11（新增权限层）
 - `export-odp-full-csv-v1`：层 1/2/4/5/6/7/8/9/10/11（新增存储层）
 
-EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 对 SPECIFIED 范围逐对象运行冻结单对象 JDBC 探针（数据可读性是 DDL 可读性的保守超集），对 ALL 范围按数据库级可达性投影，逐对象枚举由工具运行时完成。层 3 SYS_PRIVILEGE 仅在 `--add-extra-message` 等 DDL 行为参数启用后才需要，EX-I2 未激活。
+EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 对 SPECIFIED 范围在一次固定 JDBC 进程和连接中逐项核对全部冻结对象：表读取元数据并执行零行查询，非表类型只核对固定元数据；任一对象不通过即汇总阻断，不输出具体对象。对 ALL 和 QUERY_RESULT 范围按数据库级可达性投影；结果集的查询 SQL 在预检查阶段不执行，语法、被引用对象与权限要到 OBDUMPER 执行时才能确认。层 3 SYS_PRIVILEGE 仅在 `--add-extra-message` 等 DDL 行为参数启用后才需要，EX-I2 未激活。
 
 **EX-I6 存储层实施（2026-08-14）**：对象存储输出任务的预检查使用“存储形态清单”——`DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → AVAILABLE_SPACE → STORAGE_CONNECTIVITY → STORAGE_AUTH`（裁剪不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY；AVAILABLE_SPACE 转向 `--tmp-path` 卷，未指定时 UNKNOWN）。本地输出保持冻结六项不变。两项存储检查由 Agent 探测：
 
@@ -867,7 +886,7 @@ EX-I2 交付收敛：按任务地图权威，EX-I2 一次实现 full-csv、ddl�
 
 EX-I3 交付收敛：25 个 ENABLED 参数一次启用（CSV 序列化 9、压缩 2、文件布局 3、筛选 6、资源 5）。该切片交付时日期时间、--compression-level、--where/--partition/--exclude-data-types 均保持门禁；后续切片的状态变化以任务地图和现行支持矩阵为准。带任一活动选项的单表 CSV 离开冻结 v5 路径并使用对应泛化版本；无选项单表保持字节级不变。
 
-EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v1）已启用并实现。CUT 启用 --cut、--trail-delimiter、--remove-newline（高风险）及与 CSV 共享的转义字符/行分隔符/空串/编码/修剪（FORMAT_IN CSV,CUT）；SQL 启用 --sql 及行分隔符/文件编码（FORMAT_IN CSV,CUT,SQL），共享文本之外的 CSV 专属与筛选/资源参数在 CUT/SQL 能力下按 UNKNOWN_PARAMETER 失败关闭。服务端归一化按格式校验 CsvOptions/CutOptions 越界（422），DDL_AND_DATA 固定 CSV、DDL_ONLY 不得声明数据格式；POS 已按独立 `--pos` + `--ctl-path` 定版，自动生成控制文件仍保持后续门控。前端向导新增格式单选与 CUT 高级配置面板，按格式收敛请求体。契约测试覆盖正例、互斥、边界与 ORACLE 负例；生成器格式单选在元数据误配置时仍失败关闭。
+EX-I4 交付收敛：CUT（export-odp-cut-v1）与 SQL（export-odp-sql-v1）已启用并实现。CUT 启用 --cut、--trail-delimiter、--remove-newline（高风险）及与 CSV 共享的转义字符/行分隔符/空串/编码/修剪（FORMAT_IN CSV,CUT）；SQL 启用 --sql 及行分隔符/文件编码（FORMAT_IN CSV,CUT,SQL），共享文本之外的 CSV 专属与筛选/资源参数在 CUT/SQL 能力下按 UNKNOWN_PARAMETER 失败关闭。服务端归一化按格式校验 CsvOptions/CutOptions 越界（422），DDL_AND_DATA 可选 CSV/CUT/SQL 并使用 v10 参数目录的独立组合能力，DDL_ONLY 不得声明数据格式；POS 已按独立 `--pos` + `--ctl-path` 定版，自动生成控制文件仍保持后续门控。前端向导按格式收敛请求体。契约测试覆盖正例、互斥、边界与 ORACLE 负例；生成器格式单选在元数据误配置时仍失败关闭。
 
 ### 9.3 测试约束
 
@@ -903,3 +922,16 @@ EX-I4 交付收敛：CUT（export-odp-cut-v1）与 Insert SQL（export-odp-sql-v
 | `migrations/0014_export_generalization.sql` | 通用导出领域模型迁移 |
 | `internal/store/types.go` | 泛化导出配置类型 |
 | `contracts/openapi.json` | 导出草稿和任务快照 schema |
+
+### 2026-10-08 前端卸数参数组织
+
+对象范围与数据筛选归属步骤 2；读取一致性、格式、日期值、拆分/目录/空文件/压缩算法归属步骤 3；输出目的地、日志、总量上限和资源归属步骤 4。参数的持久化字段归属不随页面位置改变。整库排除表由浏览器写入既有 objectScope.excludeTables；自动压缩在浏览器构造草稿时显式选择 zstd。列名与对象名仍按现有规则归一，分隔符及 NULL 字面格式不得 trim。新建 querySql 统一走 QUERY_RESULT 入口，历史普通范围中的 querySql 保持可读和既有服务端校验。第三步不再展示格式示意；页面参数分组不影响指纹和命令生成。
+
+
+### 2026-10-08 DDL 开关位置与受限入口
+
+前置 DROP、保留 Schema、紧凑 Schema 的编辑入口移到第三步其他选项，包含结构时显示；仅结构的第三步不显示数据格式，但保留 DDL 开关。字段仍归既有 ddlBehavior，不改变 DTO、指纹与唯一生成器。第三步其他选项还集中对象数据范围的排除生成列、弱读、使用隐藏主键和包含结构时的附加对象信息；排除生成列仍写入原 filterConfig。MySQL CSV/CUT 零日期保留、弱读、隐藏主键和附加对象信息保留禁用入口与原因，均无可写模型，不进入提交配置。全量无值参数展示/接入对照见导出 Canonical 同日章节，元数据版本与能力状态不因 UI 入口增加而提升。
+
+### 2026-10-08 读取一致性与筛选入口修订
+
+第二步删除读取一致性区域；`--snapshot` 移至第三步其他选项，`--flashback-scn` 和 Oracle 专属 `--flashback-timestamp` 移至第三步高级设置，并计入区内已配置项数。持久化仍使用 filterConfig 原字段；快照/闪回互斥、结果集禁用与租户校验不变，前端步骤错误指向第三步。第二步条件与分区筛选不再因整库或混合类型而消失，而是禁用并说明仅指定表范围可用；对象资格变化继续清除不适用值。布局变更不提升参数能力状态，不改变指纹、DTO 或唯一命令生成器。

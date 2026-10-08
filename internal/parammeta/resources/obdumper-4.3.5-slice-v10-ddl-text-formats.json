@@ -1,0 +1,840 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v10-ddl-text-formats",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "inherits": "obdumper-4.3.5-slice-v9-combined-object-selection.json",
+  "revisionReason": "Enable official DDL plus CUT and DDL plus SQL text formats without changing frozen metadata revisions.",
+  "sourceDocuments": [
+    "docs/02-design/export-module.md",
+    "docs/03-technical/export-general-contract.md",
+    "OceanBase OBDUMPER V4.3.5 command-line options"
+  ],
+  "categoryOrder": [
+    "CONNECTION",
+    "DATABASE_CONNECTION",
+    "OBJECT_SCOPE",
+    "CONTENT_FORMAT",
+    "FORMAT_SERIALIZATION",
+    "OUTPUT_FILE",
+    "DATA_FILTER",
+    "PERFORMANCE",
+    "COMPRESSION"
+  ],
+  "overrides": [
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.compression.compress",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.compression.compression_algo",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.compression.compression_level",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.ddl.add_extra_message",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.ddl.compact_schema",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.ddl.drop_object",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.ddl.retain_schema",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.enable_hidden_pk",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.exclude_column_names",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.exclude_data_types",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.exclude_table",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.exclude_virtual_columns",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.flashback_scn",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.flashback_timestamp",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.include_column_names",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.partition",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.query_sql",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.retry",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.snapshot",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.weak_read",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.filter.where",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.cut",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.date_value_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.datetime_value_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.format.ddl",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.nls_date_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.nls_timestamp_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.nls_timestamp_tz_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-sql-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.format.sql",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.time_value_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.timestamp_ltz_value_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.timestamp_tz_value_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.format.timestamp_value_format",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.object.all",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.object.function",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.object.procedure",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.object.sequence",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.object.view",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.output.max_file_size",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.output.no_nested_dir",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.output.retain_empty_files",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.output.tmp_path",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.performance.block_size",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.performance.fetch_size",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.performance.mem",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.performance.page_size",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.performance.parallel_macro",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "definitionId": "obdumper.performance.thread",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.text.column_splitter",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.text.remove_newline",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.text.trail_delimiter",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    },
+    {
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "definitionId": "obdumper.text.with_trim",
+      "appendEvidence": [
+        "OBDUMPER 4.3.5 --ddl with --cut or --sql format"
+      ]
+    }
+  ],
+  "additions": []
+}

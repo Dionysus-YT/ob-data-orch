@@ -56,6 +56,8 @@ func TestBuildGeneralizedFieldsFormatMatrix(t *testing.T) {
 		fields []string
 	}{
 		{name: "全部范围 DDL", input: Draft{ScopeKind: "ALL", ContentKind: "DDL_ONLY", FilePath: "/E:/tmp/out"}, fields: []string{"--all", "--ddl", "--file-path", "--skip-check-dir"}},
+		{name: "DDL 与 CUT", input: Draft{ScopeKind: "SPECIFIED", ObjectType: "TABLE", Objects: []string{"orders"}, ContentKind: "DDL_AND_DATA", Format: "CUT", FilePath: "/E:/tmp/out"}, fields: []string{"--table", "--ddl", "--cut", "--file-path", "--skip-check-dir"}},
+		{name: "DDL 与 SQL", input: Draft{ScopeKind: "SPECIFIED", ObjectType: "TABLE", Objects: []string{"orders"}, ContentKind: "DDL_AND_DATA", Format: "SQL", FilePath: "/E:/tmp/out"}, fields: []string{"--table", "--ddl", "--sql", "--file-path", "--skip-check-dir"}},
 		{name: "视图 SQL", input: Draft{ScopeKind: "SPECIFIED", ObjectType: "VIEW", Objects: []string{"v_orders"}, ContentKind: "DATA_ONLY", Format: "SQL", FilePath: "/E:/tmp/out", CsvOptions: store.CsvOptions{LineSeparator: "\\n"}}, fields: []string{"--view", "--sql", "--file-path", "--skip-check-dir", "--line-separator"}},
 		{name: "POS 控制文件", input: Draft{ScopeKind: "SPECIFIED", ObjectType: "TABLE", Objects: []string{"orders"}, ContentKind: "DATA_ONLY", Format: "POS", FilePath: "/E:/tmp/out", ControlFilePath: "/E:/tmp/ctl"}, fields: []string{"--table", "--pos", "--file-path", "--ctl-path", "--skip-check-dir"}},
 		{name: "结构化编码", input: Draft{ScopeKind: "SPECIFIED", ObjectType: "TABLE", Objects: []string{"orders"}, ContentKind: "DATA_ONLY", Format: "PARQUET", FilePath: "/E:/tmp/out", CsvOptions: store.CsvOptions{FileEncoding: "UTF-8"}}, fields: []string{"--table", "--par", "--file-path", "--skip-check-dir", "--file-encoding"}},
@@ -73,10 +75,25 @@ func TestBuildGeneralizedFieldsFormatMatrix(t *testing.T) {
 	}
 }
 
+// TestBuildGeneralizedFieldsMixedDDLObjects 验证五类对象参数按固定顺序输出。
+func TestBuildGeneralizedFieldsMixedDDLObjects(t *testing.T) {
+	fields, err := BuildGeneralizedFields(Draft{ScopeKind: "SPECIFIED", ObjectsByType: map[string][]string{
+		"TABLE": {"orders"}, "VIEW": {"v_orders"}, "FUNCTION": {"fn_total"}, "PROCEDURE": {"proc_sync"}, "SEQUENCE": {"seq_id"},
+	}, ContentKind: "DDL_ONLY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--table", "--view", "--function", "--procedure", "--sequence", "--ddl", "--skip-check-dir"}
+	if got := fieldNames(fields); !reflect.DeepEqual(got, want) {
+		t.Fatalf("混合对象参数顺序不匹配：got=%v want=%v", got, want)
+	}
+}
+
 func TestBuildGeneralizedFieldsRejectsUnsupportedShape(t *testing.T) {
 	for name, input := range map[string]Draft{
-		"未知范围": {ScopeKind: "UNKNOWN", ContentKind: "DATA_ONLY", Format: "CSV"},
-		"未知内容": {ScopeKind: "ALL", ContentKind: "UNKNOWN", Format: "CSV"},
+		"未知范围":   {ScopeKind: "UNKNOWN", ContentKind: "DATA_ONLY", Format: "CSV"},
+		"未知内容":   {ScopeKind: "ALL", ContentKind: "UNKNOWN", Format: "CSV"},
+		"未知对象类型": {ScopeKind: "SPECIFIED", ObjectType: "TRIGGER", Objects: []string{"item"}, ContentKind: "DDL_ONLY"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := BuildGeneralizedFields(input)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,17 @@ import (
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
 )
+
+func TestValidPrecheckGrantAcceptsMoreThanOneHundredObjects(t *testing.T) {
+	grant := validStoragePrecheckGrantForTest()
+	grant.Context.Objects = make([]string, 101)
+	for index := range grant.Context.Objects {
+		grant.Context.Objects[index] = "table_" + strconv.Itoa(index)
+	}
+	if !validPrecheckGrant(grant, "node-1") {
+		t.Fatal("101 个冻结对象应通过 Agent 租约结构校验")
+	}
+}
 
 func TestClaimNextPrecheckRetriesWithSameRequestIDAndMachineCredential(t *testing.T) {
 	var mutex sync.Mutex

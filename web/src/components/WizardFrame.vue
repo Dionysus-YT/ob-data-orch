@@ -5,7 +5,7 @@ import OrchTaskStepRail from './OrchTaskStepRail.vue'
 import { product } from '@/platform/tokens'
 import { useAntDrawerDialog } from '@/composables/useAntDrawerDialog'
 
-const props = defineProps<{ kind: 'export' | 'normal' | 'direct'; activeStep?: number }>()
+const props = defineProps<{ kind: 'export' | 'normal' | 'direct'; activeStep?: number; progressPercent?: number }>()
 const emit = defineEmits<{ stepChange: [step: number] }>()
 const summaryOpen = ref(false)
 const summaryTitleId = useId()
@@ -28,8 +28,8 @@ const steps = computed(() => {
 
 <template>
   <div class="orch-task-builder" :class="{ 'orch-export-builder': kind === 'export' }">
-    <Steps v-if="kind === 'export'" class="export-ant-step-rail" direction="horizontal" :responsive="false" size="small" :current="(activeStep ?? 1) - 1" aria-label="任务创建步骤" @change="selectVisitedStep">
-      <Step v-for="(step, index) in steps" :key="step" :title="step" :description="index + 1 === (activeStep ?? 1) ? '当前步骤' : index + 1 < (activeStep ?? 1) ? '已访问' : '待配置'" :status="index + 1 === (activeStep ?? 1) ? 'process' : 'wait'" :disabled="index + 1 >= (activeStep ?? 1)" :aria-current="index + 1 === (activeStep ?? 1) ? 'step' : undefined" />
+    <Steps v-if="kind === 'export'" class="export-ant-step-rail" direction="horizontal" :responsive="false" :current="(activeStep ?? 1) - 1" :percent="progressPercent ?? 0" aria-label="任务创建步骤" @change="selectVisitedStep">
+      <Step v-for="(step, index) in steps" :key="step" :title="step" :description="index + 1 === (activeStep ?? 1) ? `当前步骤 · ${progressPercent ?? 0}%` : index + 1 < (activeStep ?? 1) ? '已完成' : '待配置'" :status="index + 1 === (activeStep ?? 1) ? 'process' : index + 1 < (activeStep ?? 1) ? 'finish' : 'wait'" :disabled="index + 1 >= (activeStep ?? 1)" :aria-current="index + 1 === (activeStep ?? 1) ? 'step' : undefined" />
     </Steps>
     <OrchTaskStepRail v-else :steps="steps" :active-step="activeStep ?? 1" />
     <div class="orch-task-decision"><div class="orch-task-context"><slot name="actions" /><Button @click="openSummary">查看任务摘要</Button></div><section class="orch-task-workspace"><slot /></section></div>
@@ -45,5 +45,5 @@ const steps = computed(() => {
 .orch-export-builder { grid-template-columns: minmax(0, 1fr); gap: var(--ob-foundation-space-4); }
 .orch-export-builder .orch-task-actions { grid-column: 1; }
 .export-ant-step-rail { min-inline-size: 0; overflow-x: auto; padding: var(--ob-foundation-space-3) 0; }
-.export-ant-step-rail :deep(.ant-steps-item) { min-inline-size: 160px; }
+.export-ant-step-rail :deep(.ant-steps-item) { min-inline-size: 180px; }
 </style>

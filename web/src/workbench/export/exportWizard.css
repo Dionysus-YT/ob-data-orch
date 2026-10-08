@@ -1,0 +1,102 @@
+/* 导出业务布局沿用拆分前的声明值；作用域不扩展到其他页面。 */
+:is(.export-builder, .export-submit-facts) .export-source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ob-foundation-space-3);
+  margin-block: 0;
+}
+:is(.export-builder, .export-submit-facts) .export-source-filter > :first-child { flex: 1 1 240px; min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-source-filter > :last-child { inline-size: 180px; }
+:is(.export-builder, .export-submit-facts) .export-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--ob-foundation-space-2); inline-size: 100%; margin-block: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-source-choice { display: flex; align-items: flex-start; min-inline-size: 0; margin-inline-end: 0; padding: var(--ob-foundation-space-3); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); background: var(--ob-color-surface); }
+:is(.export-builder, .export-submit-facts) .export-source-facts { display: grid; min-inline-size: 0; gap: var(--ob-foundation-space-1); overflow-wrap: anywhere; }
+:is(.export-builder, .export-submit-facts) .export-source-facts span { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+:is(.export-builder, .export-submit-facts) .export-field-group { margin-block: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-object-group { container-type: inline-size; }
+:is(.export-builder, .export-submit-facts) .export-content-form { margin-block-start: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-content-options { display: flex; flex-wrap: wrap; max-inline-size: 100%; }
+:is(.export-builder, .export-submit-facts) .export-field-group h3, :is(.export-builder, .export-submit-facts) .export-advanced h3 {
+  margin: var(--ob-foundation-space-4) 0 var(--ob-foundation-space-2);
+  color: var(--ob-color-form-text);
+  font-size: var(--ob-product-typography-section-size);
+  font-weight: var(--ob-product-typography-weight);
+}
+:is(.export-builder, .export-submit-facts) .export-field-group h3:first-child, :is(.export-builder, .export-submit-facts) .export-advanced h3:first-child { margin-block-start: 0; }
+:is(.export-builder, .export-submit-facts) .export-field-body { padding-block: var(--ob-foundation-space-2); }
+:is(.export-builder, .export-submit-facts) .export-result-limit { max-inline-size: 200px; }
+:is(.export-builder, .export-submit-facts) .export-database-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-inline-size: 740px; gap: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-database-grid .ant-form-item { min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-database-select { display: flex; gap: var(--ob-foundation-space-2); }
+:is(.export-builder, .export-submit-facts) .export-database-select .ant-select { flex: 1; min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-database-manual { flex: none; padding-inline: 0; }
+:is(.export-builder, .export-submit-facts) .export-group-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
+:is(.export-builder, .export-submit-facts) .export-group-heading h3 { margin-block-end: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-count { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+:is(.export-builder, .export-submit-facts) .export-object-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-block-start: var(--ob-foundation-space-3); overflow: hidden; border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
+:is(.export-builder, .export-submit-facts) .export-object-pane { display: flex; flex-direction: column; min-inline-size: 0; min-block-size: 0; block-size: 400px; overflow: hidden; padding: 0 var(--ob-foundation-space-3) var(--ob-foundation-space-3); }
+:is(.export-builder, .export-submit-facts) .export-object-scroll { flex: 1; min-block-size: 0; margin-block-start: var(--ob-foundation-space-3); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+:is(.export-builder, .export-submit-facts) .export-object-pane h4 { margin: 0; color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); font-weight: var(--ob-product-typography-weight); }
+:is(.export-builder, .export-submit-facts) .export-object-selected { border-inline-start: 1px solid var(--ob-color-border); }
+:is(.export-builder, .export-submit-facts) .export-object-pane-heading { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-2); min-block-size: 44px; margin-inline: calc(-1 * var(--ob-foundation-space-3)); margin-block-end: var(--ob-foundation-space-3); padding-inline: var(--ob-foundation-space-3); border-block-end: 1px solid var(--ob-color-border); }
+:is(.export-builder, .export-submit-facts) .export-object-search { flex: none; display: flex; gap: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-search .ant-input-affix-wrapper { flex: 1; min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-search .ant-btn { border-start-start-radius: 0; border-end-start-radius: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-search .ant-input-affix-wrapper { border-start-end-radius: 0; border-end-end-radius: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-tree { margin-block-start: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-tree-category { display: flex; align-items: center; gap: var(--ob-foundation-space-2); min-block-size: 29px; min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-expand { flex: none; inline-size: 20px; min-inline-size: 20px; padding: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-kind-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; inline-size: 16px; block-size: 16px; color: var(--ob-color-secondary); font-size: var(--ob-component-control-font-size); line-height: 1; }
+:is(.export-builder, .export-submit-facts) .export-object-kind-icon svg { inline-size: 14px; block-size: 14px; }
+:is(.export-builder, .export-submit-facts) .export-object-kind-glyph { font-family: Arial, sans-serif; font-weight: 700; white-space: nowrap; }
+:is(.export-builder, .export-submit-facts) .export-object-category-name { min-inline-size: 0; padding: 0; text-align: start; color: var(--ob-color-form-text); }
+:is(.export-builder, .export-submit-facts) .export-object-category-name.is-disabled, :is(.export-builder, .export-submit-facts) .export-object-kind-note { color: var(--ob-color-secondary); }
+:is(.export-builder, .export-submit-facts) .export-object-kind-note { margin-inline-start: auto; font-size: var(--ob-component-field-helper-size); }
+:is(.export-builder, .export-submit-facts) .export-object-tree-children { margin-inline-start: 36px; }
+:is(.export-builder, .export-submit-facts) .export-object-tree-children .ant-list-item { min-block-size: 28px; padding-block: 2px; border-block-end: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-tree-children .ant-checkbox-wrapper { display: flex; align-items: center; gap: var(--ob-foundation-space-2); }
+:is(.export-builder, .export-submit-facts) .export-object-tree-children .ant-checkbox-wrapper > span:last-child { display: inline-flex; align-items: center; gap: var(--ob-foundation-space-2); min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-tree-empty .ant-empty-description { font-size: var(--ob-component-field-helper-size); }
+:is(.export-builder, .export-submit-facts) .export-object-pane .ant-checkbox-wrapper { min-inline-size: 0; overflow-wrap: anywhere; }
+:is(.export-builder, .export-submit-facts) .export-object-pane .ant-list-item { min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-object-selected > .ant-input-affix-wrapper { flex: none; }
+:is(.export-builder, .export-submit-facts) .export-object-selected-category { margin-block-start: var(--ob-foundation-space-2); }
+:is(.export-builder, .export-submit-facts) .export-object-delete { margin-inline-start: auto; padding-inline: var(--ob-foundation-space-1); color: var(--ob-color-secondary); }
+:is(.export-builder, .export-submit-facts) .export-object-selected .ant-list-item { display: flex; align-items: center; gap: var(--ob-foundation-space-2); }
+:is(.export-builder, .export-submit-facts) .export-object-selected .ant-list-item > span { min-inline-size: 0; overflow-wrap: anywhere; }
+:is(.export-builder, .export-submit-facts) .export-form { display: grid; gap: var(--ob-foundation-space-3); }
+:is(.export-builder, .export-submit-facts) .export-advanced-form { max-inline-size: 720px; margin-block: 0; }
+:is(.export-builder, .export-submit-facts) .export-format-panel { margin-block-start: var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4); background: var(--ob-color-subtle); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
+:is(.export-builder, .export-submit-facts) .export-parameter-field { margin-block-start: 0; }
+:is(.export-builder, .export-submit-facts) .export-option-group + .export-option-group { margin-block-start: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-option-content { margin-block-start: var(--ob-foundation-space-3); }
+:is(.export-builder, .export-submit-facts) .export-option-group h4 { margin: 0; font-weight: var(--ob-product-typography-weight); }
+:is(.export-builder, .export-submit-facts) .export-field-label { display: inline-flex; align-items: center; gap: var(--ob-foundation-space-1); min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-option-control { display: flex; align-items: center; gap: var(--ob-foundation-space-1); min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-option-control .ant-checkbox-wrapper { min-inline-size: 0; margin-inline-end: 0; }
+:is(.export-builder, .export-submit-facts) .export-other-options-body .export-format-toggle-grid { margin-block-end: 0; }
+:is(.export-builder, .export-submit-facts) .export-other-options-warning { margin-block-start: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-format-group h3 small { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); font-weight: 400; }
+:is(.export-builder, .export-submit-facts) .export-format-toggle-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); margin-block-end: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-format-toggle-grid .ant-form-item { margin-block-end: 0; }
+:is(.export-builder, .export-submit-facts) .export-format-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-format-grid > .ant-form-item { min-inline-size: 0; }
+:is(.export-builder, .export-submit-facts) .export-format-grid .ant-form-item { margin-block-end: 0; }
+:is(.export-builder, .export-submit-facts) .export-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); }
+@container (max-width: 800px) { :is(.export-builder, .export-submit-facts) .export-database-grid, :is(.export-builder, .export-submit-facts) .export-object-workspace { grid-template-columns: minmax(0, 1fr); } :is(.export-builder, .export-submit-facts) .export-object-selected { border-inline-start: 0; border-block-start: 1px solid var(--ob-color-border); } }
+:is(.export-builder, .export-submit-facts) .export-advanced { margin-block-start: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-step-error { margin-block-end: var(--ob-foundation-space-4); }
+:is(.export-builder, .export-submit-facts) .export-loading-space { display: block; min-block-size: var(--ob-foundation-space-8); }
+:is(.export-builder, .export-submit-facts) .export-facts { min-inline-size: 0; overflow-wrap: anywhere; }
+:is(.export-builder, .export-submit-facts) .export-precheck-row { display: grid; grid-template-columns: 16px minmax(140px, 200px) minmax(0, 1fr); align-items: start; gap: var(--ob-foundation-space-3); inline-size: 100%; min-inline-size: 0; overflow-wrap: anywhere; }
+:is(.export-builder, .export-submit-facts) .export-precheck-row small, :is(.export-builder, .export-submit-facts) .export-precheck-row code { display: block; margin-block-start: var(--ob-foundation-space-1); }
+:is(.export-builder, .export-submit-facts) .export-precheck-detail { display: grid; gap: var(--ob-foundation-space-1); min-inline-size: 0; overflow-wrap: anywhere; }
+.export-builder .ant-select { min-inline-size: 0; }
+@media (max-width: 800px) {
+  :is(.export-builder, .export-submit-facts) .export-database-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(.export-builder, .export-submit-facts) .export-format-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(.export-builder, .export-submit-facts) .export-field-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(.export-builder, .export-submit-facts) .export-format-toggle-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(.export-builder, .export-submit-facts) .export-precheck-row { grid-template-columns: 16px minmax(0, 1fr); }
+  :is(.export-builder, .export-submit-facts) .export-precheck-row > :last-child { grid-column: 2; }
+  :is(.export-builder, .export-submit-facts) .export-source-filter > :last-child { flex: 1 1 180px; }
+}

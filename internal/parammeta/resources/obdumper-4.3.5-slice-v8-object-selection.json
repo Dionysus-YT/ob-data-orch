@@ -1,0 +1,16 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v8-object-selection",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "inherits": "obdumper-4.3.5-slice-v7.json",
+  "revisionReason": "Five-category DDL object selection adds fixed function, procedure and sequence parameters without changing frozen v5-v7 metadata.",
+  "sourceDocuments": ["docs/02-design/export-module.md", "docs/03-technical/export-general-contract.md", "OceanBase OBDUMPER V4.3.5 command-line options"],
+  "categoryOrder": ["CONNECTION", "DATABASE_CONNECTION", "OBJECT_SCOPE", "CONTENT_FORMAT", "FORMAT_SERIALIZATION", "OUTPUT_FILE", "DATA_FILTER", "PERFORMANCE", "COMPRESSION"],
+  "overrides": [],
+  "additions": [
+    {"definitionId":"obdumper.object.function","productFieldId":"EX-F010","longName":"--function","category":"OBJECT_SCOPE","order":30,"valueType":"string","cardinality":"SINGLE","activation":{"kind":"ALWAYS"},"requiredWhen":{"kind":"NEVER"},"conflictsWith":["--all"],"dependsOn":[],"sourcePolicy":"USER","supportState":"ENABLED","sensitivity":"IDENTIFIER","riskLevel":"LOW","confirmationRule":"NONE","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1"],"officialEvidence":["OBDUMPER 4.3.5 object type baseline"]},
+    {"definitionId":"obdumper.object.procedure","productFieldId":"EX-F010","longName":"--procedure","category":"OBJECT_SCOPE","order":40,"valueType":"string","cardinality":"SINGLE","activation":{"kind":"ALWAYS"},"requiredWhen":{"kind":"NEVER"},"conflictsWith":["--all"],"dependsOn":[],"sourcePolicy":"USER","supportState":"ENABLED","sensitivity":"IDENTIFIER","riskLevel":"LOW","confirmationRule":"NONE","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1"],"officialEvidence":["OBDUMPER 4.3.5 object type baseline"]},
+    {"definitionId":"obdumper.object.sequence","productFieldId":"EX-F010","longName":"--sequence","category":"OBJECT_SCOPE","order":50,"valueType":"string","cardinality":"SINGLE","activation":{"kind":"ALWAYS"},"requiredWhen":{"kind":"NEVER"},"conflictsWith":["--all"],"dependsOn":[],"sourcePolicy":"USER","supportState":"ENABLED","sensitivity":"IDENTIFIER","riskLevel":"LOW","confirmationRule":"NONE","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1"],"officialEvidence":["OBDUMPER 4.3.5 object type baseline"]}
+  ]
+}

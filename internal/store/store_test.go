@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -2513,6 +2514,55 @@ const storageDraftConfigJSON = `{"configVersion":"v6","dataSourceId":"source-1",
 
 // TestParsePrecheckExecutionContextStorageShape 验证 v6 对象存储草稿解析出受控存储目标段，
 // 并拒绝 scheme 不符、URI 携带密钥参数、未知查询参数与缺 bucket 的失败关闭输入。
+// TestParsePrecheckExecutionContextMixedTypes 验证冻结表达式类型随对象顺序进入 Agent 上下文，篡改则拒绝。
+func TestParsePrecheckExecutionContextMixedTypes(t *testing.T) {
+	config := `{"database":"synthetic_db","scopeKind":"SPECIFIED","table":"orders,fn_total","contentKind":"DDL_ONLY","filePath":"/E:/tmp/out","config":{"objectScope":{"objectTypes":["TABLE","FUNCTION"],"expressions":[{"objectType":"TABLE","name":"orders"},{"objectType":"FUNCTION","name":"fn_total"}]},"outputConfig":{"outputKind":"LOCAL"}}}`
+	context, ok := parsePrecheckExecutionContext("v6", config)
+	if !ok || !reflect.DeepEqual(context.Objects, []string{"orders", "fn_total"}) || !reflect.DeepEqual(context.ObjectTypes, []string{"TABLE", "FUNCTION"}) {
+		t.Fatalf("冻结对象类型解析失败：%#v / %v", context, ok)
+	}
+	if _, ok := parsePrecheckExecutionContext("v6", strings.Replace(config, `"objectType":"FUNCTION","name":"fn_total"`, `"objectType":"FUNCTION","name":"other"`, 1)); ok {
+		t.Fatal("对象名称与冻结列表不一致时必须拒绝")
+	}
+}
+
+func TestParsePrecheckExecutionContextAcceptsMoreThanOneHundredObjects(t *testing.T) {
+	names := make([]string, 101)
+	expressions := make([]ObjectExpression, len(names))
+	for index := range names {
+		names[index] = "table_" + strconv.Itoa(index)
+		expressions[index] = ObjectExpression{Name: names[index]}
+	}
+	config, err := json.Marshal(map[string]any{
+		"database": "synthetic_db", "scopeKind": "SPECIFIED", "table": strings.Join(names, ","),
+		"contentKind": "DATA_ONLY", "filePath": "/E:/tmp/out",
+		"config": map[string]any{
+			"objectScope":  map[string]any{"objectTypes": []string{"TABLE"}, "expressions": expressions},
+			"outputConfig": map[string]any{"outputKind": "LOCAL"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, ok := parsePrecheckExecutionContext("v6", string(config))
+	if !ok || !reflect.DeepEqual(context.Objects, names) {
+		t.Fatalf("101 个对象应进入冻结预检查上下文：count=%d ok=%v", len(context.Objects), ok)
+	}
+}
+
+func TestParsePrecheckExecutionContextQueryResult(t *testing.T) {
+	t.Parallel()
+	config := `{"database":"synthetic_db","scopeKind":"QUERY_RESULT","table":"","contentKind":"DATA_ONLY","filePath":"/E:/tmp/out","config":{"objectScope":{"database":"synthetic_db","scopeKind":"QUERY_RESULT"},"outputConfig":{"outputKind":"LOCAL"},"filterConfig":{"querySql":"SELECT 1","queryResultLimit":1000}}}`
+	context, ok := parsePrecheckExecutionContext("v6", config)
+	if !ok || context.Database != "synthetic_db" || len(context.Objects) != 0 {
+		t.Fatalf("结果集预检查仅应携带数据库连接事实：context=%#v ok=%v", context, ok)
+	}
+	invalid := strings.Replace(config, `"table":""`, `"table":"synthetic_table"`, 1)
+	if _, ok := parsePrecheckExecutionContext("v6", invalid); ok {
+		t.Fatal("结果集上下文不得携带对象")
+	}
+}
+
 func TestParsePrecheckExecutionContextStorageShape(t *testing.T) {
 	t.Parallel()
 	context, ok := parsePrecheckExecutionContext("v6", storageDraftConfigJSON)

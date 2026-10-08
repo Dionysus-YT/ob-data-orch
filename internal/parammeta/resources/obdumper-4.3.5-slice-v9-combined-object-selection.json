@@ -1,0 +1,17 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v9-combined-object-selection",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "inherits": "obdumper-4.3.5-slice-v8-object-selection.json",
+  "revisionReason": "Allow selected non-table definitions beside table data in the fixed DDL plus CSV capability.",
+  "sourceDocuments": ["docs/02-design/export-module.md", "docs/03-technical/export-general-contract.md", "OceanBase OBDUMPER V4.3.5 command-line options"],
+  "categoryOrder": ["CONNECTION", "DATABASE_CONNECTION", "OBJECT_SCOPE", "CONTENT_FORMAT", "FORMAT_SERIALIZATION", "OUTPUT_FILE", "DATA_FILTER", "PERFORMANCE", "COMPRESSION"],
+  "overrides": [
+    {"definitionId":"obdumper.object.view","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1","export-odp-ddl-csv-v1"],"appendEvidence":["EX-I8 combined object selection"]},
+    {"definitionId":"obdumper.object.function","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1","export-odp-ddl-csv-v1"],"appendEvidence":["EX-I8 combined object selection"]},
+    {"definitionId":"obdumper.object.procedure","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1","export-odp-ddl-csv-v1"],"appendEvidence":["EX-I8 combined object selection"]},
+    {"definitionId":"obdumper.object.sequence","emissionTarget":"ARGV","capabilityVersions":["export-odp-ddl-v1","export-odp-ddl-csv-v1"],"appendEvidence":["EX-I8 combined object selection"]}
+  ],
+  "additions": []
+}

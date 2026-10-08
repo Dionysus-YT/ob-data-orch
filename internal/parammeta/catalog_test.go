@@ -71,13 +71,16 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 		t.Fatalf("read embedded resources: %v", err)
 	}
 	known := map[string]struct{}{
-		"obdumper-4.3.5-slice-v1.json": {},
-		"obdumper-4.3.5-slice-v2.json": {},
-		"obdumper-4.3.5-slice-v3.json": {},
-		"obdumper-4.3.5-slice-v4.json": {},
-		"obdumper-4.3.5-slice-v5.json": {},
-		"obdumper-4.3.5-slice-v6.json": {},
-		"obdumper-4.3.5-slice-v7.json": {},
+		"obdumper-4.3.5-slice-v1.json":                           {},
+		"obdumper-4.3.5-slice-v2.json":                           {},
+		"obdumper-4.3.5-slice-v3.json":                           {},
+		"obdumper-4.3.5-slice-v4.json":                           {},
+		"obdumper-4.3.5-slice-v5.json":                           {},
+		"obdumper-4.3.5-slice-v6.json":                           {},
+		"obdumper-4.3.5-slice-v7.json":                           {},
+		"obdumper-4.3.5-slice-v8-object-selection.json":          {},
+		"obdumper-4.3.5-slice-v9-combined-object-selection.json": {},
+		"obdumper-4.3.5-slice-v10-ddl-text-formats.json":         {},
 	}
 	for _, entry := range entries {
 		if _, ok := known[entry.Name()]; !ok {
@@ -93,6 +96,9 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 	}
 	if _, err := loadFromFS(resourceFiles, generalizedRevisionResource); err != nil {
 		t.Fatalf("embedded v7 revision is not loadable: %v", err)
+	}
+	if _, err := LoadObjectSelection(); err != nil {
+		t.Fatalf("embedded object selection revision is not loadable: %v", err)
 	}
 	if _, err := loadFromFS(resourceFiles, legacyGeneralizedRevisionResource); err != nil {
 		t.Fatalf("embedded v6 revision is not loadable for historical replay: %v", err)
@@ -259,6 +265,69 @@ func TestLoadGeneralizedCatalog(t *testing.T) {
 	if extra, ok := catalog.Definition("--add-extra-message"); !ok || extra.SupportState != "VALIDATION_GATED" || len(extra.CapabilityVersions) != 2 {
 		t.Fatalf("add extra message metadata: %#v", extra)
 	}
+}
+
+// TestLoadObjectSelectionCatalog 验证五类对象目录独立版本及新增参数的 DDL 能力绑定。
+func TestLoadObjectSelectionCatalog(t *testing.T) {
+	t.Parallel()
+	catalog, err := LoadObjectSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.MetadataVersion() != "obdumper-4.3.5-slice-v8-object-selection" || len(catalog.Definitions()) != 75 {
+		t.Fatalf("五类对象目录身份或定义数不符：%s / %d", catalog.MetadataVersion(), len(catalog.Definitions()))
+	}
+	for _, name := range []string{"--function", "--procedure", "--sequence"} {
+		definition, ok := catalog.Definition(name)
+		if !ok || definition.SupportState != "ENABLED" || len(definition.CapabilityVersions) != 1 || definition.CapabilityVersions[0] != "export-odp-ddl-v1" {
+			t.Fatalf("新增对象参数 %s 状态或能力错误：%#v", name, definition)
+		}
+	}
+}
+
+// TestLoadCombinedObjectSelectionCatalog 验证新修订只拓宽四类对象的结构与表数据组合能力。
+func TestLoadCombinedObjectSelectionCatalog(t *testing.T) {
+	t.Parallel()
+	catalog, err := LoadCombinedObjectSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.MetadataVersion() != combinedObjectMetadataVersion || len(catalog.Definitions()) != 75 {
+		t.Fatalf("组合目录身份或定义数错误：%s / %d", catalog.MetadataVersion(), len(catalog.Definitions()))
+	}
+	for _, name := range []string{"--view", "--function", "--procedure", "--sequence"} {
+		definition, ok := catalog.Definition(name)
+		if !ok || len(definition.CapabilityVersions) != 2 || definition.CapabilityVersions[1] != "export-odp-ddl-csv-v1" {
+			t.Fatalf("组合对象参数 %s 能力错误：%#v", name, definition)
+		}
+	}
+}
+
+// TestLoadDDLTextFormatsCatalog 验证组合格式只获得对应的 DDL、对象及文本参数。
+func TestLoadDDLTextFormatsCatalog(t *testing.T) {
+	t.Parallel()
+	catalog, err := LoadDDLTextFormats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.MetadataVersion() != ddlTextFormatsMetadataVersion || len(catalog.Definitions()) != 75 {
+		t.Fatalf("组合文本目录身份或定义数错误：%s / %d", catalog.MetadataVersion(), len(catalog.Definitions()))
+	}
+	for _, name := range []string{"--ddl", "--cut", "--sql", "--view", "--function", "--sequence"} {
+		definition, ok := catalog.Definition(name)
+		if !ok || (!containsCapability(definition.CapabilityVersions, "export-odp-ddl-cut-v1") && !containsCapability(definition.CapabilityVersions, "export-odp-ddl-sql-v1")) {
+			t.Fatalf("组合格式参数 %s 能力缺失：%#v", name, definition)
+		}
+	}
+}
+
+func containsCapability(versions []string, value string) bool {
+	for _, version := range versions {
+		if version == value {
+			return true
+		}
+	}
+	return false
 }
 
 // TestLoadLegacyGeneralizedCatalog 固化 v6 目录的字节级身份与旧 --table 短参数，

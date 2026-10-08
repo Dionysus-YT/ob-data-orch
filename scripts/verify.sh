@@ -29,6 +29,7 @@ done
   cd web
   npm ci
   npm run lint
+  npm run audit:wizards
   npm run typecheck
   npm run test
   npm run build

@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-pattern='(mysql|obclient)[[:space:]].*-[pP][^[:space:]]+|BEGIN[[:space:]]+(RSA[[:space:]]+|EC[[:space:]]+|OPENSSH[[:space:]]+)?PRIVATE[[:space:]]+KEY|AKIA[0-9A-Z]{16}'
+# 与 PowerShell 扫描保持参数边界一致，允许引号参数并排除 custom-placeholder 误报。
+pattern='(mysql|obclient)[[:space:]]+(.*[^[:alnum:]_-])?-[pP][^[:space:]]+|BEGIN[[:space:]]+(RSA[[:space:]]+|EC[[:space:]]+|OPENSSH[[:space:]]+)?PRIVATE[[:space:]]+KEY|AKIA[0-9A-Z]{16}'
 matches_file=$(mktemp)
 trap 'rm -f "$matches_file"' EXIT INT TERM
 git ls-files --cached --others --exclude-standard -- cmd contracts internal migrations web .github | while IFS= read -r file; do

@@ -5,6 +5,8 @@ package agentjdbc
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -40,22 +42,22 @@ type SecretResolver interface {
 	ResolveDatabaseConnection(context.Context, agentstate.PrecheckBinding) (Connection, error)
 }
 
-// PreflightRunner 为一个 JDBC 进程内的固定连接和对象检查保留窄的可替换边界。
-// 生产默认实现只允许 jdbcprobe.TestPreflightInWorkspace，测试替身不得改变外部协议语义。
-type PreflightRunner func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.PreflightRequest) (jdbcprobe.PreflightResult, error)
+// BatchPreflightRunner 为全部冻结对象共用的 JDBC 进程与连接保留窄的可替换边界。
+// 生产默认实现只允许复用一次安装的资产调用 jdbcprobe.TestBatchPreflight。
+type BatchPreflightRunner func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error)
 
 // ConnectionRunner 是 ALL 范围的数据库级可达性探测边界。
-// 生产默认实现只允许 jdbcprobe.TestConnectionInWorkspace，不携带对象输入。
+// 生产默认实现只允许复用一次安装的资产调用 jdbcprobe.TestConnection，不携带对象输入。
 type ConnectionRunner func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.Request) (jdbcprobe.Result, error)
 
 // PrecheckProbe 实现固定 DATABASE_CONNECTIVITY 与 OBJECT_ACCESS 检查。
-// 同一实例只能为一个冻结请求解析一次槽位；SPECIFIED 范围逐对象运行冻结单对象探针，
+// 同一实例只能为一个冻结请求解析一次槽位；SPECIFIED 范围在单个进程和连接中核对全部对象，
 // ALL 范围只运行数据库级连接探测，对象结论由可达性投影，逐对象枚举由工具运行时完成。
 type PrecheckProbe struct {
 	WorkspaceRoot string
 	Runtime       jdbcprobe.Runtime
 	Resolver      SecretResolver
-	Run           PreflightRunner
+	RunBatch      BatchPreflightRunner
 	RunConnection ConnectionRunner
 
 	mu    sync.Mutex
@@ -75,8 +77,9 @@ type jdbcRequestIdentity struct {
 	binding           agentstate.PrecheckBinding
 	compatibilityMode jdbcprobe.CompatibilityMode
 	database          string
-	// objects 是逗号连接的冻结对象清单；ALL 范围为空。
+	// 对象清单使用字节长度前缀，避免含逗号的名称与多对象清单碰撞。
 	objects     string
+	objectTypes string
 	contentKind string
 }
 
@@ -86,9 +89,20 @@ func newJdbcRequestIdentity(request agentpreflight.Request) jdbcRequestIdentity 
 		binding:           request.Binding,
 		compatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
 		database:          request.Database,
-		objects:           strings.Join(request.Objects, ","),
+		objects:           encodeRequestList(request.Objects),
+		objectTypes:       encodeRequestList(request.ObjectTypes),
 		contentKind:       request.ContentKind,
 	}
+}
+
+func encodeRequestList(values []string) string {
+	var encoded strings.Builder
+	for _, value := range values {
+		encoded.WriteString(strconv.Itoa(len(value)))
+		encoded.WriteByte(':')
+		encoded.WriteString(value)
+	}
+	return encoded.String()
 }
 
 // Probe 执行短时 JDBC 连接、固定对象元数据和零行读取验证，并始终以安全状态码投影失败。
@@ -106,6 +120,7 @@ func (p *PrecheckProbe) Probe(ctx context.Context, check agentpreflight.CheckID,
 
 func (p *PrecheckProbe) databaseResult(ctx context.Context, request agentpreflight.Request) agentpreflight.Result {
 	if p == nil || p.Resolver == nil || strings.TrimSpace(p.WorkspaceRoot) == "" {
+		slog.Warn("导出预检查数据库探针未完成", "stage", "configuration")
 		return unavailableDatabaseResult()
 	}
 	identity := newJdbcRequestIdentity(request)
@@ -153,10 +168,12 @@ func (p *PrecheckProbe) objectResult(request agentpreflight.Request) agentprefli
 func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight.Request) (databaseResult agentpreflight.Result, objectResult agentpreflight.Result) {
 	workspace, err := credential.CreateWorkspace(p.WorkspaceRoot, request.PrecheckID)
 	if err != nil {
+		slog.Warn("导出预检查数据库探针未完成", "stage", "workspace_create")
 		return unavailableDatabaseResult(), unavailableObjectResult()
 	}
 	defer func() {
 		if cleanupErr := workspace.Cleanup(); cleanupErr != nil {
+			slog.Warn("导出预检查数据库探针未完成", "stage", "workspace_cleanup")
 			databaseResult = unavailableDatabaseResult()
 			objectResult = unavailableObjectResult()
 		}
@@ -166,6 +183,7 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 	defer credential.Zero(connection.Username)
 	defer credential.Zero(connection.Password)
 	if resolveErr != nil {
+		slog.Warn("导出预检查数据库探针未完成", "stage", "secret_resolution")
 		return unavailableDatabaseResult(), unavailableObjectResult()
 	}
 	jdbcConnection := jdbcprobe.Request{
@@ -174,49 +192,79 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 		Username: connection.Username,
 		Password: connection.Password,
 	}
+	// 同一预检查的多个冻结对象共用工作区和不可变探针资产；重复 Install 会触发 O_EXCL 失败关闭。
+	probePath, probeDigest, installErr := jdbcprobe.Install(workspace)
+	if installErr != nil {
+		return unavailableDatabaseResult(), unavailableObjectResult()
+	}
+	runtime := p.Runtime
+	runtime.ProbePath = probePath
+	runtime.ProbeSHA256 = probeDigest
 	// ALL 范围：只用冻结连接探针完成数据库级可达性检查；对象结论由可达性投影，
 	// 逐对象枚举由工具运行时完成，预检查不代替运行时事实。
 	if len(request.Objects) == 0 {
 		runConnection := p.RunConnection
 		if runConnection == nil {
-			runConnection = jdbcprobe.TestConnectionInWorkspace
+			runConnection = func(ctx context.Context, _ credential.Workspace, runtime jdbcprobe.Runtime, request jdbcprobe.Request) (jdbcprobe.Result, error) {
+				return jdbcprobe.TestConnection(ctx, runtime, request)
+			}
 		}
-		if _, runErr := runConnection(ctx, workspace, p.Runtime, jdbcConnection); runErr != nil {
+		if _, runErr := runConnection(ctx, workspace, runtime, jdbcConnection); runErr != nil {
 			if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
 				return failedDatabaseResult(), unavailableObjectResult()
 			}
+			slog.Warn("导出预检查数据库探针未完成", "stage", "connection_probe", "category", probeErrorCategory(runErr))
 			return unavailableDatabaseResult(), unavailableObjectResult()
 		}
 		return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
 	}
-	run := p.Run
+	objects := make([]jdbcprobe.PreflightObject, 0, len(request.Objects))
+	for index, object := range request.Objects {
+		objectType := "TABLE"
+		if len(request.ObjectTypes) != 0 {
+			objectType = request.ObjectTypes[index]
+		}
+		objects = append(objects, jdbcprobe.PreflightObject{Type: objectType, Name: object})
+	}
+	run := p.RunBatch
 	if run == nil {
-		run = jdbcprobe.TestPreflightInWorkspace
-	}
-	// SPECIFIED 范围：对每个冻结对象运行一次固定单对象探针；任一对象不可达即整体失败。
-	for _, object := range request.Objects {
-		result, runErr := run(ctx, workspace, p.Runtime, jdbcprobe.PreflightRequest{
-			Connection:        jdbcConnection,
-			CompatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
-			Database:          request.Database,
-			Table:             object,
-		})
-		if runErr != nil {
-			if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
-				return failedDatabaseResult(), unavailableObjectResult()
-			}
-			return unavailableDatabaseResult(), unavailableObjectResult()
-		}
-		switch result.ObjectAccess {
-		case jdbcprobe.ObjectAccessible:
-			continue
-		case jdbcprobe.ObjectNotAccessible:
-			return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: EvidenceObjectNotAccessible}
-		default:
-			return connectedDatabaseResult(), unavailableObjectResult()
+		run = func(ctx context.Context, _ credential.Workspace, runtime jdbcprobe.Runtime, request jdbcprobe.BatchPreflightRequest) (jdbcprobe.PreflightResult, error) {
+			return jdbcprobe.TestBatchPreflight(ctx, runtime, request)
 		}
 	}
-	return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
+	result, runErr := run(ctx, workspace, runtime, jdbcprobe.BatchPreflightRequest{
+		Connection: jdbcConnection, CompatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
+		Database: request.Database, Objects: objects,
+	})
+	if runErr != nil {
+		if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
+			return failedDatabaseResult(), unavailableObjectResult()
+		}
+		slog.Warn("导出预检查数据库探针未完成", "stage", "batch_object_probe", "category", probeErrorCategory(runErr))
+		return unavailableDatabaseResult(), unavailableObjectResult()
+	}
+	switch result.ObjectAccess {
+	case jdbcprobe.ObjectAccessible:
+		return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
+	case jdbcprobe.ObjectNotAccessible:
+		return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: EvidenceObjectNotAccessible}
+	default:
+		return connectedDatabaseResult(), unavailableObjectResult()
+	}
+}
+
+// probeErrorCategory 只输出固定错误类别，避免将 JDBC 异常、连接输入或对象名称写入服务日志。
+func probeErrorCategory(err error) string {
+	switch {
+	case errors.Is(err, jdbcprobe.ErrInvalidRuntime):
+		return "invalid_runtime"
+	case errors.Is(err, jdbcprobe.ErrInvalidRequest):
+		return "invalid_request"
+	case errors.Is(err, jdbcprobe.ErrDriverUnavailable):
+		return "driver_unavailable"
+	default:
+		return "probe_failed"
+	}
 }
 
 func connectedDatabaseResult() agentpreflight.Result {

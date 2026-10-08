@@ -8,9 +8,10 @@ type Draft struct {
 	DataSourceID  string
 	NodeID        string
 	Database      string
-	ScopeKind     string // ALL | SPECIFIED
-	ObjectType    string // TABLE | VIEW；ALL 范围时为空
+	ScopeKind     string // ALL | SPECIFIED | QUERY_RESULT
+	ObjectType    string // 单类型范围的对象类型；ALL 或混选时为空
 	Objects       []string
+	ObjectsByType map[string][]string // 混选时按类型保存名称，避免同名对象失去归属
 	ExcludeTables []string
 	ContentKind   string // DATA_ONLY | DDL_ONLY | DDL_AND_DATA
 	Format        string // CSV | CUT | SQL | POS | PARQUET | ORC | AVRO；仅 DDL 时为空
@@ -29,6 +30,7 @@ type Draft struct {
 	MaxFileSize      *int64
 	RetainEmptyFiles bool
 	QuerySql         string
+	QueryResultLimit *int64
 	IncludeColumns   []string
 	ExcludeColumns   []string
 	// ExcludeVirtualColumns、闪回和资源参数保持与 OBDUMPER 领域契约一致。
@@ -74,7 +76,7 @@ func (n Draft) IsFrozenSingleTableCSV() bool {
 func (n Draft) HasZeroOptions() bool {
 	return n.CsvOptions == (store.CsvOptions{}) && n.CutOptions == (store.CutOptions{}) && !n.Compress && n.CompressionAlgo == "" && n.CompressionLevel == nil &&
 		!n.NoNestedDir && n.MaxFileSize == nil && !n.RetainEmptyFiles &&
-		n.QuerySql == "" && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
+		n.QuerySql == "" && n.QueryResultLimit == nil && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
 		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
 		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot &&

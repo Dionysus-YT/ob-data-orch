@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { createBrowserApi, dataSourceErrorMessage, executionNodeErrorMessage, exportDraftErrorMessage, taskDetailErrorMessage, type FetchLike } from './browser'
+import { browserApi, createBrowserApi, dataSourceErrorMessage, executionNodeErrorMessage, exportDraftErrorMessage, taskDetailErrorMessage, type FetchLike } from './browser'
 
 function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
   const calls: Array<{ path: string; init: RequestInit }> = []
@@ -15,6 +15,22 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
+  it('页面取消信号传递给原生 HTTP 等待并保留原请求边界', async () => {
+    const request = new AbortController()
+    const fetcher = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      expect(init?.signal).toBe(request.signal)
+      expect(init?.credentials).toBe('same-origin')
+      return Response.json({ items: [] })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    try {
+      await browserApi(request.signal).listDataSources()
+      request.abort()
+      expect((fetcher.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
   it('读取数据源列表中的普通业务用户名且忽略敏感字段', async () => {
     const { api } = apiWith(Response.json({
       items: [{
@@ -498,6 +514,15 @@ describe('浏览器 API 客户端', () => {
       format: 'DDL_CSV', configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v1', capabilityVersion: 'capability-v1',
     })
     expect(snapshot.calls[0]?.path).toBe('/api/v1/tasks/task%2F1/snapshot')
+    for (const format of ['DDL_CUT', 'DDL_SQL'] as const) {
+      const combined = apiWith(Response.json({
+        item: {
+          type: 'OBDUMPER_EXPORT', snapshotVersion: 'v2', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1',
+          format, configFingerprint: 'synthetic-fingerprint', toolVersion: '4.3.5-RELEASE', metadataVersion: 'metadata-v10', capabilityVersion: 'capability-v1',
+        },
+      }))
+      await expect(combined.api.getTaskSnapshot('task/1')).resolves.toMatchObject({ format, metadataVersion: 'metadata-v10' })
+    }
 
     const command = apiWith(Response.json({ item: { kind: 'PLANNED', command: 'obdumper --user ****** -p ******', redaction: 'PASSWORD_ONLY', argv: 'must-not-be-read' } }))
     await expect(command.api.getTaskCommandEvidence('task/1')).resolves.toEqual({ kind: 'PLANNED', command: 'obdumper --user ****** -p ******', redaction: 'PASSWORD_ONLY' })
@@ -674,6 +699,32 @@ describe('浏览器 API 客户端', () => {
         dataFormat: { formatKind: 'CSV' },
       },
     })
+  })
+
+  it('回填结果集草稿的 SQL 与条数上限', async () => {
+    const { api } = apiWith(Response.json({ item: {
+      id: 'draft-query', dataSourceId: 'source-1', nodeId: 'node-1', revision: 1, configVersion: 'v6', configFingerprint: 'synthetic-fingerprint',
+      config: { configVersion: 'v6', dataSourceId: 'source-1', nodeId: 'node-1', database: 'synthetic_db', scopeKind: 'QUERY_RESULT', table: '', contentKind: 'DATA_ONLY', format: 'CSV', filePath: '/E:/tmp/output',
+        config: { objectScope: { database: 'synthetic_db', scopeKind: 'QUERY_RESULT' }, contentSelection: { contentKind: 'DATA_ONLY' }, dataFormat: { formatKind: 'CSV' }, outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' }, filterConfig: { querySql: 'SELECT id FROM synthetic_table', queryResultLimit: 1000 } },
+      },
+    } }))
+    await expect(api.getExportDraft('draft-query')).resolves.toMatchObject({ config: {
+      objectScope: { scopeKind: 'QUERY_RESULT' }, filterConfig: { querySql: 'SELECT id FROM synthetic_table', queryResultLimit: 1000 },
+    } })
+  })
+
+  it('回填仅含文件拆分的草稿并拒绝无效响应类型', async () => {
+    for (const blockSize of ['256ROW', '1024MB', 256]) {
+      const { api } = apiWith(Response.json({ item: {
+        id: 'draft-split', dataSourceId: 'source-1', nodeId: 'node-1', revision: 1, configVersion: 'v6', configFingerprint: 'synthetic-fingerprint',
+        config: { config: { objectScope: { database: 'synthetic_db', scopeKind: 'ALL' }, contentSelection: { contentKind: 'DATA_ONLY' }, dataFormat: { formatKind: 'CSV' }, outputConfig: { outputKind: 'LOCAL', filePath: '/E:/tmp/output' }, performanceConfig: { blockSize } } },
+      } }))
+      if (typeof blockSize === 'string') {
+        await expect(api.getExportDraft('draft-split')).resolves.toMatchObject({ config: { performanceConfig: { blockSize } } })
+      } else {
+        await expect(api.getExportDraft('draft-split')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+      }
+    }
   })
 
   it('解析 EX-I3 全量选项的标准文档', async () => {

@@ -22,8 +22,11 @@ const (
 	currentMetadataVersion           = "obdumper-4.3.5-slice-v5"
 	legacyGeneralizedMetadataVersion = "obdumper-4.3.5-slice-v6"
 	generalizedMetadataVersion       = "obdumper-4.3.5-slice-v7"
+	objectSelectionMetadataVersion   = "obdumper-4.3.5-slice-v8-object-selection"
+	combinedObjectMetadataVersion    = "obdumper-4.3.5-slice-v9-combined-object-selection"
+	ddlTextFormatsMetadataVersion    = "obdumper-4.3.5-slice-v10-ddl-text-formats"
 	// maxInheritanceDepth 限制清单继承链深度，避免循环或过长的依赖链。
-	maxInheritanceDepth = 4
+	maxInheritanceDepth = 5
 )
 
 // resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
@@ -101,6 +104,8 @@ type definitionOverride struct {
 	// Activation 允许泛化修订扩展参数激活规则（如把 CSV 专属参数扩展为 CSV/CUT 多格式）；空值表示保持基线规则。
 	Activation     *Rule    `json:"activation,omitempty"`
 	AppendEvidence []string `json:"appendEvidence"`
+	// CapabilityVersions 仅在新修订显式设置时替换，保留历史版本能力绑定。
+	CapabilityVersions []string `json:"capabilityVersions,omitempty"`
 }
 
 type Catalog struct {
@@ -123,6 +128,21 @@ func LoadDefault() (*Catalog, error) {
 // 该目录 capabilityVersion 为空，由命令生成器按请求能力筛选参数子集。
 func LoadGeneralized() (*Catalog, error) {
 	return loadFromFS(resourceFiles, generalizedRevisionResource)
+}
+
+// LoadObjectSelection 加载五类对象专用的新增目录，历史 v5～v7 元数据保持不变。
+func LoadObjectSelection() (*Catalog, error) {
+	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v8-object-selection.json")
+}
+
+// LoadCombinedObjectSelection 加载结构与表数据组合时可携带其他对象定义的现行目录。
+func LoadCombinedObjectSelection() (*Catalog, error) {
+	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v9-combined-object-selection.json")
+}
+
+// LoadDDLTextFormats 加载结构与 CUT/SQL 数据组合的现行参数目录。
+func LoadDDLTextFormats() (*Catalog, error) {
+	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v10-ddl-text-formats.json")
 }
 
 // LoadLegacyGeneralized 加载冻结的 v6 泛化目录，只用于重放升级前已经持久化的草稿。
@@ -306,6 +326,18 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 		if len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 1 || len(manifest.Additions) != 13 {
 			return revisionManifest{}, errors.New("parameter metadata revision content is invalid")
 		}
+	case objectSelectionMetadataVersion:
+		if manifest.Inherits != "obdumper-4.3.5-slice-v7.json" || manifest.CapabilityVersion != "" || len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 0 || len(manifest.Additions) != 3 {
+			return revisionManifest{}, errors.New("parameter metadata object selection revision is invalid")
+		}
+	case combinedObjectMetadataVersion:
+		if manifest.Inherits != "obdumper-4.3.5-slice-v8-object-selection.json" || manifest.CapabilityVersion != "" || len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 4 || len(manifest.Additions) != 0 {
+			return revisionManifest{}, errors.New("parameter metadata combined object selection revision is invalid")
+		}
+	case ddlTextFormatsMetadataVersion:
+		if manifest.Inherits != "obdumper-4.3.5-slice-v9-combined-object-selection.json" || manifest.CapabilityVersion != "" || len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 52 || len(manifest.Additions) != 0 {
+			return revisionManifest{}, errors.New("parameter metadata ddl text format revision is invalid")
+		}
 	default:
 		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 	}
@@ -352,6 +384,9 @@ func applyOverrides(raw *resource, overrides []definitionOverride) error {
 		if override.Activation != nil {
 			raw.Definitions[index].Activation = *override.Activation
 		}
+		if override.CapabilityVersions != nil {
+			raw.Definitions[index].CapabilityVersions = append([]string(nil), override.CapabilityVersions...)
+		}
 		raw.Definitions[index].OfficialEvidence = append(raw.Definitions[index].OfficialEvidence, override.AppendEvidence...)
 	}
 	return nil
@@ -377,7 +412,7 @@ func validateResource(raw resource) error {
 		if len(raw.Definitions) != 18 {
 			return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion:
 		// v6/v7 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
 		if raw.CapabilityVersion != "" {
 			return errors.New("parameter metadata capability version is unsupported")
@@ -387,9 +422,12 @@ func validateResource(raw resource) error {
 			return errors.New("parameter metadata category order does not match the confirmed command order")
 		}
 		expectedDefinitions := 59
-		if raw.MetadataVersion == generalizedMetadataVersion {
+		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
 			// v7 登记第二批 13 个定义；尚未完成专用验证或预检查的定义仍保持门禁。
 			expectedDefinitions = 72
+		}
+		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
+			expectedDefinitions = 75
 		}
 		if len(raw.Definitions) != expectedDefinitions {
 			return fmt.Errorf("parameter metadata has %d definitions, want %d", len(raw.Definitions), expectedDefinitions)
@@ -499,7 +537,7 @@ func validateResource(raw resource) error {
 		}); err != nil {
 			return err
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion:
 		// v6 已取证子集：EX-I2 六项 + EX-I3 的 CSV 序列化、压缩、文件布局、筛选与资源参数
 		// + EX-I4 的 CUT/SQL 数据格式及其专属序列化参数
 		// + EX-I4 POS 定版（2026-08-07 实测）的 --pos/--ctl-path 与 CUT 专属 --column-splitter
@@ -519,9 +557,12 @@ func validateResource(raw resource) error {
 			"--query-sql", "--where", "--snapshot", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
 		}
-		if raw.MetadataVersion == generalizedMetadataVersion {
+		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
 			// 第二批仅四项已观察到可验收效果：MySQL DATE/DATETIME 格式、分区和类型排除。
 			enabled = append(enabled, "--date-value-format", "--datetime-value-format", "--partition", "--exclude-data-types")
+		}
+		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
+			enabled = append(enabled, "--function", "--procedure", "--sequence")
 		}
 		if err := requireNamesByState(raw.Definitions, "ENABLED", enabled); err != nil {
 			return err
@@ -612,7 +653,7 @@ func gatedNamesByVersion(metadataVersion string) []string {
 	switch metadataVersion {
 	case legacyGeneralizedMetadataVersion:
 		return []string{"--retry", "--weak-read"}
-	case generalizedMetadataVersion:
+	case generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion:
 		return []string{
 			"--retry", "--weak-read",
 			"--time-value-format", "--timestamp-value-format", "--timestamp-tz-value-format", "--timestamp-ltz-value-format",

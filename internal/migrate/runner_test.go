@@ -44,8 +44,8 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 22 {
-		t.Fatalf("migration count = %d, want 22", migrationCount)
+	if migrationCount != 23 {
+		t.Fatalf("migration count = %d, want 23", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -81,7 +81,7 @@ func Test历史解耦迁移保留现有任务(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range names {
-		if strings.HasPrefix(name, "0021_") || strings.HasPrefix(name, "0022_") {
+		if strings.HasPrefix(name, "0021_") || strings.HasPrefix(name, "0022_") || strings.HasPrefix(name, "0023_") {
 			continue
 		}
 		data, err := migrations.Files.ReadFile(name)
@@ -468,7 +468,12 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	twentyThirdMigration, err := migrations.Files.ReadFile("0023_export_catalog_extended_types.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	tampered := fstest.MapFS{
+		"0023_export_catalog_extended_types.sql":              &fstest.MapFile{Data: twentyThirdMigration},
 		"0022_export_object_catalog.sql":                      &fstest.MapFile{Data: twentySecondMigration},
 		"0021_decouple_data_source_history.sql":               &fstest.MapFile{Data: twentyFirstMigration},
 		"0001_initial.sql":                                    &fstest.MapFile{Data: []byte("CREATE TABLE tampered(value TEXT) STRICT;")},

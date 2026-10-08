@@ -248,7 +248,7 @@ func TestOpenAPI任务详情读取使用独立安全投影(t *testing.T) {
 	}
 	snapshot := object(t, schemas, "TaskSnapshotRead")
 	snapshotProperties := object(t, snapshot, "properties")
-	assertExactStringEnum(t, object(t, snapshotProperties, "format"), []string{"CSV", "CUT", "SQL", "POS", "PARQUET", "ORC", "AVRO", "DDL", "DDL_CSV"})
+	assertExactStringEnum(t, object(t, snapshotProperties, "format"), []string{"CSV", "CUT", "SQL", "POS", "PARQUET", "ORC", "AVRO", "DDL", "DDL_CSV", "DDL_CUT", "DDL_SQL"})
 	execution := object(t, schemas, "TaskExecutionRead")
 	properties := object(t, execution, "properties")
 	if object(t, properties, "stageEvidence")["const"] != "UNAVAILABLE" || object(t, properties, "progressEvidence")["const"] != "UNAVAILABLE" {

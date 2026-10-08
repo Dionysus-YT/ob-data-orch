@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/credential"
 )
 
@@ -29,9 +31,10 @@ const (
 	probeTimeout   = 10 * time.Second
 	maxOutputBytes = 4 * 1024
 
-	connectionProtocolVersion = 1
-	preflightProtocolVersion  = 3
-	catalogProtocolVersion    = 4
+	connectionProtocolVersion     = 1
+	preflightProtocolVersion      = 3
+	catalogProtocolVersion        = 4
+	batchPreflightProtocolVersion = 5
 )
 
 var (
@@ -77,7 +80,21 @@ type PreflightRequest struct {
 	Table             string
 }
 
-// CatalogRequest 只允许列举有界数据库名，或指定数据库内的表和视图名。
+// PreflightObject 是冻结的单个导出对象，类型限定为五类已开放对象。
+type PreflightObject struct {
+	Type string
+	Name string
+}
+
+// BatchPreflightRequest 在一次固定 JDBC 连接中核对全部冻结对象。
+type BatchPreflightRequest struct {
+	Connection        Request
+	CompatibilityMode CompatibilityMode
+	Database          string
+	Objects           []PreflightObject
+}
+
+// CatalogRequest 只允许列举有界数据库名，或指定数据库内的五类已开放对象名。
 type CatalogRequest struct {
 	Connection        Request
 	CompatibilityMode CompatibilityMode
@@ -86,10 +103,11 @@ type CatalogRequest struct {
 	Keyword           string
 }
 
-// CatalogResult 是固定元数据 API 返回的最多 100 个对象名。
+// CatalogResult 是单类最多 100 项或五类合计最多 500 项的固定目录结果。
 type CatalogResult struct {
 	Objects   []string
 	Truncated bool
+	Groups    []catalogresult.Group
 }
 
 // CompatibilityMode 是已冻结数据源的 OceanBase 兼容模式。
@@ -127,15 +145,16 @@ type Result struct {
 }
 
 type probeResponse struct {
-	Status         string   `json:"status"`
-	Code           string   `json:"code"`
-	ProductName    string   `json:"productName"`
-	ProductVersion string   `json:"productVersion"`
-	DriverName     string   `json:"driverName"`
-	DriverVersion  string   `json:"driverVersion"`
-	ObjectAccess   string   `json:"objectAccess"`
-	Objects        []string `json:"objects"`
-	Truncated      *bool    `json:"truncated"`
+	Status         string                `json:"status"`
+	Code           string                `json:"code"`
+	ProductName    string                `json:"productName"`
+	ProductVersion string                `json:"productVersion"`
+	DriverName     string                `json:"driverName"`
+	DriverVersion  string                `json:"driverVersion"`
+	ObjectAccess   string                `json:"objectAccess"`
+	Objects        []string              `json:"objects"`
+	Truncated      *bool                 `json:"truncated"`
+	Groups         []catalogresult.Group `json:"groups"`
 }
 
 // ListObjectsInWorkspace 安装已核验探针后执行一次固定元数据查询。
@@ -165,12 +184,20 @@ func ListObjects(ctx context.Context, runtime Runtime, request CatalogRequest) (
 	}
 	input := encodeProbeRequest(catalogProtocolVersion, request.Connection, [][]byte{[]byte(request.CompatibilityMode), []byte(request.Database), []byte(request.ObjectType), []byte(request.Keyword)})
 	defer zero(input)
-	output, err := runProbeLimited(ctx, runtime, input, 64*1024)
+	maximum := 64 * 1024
+	if request.ObjectType == "ALL" {
+		maximum = 512 * 1024
+	}
+	timeout := probeTimeout
+	if request.ObjectType == "ALL" {
+		timeout = 35 * time.Second
+	}
+	output, err := runProbeLimitedWithTimeout(ctx, runtime, input, maximum, timeout)
 	if err != nil {
 		return CatalogResult{}, err
 	}
 	defer zero(output)
-	return parseCatalogResponse(output)
+	return parseCatalogResponseForType(output, request.ObjectType)
 }
 
 // validCatalogRequestScope 与控制面冻结条件保持一致，防止探针接收任意元数据范围。
@@ -178,17 +205,30 @@ func validCatalogRequestScope(database, objectType string) bool {
 	if objectType == "DATABASE" {
 		return database == ""
 	}
-	return (objectType == "TABLE" || objectType == "VIEW") && validObjectIdentifier(database)
+	return (objectType == "ALL" || objectType == "TABLE" || objectType == "VIEW" || objectType == "FUNCTION" || objectType == "PROCEDURE" || objectType == "SEQUENCE") && validObjectIdentifier(database)
 }
 
 func parseCatalogResponse(output []byte) (CatalogResult, error) {
+	return parseCatalogResponseForType(output, "TABLE")
+}
+
+func parseCatalogResponseForType(output []byte, objectType string) (CatalogResult, error) {
 	response, err := decodeResponse(output)
 	if err != nil {
 		return CatalogResult{}, ErrProbeFailed
 	}
 	if response.Status != "SUCCESS" || response.Code != "" || response.ObjectAccess != "" ||
 		response.ProductName != "" || response.ProductVersion != "" || response.DriverName != "" || response.DriverVersion != "" ||
-		response.Objects == nil || response.Truncated == nil || len(response.Objects) > 100 {
+		response.Truncated == nil || len(response.Objects) > 100 {
+		return CatalogResult{}, ErrProbeFailed
+	}
+	if objectType == "ALL" {
+		if response.Objects == nil || len(response.Objects) != 0 || *response.Truncated || !catalogresult.ValidGroups(response.Groups) {
+			return CatalogResult{}, ErrProbeFailed
+		}
+		return CatalogResult{Groups: response.Groups}, nil
+	}
+	if response.Objects == nil || len(response.Groups) != 0 {
 		return CatalogResult{}, ErrProbeFailed
 	}
 	seen := map[string]bool{}
@@ -218,6 +258,7 @@ func TestConnectionInWorkspace(ctx context.Context, workspace credential.Workspa
 func TestPreflightInWorkspace(ctx context.Context, workspace credential.Workspace, runtime Runtime, request PreflightRequest) (PreflightResult, error) {
 	probePath, probeDigest, err := Install(workspace)
 	if err != nil {
+		slog.Warn("JDBC 预检查探针未完成", "phase", "asset_install")
 		return PreflightResult{}, err
 	}
 	runtime.ProbePath = probePath
@@ -248,9 +289,11 @@ func TestConnection(ctx context.Context, runtime Runtime, request Request) (Resu
 // 它拒绝非冻结对象输入，且不会把对象或秘密写入命令行、环境变量、日志或返回错误。
 func TestPreflight(ctx context.Context, runtime Runtime, request PreflightRequest) (PreflightResult, error) {
 	if !validRuntime(runtime) {
+		slog.Warn("JDBC 预检查探针未完成", "phase", "runtime_validation")
 		return PreflightResult{}, ErrInvalidRuntime
 	}
 	if !validPreflightRequest(request) {
+		slog.Warn("JDBC 预检查探针未完成", "phase", "request_validation")
 		return PreflightResult{}, ErrInvalidRequest
 	}
 	input := encodePreflightRequest(request)
@@ -260,7 +303,91 @@ func TestPreflight(ctx context.Context, runtime Runtime, request PreflightReques
 		return PreflightResult{}, err
 	}
 	defer zero(output)
+	result, err := parsePreflightResponse(output)
+	if err != nil {
+		slog.Warn("JDBC 预检查探针未完成", "phase", "response_validation", "category", probeResponseErrorCategory(err))
+	}
+	return result, err
+}
+
+// TestBatchPreflight 使用一次受控子进程和 JDBC 连接逐项核对冻结对象，仅返回汇总三态。
+func TestBatchPreflight(ctx context.Context, runtime Runtime, request BatchPreflightRequest) (PreflightResult, error) {
+	if !validRuntime(runtime) {
+		return PreflightResult{}, ErrInvalidRuntime
+	}
+	if !validBatchPreflightRequest(request) {
+		return PreflightResult{}, ErrInvalidRequest
+	}
+	input := encodeBatchPreflightRequest(request)
+	defer zero(input)
+	output, err := runProbeLimitedWithTimeout(ctx, runtime, input, maxOutputBytes, 90*time.Second)
+	if err != nil {
+		return PreflightResult{}, err
+	}
+	defer zero(output)
 	return parsePreflightResponse(output)
+}
+
+func validBatchPreflightRequest(request BatchPreflightRequest) bool {
+	if !validRequest(request.Connection) || !validCompatibilityMode(request.CompatibilityMode) || !validObjectIdentifier(request.Database) || len(request.Objects) == 0 {
+		return false
+	}
+	for _, object := range request.Objects {
+		if !validObjectIdentifier(object.Name) || strings.ContainsAny(object.Name, "*,") {
+			return false
+		}
+		switch object.Type {
+		case "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func encodeBatchPreflightRequest(request BatchPreflightRequest) []byte {
+	length := 4 + 4 + len(request.Connection.Host) + 4 + 4 + len(request.Connection.Username) + 4 + len(request.Connection.Password) + 4 + len(request.CompatibilityMode) + 4 + len(request.Database) + 4
+	for _, object := range request.Objects {
+		length += 4 + len(object.Type) + 4 + len(object.Name)
+	}
+	result := make([]byte, length)
+	offset := 0
+	writeInt := func(value int) {
+		binary.BigEndian.PutUint32(result[offset:offset+4], uint32(value))
+		offset += 4
+	}
+	writeBytes := func(value []byte) {
+		writeInt(len(value))
+		copy(result[offset:], value)
+		offset += len(value)
+	}
+	writeInt(batchPreflightProtocolVersion)
+	writeBytes([]byte(request.Connection.Host))
+	writeInt(request.Connection.Port)
+	writeBytes(request.Connection.Username)
+	writeBytes(request.Connection.Password)
+	writeBytes([]byte(request.CompatibilityMode))
+	writeBytes([]byte(request.Database))
+	writeInt(len(request.Objects))
+	for _, object := range request.Objects {
+		writeBytes([]byte(object.Type))
+		writeBytes([]byte(object.Name))
+	}
+	return result
+}
+
+// probeResponseErrorCategory 仅保留受控错误类别，不记录 JDBC 输出或连接输入。
+func probeResponseErrorCategory(err error) string {
+	switch {
+	case errors.Is(err, ErrConnectionFailed):
+		return "connection_failed"
+	case errors.Is(err, ErrDriverUnavailable):
+		return "driver_unavailable"
+	case errors.Is(err, ErrInvalidRequest):
+		return "invalid_request"
+	default:
+		return "invalid_response"
+	}
 }
 
 func runProbe(ctx context.Context, runtime Runtime, input []byte) ([]byte, error) {
@@ -268,7 +395,12 @@ func runProbe(ctx context.Context, runtime Runtime, input []byte) ([]byte, error
 }
 
 func runProbeLimited(ctx context.Context, runtime Runtime, input []byte, maximum int) ([]byte, error) {
-	bounded, cancel := context.WithTimeout(ctx, probeTimeout)
+	return runProbeLimitedWithTimeout(ctx, runtime, input, maximum, probeTimeout)
+}
+
+// runProbeLimitedWithTimeout 只为五类批量目录延长单次固定探针时限。
+func runProbeLimitedWithTimeout(ctx context.Context, runtime Runtime, input []byte, maximum int, timeout time.Duration) ([]byte, error) {
+	bounded, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	arguments := []string{"-cp", runtime.ProbePath + string(os.PathListSeparator) + runtime.ConnectorPath, probeMainClass}
 	command := exec.CommandContext(bounded, runtime.JavaPath, arguments...)
@@ -276,17 +408,21 @@ func runProbeLimited(ctx context.Context, runtime Runtime, input []byte, maximum
 	command.Env = append([]string(nil), runtime.Environment...)
 	stdin, err := command.StdinPipe()
 	if err != nil {
+		slog.Warn("JDBC 固定子进程未完成", "phase", "stdin_pipe")
 		return nil, ErrProbeFailed
 	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
+		slog.Warn("JDBC 固定子进程未完成", "phase", "stdout_pipe")
 		return nil, ErrProbeFailed
 	}
 	stderr, err := command.StderrPipe()
 	if err != nil {
+		slog.Warn("JDBC 固定子进程未完成", "phase", "stderr_pipe")
 		return nil, ErrProbeFailed
 	}
 	if err := command.Start(); err != nil {
+		slog.Warn("JDBC 固定子进程未完成", "phase", "process_start")
 		return nil, ErrProbeFailed
 	}
 	writeDone := make(chan error, 1)
@@ -315,6 +451,11 @@ func runProbeLimited(ctx context.Context, runtime Runtime, input []byte, maximum
 	written := <-writeDone
 	waitErr := command.Wait()
 	if written != nil || outputErr != nil {
+		phase := "stdin_write"
+		if outputErr != nil {
+			phase = "stdout_read"
+		}
+		slog.Warn("JDBC 固定子进程未完成", "phase", phase)
 		zero(output)
 		return nil, ErrProbeFailed
 	}
@@ -324,6 +465,13 @@ func runProbeLimited(ctx context.Context, runtime Runtime, input []byte, maximum
 			zero(output)
 			return nil, responseErr
 		}
+		phase := "process_exit"
+		if bounded.Err() != nil {
+			phase = "process_timeout"
+		} else if response, decodeErr := decodeResponse(output); decodeErr == nil && response.Status == "SUCCESS" {
+			phase = "process_exit_after_success"
+		}
+		slog.Warn("JDBC 固定子进程未完成", "phase", phase)
 		zero(output)
 		return nil, ErrProbeFailed
 	}
@@ -440,7 +588,7 @@ func readLimited(reader io.Reader, maximum int) ([]byte, error) {
 
 func parseResponse(output []byte) (Result, error) {
 	response, err := decodeResponse(output)
-	if err != nil || response.ObjectAccess != "" || response.Objects != nil || response.Truncated != nil {
+	if err != nil || response.ObjectAccess != "" || response.Objects != nil || response.Truncated != nil || response.Groups != nil {
 		return Result{}, ErrProbeFailed
 	}
 	return parseConnectionResponse(response)
@@ -451,7 +599,7 @@ func parsePreflightResponse(output []byte) (PreflightResult, error) {
 	if err != nil {
 		return PreflightResult{}, ErrProbeFailed
 	}
-	if response.Objects != nil || response.Truncated != nil {
+	if response.Objects != nil || response.Truncated != nil || response.Groups != nil {
 		return PreflightResult{}, ErrProbeFailed
 	}
 	connection, err := parseConnectionResponse(response)

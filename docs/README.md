@@ -12,6 +12,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。按当�
 | 某个页面的功能、字段和异常场景 | [模块设计索引](02-design/README.md) | 每个模块一份设计；导入参数映射和验证计划按需读取 |
 | 页面应该长什么样 | [P0 MASTER](../design-system/MASTER.md) | [数据源标准页](../design-system/pages/data-sources.md)及对应页面 P1 |
 | 前端基础控件、Token、样式与升级 | [前端平台基线](03-technical/frontend-platform-baseline.md) | Qualification、浏览器回归和静态审计入口 |
+| 复杂向导如何组织与维护 | [统一向导架构](03-technical/frontend-platform-baseline.md#复杂向导架构与开发规范) | [导出维护索引](../web/src/workbench/export/README.md)、强制约束/人工复核/自动检查；导入仍按任务地图准入 |
 | 如何安装、使用网页、启停和升级 | [安装、使用与运维手册](03-technical/deployment-operations.md) | 首次安装、Agent 注册、真实执行条件、旧部署迁移和故障定位；快速开始见 [README](../README.md) |
 | 系统如何实现、接口有哪些边界 | [技术契约索引](03-technical/README.md) | 只读受影响的契约 |
 | 某项能力有什么验证证据 | [验证记录索引](03-technical/README.md#evidence) | 区分合成验证、Windows 实测和正式发布 |

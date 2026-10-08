@@ -13,6 +13,7 @@ export interface ExportDraftFormValues {
   readonly scopeKind: ExportScopeKind
   readonly objectType: ExportObjectType
   readonly objectNames: readonly string[]
+  readonly objectSelections?: readonly { readonly objectType: ExportObjectType; readonly name: string }[]
   readonly excludeTables: readonly string[]
   readonly contentKind: ExportContentKind
   // EX-I4：数据格式单选；CSV/CUT/SQL 各有适用面板。
@@ -56,6 +57,7 @@ export interface ExportDraftFormValues {
   // EX-I7 压缩等级（2026-08-10）：--compression-level，按所选算法分范围。
   readonly compressionLevel: string
   readonly querySql: string
+  readonly queryResultLimit: string
   // 条件筛选仅适用于指定表，并与 querySql 互斥。
   readonly where: string
   readonly includeColumnNames: string
@@ -98,7 +100,6 @@ export type ExportDraftInputValidation =
   | { readonly valid: true; readonly input: ExportDraftInput }
   | { readonly valid: false; readonly message: string }
 
-const MAX_OBJECT_EXPRESSIONS = 100
 const CSV_QUOTE_MODES: readonly CsvQuoteMode[] = ['all', 'all_not_null', 'minimal', 'non_numeric', 'none']
 const COMPRESSION_ALGOS: readonly CompressionAlgo[] = ['zstd', 'zlib', 'gzip', 'snappy']
 const MEMORY_PATTERN = /^[1-9][0-9]*[KMGTP]?$/
@@ -107,14 +108,35 @@ export const BLOCK_SIZE_PATTERN = /^[1-9][0-9]*(MB|ROW)?$/
 // 时间格式只允许 ASCII 空格与已核验的格式字符，不能把制表符或换行作为空白字符接受。
 const TIMESTAMP_FORMAT_PATTERN = /^[A-Za-z0-9 \-/:.'TZ]+$/
 
-// supportsWhere 仅在指定表范围允许条件筛选，避免把表级参数扩展到全部对象或视图。
+// 结果集入口只接受受控的单条 SELECT，行数上限由控制面按租户模式写入外层查询。
+export function queryResultInputMessage(querySql: string, rowLimit: string): string {
+  if (!/^[1-9][0-9]*$/.test(rowLimit) || Number(rowLimit) > 2147483647) return '查询结果条数限制须为 1～2147483647 的整数。'
+  const query = querySql.trim()
+  if (!/^SELECT\s/i.test(query) || new TextEncoder().encode(query).length > 60 * 1024 || query.includes('\0') || /;|--|\/\*|\*\/|file:\/\//i.test(query)) return '查询 SQL 仅支持一条 SELECT，不可包含注释或语句分隔符。'
+  return ''
+}
+
+// 当前命令边界仅接受单字节转义字符；与服务端的长度及控制字符校验保持一致。
+export function isValidEscapeCharacter(value: string): boolean {
+  if (value === '') return true
+  const code = value.charCodeAt(0)
+  return value.length === 1 && code <= 0x7f && code !== 0 && code !== 10 && code !== 13
+}
+
+// isTableOnlySelection 根据完整已选集合判断表级选项资格，不依赖当前浏览的对象分类。
+export function isTableOnlySelection(values: Pick<ExportDraftFormValues, 'objectType' | 'objectSelections'>): boolean {
+  const selections = values.objectSelections?.filter((item) => item.name.trim())
+  return selections?.length ? selections.every((item) => item.objectType === 'TABLE') : values.objectType === 'TABLE'
+}
+
+// supportsWhere 仅在指定纯表范围允许条件筛选。
 function supportsWhere(values: ExportDraftFormValues): boolean {
-  return values.scopeKind === 'SPECIFIED' && values.objectType === 'TABLE'
+  return values.scopeKind === 'SPECIFIED' && isTableOnlySelection(values)
 }
 
 // supportsPartition 分区筛选仅允许指定表的数据内容组合（EX-F072，2026-08-13 实测定版）。
 function supportsPartition(values: ExportDraftFormValues): boolean {
-  return values.contentKind !== 'DDL_ONLY' && values.scopeKind === 'SPECIFIED' && values.objectType === 'TABLE'
+  return values.contentKind !== 'DDL_ONLY' && supportsWhere(values)
 }
 
 // supportsTimestampFormats 仅允许 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME 格式；未知与 Oracle 均失败关闭。
@@ -124,7 +146,7 @@ function supportsTimestampFormats(values: ExportDraftFormValues): boolean {
 
 // supportsCompactSchema 只允许会包含表 DDL 的组合，纯视图导出不得携带紧凑 Schema。
 function supportsCompactSchema(values: ExportDraftFormValues): boolean {
-  return values.contentKind !== 'DATA_ONLY' && (values.scopeKind === 'ALL' || values.objectType === 'TABLE')
+  return values.contentKind !== 'DATA_ONLY' && (values.scopeKind === 'ALL' || isTableOnlySelection(values))
 }
 
 export function validateExportDraftInput(values: ExportDraftFormValues): ExportDraftInputValidation {
@@ -137,24 +159,31 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   if (!database) return { valid: false, message: '请填写默认数据库或 Schema。' }
   if (!nodeId) return { valid: false, message: '请选择一个已授权的执行节点。' }
   if (values.formatKind !== 'CSV' && values.formatKind !== 'CUT' && values.formatKind !== 'POS' && values.formatKind !== 'SQL' && values.formatKind !== 'PARQUET' && values.formatKind !== 'ORC' && values.formatKind !== 'AVRO') return { valid: false, message: '请选择支持的数据格式。' }
-  // DDL + 数据只支持 CSV 数据格式；页面切换内容类型时应重置非 CSV 格式，服务端同样失败关闭。
-  if (values.contentKind === 'DDL_AND_DATA' && values.formatKind !== 'CSV') return { valid: false, message: 'DDL + 数据只支持 CSV 数据格式。' }
+  // 结构与数据组合只开放已映射的文本格式；服务端按同一范围复核。
+  if (values.contentKind === 'DDL_AND_DATA' && values.formatKind !== 'CSV' && values.formatKind !== 'CUT' && values.formatKind !== 'SQL') return { valid: false, message: '结构和数据仅支持 CSV、CUT 或 SQL 格式。' }
+  if (values.scopeKind === 'QUERY_RESULT') {
+    if (values.contentKind !== 'DATA_ONLY' || !['CSV', 'CUT', 'SQL'].includes(values.formatKind)) return { valid: false, message: '结果集导出仅支持数据内容及 CSV、CUT、SQL 格式。' }
+    const queryMessage = queryResultInputMessage(values.querySql, values.queryResultLimit)
+    if (queryMessage) return { valid: false, message: queryMessage }
+    if (values.excludeTables.length || values.where.trim() || values.partition.trim() || values.flashbackScn.trim() || values.flashbackTimestamp.trim() || values.snapshot || values.includeColumnNames.trim() || values.excludeColumnNames.trim() || values.excludeVirtualColumns || values.excludeDataTypes.trim()) return { valid: false, message: '结果集导出不能组合对象筛选、列筛选、分区、快照或闪回参数。' }
+  } else if (values.queryResultLimit.trim()) return { valid: false, message: '查询结果条数限制仅适用于结果集导出。' }
   if (values.scopeKind === 'SPECIFIED') {
-    const names = values.objectNames.map((name) => name.trim()).filter((name) => name.length > 0)
-    if (names.length === 0) return { valid: false, message: values.objectType === 'VIEW' ? '请至少填写一个视图名称。' : '请至少填写一个表名。' }
-    if (names.length > MAX_OBJECT_EXPRESSIONS) return { valid: false, message: `对象数量不能超过 ${MAX_OBJECT_EXPRESSIONS} 个。` }
+    const selections = values.objectSelections ?? values.objectNames.map((name) => ({ objectType: values.objectType, name }))
+    const names = selections.map((item) => item.name.trim()).filter((name) => name.length > 0)
+    if (names.length === 0) return { valid: false, message: '请至少选择一个导出对象。' }
     for (const name of names) {
       if (name.includes('*') || name.includes(',') || name.length > 256) {
         return { valid: false, message: '对象名称不能使用通配符或逗号，且不超过 256 个字符；多个对象请分行填写。' }
       }
     }
-    if (values.objectType === 'VIEW' && values.contentKind !== 'DDL_ONLY') {
-      return { valid: false, message: '视图只能导出对象定义（仅 DDL），不能导出数据。' }
+    if (selections.some((item) => item.objectType !== 'TABLE') && values.contentKind === 'DATA_ONLY') {
+      return { valid: false, message: '视图、函数、存储过程和序列只能导出对象定义（仅 DDL），不能导出数据。' }
     }
   }
   if (values.scopeKind === 'ALL' && values.excludeTables.length > 0 && values.contentKind === 'DDL_ONLY') {
     return { valid: false, message: '排除表仅在导出含表数据或 DDL + 数据时使用。' }
   }
+  if (values.scopeKind === 'SPECIFIED' && values.excludeTables.length > 0 && !isTableOnlySelection(values)) return { valid: false, message: '排除表仅适用于整库或纯表范围，混合对象范围暂不支持。' }
   if (values.where.trim() && !supportsWhere(values)) {
     return { valid: false, message: '条件筛选仅可用于指定表范围，全部对象或视图导出不得携带该参数。' }
   }
@@ -164,6 +193,8 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   if (values.snapshot && (values.flashbackScn.trim() || values.flashbackTimestamp.trim())) {
     return { valid: false, message: '一致性快照与闪回参数互斥，只能选择其一。' }
   }
+  if (values.flashbackTimestamp.trim() && values.compatibilityMode !== 'ORACLE') return { valid: false, message: '闪回时间点仅适用于 Oracle 兼容模式。' }
+  if (values.fetchSize.trim() && values.compatibilityMode !== 'ORACLE') return { valid: false, message: '游标抓取行数仅适用于 Oracle 兼容模式。' }
   // EX-I6：输出类型分流——本地输出要求节点绝对路径，对象存储按受控字段拼装 URI。
   const outputKind = values.outputKind
   if (outputKind === 'LOCAL') {
@@ -226,21 +257,21 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     // EX-I4：格式适用性决定各面板校验范围；序列化选项按格式区分，
     // 文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均参与校验。
     if (values.formatKind === 'CSV' && values.columnQuoteMode !== '' && !CSV_QUOTE_MODES.includes(values.columnQuoteMode)) return { valid: false, message: 'CSV 包围模式不是受支持的枚举值。' }
-    if ((values.formatKind === 'CSV' || values.formatKind === 'CUT') && values.escapeCharacter.length > 1) return { valid: false, message: '转义字符官方仅支持单字符。' }
+    if (values.formatKind === 'CSV' && (Array.from(values.columnSeparator).length > 1 || Array.from(values.columnQuote).length > 1)) return { valid: false, message: 'CSV 字段分隔符和文本识别符在 OBDUMPER 4.3.5 中仅支持单字符。' }
+    if ((values.formatKind === 'CSV' || values.formatKind === 'CUT') && !isValidEscapeCharacter(values.escapeCharacter)) return { valid: false, message: '转义字符当前仅支持单个 ASCII 字符，且不能使用换行或 NUL。' }
     // 前置 DROP 与保留 Schema 仅在 DDL 内容时生效；紧凑 Schema 已在上方按表 DDL 范围单独失败关闭。
     if (values.contentKind === 'DATA_ONLY' && (values.dropObject || values.retainSchema)) return { valid: false, message: 'DDL 行为参数仅在导出 DDL 内容时生效。' }
     for (const option of serializationOptionValues(values)) {
       if (option.length > 256) return { valid: false, message: '文本序列化选项值不能超过 256 个字符。' }
     }
-    if (values.compress && values.compressionAlgo === '') return { valid: false, message: '启用压缩后请选择压缩算法。' }
     if (!values.compress && values.compressionAlgo !== '') return { valid: false, message: '压缩算法需要先启用压缩。' }
     if (values.compressionAlgo !== '' && !COMPRESSION_ALGOS.includes(values.compressionAlgo)) return { valid: false, message: '压缩算法不是受支持的枚举值。' }
     // EX-I7 压缩等级：官方按算法分范围——zstd 1~22、zlib -1~9；gzip/snappy 不支持指定等级。
     const compressionLevel = values.compressionLevel.trim()
     if (compressionLevel) {
-      if (!values.compress || values.compressionAlgo === '') return { valid: false, message: '压缩等级需要先启用压缩并选择算法。' }
+      if (!values.compress) return { valid: false, message: '压缩等级需要先启用压缩。' }
       const level = Number(compressionLevel)
-      if (values.compressionAlgo === 'zstd' && (!Number.isInteger(level) || level < 1 || level > 22)) return { valid: false, message: 'zstd 压缩等级必须为 1~22 的整数。' }
+      if ((values.compressionAlgo === '' || values.compressionAlgo === 'zstd') && (!Number.isInteger(level) || level < 1 || level > 22)) return { valid: false, message: 'zstd 压缩等级必须为 1~22 的整数。' }
       if (values.compressionAlgo === 'zlib' && (!Number.isInteger(level) || level < -1 || level > 9)) return { valid: false, message: 'zlib 压缩等级必须为 -1~9 的整数。' }
       if (values.compressionAlgo === 'gzip' || values.compressionAlgo === 'snappy') return { valid: false, message: 'gzip/snappy 不支持指定压缩等级。' }
     }
@@ -300,13 +331,15 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
   const performanceOptions = dataOptions ? buildPerformanceOptions(values) : undefined
   const outputFilePath = buildOutputFilePath(values, filePath)
   const config: GeneralizedExportConfig = {
-    objectScope: values.scopeKind === 'ALL'
-      ? { database, scopeKind: 'ALL' }
+    objectScope: values.scopeKind === 'QUERY_RESULT'
+      ? { database, scopeKind: 'QUERY_RESULT' }
+      : values.scopeKind === 'ALL'
+      ? { database, scopeKind: 'ALL', ...(values.excludeTables.length ? { excludeTables: values.excludeTables } : {}) }
       : {
           database,
           scopeKind: 'SPECIFIED',
-          objectTypes: [values.objectType],
-          expressions: values.objectNames.map((name) => name.trim()).filter((name) => name.length > 0).map((name) => ({ name })),
+          objectTypes: [...new Set((values.objectSelections ?? values.objectNames.map((name) => ({ objectType: values.objectType, name }))).filter((item) => item.name.trim()).map((item) => item.objectType))],
+          expressions: (values.objectSelections ?? values.objectNames.map((name) => ({ objectType: values.objectType, name }))).filter((item) => item.name.trim()).map((item) => ({ name: item.name.trim(), objectType: item.objectType })),
           excludeTables: values.excludeTables.length > 0 ? values.excludeTables : undefined,
         },
     contentSelection: { contentKind: values.contentKind },
@@ -318,7 +351,8 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
       maxFileSize: values.maxFileSize ? Number(values.maxFileSize) : undefined,
       retainEmptyFiles: outputOptions ? (values.retainEmptyFiles || undefined) : undefined,
       compress: outputOptions ? (values.compress || undefined) : undefined,
-      compressionAlgo: (values.compressionAlgo || undefined) as CompressionAlgo | undefined,
+      // 自动算法在提交时显式冻结为 zstd，避免界面默认项与执行形态不一致。
+      compressionAlgo: values.compress ? values.compressionAlgo || 'zstd' : undefined,
       // EX-I7 压缩等级：显式设置时随压缩发送（校验已按算法分范围）。
       compressionLevel: values.compressionLevel.trim() ? Number(values.compressionLevel.trim()) : undefined,
       // EX-I4 POS 定版：控制文件目录仅包含数据的 POS 格式发送；仅 DDL 与其余格式不携带（服务端对非 POS 携带失败关闭）。
@@ -420,6 +454,7 @@ function buildSerializationOptions(values: ExportDraftFormValues, formatKind: Ex
 
 function buildFilterOptions(values: ExportDraftFormValues): FilterOptions | undefined {
   const querySql = values.querySql.trim()
+  if (values.scopeKind === 'QUERY_RESULT') return { querySql, queryResultLimit: Number(values.queryResultLimit) }
   const where = supportsWhere(values) ? values.where.trim() : ''
   const includeColumnNames = splitNameList(values.includeColumnNames)
   const excludeColumnNames = splitNameList(values.excludeColumnNames)

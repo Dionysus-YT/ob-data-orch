@@ -15,12 +15,15 @@
     "typecheck": "vue-tsc -b --noEmit",
     "test:browser": "playwright test",
     "audit:platform": "node scripts/audit-platform.mjs",
+    "audit:wizards": "node --test scripts/audit-wizards.test.mjs && node scripts/audit-wizards.mjs",
     "tokens:generate": "node scripts/generate-tokens.mjs",
     "tokens:check": "node scripts/generate-tokens.mjs --check"
   },
   "dependencies": {
     "@ant-design/icons-vue": "7.0.1",
     "ant-design-vue": "4.2.6",
+    "monaco-editor": "0.57.0",
+    "sql-formatter": "15.9.0",
     "vue": "3.5.40",
     "vue-router": "5.2.0"
   },

@@ -152,6 +152,7 @@ type Request struct {
 	CompatibilityMode string
 	Database          string
 	Objects           []string
+	ObjectTypes       []string
 	ContentKind       string
 	TargetPlatform    commandgen.Platform
 	OutputPath        string
@@ -393,12 +394,20 @@ func validateRequest(request Request) error {
 	if request.ContentKind != "DATA_ONLY" && request.ContentKind != "DDL_ONLY" && request.ContentKind != "DDL_AND_DATA" {
 		return ErrInvalidRequest
 	}
-	// ALL 范围允许空对象清单；SPECIFIED 范围的对象数量与名称受冻结边界约束。
-	if len(request.Objects) > 100 {
-		return ErrInvalidRequest
-	}
+	// ALL 范围允许空对象清单；SPECIFIED 范围逐项验证冻结名称。
 	for _, object := range request.Objects {
 		if blank(object) || len(object) > 256 || strings.ContainsAny(object, "\x00\r\n") {
+			return ErrInvalidRequest
+		}
+	}
+	if len(request.ObjectTypes) != 0 && len(request.ObjectTypes) != len(request.Objects) {
+		return ErrInvalidRequest
+	}
+	for _, objectType := range request.ObjectTypes {
+		if objectType != "TABLE" && objectType != "VIEW" && objectType != "FUNCTION" && objectType != "PROCEDURE" && objectType != "SEQUENCE" {
+			return ErrInvalidRequest
+		}
+		if objectType != "TABLE" && request.ContentKind == "DATA_ONLY" {
 			return ErrInvalidRequest
 		}
 	}

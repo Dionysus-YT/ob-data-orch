@@ -3313,6 +3313,14 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
 		}
 	}
+	if len(executionContext.ObjectTypes) != 0 && len(executionContext.ObjectTypes) != len(executionContext.Objects) {
+		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+	}
+	for _, objectType := range executionContext.ObjectTypes {
+		if !oneOf(objectType, "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+		}
+	}
 	var allowedRoots []string
 	if err := json.Unmarshal([]byte(allowedRootsJSON), &allowedRoots); err != nil || !ValidateExecutionNodeConfiguration(platform, allowedRoots) {
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
@@ -3322,9 +3330,6 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 	executionContext.AllowedRoots = append([]string(nil), allowedRoots...)
 	return executionContext, nil
 }
-
-// maxPrecheckObjects 限制预检查上下文可携带的冻结对象数量，与控制面草稿校验保持一致。
-const maxPrecheckObjects = 100
 
 // parsePrecheckExecutionContext 按草稿配置版本解析固定检查上下文；任何结构缺失或越界都返回 ok=false 失败关闭。
 func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckExecutionContext, bool) {
@@ -3356,6 +3361,10 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 			LogPath      string `json:"logPath"`
 			SkipCheckDir bool   `json:"skipCheckDir"`
 			Config       struct {
+				ObjectScope struct {
+					ObjectTypes []string           `json:"objectTypes"`
+					Expressions []ObjectExpression `json:"expressions"`
+				} `json:"objectScope"`
 				OutputConfig struct {
 					OutputKind string `json:"outputKind"`
 					TmpPath    string `json:"tmpPath"`
@@ -3373,6 +3382,11 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 		switch config.ScopeKind {
 		case "ALL":
 			if config.Table != "" {
+				return PrecheckExecutionContext{}, false
+			}
+		case "QUERY_RESULT":
+			// 结果集由 --query-sql 定义；预检查只确认数据库连接，不假定查询语法或对象权限已验证。
+			if config.Table != "" || config.ContentKind != "DATA_ONLY" || len(config.Config.ObjectScope.Expressions) != 0 || len(config.Config.ObjectScope.ObjectTypes) != 0 {
 				return PrecheckExecutionContext{}, false
 			}
 		case "SPECIFIED":
@@ -3394,7 +3408,7 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 		}
 		if config.ScopeKind == "SPECIFIED" {
 			objects := strings.Split(config.Table, ",")
-			if len(objects) == 0 || len(objects) > maxPrecheckObjects {
+			if len(objects) == 0 {
 				return PrecheckExecutionContext{}, false
 			}
 			for _, object := range objects {
@@ -3403,6 +3417,22 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 				}
 			}
 			executionContext.Objects = objects
+			if len(config.Config.ObjectScope.Expressions) != len(objects) {
+				return PrecheckExecutionContext{}, false
+			}
+			for index, expression := range config.Config.ObjectScope.Expressions {
+				if expression.Name != objects[index] {
+					return PrecheckExecutionContext{}, false
+				}
+				objectType := expression.ObjectType
+				if objectType == "" && len(config.Config.ObjectScope.ObjectTypes) == 1 {
+					objectType = config.Config.ObjectScope.ObjectTypes[0]
+				}
+				if !oneOf(objectType, "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+					return PrecheckExecutionContext{}, false
+				}
+				executionContext.ObjectTypes = append(executionContext.ObjectTypes, objectType)
+			}
 		}
 		return executionContext, true
 	default:

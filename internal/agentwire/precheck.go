@@ -43,6 +43,7 @@ type PrecheckExecutionContext struct {
 	CompatibilityMode string
 	Database          string
 	Objects           []string
+	ObjectTypes       []string
 	ContentKind       string
 	OutputPath        string
 	LogPath           string
@@ -240,6 +241,7 @@ type precheckExecutionContextPayload struct {
 	CompatibilityMode string   `json:"compatibilityMode"`
 	Database          string   `json:"database"`
 	Objects           []string `json:"objects"`
+	ObjectTypes       []string `json:"objectTypes"`
 	ContentKind       string   `json:"contentKind"`
 	OutputPath        string   `json:"outputPath"`
 	LogPath           string   `json:"logPath"`
@@ -714,6 +716,7 @@ func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
 		CompatibilityMode: p.CompatibilityMode,
 		Database:          p.Database,
 		Objects:           append([]string(nil), p.Objects...),
+		ObjectTypes:       append([]string(nil), p.ObjectTypes...),
 		ContentKind:       p.ContentKind,
 		OutputPath:        p.OutputPath,
 		LogPath:           p.LogPath,
@@ -823,7 +826,7 @@ func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
 }
 
 func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
-	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validPrecheckContentKind(context.ContentKind) || len(context.Objects) > 100 || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
+	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validPrecheckContentKind(context.ContentKind) || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
 		return false
 	}
 	// EX-I6：缺省输出类型保持本地语义；对象存储输出必须携带受控存储目标段，
@@ -849,6 +852,14 @@ func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
 	}
 	for _, object := range context.Objects {
 		if !validOpaqueValue(object, 256) {
+			return false
+		}
+	}
+	if len(context.ObjectTypes) != 0 && len(context.ObjectTypes) != len(context.Objects) {
+		return false
+	}
+	for _, objectType := range context.ObjectTypes {
+		if objectType != "TABLE" && objectType != "VIEW" && objectType != "FUNCTION" && objectType != "PROCEDURE" && objectType != "SEQUENCE" {
 			return false
 		}
 	}

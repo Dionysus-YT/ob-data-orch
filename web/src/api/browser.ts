@@ -29,11 +29,11 @@ export function exportCatalogErrorMessage(error: unknown): string {
   const apiError = error as Partial<ApiError>
   if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE' || apiError.status === 401) return '登录或页面安全校验已失效，请刷新后重试。'
   if (apiError.code === 'EXPORT_OBJECT_CATALOG_FIELDS_INVALID') return '目录查询条件与当前控制面版本不兼容。请更新控制面与 Agent 后重新加载。'
-  if (apiError.status === 404) return '对象目录接口不可用，或当前身份无权读取所选数据源和节点。请确认控制面已更新并检查授权；仍可手动添加对象。'
+  if (apiError.status === 404) return '对象目录接口不可用，或当前身份无权读取所选数据源和节点。请确认控制面已更新并检查授权。'
   if (apiError.status === 409 || apiError.status === 412) return '数据源配置已变化，请刷新页面后重新选择。'
-  if (apiError.code === 'EXPORT_OBJECT_CATALOG_NODE_UNAVAILABLE') return '执行节点当前无法接收对象查询。请检查 Agent 心跳和节点状态；也可手动添加对象。'
+  if (apiError.code === 'EXPORT_OBJECT_CATALOG_NODE_UNAVAILABLE') return '执行节点当前无法接收对象查询。请检查 Agent 心跳和节点状态后重试。'
   if (apiError.code === 'NETWORK_UNAVAILABLE') return '无法连接控制面，请检查服务状态后重试。'
-  return apiError.message || '无法读取对象元数据，可重试或手动添加。'
+  return apiError.message || '无法读取对象元数据，请重试。'
 }
 
 export function exportDraftErrorMessage(error: unknown, fallback: string): string {
@@ -195,11 +195,19 @@ export interface ExportObjectCatalogQuery {
   readonly dataSourceId: string
   readonly nodeId: string
   readonly database: string
-  readonly objectType: 'DATABASE' | ExportObjectType
+  readonly objectType: 'DATABASE' | 'ALL' | ExportObjectType
   readonly keyword: string
   readonly objects: readonly string[]
+  readonly groups: readonly ExportObjectCatalogGroup[]
   readonly truncated: boolean
   readonly validUntil: string
+}
+
+export interface ExportObjectCatalogGroup {
+  readonly objectType: ExportObjectType
+  readonly objects: readonly string[]
+  readonly truncated: boolean
+  readonly unavailable: boolean
 }
 
 export interface DataSourceStateChange {
@@ -294,8 +302,8 @@ export interface ExecutionNodeEnrollment {
   readonly displayedOnce: true
 }
 
-export type ExportScopeKind = 'ALL' | 'SPECIFIED'
-export type ExportObjectType = 'TABLE' | 'VIEW'
+export type ExportScopeKind = 'ALL' | 'SPECIFIED' | 'QUERY_RESULT'
+export type ExportObjectType = 'TABLE' | 'VIEW' | 'FUNCTION' | 'PROCEDURE' | 'SEQUENCE'
 export type ExportContentKind = 'DATA_ONLY' | 'DDL_ONLY' | 'DDL_AND_DATA'
 // EX-I4/EX-I5：数据格式单选；CSV/CUT/POS/SQL 为文本格式，PARQUET/ORC/AVRO 为结构化格式（2026-08-07 接入）。
 export type ExportDataFormatKind = 'CSV' | 'CUT' | 'POS' | 'SQL' | 'PARQUET' | 'ORC' | 'AVRO'
@@ -306,6 +314,7 @@ export function isStructuredFormat(formatKind: ExportDataFormatKind): boolean {
 }
 
 export interface ExportObjectExpression {
+  readonly objectType?: ExportObjectType
   readonly schema?: string
   readonly name: string
 }
@@ -345,6 +354,7 @@ export interface CutOptions {
 
 export interface FilterOptions {
   readonly querySql?: string
+  readonly queryResultLimit?: number
   // EX-I7 条件筛选（2026-08-11 实测定版）：--where，与 querySql 互斥。
   readonly where?: string
   // --partition 与 querySql 互斥，--exclude-data-types 为数据内容筛选；
@@ -550,7 +560,7 @@ export interface TaskSnapshot {
   readonly nodeId: string
   readonly precheckId: string
   readonly objectSummary?: string
-  readonly format: 'CSV' | 'CUT' | 'SQL' | 'POS' | 'PARQUET' | 'ORC' | 'AVRO' | 'DDL' | 'DDL_CSV'
+  readonly format: 'CSV' | 'CUT' | 'SQL' | 'POS' | 'PARQUET' | 'ORC' | 'AVRO' | 'DDL' | 'DDL_CSV' | 'DDL_CUT' | 'DDL_SQL'
   readonly configFingerprint: string
   readonly toolVersion: string
   readonly metadataVersion: string
@@ -651,7 +661,7 @@ export interface BrowserApi {
 	archiveDataSource(dataSourceId: string, revision: number): Promise<DataSourceDeletionResult>
   startDataSourceConnectionTest(dataSourceId: string, revision: number, nodeId: string): Promise<DataSourceConnectionTestRequest>
   getDataSourceConnectionTest(connectionTestId: string): Promise<DataSourceConnectionTest>
-  searchExportObjects(dataSourceId: string, revision: number, input: { nodeId: string; database: string; objectType: 'DATABASE' | ExportObjectType; keyword: string }): Promise<ExportObjectCatalogQuery>
+  searchExportObjects(dataSourceId: string, revision: number, input: { nodeId: string; database: string; objectType: 'DATABASE' | 'ALL' | ExportObjectType; keyword: string }): Promise<ExportObjectCatalogQuery>
   getExportObjectCatalogQuery(queryId: string): Promise<ExportObjectCatalogQuery>
   createExportDraft(input: ExportDraftInput): Promise<string>
   getExportDraft(draftId: string): Promise<ExportDraft>
@@ -962,10 +972,11 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
   }
 }
 
-export function browserApi(): BrowserApi {
+// 可选取消信号仅控制当前页面的 HTTP 生命周期，不取消服务端已接受的业务操作。
+export function browserApi(signal?: AbortSignal): BrowserApi {
   return createBrowserApi({
     fetcher: async (input, init) => {
-      const response = await fetch(input, init)
+      const response = await fetch(input, signal ? { ...init, signal } : init)
       if (response.status === 401) window.location.assign('/login')
       return response
     },
@@ -1100,7 +1111,7 @@ function parseDataSourceConnectionTestRequest(value: Record<string, unknown>): D
 function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportObjectCatalogQuery {
   const status = parseDataSourceConnectionTestStatus(value)
   const objectType = requiredString(value, 'objectType')
-  if (objectType !== 'DATABASE' && objectType !== 'TABLE' && objectType !== 'VIEW') throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
+  if (objectType !== 'DATABASE' && objectType !== 'ALL' && objectType !== 'TABLE' && objectType !== 'VIEW' && objectType !== 'FUNCTION' && objectType !== 'PROCEDURE' && objectType !== 'SEQUENCE') throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
   const database = objectType === 'DATABASE' ? requiredStringAllowEmpty(value, 'database') : requiredString(value, 'database')
   if (objectType === 'DATABASE' && database !== '') throw localError('RESPONSE_INVALID', '控制面返回了无效数据库查询范围。')
   const objects = requiredStringList(value, 'objects')
@@ -1108,10 +1119,24 @@ function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportOb
     throw localError('RESPONSE_INVALID', '控制面返回了无效对象目录。')
   }
   if (status !== 'SUCCEEDED' && objects.length > 0) throw localError('RESPONSE_INVALID', '未完成的对象查询包含对象名称。')
+  const rawGroups = value.groups ?? []
+  if (!Array.isArray(rawGroups)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
+  const types: ExportObjectType[] = ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE']
+  const groups = rawGroups.map((raw, index): ExportObjectCatalogGroup => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
+    const row = raw as Record<string, unknown>
+    const type = requiredString(row, 'objectType')
+    const names = requiredStringList(row, 'objects')
+    const truncated = requiredBoolean(row, 'truncated')
+    const unavailable = requiredBoolean(row, 'unavailable')
+    if (type !== types[index] || names.length > 100 || names.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name)) || (unavailable && (names.length > 0 || truncated))) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
+    return { objectType: type, objects: names, truncated, unavailable }
+  })
+  if ((objectType === 'ALL' && status === 'SUCCEEDED' && (groups.length !== 5 || objects.length > 0)) || (objectType !== 'ALL' && groups.length > 0) || (status !== 'SUCCEEDED' && groups.length > 0)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
   return {
     id: requiredString(value, 'id'), status, dataSourceId: requiredString(value, 'dataSourceId'),
     nodeId: requiredString(value, 'nodeId'), database, objectType,
-    keyword: optionalString(value, 'keyword') ?? '', objects, truncated: requiredBoolean(value, 'truncated'),
+    keyword: optionalString(value, 'keyword') ?? '', objects, groups, truncated: requiredBoolean(value, 'truncated'),
     validUntil: requiredString(value, 'validUntil'),
   }
 }
@@ -1363,7 +1388,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
   const nested = requiredObject(value, 'config')
   const scope = requiredObject(nested, 'objectScope')
   const scopeKind = requiredString(scope, 'scopeKind')
-  if (scopeKind !== 'ALL' && scopeKind !== 'SPECIFIED') {
+  if (scopeKind !== 'ALL' && scopeKind !== 'SPECIFIED' && scopeKind !== 'QUERY_RESULT') {
     throw localError('RESPONSE_INVALID', '控制面返回了未知的对象范围。')
   }
   const expressionsRaw = scope['expressions']
@@ -1375,9 +1400,11 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
       const expression = item as Record<string, unknown>
       const name = expression['name']
       const schema = expression['schema']
+      const objectType = expression['objectType']
       if (typeof name !== 'string' || !name) throw localError('RESPONSE_INVALID', '控制面返回了无效对象名称。')
       if (schema !== undefined && typeof schema !== 'string') throw localError('RESPONSE_INVALID', '控制面返回了无效对象 Schema。')
-      expressions.push(schema === undefined ? { name } : { schema, name })
+      if (objectType !== undefined && objectType !== 'TABLE' && objectType !== 'VIEW' && objectType !== 'FUNCTION' && objectType !== 'PROCEDURE' && objectType !== 'SEQUENCE') throw localError('RESPONSE_INVALID', '控制面返回了无效表达式类型。')
+      expressions.push({ name, ...(schema === undefined ? {} : { schema }), ...(objectType === undefined ? {} : { objectType }) })
     }
   }
   const objectTypesRaw = scope['objectTypes']
@@ -1385,7 +1412,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
   if (objectTypesRaw !== undefined && objectTypesRaw !== null) {
     if (!Array.isArray(objectTypesRaw)) throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
     for (const item of objectTypesRaw) {
-      if (item !== 'TABLE' && item !== 'VIEW') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的对象类型。')
+      if (item !== 'TABLE' && item !== 'VIEW' && item !== 'FUNCTION' && item !== 'PROCEDURE' && item !== 'SEQUENCE') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的对象类型。')
       objectTypes.push(item)
     }
   }
@@ -1519,13 +1546,15 @@ function parseFilterConfig(nested: Record<string, unknown>): FilterOptions | und
   if (raw === undefined || raw === null) return undefined
   const options = asRecord(raw)
   const querySql = optionalOptionText(options, 'querySql')
+  const queryResultLimit = optionalNumber(options, 'queryResultLimit')
   const includeColumnNames = optionalStringList(options, 'includeColumnNames')
   const excludeColumnNames = optionalStringList(options, 'excludeColumnNames')
-  if (querySql === undefined && includeColumnNames === undefined && excludeColumnNames === undefined && options['excludeVirtualColumns'] === undefined && options['flashbackScn'] === undefined && options['flashbackTimestamp'] === undefined) {
+  if (querySql === undefined && queryResultLimit === undefined && includeColumnNames === undefined && excludeColumnNames === undefined && options['excludeVirtualColumns'] === undefined && options['flashbackScn'] === undefined && options['flashbackTimestamp'] === undefined) {
     return undefined
   }
   return {
     querySql,
+    queryResultLimit,
     includeColumnNames,
     excludeColumnNames,
     excludeVirtualColumns: optionalBoolean(options, 'excludeVirtualColumns'),
@@ -1544,10 +1573,11 @@ function parsePerformanceConfig(nested: Record<string, unknown>): PerformanceOpt
   const parallelMacro = optionalNumber(options, 'parallelMacro')
   const fetchSize = optionalNumber(options, 'fetchSize')
   const jvmMemory = optionalOptionText(options, 'jvmMemory')
-  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined) {
+  const blockSize = optionalOptionText(options, 'blockSize')
+  if (thread === undefined && pageSize === undefined && parallelMacro === undefined && fetchSize === undefined && jvmMemory === undefined && blockSize === undefined) {
     return undefined
   }
-  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory }
+  return { thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize }
 }
 
 function optionalBoolean(value: Record<string, unknown>, field: string): boolean | undefined {
@@ -1678,7 +1708,7 @@ function parseTaskSnapshot(value: Record<string, unknown>): TaskSnapshot {
   const type = requiredString(value, 'type')
   const snapshotVersion = requiredString(value, 'snapshotVersion')
   const format = requiredString(value, 'format')
-  if (type !== 'OBDUMPER_EXPORT' || (snapshotVersion !== 'v1' && snapshotVersion !== 'v2') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV')) {
+  if (type !== 'OBDUMPER_EXPORT' || (snapshotVersion !== 'v1' && snapshotVersion !== 'v2') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV' && format !== 'DDL_CUT' && format !== 'DDL_SQL')) {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务快照。')
   }
   return {
