@@ -18,6 +18,29 @@ function fill(editor: ReturnType<typeof useCredentialEditor>) { editor.formName.
 function secretsEmpty(editor: ReturnType<typeof useCredentialEditor>) { return editor.formAccessKey.value === '' && editor.formSecretKey.value === '' }
 
 describe('存储凭据列表和短时输入生命周期', () => {
+  it.each([401, 403])('列表 %s 同步撤销删除确认，阻断旧目标直到授权重读成功', async status => {
+    const { list, deletion, api } = setup(); await list.loadCredentials()
+    deletion.requestDelete(item()); expect(deletion.pendingDelete.value).toEqual(item())
+    api.listStorageCredentials.mockRejectedValueOnce({ status }); await list.loadCredentials()
+    expect(list.credentials.value).toEqual([]); expect(deletion.pendingDelete.value).toBeUndefined()
+    deletion.requestDelete(item()); await deletion.confirmDelete()
+    expect(deletion.pendingDelete.value).toBeUndefined(); expect(api.deleteStorageCredential).not.toHaveBeenCalled()
+    api.listStorageCredentials.mockRejectedValueOnce({ status: 503 }); await list.loadCredentials()
+    deletion.requestDelete(item()); await deletion.confirmDelete()
+    expect(deletion.pendingDelete.value).toBeUndefined(); expect(api.deleteStorageCredential).not.toHaveBeenCalled()
+    await list.loadCredentials(); await deletion.confirmDelete()
+    expect(deletion.pendingDelete.value).toBeUndefined(); expect(api.deleteStorageCredential).not.toHaveBeenCalled()
+    deletion.requestDelete(list.credentials.value[0]!); await deletion.confirmDelete()
+    expect(api.deleteStorageCredential).toHaveBeenCalledExactlyOnceWith('synthetic-a', 1)
+  })
+  it('普通列表故障保留删除确认，过期授权拒绝不得撤销最新授权会话', async () => {
+    const { list, deletion, api } = setup(); await list.loadCredentials(); deletion.requestDelete(item())
+    api.listStorageCredentials.mockRejectedValueOnce({ status: 503 }); await list.loadCredentials()
+    expect(deletion.pendingDelete.value).toEqual(item()); expect(list.accessDenied.value).toBe(false)
+    const old = deferred<StorageCredentialListItem[]>(); api.listStorageCredentials.mockImplementationOnce(() => old.promise)
+    const pending = list.loadCredentials(); await list.loadCredentials(); old.reject({ status: 403 }); await pending
+    expect(deletion.pendingDelete.value).toEqual(item()); expect(list.credentials.value).toEqual([item()]); expect(list.accessDenied.value).toBe(false)
+  })
   it('最新读取胜出，刷新失败保留事实，权限失败清除列表及输入', async () => {
     const { list, editor, api } = setup(); const old = deferred<StorageCredentialListItem[]>(); api.listStorageCredentials.mockImplementationOnce(() => old.promise)
     const pending = list.loadCredentials(); await list.loadCredentials(); old.resolve([item('synthetic-old')]); await pending; expect(list.credentials.value[0]?.id).toBe('synthetic-a')

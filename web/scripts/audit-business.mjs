@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyzeSource, isTest, readSources, valueCycles } from './architecture/sources.mjs'
-import { dependencyViolation, networkViolations, ownershipReviews, responsibilityReviews } from './architecture/rules.mjs'
+import { dependencyReview, dependencyViolation, networkViolations, ownershipReviews, responsibilityReviews } from './architecture/rules.mjs'
 
 export function auditBusinessSources(records) {
   const violations = []
@@ -16,6 +16,8 @@ export function auditBusinessSources(records) {
     for (const dep of source.dependencies) {
       const violation = dependencyViolation(file, dep)
       if (violation) violations.push(`${file}: ${violation}`)
+      const review = dependencyReview(file, dep)
+      if (review) reviews.push(`${file}: ${review}`)
     }
     violations.push(...networkViolations(source).map(item => `${file}: ${item}`))
     reviews.push(...responsibilityReviews(source).map(item => `${file}: ${item}`))

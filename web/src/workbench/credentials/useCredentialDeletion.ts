@@ -1,4 +1,4 @@
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { storageCredentialErrorMessage, type StorageCredentialListItem } from '@/api/browser'
 import type { useCredentialList } from './useCredentialList'
 
@@ -7,8 +7,10 @@ export function useCredentialDeletion(list: ReturnType<typeof useCredentialList>
   let version = 0
   function cancelDelete() { version++; pendingDelete.value = undefined }
   onScopeDispose(cancelDelete)
+  // 授权失效同步清除确认目标，避免列表清空后弹框仍展示旧对象。
+  watch(list.accessDenied, denied => { if (denied) cancelDelete() }, { flush: 'sync' })
   function requestDelete(credential: StorageCredentialListItem) {
-    if (!list.active() || list.writeBusy.value) return
+    if (!list.active() || list.writeBusy.value || list.accessDenied.value) return
     cancelDelete()
     pendingDelete.value = credential
   }

@@ -1,4 +1,4 @@
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { taskDetailErrorMessage, type ExportConfigTemplateItem } from '@/api/browser'
 import type { useTemplateCatalog } from './useTemplateCatalog'
 
@@ -11,15 +11,17 @@ export function useTemplateActions(catalog: ReturnType<typeof useTemplateCatalog
   function cancelRename() { renameVersion++; renameID.value = renameValue.value = '' }
   function cancelDelete() { deleteVersion++; pendingDelete.value = undefined }
   onScopeDispose(() => { cancelRename(); cancelDelete() })
+  // 目录授权失效时同步撤销两类编辑会话，成功重读也不恢复旧输入或目标。
+  watch(catalog.accessDenied, denied => { if (denied) { cancelRename(); cancelDelete() } }, { flush: 'sync' })
   function startRename(template: ExportConfigTemplateItem) {
-    if (!catalog.active() || catalog.actionBusy.value) return
+    if (!catalog.active() || catalog.actionBusy.value || catalog.accessDenied.value) return
     cancelRename()
     renameID.value = template.id
     renameValue.value = template.displayName
     catalog.notice.value = ''
   }
   function requestDelete(template: ExportConfigTemplateItem) {
-    if (!catalog.active() || catalog.actionBusy.value) return
+    if (!catalog.active() || catalog.actionBusy.value || catalog.accessDenied.value) return
     cancelDelete()
     pendingDelete.value = template
   }

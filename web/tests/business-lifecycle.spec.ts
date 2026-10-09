@@ -9,6 +9,41 @@ async function navigate(page: Page, path: string) {
 }
 async function fill(page: Page) { await page.getByLabel('凭据名称', { exact: true }).fill('合成凭据'); await page.getByLabel('AccessKey', { exact: true }).fill('synthetic-access'); await page.getByLabel('SecretKey', { exact: true }).fill('synthetic-secret') }
 
+for (const status of [401, 403]) {
+  test(`凭据列表 ${status} 后删除框关闭，授权恢复不恢复旧确认`, async ({ page }) => {
+    await mockFacts(page); let delayRead = false; const held: Route[] = []; let writes = 0
+    await page.route('**/api/v1/storage-credentials', route => delayRead ? void held.push(route) : route.fulfill({ json: { items: [credential()] } }))
+    await page.route('**/api/v1/storage-credentials/synthetic-credential', route => { writes++; return route.fulfill({ status: 204 }) })
+    await page.goto('/settings/storage-credentials'); await expect(page.getByRole('button', { name: '删除', exact: true })).toBeVisible()
+    delayRead = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await expect.poll(() => held.length).toBe(1)
+    // 构造刷新在途时已进入确认的竞态，不依赖加载遮罩的点击时机。
+    await page.getByRole('button', { name: '删除', exact: true }).dispatchEvent('click')
+    await expect(page.getByRole('dialog')).toContainText('合成凭据')
+    await held[0]!.fulfill({ status, json: { code: 'SYNTHETIC_DENIED' } })
+    await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.getByText('合成凭据', { exact: true })).toHaveCount(0)
+    delayRead = false
+    if (status === 401) { await expect(page).toHaveURL(/\/login$/); await page.goto('/settings/storage-credentials') }
+    else await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await expect(page.getByRole('region', { name: '存储凭据列表' })).toContainText('合成凭据'); await expect(page.getByRole('dialog')).toHaveCount(0); expect(writes).toBe(0)
+  })
+  test(`模板列表 ${status} 后清除改名与删除框，恢复授权后输入不复活`, async ({ page }) => {
+    await mockFacts(page); let delayRead = false; const held: Route[] = []; let writes = 0
+    await page.route('**/api/v1/export-config-templates', route => delayRead ? void held.push(route) : route.fulfill({ json: { items: [template] } }))
+    await page.route('**/api/v1/export-config-templates/synthetic-template', route => { writes++; return route.fulfill({ status: 204 }) })
+    await page.goto('/templates'); await page.getByRole('button', { name: '改名', exact: true }).click(); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill('合成未保存改名')
+    delayRead = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await expect.poll(() => held.length).toBe(1)
+    await page.getByRole('button', { name: '删除', exact: true }).dispatchEvent('click'); await expect(page.getByRole('dialog')).toContainText('合成模板')
+    await held[0]!.fulfill({ status, json: { code: 'SYNTHETIC_DENIED' } })
+    await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveCount(0)
+    delayRead = false
+    if (status === 401) { await expect(page).toHaveURL(/\/login$/); await page.goto('/templates') }
+    else await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await expect(page.getByRole('region', { name: '模板列表' })).toContainText('合成模板')
+    await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: '改名', exact: true }).click(); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveValue('合成模板'); expect(writes).toBe(0)
+  })
+}
+
 test('凭据创建和轮换防重、版本及敏感输入清理，旧刷新不能覆盖新修订', async ({ page }, info) => {
   await mockFacts(page); let row = credential(); let delayRead = false; const held: Route[] = []; const rotations: Route[] = []
   await page.route('**/api/v1/storage-credentials', route => { if (delayRead) held.push(route); else return route.fulfill({ json: { items: [row] } }) })

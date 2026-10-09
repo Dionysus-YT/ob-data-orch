@@ -11,6 +11,7 @@ export function useTemplateCatalog(createApi: (signal: AbortSignal) => TemplateA
   const loadFailure = ref('')
   const notice = ref('')
   const actionBusy = ref('')
+  const accessDenied = ref(false)
   let disposed = false
   let readVersion = 0
   const active = () => !disposed
@@ -23,22 +24,26 @@ export function useTemplateCatalog(createApi: (signal: AbortSignal) => TemplateA
     loadFailure.value = ''
     try {
       const result = await api.listExportConfigTemplates()
-      if (valid()) templates.value = result
+      if (!valid()) return
+      templates.value = result
+      accessDenied.value = false
     } catch (error) {
       if (!valid()) return
-      if ([401, 403].includes((error as Partial<ApiError>).status ?? 0)) templates.value = []
+      // 仅成功的授权读取能恢复操作；临时故障不能解除授权阻断。
+      if ([401, 403].includes((error as Partial<ApiError>).status ?? 0)) accessDenied.value = true
+      if (accessDenied.value) templates.value = []
       loadFailure.value = taskDetailErrorMessage(error, '无法加载模板，请稍后重试。')
     } finally {
       if (valid()) loading.value = false
     }
   }
   function beginAction(id: string) {
-    if (!active() || actionBusy.value) return false
+    if (!active() || actionBusy.value || accessDenied.value) return false
     readVersion++
     loading.value = false
     actionBusy.value = id
     return true
   }
   function endAction() { if (active()) actionBusy.value = '' }
-  return { api, active, templates, loading, loadFailure, notice, actionBusy, refresh, beginAction, endAction }
+  return { api, active, templates, loading, loadFailure, notice, actionBusy, accessDenied, refresh, beginAction, endAction }
 }

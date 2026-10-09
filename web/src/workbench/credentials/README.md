@@ -7,7 +7,7 @@
 | 页面布局、列、控件、装配 | `views/StorageCredentialsView.vue`；模板只将取消意图交给能力，不维护表单副本 |
 | 列表、筛选、可信事实、错误和共享写锁 | `useCredentialList.ts`；独立读取代、一个 AbortController，写入使旧读取失效，身份拒绝清空列表 |
 | 创建/轮换及短时敏感输入 | `useCredentialEditor.ts`；唯一表单、编辑代、打开时目标修订；关闭/切换/成功/卸载清输入，当前失败保留重试 |
-| 删除确认与版本事务 | `useCredentialDeletion.ts`；目标与确认代、方法防重、取消/卸载失效 |
+| 删除确认与版本事务 | `useCredentialDeletion.ts`；目标与确认代、方法防重、取消/卸载失效；列表 401/403 同步清目标并关闭确认，授权阻断期间不能重开 |
 | 校验、provider、筛选 | `storageCredentialList.ts`；从 views 原样迁入的唯一纯规则，原 `.test.ts` 同步迁移 |
 | HTTP/安全投影 | `api/browser.ts`；不修改 API、CSRF、If-Match、幂等或密钥读取边界 |
 

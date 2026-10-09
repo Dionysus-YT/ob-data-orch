@@ -5,8 +5,8 @@
 | 修改目标 | 唯一入口 |
 | --- | --- |
 | 页面、列、Ant 装配、路由导航 | `views/TemplateCenterView.vue` |
-| 列表事实、读取失效和共享操作锁 | `useTemplateCatalog.ts` |
-| 改名/删除及取消会话 | `useTemplateActions.ts` |
+| 列表事实、读取失效和共享操作锁 | `useTemplateCatalog.ts`；401/403 阻断操作，后续临时故障不恢复权限，仅成功授权重读解除阻断 |
+| 改名/删除及取消会话 | `useTemplateActions.ts`；列表授权失效同步清改名标识、输入与待删除目标；恢复授权不恢复旧会话 |
 | 引用加载/缓存与派生草稿 | `useTemplateDraft.ts`；两类引用原子发布、单一在途 Promise，失败不缓存半份结果 |
 | 数据源资格 | 直接复用 `workbench/export/exportDataSourceEligibility.ts`，不重复实现 |
 | HTTP、修订、安全响应 | `api/browser.ts` 原方法，不绕过边界 |

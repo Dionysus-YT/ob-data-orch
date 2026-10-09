@@ -10,6 +10,13 @@ export function dependencyViolation(file, dependency) {
   if (!typeOnly && !file.startsWith('src/api/') && /^(axios|ky|ofetch|superagent|undici)(\/|$)/.test(specifier)) return `网络客户端只能用于 api 边界 (${specifier})`
 }
 
+// 跨业务依赖可能是合理规则复用；提示逐项确认所有权，不据静态方向直接判违规。
+export function dependencyReview(file, dependency) {
+  const owner = /^src\/workbench\/([^/]+)\//.exec(file)?.[1]
+  const targetOwner = /^src\/workbench\/([^/]+)(?:\/|$)/.exec(dependency.resolved || dependency.target)?.[1]
+  if (owner && targetOwner && owner !== targetOwner) return `跨业务依赖 ${owner} → ${targetOwner} (${dependency.specifier})；复核真实复用依据、能力所有者及状态边界`
+}
+
 // 权限退出是既有产品外壳的认证边界，仅保留准确文件与 /logout 调用，不豁免其他请求。
 export function networkViolations(source) {
   if (source.file.startsWith('src/api/')) return []

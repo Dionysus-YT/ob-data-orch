@@ -9,6 +9,32 @@ import { auditBusinessSources } from './audit-business.mjs'
 import { readSources } from './architecture/sources.mjs'
 
 const audit = entries => auditBusinessSources(new Map(entries))
+test('跨 workbench 业务依赖覆盖 alias、相对、barrel、类型和动态引用，仅提示 REVIEW', () => {
+  for (const code of [
+    "import { eligible } from '@/workbench/export/eligibility'",
+    "import { eligible } from '../export/eligibility'",
+    "export { eligible } from '../export'",
+    "export * from '../export/eligibility'",
+    "import type { Eligibility } from '../export/eligibility'",
+    "export type { Eligibility } from '../export/eligibility'",
+    "import('../export/eligibility')",
+    "import(`../export/eligibility`)",
+    "const eligible = require('../export/eligibility')",
+  ]) {
+    const result = audit([
+      ['src/workbench/templates/a.ts', code],
+      ['src/workbench/export/index.ts', "export { eligible } from './eligibility'"],
+      ['src/workbench/export/eligibility.ts', 'export const eligible = true'],
+    ])
+    assert.equal(result.violations.length, 0, code)
+    assert.equal(result.reviews.length, 1, code)
+    assert.match(result.reviews[0], /跨业务依赖 templates → export/)
+  }
+  const local = audit([['src/workbench/templates/a.ts', "import { b } from './b'; import type { X } from '@/api/browser'; import { ref } from 'vue'"]])
+  assert.deepEqual(local.reviews, [])
+  const vue = audit([['src/workbench/templates/A.vue', `<script setup lang="ts">import { eligible } from '@/workbench/export/eligibility'</script>`]])
+  assert.equal(vue.violations.length, 0); assert.match(vue.reviews[0], /跨业务依赖 templates → export/)
+})
 test('所有业务模块及相对、alias、再导出、动态导入均不得反向依赖页面或路由', () => {
   for (const code of ["import { x } from '@/views/page'", "export * from '../../views/page'", "import('@/views/page')", "import(`@/views/page`)", "export type { X } from '@/router/index'"]) {
     assert.equal(audit([['src/workbench/tasks/a.ts', code]]).violations.length, 1)
@@ -88,13 +114,14 @@ test('文件读取与 CLI 在 REVIEW 时成功，硬违规时非零退出', () =
   try {
     mkdirSync(join(directory, 'src', 'workbench', 'tasks'), { recursive: true })
     const file = join(directory, 'src', 'workbench', 'tasks', 'a.ts')
-    writeFileSync(file, '\n'.repeat(410))
+    writeFileSync(file, "import { eligible } from '../export/eligibility'")
     assert.equal(auditBusinessSources(readSources(directory)).violations.length, 0)
     // 真实 CLI 校验退出码，不能仅复述算法来证明门禁已经执行。
     const args = [fileURLToPath(new URL('./audit-business.mjs', import.meta.url)), '--root', directory]
     const review = spawnSync(process.execPath, args, { encoding: 'utf8' })
     assert.equal(review.status, 0)
     assert.match(review.stdout, /REVIEW/)
+    assert.match(review.stdout, /跨业务依赖 tasks → export/)
     writeFileSync(file, "import { page } from '@/views/A'")
     const failed = spawnSync(process.execPath, args, { encoding: 'utf8' })
     assert.equal(failed.status, 1)

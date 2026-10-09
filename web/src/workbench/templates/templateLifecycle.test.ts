@@ -15,6 +15,35 @@ function setup() {
   return { ...value, api, navigate, scope }
 }
 describe('模板事实、编辑与派生生命周期', () => {
+  it.each([401, 403])('列表 %s 同步清除改名和删除会话，授权恢复不复活旧操作', async status => {
+    const { catalog, actions, draft, api } = setup(); await catalog.refresh()
+    actions.startRename(item()); actions.renameValue.value = '合成未保存改名'; actions.requestDelete(item())
+    api.listExportConfigTemplates.mockRejectedValueOnce({ status }); await catalog.refresh()
+    expect(catalog.templates.value).toEqual([]); expect(actions.renameID.value).toBe(''); expect(actions.renameValue.value).toBe(''); expect(actions.pendingDelete.value).toBeUndefined()
+    const attemptStaleActions = async () => {
+      actions.startRename(item()); actions.requestDelete(item()); await actions.confirmRename(item()); await actions.confirmDelete()
+      draft.draftSourceID.value = 'synthetic-source'; draft.draftNodeID.value = 'synthetic-node'; await draft.createDraft(item())
+      expect(actions.renameID.value).toBe(''); expect(actions.renameValue.value).toBe(''); expect(actions.pendingDelete.value).toBeUndefined()
+      expect(api.renameExportConfigTemplate).not.toHaveBeenCalled(); expect(api.deleteExportConfigTemplate).not.toHaveBeenCalled(); expect(api.createDraftFromTemplate).not.toHaveBeenCalled()
+    }
+    await attemptStaleActions()
+    api.listExportConfigTemplates.mockRejectedValueOnce({ status: 503 }); await catalog.refresh(); await attemptStaleActions()
+    await catalog.refresh(); await actions.confirmRename(item()); await actions.confirmDelete()
+    expect(catalog.accessDenied.value).toBe(false); expect(actions.renameValue.value).toBe(''); expect(actions.pendingDelete.value).toBeUndefined()
+    expect(api.renameExportConfigTemplate).not.toHaveBeenCalled(); expect(api.deleteExportConfigTemplate).not.toHaveBeenCalled()
+    actions.startRename(catalog.templates.value[0]!); actions.renameValue.value = '合成新名'; await actions.confirmRename(item())
+    expect(api.renameExportConfigTemplate).toHaveBeenCalledExactlyOnceWith(item().id, 1, '合成新名')
+    actions.requestDelete(catalog.templates.value[0]!); await actions.confirmDelete()
+    expect(api.deleteExportConfigTemplate).toHaveBeenCalledExactlyOnceWith(item().id, 2)
+  })
+  it('普通列表故障保留输入和确认，过期授权拒绝不能清除最新会话', async () => {
+    const { catalog, actions, api } = setup(); await catalog.refresh(); actions.startRename(item()); actions.renameValue.value = '合成未保存改名'; actions.requestDelete(item())
+    api.listExportConfigTemplates.mockRejectedValueOnce({ status: 503 }); await catalog.refresh()
+    expect(actions.renameValue.value).toBe('合成未保存改名'); expect(actions.pendingDelete.value).toEqual(item())
+    const old = deferred<ExportConfigTemplateItem[]>(); api.listExportConfigTemplates.mockImplementationOnce(() => old.promise)
+    const pending = catalog.refresh(); await catalog.refresh(); old.reject({ status: 401 }); await pending
+    expect(catalog.accessDenied.value).toBe(false); expect(actions.renameValue.value).toBe('合成未保存改名'); expect(actions.pendingDelete.value).toEqual(item()); expect(catalog.templates.value).toEqual([item()])
+  })
   it('最新列表胜出，写入前失效旧读取；改名裁剪且保持修订', async () => {
     const { catalog, actions, api } = setup(); await catalog.refresh(); const read = deferred<ExportConfigTemplateItem[]>(); api.listExportConfigTemplates.mockImplementationOnce(() => read.promise)
     const pending = catalog.refresh(); actions.startRename(item()); actions.renameValue.value = ' 合成新名 '; await actions.confirmRename(item()); read.resolve([item()]); await pending
