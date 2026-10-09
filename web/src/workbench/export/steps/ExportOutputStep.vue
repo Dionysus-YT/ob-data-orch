@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { toRefs } from 'vue'
+import { EditOutlined, HddOutlined } from '@ant-design/icons-vue'
 import type { ExportOutputStepModel } from '../exportStepModels'
 import { Alert as AAlert, Form as AForm, FormItem as AFormItem, Button as AButton, Skeleton as ASkeleton, RadioGroup as ARadioGroup, Radio as ARadio, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Checkbox as ACheckbox } from 'ant-design-vue'
 import ExportOptionHint from '@/components/ExportOptionHint.vue'
@@ -11,20 +12,26 @@ const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCan
 
 <template>
   <section class="form-section">
-    <h2>输出位置与执行资源</h2>
     <AAlert v-if="draftNotice" type="info" show-icon :message="draftNotice" />
-    <p>填写已选执行节点上的完整输出路径。路径资格、目录空性、空间和工具环境由后续预检查确认。</p>
     <div class="export-field-group">
       <h3>输出设置</h3>
       <AForm layout="vertical" class="export-form">
-        <AFormItem required :validate-status="attemptedStep === 4 && !selectedNodeID ? 'error' : undefined" :help="attemptedStep === 4 && !selectedNodeID ? '请返回导出内容与对象选择执行节点。' : '已与数据库和对象目录绑定；节点在线及工具可用性由预检查确认。'">
+        <AFormItem required :validate-status="attemptedStep === 4 && !selectedNodeID ? 'error' : undefined" :help="attemptedStep === 4 && !selectedNodeID ? '请返回导出内容与对象选择执行节点。' : undefined">
           <template #label>执行节点</template>
           <AAlert v-if="nodeLoadFailure" type="error" show-icon :message="nodeLoadFailure"><template #action><AButton type="link" @click="loadNodeCandidates">重试</AButton></template></AAlert>
           <ASkeleton v-else-if="loadingNodes" active :paragraph="{ rows: 1 }" aria-label="正在加载已授权执行节点" />
-          <template v-else>
-            <span>{{ selectedNode ? `${selectedNode.displayName} · ${selectedNode.platform}` : '尚未选择' }}</span>
-            <AButton v-if="!derivedDraftBindingLocked" type="link" @click="moveToStep(2)">返回内容与对象修改节点</AButton>
-          </template>
+          <div v-else class="export-output-node" role="group" aria-label="执行节点信息">
+            <div class="export-output-node-facts">
+              <HddOutlined class="export-output-node-icon" aria-hidden="true" />
+              <div class="export-output-node-identity">
+                <strong class="export-output-node-name">{{ selectedNode?.displayName ?? '尚未选择执行节点' }}</strong>
+                <span v-if="selectedNode" class="export-output-node-platform">平台 · {{ selectedNode.platform }}</span>
+              </div>
+            </div>
+            <AButton v-if="!derivedDraftBindingLocked" type="link" class="export-output-node-action" @click="moveToStep(2)">
+              <template #icon><EditOutlined /></template>{{ selectedNode ? '更换节点' : '选择节点' }}
+            </AButton>
+          </div>
         </AFormItem>
         <AAlert v-if="selectedNode && derivedDraftBindingLocked" type="info" show-icon message="派生草稿固定使用来源任务的执行节点；节点状态仍由预检查确认。" />
         <AFormItem required>

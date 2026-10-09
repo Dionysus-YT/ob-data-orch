@@ -1,240 +1,29 @@
 <script setup lang="ts">
 import { FileTextOutlined } from '@ant-design/icons-vue'
 import { Button as AButton, Input as AInput } from 'ant-design-vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { taskFailureSummary } from '@/workbench/tasks/taskFailurePresentation'
+import { stateLabel, stateClass, dateTime, formatBytes } from '@/workbench/tasks/taskDetailPresentation'
+import { useTaskDetail } from '@/workbench/tasks/useTaskDetail'
+import { useTaskActions } from '@/workbench/tasks/useTaskActions'
 
-import { browserApi, taskDetailErrorMessage, type TaskCommandEvidence, type TaskExecution, type TaskLog, type TaskOverview, type TaskSnapshot } from '@/api/browser'
-import { taskFailureSummary } from './taskFailurePresentation'
-import { createTaskLogStreamLifecycle } from './taskLogStreamLifecycle'
-
-const api = browserApi()
 const route = useRoute()
-const router = useRouter()
 const taskID = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
-const overview = ref<TaskOverview | null>(null)
-const execution = ref<TaskExecution | null>(null)
-const snapshot = ref<TaskSnapshot | null>(null)
-const commandEvidence = ref<TaskCommandEvidence | null>(null)
-const logs = ref<readonly TaskLog[]>([])
-const loading = ref(true)
-const failure = ref('')
-const executionFailure = ref('')
-const snapshotFailure = ref('')
-const commandFailure = ref('')
-const logFailure = ref('')
-const derivationFailure = ref('')
-const derivationBusy = ref('')
-const noticeTemplate = ref('')
-const logCursor = ref<string | undefined>()
-const logStreamStatus = ref<'idle' | 'connected' | 'interrupted'>('idle')
+const {
+  session, overview, execution, snapshot, commandEvidence, logs, loading, failure,
+  executionFailure, snapshotFailure, commandFailure, logFailure, logStreamStatus,
+  refresh, loadExecution, loadSnapshot, loadCommandEvidence,
+} = useTaskDetail(taskID)
+const {
+  derivationFailure, derivationBusy, noticeTemplate, templateNameInput, savingTemplate,
+  checkpointResumeAvailable, rebuildFromTask, resumeFromCheckpoint, saveAsTemplate,
+} = useTaskActions(session, useRouter(), execution)
 const failureSummary = computed(() => taskFailureSummary(execution.value?.state, logs.value))
-// EX-I8：检查点继续只在失败且 Agent 确认输出目录存在 dump.ckpt 时提供。
-const checkpointResumeAvailable = computed(() => execution.value?.state === 'FAILED' && execution.value?.resultSummary?.checkpointPresent === true)
 const derivationLabel = computed(() => ({ REBUILD_FROM_CONFIG: '基于原配置新建', RERUN_FROM_SCRATCH: '从头重新执行', CHECKPOINT_RESUME: '从检查点继续' })[overview.value?.derivationKind ?? ''] ?? '')
-let pollTimer: ReturnType<typeof setTimeout> | undefined
-const logStreamLifecycle = createTaskLogStreamLifecycle()
-let stopped = false
-
-onMounted(() => { void refresh() })
-onBeforeUnmount(() => {
-  stopped = true
-  if (pollTimer !== undefined) clearTimeout(pollTimer)
-  logStreamLifecycle.close()
-})
-
-// rebuildFromTask 重建派生草稿并跳转向导；从头重新执行直接进入预检查步骤且不允许改参。
-async function rebuildFromTask(derivation: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH') {
-  if (!taskID.value || derivationBusy.value) return
-  derivationBusy.value = derivation
-  derivationFailure.value = ''
-  try {
-    const derived = await api.rebuildTaskDraft(taskID.value, derivation)
-    const step = derivation === 'RERUN_FROM_SCRATCH' ? 5 : 1
-    await router.push({ path: '/exports/new', query: { draft: derived.draftId, step: String(step) } })
-  } catch (error) {
-    derivationFailure.value = taskDetailErrorMessage(error, derivation === 'RERUN_FROM_SCRATCH' ? '从头重新执行发起失败。' : '基于原配置新建发起失败。')
-  } finally {
-    derivationBusy.value = ''
-  }
-}
-
-// resumeFromCheckpoint 创建检查点继续任务并跳转到新任务详情。
-async function resumeFromCheckpoint() {
-  if (!taskID.value || derivationBusy.value) return
-  derivationBusy.value = 'CHECKPOINT_RESUME'
-  derivationFailure.value = ''
-  try {
-    const derived = await api.resumeTaskFromCheckpoint(taskID.value)
-    await router.push(`/tasks/${encodeURIComponent(derived.id)}`)
-  } catch (error) {
-    derivationFailure.value = taskDetailErrorMessage(error, '从检查点继续发起失败。')
-  } finally {
-    derivationBusy.value = ''
-  }
-}
-
-// templateNameInput 保存模板的显示名称输入；只对成功任务提供。
-const templateNameInput = ref('')
-const savingTemplate = ref(false)
-
-async function saveAsTemplate() {
-  const displayName = templateNameInput.value.trim()
-  if (!displayName || !taskID.value || savingTemplate.value) return
-  savingTemplate.value = true
-  derivationFailure.value = ''
-  try {
-    await api.saveTaskTemplate(taskID.value, displayName)
-    templateNameInput.value = ''
-    noticeTemplate.value = '模板已保存；模板不复制凭据、节点、预检查或风险确认。'
-  } catch (error) {
-    derivationFailure.value = taskDetailErrorMessage(error, '保存模板失败。')
-  } finally {
-    savingTemplate.value = false
-  }
-}
-
-async function refresh() {
-  if (!taskID.value || stopped) return
-  loading.value = overview.value === null
-  failure.value = ''
-  if (overview.value === null) {
-    try {
-      const item = await api.getTaskOverview(taskID.value)
-      if (stopped) return
-      overview.value = item
-    } catch (error) {
-      if (!stopped) failure.value = taskDetailErrorMessage(error, '无法读取任务概览。')
-      return
-    }
-  }
-  await Promise.all([
-    loadSnapshot(),
-    loadCommandEvidence(),
-    loadExecution(),
-    loadLogs(),
-  ])
-  if (!stopped) {
-    loading.value = false
-    pollTimer = setTimeout(() => { void refresh() }, 2000)
-  }
-}
-
-async function loadExecution() {
-  if (!taskID.value || stopped) return
-  try {
-    const item = await api.getTaskExecution(taskID.value)
-    if (stopped) return
-    execution.value = item
-    executionFailure.value = ''
-  } catch (error) {
-    if (!stopped) executionFailure.value = taskDetailErrorMessage(error, '执行状态暂时不可读取。')
-  }
-}
-
-async function loadSnapshot() {
-  if (!taskID.value || stopped || snapshot.value !== null) return
-  try {
-    const item = await api.getTaskSnapshot(taskID.value)
-    if (stopped) return
-    snapshot.value = item
-    snapshotFailure.value = ''
-  } catch (error) {
-    if (!stopped) snapshotFailure.value = taskDetailErrorMessage(error, '冻结配置暂时不可读取。')
-  }
-}
-
-async function loadCommandEvidence() {
-  if (!taskID.value || stopped || commandEvidence.value !== null) return
-  try {
-    const item = await api.getTaskCommandEvidence(taskID.value)
-    if (stopped) return
-    commandEvidence.value = item
-    commandFailure.value = ''
-  } catch (error) {
-    if (!stopped) commandFailure.value = taskDetailErrorMessage(error, '命令证据暂时不可读取。')
-  }
-}
-
-async function loadLogs() {
-  if (!taskID.value || stopped) return
-  try {
-    const page = await api.getTaskLogs(taskID.value, undefined, logCursor.value)
-    if (stopped) return
-    appendLogs(page.items)
-    logCursor.value = page.lastReliableCursor ?? logCursor.value
-    logFailure.value = ''
-    ensureLogStream()
-  } catch (error) {
-    if (!stopped) logFailure.value = taskDetailErrorMessage(error, '日志暂时不可读取。')
-  }
-}
-
-function ensureLogStream() {
-  if (stopped || logStreamLifecycle.active() || !taskID.value || (execution.value?.state !== 'STARTING' && execution.value?.state !== 'RUNNING')) return
-  try {
-    const opened = logStreamLifecycle.open((onDisconnected) => api.streamTaskLogs(taskID.value, logCursor.value, (record, cursor) => {
-      if (stopped) return
-      appendLogs([record])
-      logCursor.value = cursor ?? logCursor.value
-      logStreamStatus.value = 'connected'
-    }, onDisconnected), () => {
-      if (!stopped) logStreamStatus.value = 'interrupted'
-    })
-    if (opened) logStreamStatus.value = 'connected'
-  } catch {
-    logStreamStatus.value = 'interrupted'
-  }
-}
-
-function appendLogs(records: readonly TaskLog[]) {
-  const known = new Set(logs.value.map((record) => `${record.sourceSeq}|${record.receivedAt}|${record.kind}|${record.message}`))
-  const appended = records.filter((record) => {
-    const key = `${record.sourceSeq}|${record.receivedAt}|${record.kind}|${record.message}`
-    if (known.has(key)) return false
-    known.add(key)
-    return true
-  })
-  if (appended.length > 0) logs.value = [...logs.value, ...appended]
-}
-
-function stateLabel(state?: string, reconciliationRequired = false) {
-  if (reconciliationRequired) return '状态核对中'
-  return {
-    WAITING_SCHEDULE: '等待 Agent 领取',
-    STARTING: '正在启动',
-    RUNNING: '正在运行',
-    SUCCEEDED: '导出成功',
-    FAILED: '导出失败',
-  }[state ?? ''] ?? '状态核对中'
-}
-
-function stateClass(state?: string) {
-  return state === 'SUCCEEDED' ? 'success' : state === 'FAILED' ? 'danger' : 'neutral'
-}
-
-function executionStateLabel() {
-  return stateLabel(execution.value?.state, execution.value?.reconciliationRequired)
-}
-
+function executionStateLabel() { return stateLabel(execution.value?.state, execution.value?.reconciliationRequired) }
 function executionEmptyMessage() {
-  if (execution.value?.state === 'WAITING_SCHEDULE') return '任务正等待所选 Agent 领取。'
-  return 'Agent 启动 OBDUMPER 后，标准输出和错误输出会显示在这里。'
-}
-
-function dateTime(value?: string) {
-  if (!value) return '尚未发生'
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.valueOf()) ? '时间未知' : parsed.toLocaleString()
-}
-
-// formatBytes 用受控单位展示字节数，不承诺精确换算。
-function formatBytes(value: number) {
-  if (!Number.isSafeInteger(value) || value < 0) return '未知'
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
-  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MiB`
-  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GiB`
+  return execution.value?.state === 'WAITING_SCHEDULE' ? '任务正等待所选 Agent 领取。' : 'Agent 启动 OBDUMPER 后，标准输出和错误输出会显示在这里。'
 }
 </script>
 

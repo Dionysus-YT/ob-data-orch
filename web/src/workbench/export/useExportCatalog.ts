@@ -76,9 +76,18 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
   let batchCatalogLoading = false
 
   const selectedObjectKeyword = ref('')
-  const visibleSelectedGroups = computed(() => visibleObjectCategories.value.map((category) => ({ ...category, rows: applicableSelectedObjects.value.filter((item) => item.type === category.type && item.name.toLocaleLowerCase().includes(selectedObjectKeyword.value.trim().toLocaleLowerCase())) })).filter((group) => group.rows.length))
+  const visibleSelectedGroups = computed(() => {
+    const keyword = selectedObjectKeyword.value.trim().toLocaleLowerCase()
+    const groups = visibleObjectCategories.value.map((category) => ({ ...category, rows: [] as typeof applicableSelectedObjects.value }))
+    const byType = new Map(groups.map((group) => [group.type, group]))
+    for (const item of applicableSelectedObjects.value) if (!keyword || item.name.toLocaleLowerCase().includes(keyword)) byType.get(item.type)?.rows.push(item)
+    return groups.filter((group) => group.rows.length)
+  })
 
-  const visibleCandidateObjectNames = computed(() => candidateObjectNames.value.filter((name) => name.toLocaleLowerCase().includes(candidateObjectKeyword.value.trim().toLocaleLowerCase())))
+  const visibleCandidateObjectNames = computed(() => {
+    const keyword = candidateObjectKeyword.value.trim().toLocaleLowerCase()
+    return keyword ? candidateObjectNames.value.filter((name) => name.toLocaleLowerCase().includes(keyword)) : candidateObjectNames.value
+  })
   const visibleObjectCategories = computed(() => contentKind.value === 'DATA_ONLY' ? objectCategories.filter((category) => category.type === 'TABLE') : objectCategories)
 
   const candidateTotalCount = computed(() => visibleObjectCategories.value.reduce((total, category) => total + catalogByType[category.type].baseNames.length, 0))
@@ -117,7 +126,8 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
 
   watch(objectNames, (names) => {
     // 恢复历史草稿时，将已选对象并入候选区，使两栏状态保持一致。
-    const missing = names.map((name) => name.trim()).filter((name) => name && !candidateObjectNames.value.includes(name))
+    const candidates = new Set(candidateObjectNames.value)
+    const missing = names.map((name) => name.trim()).filter((name) => name && !candidates.has(name))
     if (missing.length > 0) {
       candidateObjectNames.value = [...candidateObjectNames.value, ...missing]
       catalogByType[objectType.value].baseNames = [...new Set([...catalogByType[objectType.value].baseNames, ...missing])]

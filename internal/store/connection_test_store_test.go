@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -400,6 +401,9 @@ func Test导出对象目录受控租约与结果隔离(t *testing.T) {
 		Status: "SUCCEEDED", EvidenceCode: "DATABASE_CONNECTED", VerificationSource: "AGENT_JDBC",
 		SysVerificationStatus: "NOT_CONFIGURED", CatalogObjects: []string{"orders"}, Now: testTime.Add(2 * time.Minute),
 	}
+	for index := 0; index < 10000; index++ {
+		completion.CatalogObjects = append(completion.CatalogObjects, fmt.Sprintf("order_%d", index))
+	}
 	invalid := completion
 	invalid.CatalogObjects = []string{"orders", "orders"}
 	if _, err := store.CompleteAgentDataSourceConnectionTest(ctx, invalid); !errors.Is(err, ErrDataSourceConnectionTestLeaseRejected) {
@@ -409,7 +413,7 @@ func Test导出对象目录受控租约与结果隔离(t *testing.T) {
 		t.Fatalf("完成对象查询: %v", err)
 	}
 	run, err = store.GetDataSourceConnectionTestRun(ctx, input.ConnectionTestID)
-	if err != nil || len(run.CatalogObjects) != 1 || run.CatalogObjects[0] != "orders" {
+	if err != nil || len(run.CatalogObjects) != 10001 || run.CatalogObjects[10000] != "order_9999" {
 		t.Fatalf("对象结果 = %#v, %v", run, err)
 	}
 	var source string

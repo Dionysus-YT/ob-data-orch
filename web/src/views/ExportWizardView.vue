@@ -24,7 +24,6 @@ const { draftDirty, createdDraftID, activeStep, stepProgressPercent, moveToStep,
   <section class="page-heading">
     <div>
       <h1>新建导出任务</h1>
-      <p>OBDUMPER 4.3.5 导出向导。支持全部/指定对象、仅数据、仅 DDL 与 DDL + 数据的已验证组合；预检查通过后可显式提交执行。</p>
     </div>
     <ATag :color="draftDirty ? 'warning' : createdDraftID ? 'success' : 'default'">{{ draftDirty ? '草稿有未保存更改' : createdDraftID ? '草稿已保存' : '草稿尚未创建' }}</ATag>
   </section>

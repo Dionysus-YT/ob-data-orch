@@ -14,7 +14,6 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
 
 <template>
   <section class="form-section">
-    <h2>文件格式与交付约定</h2>
     <AAlert v-if="formatChangeNotice" type="info" show-icon :message="formatChangeNotice" closable @close="formatChangeNotice = ''" />
     <AAlert v-if="contentKind === 'DDL_ONLY'" type="info" show-icon message="无数据格式" description="仅 DDL 导出不生成数据文件；仍可在其他选项中配置 DDL 文件行为。" />
     <div v-if="dataOptionsActive" class="export-field-group">
@@ -29,7 +28,7 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
               <ASelectOption value="SQL">SQL 格式</ASelectOption>
             </ASelect>
           </AFormItem>
-          <AFormItem :html-for="fieldPrefix + '-file-encoding'" extra="选择常用编码，或直接输入执行环境支持的编码。">
+          <AFormItem :html-for="fieldPrefix + '-file-encoding'">
             <template #label><span class="export-field-label"><span>文件编码</span><ExportOptionHint label="文件编码" parameter="--file-encoding" description="指定导出文件的字符编码，与数据库连接字符集不同。留空继承工具默认 UTF-8；所选编码须由执行环境支持。" /></span></template>
             <ExportFormatChoice :id="fieldPrefix + '-file-encoding'" v-model="fileEncoding" label="文件编码" :options="fileEncodingChoices" custom-placeholder="输入执行环境支持的编码" />
           </AFormItem>
@@ -38,18 +37,18 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
       </AForm>
     </div>
     <div v-if="dataOptionsActive && ordinaryFormat" class="export-field-group export-format-group" role="region" :aria-label="`${formatKind} 常用选项`">
-      <h3>{{ formatKind }} 常用选项 <small>（可选，未配置时继承工具默认）</small></h3>
+      <h3>{{ formatKind }} 选项 </h3>
       <AForm layout="vertical" class="export-field-body export-format-panel">
         <div class="export-format-grid">
-          <AFormItem v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'" :html-for="fieldPrefix + '-csv-separator'" extra="OBDUMPER 4.3.5 仅支持单字符；留空使用逗号。" :validate-status="Array.from(columnSeparator).length > 1 ? 'error' : undefined" :help="Array.from(columnSeparator).length > 1 ? '请输入单个分隔字符。' : undefined">
-            <template #label><span class="export-field-label"><span>字段分隔符</span><ExportOptionHint label="字段分隔符" parameter="--column-separator" description="指定 CSV 字段之间的单字符分隔符，默认逗号。OBDUMPER 4.3.5 仅支持单字符；空格和制表符按选择值保留。" /></span></template>
+          <AFormItem v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'" :html-for="fieldPrefix + '-csv-separator'" :validate-status="Array.from(columnSeparator).length > 1 ? 'error' : undefined" :help="Array.from(columnSeparator).length > 1 ? '请输入单个分隔字符。' : undefined">
+            <template #label><span class="export-field-label"><span>字段分隔符</span><ExportOptionHint label="字段分隔符" parameter="--column-separator" description="指定 CSV 字段之间的单字符分隔符，默认逗号。仅支持单字符；空格和制表符按选择值保留。" /></span></template>
             <ExportFormatChoice :id="fieldPrefix + '-csv-separator'" v-model="columnSeparator" label="字段分隔符" :options="fieldSeparatorChoices" custom-placeholder="输入单个分隔字符" />
           </AFormItem>
           <AFormItem v-else-if="formatKind === 'CUT'" :html-for="fieldPrefix + '-cut-separator'" extra="CUT 使用分隔字符串，可选择常用字符或输入最多 256 个字符。" :validate-status="columnSplitter.length > 256 ? 'error' : undefined" :help="columnSplitter.length > 256 ? '分隔字符串不能超过 256 个字符。' : undefined">
             <template #label><span class="export-field-label"><span>字段分隔符</span><ExportOptionHint label="字段分隔符" parameter="--column-splitter" description="指定 CUT 字段之间的分隔字符串，当前最长 256 个字符。不同于 CSV，可配置多字符分隔；留空继承工具默认。" /></span></template>
             <ExportFormatChoice :id="fieldPrefix + '-cut-separator'" v-model="columnSplitter" label="字段分隔符" :options="cutSeparatorChoices" custom-placeholder="输入自定义分隔字符串" />
           </AFormItem>
-          <AFormItem v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'" :html-for="fieldPrefix + '-column-quote'" extra="OBDUMPER 4.3.5 仅支持单字符；留空使用单引号。" :validate-status="Array.from(columnQuote).length > 1 ? 'error' : undefined" :help="Array.from(columnQuote).length > 1 ? '请输入单个识别字符。' : undefined">
+          <AFormItem v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'" :html-for="fieldPrefix + '-column-quote'" :validate-status="Array.from(columnQuote).length > 1 ? 'error' : undefined" :help="Array.from(columnQuote).length > 1 ? '请输入单个识别字符。' : undefined">
             <template #label><span class="export-field-label"><span>文本识别符</span><ExportOptionHint label="文本识别符" parameter="--column-quote" description="用于包围 CSV 字段内容的单字符，默认单引号。与包围模式共同控制字段输出，不支持多个字符。" /></span></template>
             <ExportFormatChoice :id="fieldPrefix + '-column-quote'" v-model="columnQuote" label="文本识别符" :options="quoteChoices" custom-placeholder="输入单个识别字符" />
           </AFormItem>
@@ -60,18 +59,16 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
           <AFormItem v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'" :html-for="fieldPrefix + '-quote-mode'">
             <template #label><span class="export-field-label"><span>包围模式</span><ExportOptionHint label="包围模式" parameter="--column-quote-mode" description="控制 CSV 字段的包围规则：全部、非空、最小必要、非数字或不包围。默认 non_numeric；不包围时须确认特殊字符已正确处理。" /></span></template><ASelect :id="fieldPrefix + '-quote-mode'" v-model:value="columnQuoteMode" aria-label="包围模式"><ASelectOption value="">继承默认（非数字包围）</ASelectOption><ASelectOption value="all">全部包围 · all</ASelectOption><ASelectOption value="all_not_null">非空包围 · all_not_null</ASelectOption><ASelectOption value="minimal">最小包围 · minimal</ASelectOption><ASelectOption value="non_numeric">非数字包围 · non_numeric</ASelectOption><ASelectOption value="none">不包围 · none</ASelectOption></ASelect>
           </AFormItem>
-          <AFormItem v-if="dataOptionsActive && ordinaryFormat && (formatKind === 'CSV' || formatKind === 'CUT')" extra="留空继承默认 \N；与空字符串不同，字面空格按原值保留。">
+          <AFormItem v-if="dataOptionsActive && ordinaryFormat && (formatKind === 'CSV' || formatKind === 'CUT')">
             <template #label><span class="export-field-label"><span>NULL 表示</span><ExportOptionHint label="NULL 表示" parameter="--null-string" description="设置 CSV/CUT 中 NULL 的输出字符串，默认 \N。NULL 与空字符串不同；显式输入的首尾空格按原值保留。" /></span></template><AInput v-model:value="nullString" aria-label="NULL 替换" placeholder="默认 \N" />
           </AFormItem>
-          <AFormItem v-if="dataOptionsActive && ordinaryFormat && (formatKind === 'CSV' || formatKind === 'CUT')" extra="当前仅支持单个 ASCII 字符；留空继承该格式的工具默认值。" :validate-status="!isValidEscapeCharacter(escapeCharacter) ? 'error' : undefined" :help="!isValidEscapeCharacter(escapeCharacter) ? '请输入单个 ASCII 字符，不能使用换行或 NUL。' : undefined">
+          <AFormItem v-if="dataOptionsActive && ordinaryFormat && (formatKind === 'CSV' || formatKind === 'CUT')" :validate-status="!isValidEscapeCharacter(escapeCharacter) ? 'error' : undefined" :help="!isValidEscapeCharacter(escapeCharacter) ? '请输入单个 ASCII 字符，不能使用换行或 NUL。' : undefined">
             <template #label><span class="export-field-label"><span>转义字符</span><ExportOptionHint label="转义字符" parameter="--escape-character" description="指定 CSV/CUT 用来转义特殊字符的字符。当前仅接受单个 ASCII 字符，不允许换行或 NUL；未填写时继承该格式默认。" /></span></template><AInput v-model:value="escapeCharacter" aria-label="转义字符" placeholder="例如 |" />
           </AFormItem>
         </div>
         <template v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'">
-          <p class="section-hint">默认 non_numeric（非数字包围）；all 全部包围、all_not_null 非空包围、minimal 最小包围、none 不包围。</p>
           <AAlert v-if="columnQuoteMode === 'none'" type="warning" show-icon message="不包围模式在数据包含分隔符、包围符或换行时可能生成无法直接导入的 CSV；请确认数据已正确转义。" />
         </template>
-        <p v-if="dataOptionsActive && ordinaryFormat && formatKind === 'CSV'" class="section-hint">常用组合：默认逗号 + 单引号 + 系统换行；也可选双引号与固定换行。包围模式、NULL 表示与转义字符在本区配置；空格修剪在下方“其他选项”勾选。</p>
         <p v-else-if="formatKind === 'CUT'" class="section-hint">CUT 使用分隔字符串和数据文件换行符；单字符分隔时，工具会转义数据中的分隔符与换行。NULL 表示与转义在本区配置；文本处理在下方“其他选项”勾选，删除换行会改变数据内容。</p>
         <p v-else class="section-hint">SQL 数据文件与仅导出结构的 DDL 文件不同。此格式仅配置文件编码与换行符号；日期、文件拆分与压缩在高级设置中按适用范围配置。</p>
       </AForm>

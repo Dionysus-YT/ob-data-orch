@@ -1791,7 +1791,7 @@ func validCatalogResult(status string, objects []string, groups []catalogresult.
 	if len(groups) != 0 {
 		return false
 	}
-	if len(objects) > 100 {
+	if (objectType == "DATABASE" && len(objects) > 100) || (objectType != "DATABASE" && truncated) {
 		return false
 	}
 	seen := make(map[string]bool, len(objects))

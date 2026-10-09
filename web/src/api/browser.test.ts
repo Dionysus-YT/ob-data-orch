@@ -15,6 +15,17 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
+  it('完整解析单类一万项和五类五万项，拒绝截断及越界数据库目录', async () => {
+    const objects = Array.from({ length: 10000 }, (_, index) => `synthetic_${index}`)
+    const item = { id: 'catalog-large', status: 'SUCCEEDED', dataSourceId: 'source', nodeId: 'node', database: 'synthetic_db', objectType: 'TABLE', keyword: '', objects, groups: [] as unknown[], truncated: false, validUntil: '2099-01-01T00:00:00Z' }
+    expect((await apiWith(Response.json({ item })).api.getExportObjectCatalogQuery(item.id)).objects.at(-1)).toBe('synthetic_9999')
+    const groups = ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE'].map(objectType => ({ objectType, objects, truncated: false, unavailable: false }))
+    const batch = { ...item, objectType: 'ALL', objects: [], groups }
+    expect((await apiWith(Response.json({ item: batch })).api.getExportObjectCatalogQuery(item.id)).groups.reduce((sum, group) => sum + group.objects.length, 0)).toBe(50000)
+    for (const invalid of [{ ...item, objects: ['duplicate', 'duplicate'] }, { ...item, truncated: true }, { ...item, objectType: 'DATABASE', database: '' }, { ...batch, groups: groups.map((group, index) => ({ ...group, truncated: index === 0 })) }]) {
+      await expect(apiWith(Response.json({ item: invalid })).api.getExportObjectCatalogQuery(item.id)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    }
+  })
   it('页面取消信号传递给原生 HTTP 等待并保留原请求边界', async () => {
     const request = new AbortController()
     const fetcher = vi.fn(async (_input: unknown, init?: RequestInit) => {

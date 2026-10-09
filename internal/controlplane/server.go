@@ -5112,7 +5112,7 @@ func (s *Server) completeAuthenticatedConnectionTest(w http.ResponseWriter, r *h
 		return
 	}
 	var request agentConnectionTestCompletionRequest
-	if !decodeAgentJSON(w, r, &request) {
+	if !decodeAgentJSONLimited(w, r, &request, catalogresult.MaxResponseBytes+(1<<20)) {
 		return
 	}
 	if !validConnectionTestEnvelope(machine, request.agentConnectionTestEnvelope, "DATA_SOURCE_CONNECTION_TEST_COMPLETE") ||
@@ -5995,7 +5995,12 @@ func (s *Server) completeSyntheticPrecheck(w http.ResponseWriter, r *http.Reques
 
 // decodeAgentJSON 对 Agent 协议同样限制大小和未知字段，避免测试适配放宽边界。
 func decodeAgentJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	return decodeAgentJSONLimited(w, r, target, 1<<20)
+}
+
+// decodeAgentJSONLimited 只为目录回执扩大字节预算；其余机器接口保留原限制。
+func decodeAgentJSONLimited(w http.ResponseWriter, r *http.Request, target any, maximum int64) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maximum))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)

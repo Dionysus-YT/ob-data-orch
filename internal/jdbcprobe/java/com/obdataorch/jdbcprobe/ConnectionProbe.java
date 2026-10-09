@@ -31,6 +31,9 @@ import java.util.List;
  * 它不接受命令行连接参数、不执行用户 SQL、不输出异常原文；连接输入只经标准输入短时传入。
  */
 public final class ConnectionProbe {
+    /** 目录无对象条数上限，字节预算超限必须失败，不能输出部分成功。 */
+    private static final int MAX_CATALOG_BYTES = 16 * 1024 * 1024 - 4096;
+
     private static final int CONNECTION_PROTOCOL_VERSION = 1;
     private static final int PREFLIGHT_PROTOCOL_VERSION = 3;
     private static final int CATALOG_PROTOCOL_VERSION = 4;
@@ -125,6 +128,7 @@ public final class ConnectionProbe {
             String schema = input.isOracle() ? escapedDatabase : null;
             String pattern = "%" + escapedKeyword + "%";
             StringBuilder result = new StringBuilder("{\"status\":\"SUCCESS\",\"objects\":[");
+            int responseBytes = 256;
             int count = 0;
             boolean truncated = false;
             try (ResultSet tables = metadata.getTables(catalog, schema, pattern, new String[] { input.objectTypeText() })) {
@@ -141,14 +145,13 @@ public final class ConnectionProbe {
                         fail("CATALOG_UNAVAILABLE", 14);
                         return;
                     }
-                    if (count == 100) {
-                        truncated = true;
-                        break;
-                    }
                     if (count > 0) {
                         result.append(',');
                     }
-                    result.append('"').append(json(name)).append('"');
+                    String encodedName = json(name);
+                    responseBytes += encodedName.getBytes(StandardCharsets.UTF_8).length + 3;
+                    if (responseBytes > MAX_CATALOG_BYTES) throw new CatalogBudgetExceeded();
+                    result.append('"').append(encodedName).append('"');
                     count++;
                 }
             }
@@ -177,7 +180,6 @@ public final class ConnectionProbe {
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     rows.add(result.getString(1), input.keywordText());
-                    if (rows.truncated) break;
                 }
             }
         }
@@ -187,6 +189,7 @@ public final class ConnectionProbe {
     /** 五类目录共用一次连接与一次秘密解析；单类失败只标记该类不可用，不伪造为空目录。 */
     private static void printCombinedCatalogSuccess(Connection connection, DatabaseMetaData metadata, ProbeInput input) {
         String[] types = { "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE" };
+        int responseBytes = 256;
         StringBuilder output = new StringBuilder("{\"status\":\"SUCCESS\",\"objects\":[],\"truncated\":false,\"groups\":[");
         for (int index = 0; index < types.length; index++) {
             if (index > 0) output.append(',');
@@ -214,23 +217,33 @@ public final class ConnectionProbe {
                                     (("TABLE".equals(type) || "VIEW".equals(type)) && !type.equals(objects.getString("TABLE_TYPE")))) throw new SQLException();
                             String name = objects.getString(("FUNCTION".equals(type) || "PROCEDURE".equals(type)) ? type + "_NAME" : "TABLE_NAME");
                             rows.add(name, "");
-                            if (rows.truncated) break;
-                        }
+                                }
                     }
                 }
+            } catch (CatalogBudgetExceeded exception) {
+                throw new IllegalStateException();
             } catch (SQLException | RuntimeException exception) {
                 unavailable = true;
                 rows = new CatalogRows();
             }
+            responseBytes += rows.responseBytes;
+            if (responseBytes > MAX_CATALOG_BYTES) throw new IllegalStateException();
             output.append("{\"objectType\":\"").append(type).append("\",\"objects\":")
                     .append(rows.namesJSON()).append(",\"truncated\":").append(rows.truncated)
                     .append(",\"unavailable\":").append(unavailable).append('}');
         }
         output.append("]}");
+        if (output.toString().getBytes(StandardCharsets.UTF_8).length > MAX_CATALOG_BYTES) throw new IllegalStateException();
         System.out.println(output.toString());
     }
 
+    /** 字节预算不足与目录不可用分开处理，五类批量查询不得把预算溢出投影为部分成功。 */
+    private static final class CatalogBudgetExceeded extends SQLException {
+        private static final long serialVersionUID = 1L;
+    }
+
     private static final class CatalogRows {
+        int responseBytes = 256;
         final List<String> names = new ArrayList<String>();
         final Set<String> seen = new HashSet<String>();
         boolean truncated;
@@ -238,7 +251,8 @@ public final class ConnectionProbe {
         void add(String name, String keyword) throws SQLException {
             if (name == null || !validObjectName(name)) throw new SQLException();
             if (!name.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT)) || !seen.add(name)) return;
-            if (names.size() == 100) { truncated = true; return; }
+            responseBytes += json(name).getBytes(StandardCharsets.UTF_8).length + 3;
+            if (responseBytes > MAX_CATALOG_BYTES) throw new CatalogBudgetExceeded();
             names.add(name);
         }
 
@@ -266,6 +280,7 @@ public final class ConnectionProbe {
             String prefix = "FUNCTION".equals(kind) ? "FUNCTION" : "PROCEDURE";
             StringBuilder result = new StringBuilder("{\"status\":\"SUCCESS\",\"objects\":[");
             Set<String> seen = new HashSet<String>();
+            int responseBytes = 256;
             int count = 0;
             boolean truncated = false;
             try (ResultSet routines = "FUNCTION".equals(kind)
@@ -279,9 +294,11 @@ public final class ConnectionProbe {
                         fail("CATALOG_UNAVAILABLE", 14); return;
                     }
                     if (!seen.add(name)) { continue; }
-                    if (count == 100) { truncated = true; break; }
                     if (count > 0) { result.append(','); }
-                    result.append('"').append(json(name)).append('"');
+                    String encodedName = json(name);
+                    responseBytes += encodedName.getBytes(StandardCharsets.UTF_8).length + 3;
+                    if (responseBytes > MAX_CATALOG_BYTES) throw new CatalogBudgetExceeded();
+                    result.append('"').append(encodedName).append('"');
                     count++;
                 }
             }

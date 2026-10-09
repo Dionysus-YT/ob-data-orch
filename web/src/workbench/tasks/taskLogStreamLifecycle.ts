@@ -8,7 +8,7 @@ export interface TaskLogStreamHandle {
 // 断开时只释放当前代连接；陈旧回调不能关闭已经按最后可靠游标重新建立的新连接。
 export interface TaskLogStreamLifecycle {
   readonly active: () => boolean
-  open(factory: (onDisconnected: () => void) => TaskLogStreamHandle, onDisconnected: () => void): boolean
+  open(factory: (onDisconnected: () => void, isCurrent: () => boolean) => TaskLogStreamHandle, onDisconnected: () => void): boolean
   close(): void
 }
 
@@ -26,10 +26,11 @@ export function createTaskLogStreamLifecycle(): TaskLogStreamLifecycle {
       const created = factory(() => {
         if (generation !== currentGeneration) return
         disconnectedDuringOpen = true
+        generation++
         stream?.close()
         stream = undefined
         onDisconnected()
-      })
+      }, () => generation === currentGeneration && !disconnectedDuringOpen)
       if (disconnectedDuringOpen) {
         created.close()
         return false

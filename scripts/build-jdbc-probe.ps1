@@ -57,7 +57,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "JDBC 批量预检查测试失败"
     }
+    & $java -cp $testClasspath com.obdataorch.jdbcprobe.ConnectionProbeObjectCatalogTest
+    if ($LASTEXITCODE -ne 0) { throw "JDBC 大对象目录测试失败" }
 } finally {
+    # 清理仅限本次在系统临时目录创建的两个精确路径。
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($target in @($classes, $testClasses)) {
+        if (-not [System.IO.Path]::GetFullPath($target).StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) { throw "临时目录清理路径越界" }
+    }
     Remove-Item -LiteralPath $classes -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testClasses -Recurse -Force -ErrorAction SilentlyContinue
 }

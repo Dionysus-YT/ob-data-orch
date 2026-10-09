@@ -1115,10 +1115,11 @@ function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportOb
   const database = objectType === 'DATABASE' ? requiredStringAllowEmpty(value, 'database') : requiredString(value, 'database')
   if (objectType === 'DATABASE' && database !== '') throw localError('RESPONSE_INVALID', '控制面返回了无效数据库查询范围。')
   const objects = requiredStringList(value, 'objects')
-  if (objects.length > 100 || objects.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name))) {
+  if ((objectType === 'DATABASE' && objects.length > 100) || new Set(objects).size !== objects.length || objects.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name))) {
     throw localError('RESPONSE_INVALID', '控制面返回了无效对象目录。')
   }
   if (status !== 'SUCCEEDED' && objects.length > 0) throw localError('RESPONSE_INVALID', '未完成的对象查询包含对象名称。')
+  if (objectType !== 'DATABASE' && requiredBoolean(value, 'truncated')) throw localError('RESPONSE_INVALID', '对象目录不完整，请更新执行节点后重试。')
   const rawGroups = value.groups ?? []
   if (!Array.isArray(rawGroups)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
   const types: ExportObjectType[] = ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE']
@@ -1129,7 +1130,8 @@ function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportOb
     const names = requiredStringList(row, 'objects')
     const truncated = requiredBoolean(row, 'truncated')
     const unavailable = requiredBoolean(row, 'unavailable')
-    if (type !== types[index] || names.length > 100 || names.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name)) || (unavailable && (names.length > 0 || truncated))) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
+    if (truncated) throw localError('RESPONSE_INVALID', '对象目录不完整，请更新执行节点后重试。')
+    if (type !== types[index] || new Set(names).size !== names.length || names.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name)) || (unavailable && (names.length > 0 || truncated))) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
     return { objectType: type, objects: names, truncated, unavailable }
   })
   if ((objectType === 'ALL' && status === 'SUCCEEDED' && (groups.length !== 5 || objects.length > 0)) || (objectType !== 'ALL' && groups.length > 0) || (status !== 'SUCCEEDED' && groups.length > 0)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')

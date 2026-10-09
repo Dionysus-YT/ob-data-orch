@@ -5,6 +5,7 @@ package agentconnectiontest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,7 @@ var (
 	ErrInvalidConfiguration = errors.New("基础连接测试 Worker 配置无效")
 	// ErrWorkerBusy 表示同一 Agent 已在处理一条基础连接测试，G2 不允许并行领取。
 	ErrWorkerBusy = errors.New("基础连接测试 Worker 正在运行")
-	// ErrGrantRejected 表示控制面返回的租约、冻结绑定或验证来源不符合当前 Worker 的受控范围。
+	// ErrGrantRejected 表示领取、租约或结果校验未通过；具体阶段只附加固定分类，不带协议原文。
 	ErrGrantRejected = errors.New("基础连接测试租约无效")
 	// ErrLeaseExpired 表示本机在继续操作前观测到租约已截止。
 	ErrLeaseExpired = errors.New("基础连接测试租约已过期")
@@ -98,13 +99,13 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		SentAt: w.now(),
 	})
 	if err != nil {
-		return Outcome{}, false, ErrGrantRejected
+		return Outcome{}, false, fmt.Errorf("%w：领取请求失败（%s）", ErrGrantRejected, claimFailureReason(err))
 	}
 	if !found {
 		return Outcome{}, false, nil
 	}
 	if !w.validGrant(identity, grant) {
-		return Outcome{}, true, ErrGrantRejected
+		return Outcome{}, true, fmt.Errorf("%w：租约绑定或本机运行能力不匹配（GRANT_VALIDATION_FAILED）", ErrGrantRejected)
 	}
 	if w.expired(grant) {
 		return Outcome{}, true, ErrLeaseExpired
@@ -118,13 +119,35 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 
 	outcome, ok := w.testOutcome(ctx, grant)
 	if !ok {
-		return Outcome{}, true, ErrGrantRejected
+		return Outcome{}, true, fmt.Errorf("%w：运行结果校验失败（RESULT_VALIDATION_FAILED）", ErrGrantRejected)
 	}
 	state, err := w.Protocol.CompleteDataSourceConnectionTest(ctx, completion(w.BootID, grant, outcome, w.now()))
 	if err != nil || state != outcome.Status {
 		return Outcome{}, true, ErrCompletionRejected
 	}
 	return outcome, true, nil
+}
+
+// claimFailureReason 只输出本机认可的固定分类，未知错误不展开，避免泄漏地址、身份或协议正文。
+func claimFailureReason(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "CANCELED"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "TIMEOUT"
+	case errors.Is(err, agentwire.ErrControlPlaneUnavailable):
+		return "CONTROL_PLANE_UNAVAILABLE"
+	case errors.Is(err, agentwire.ErrAgentAuthenticationDenied):
+		return "AUTHENTICATION_DENIED"
+	case errors.Is(err, agentwire.ErrProtocolRejected):
+		return "PROTOCOL_REJECTED"
+	case errors.Is(err, agentwire.ErrEnrollmentPending):
+		return "ENROLLMENT_PENDING"
+	case errors.Is(err, agentwire.ErrIdentityUnavailable):
+		return "IDENTITY_UNAVAILABLE"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 func (w *Worker) enter() bool {
@@ -250,7 +273,8 @@ func validJDBCOutcome(grant agentwire.DataSourceConnectionTestGrant, outcome Out
 		return false
 	}
 	if grant.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
-		if outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured || len(outcome.CatalogObjects) > 100 ||
+		if outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured || (grant.Binding.CatalogObjectType == "DATABASE" && len(outcome.CatalogObjects) > 100) ||
+			(grant.Binding.CatalogObjectType != "DATABASE" && outcome.CatalogTruncated) ||
 			(outcome.Status != agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || len(outcome.CatalogGroups) != 0 || outcome.CatalogTruncated)) ||
 			(grant.Binding.CatalogObjectType == "ALL" && outcome.Status == agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated || !catalogresult.ValidGroups(outcome.CatalogGroups))) ||
 			(grant.Binding.CatalogObjectType != "ALL" && len(outcome.CatalogGroups) != 0) {

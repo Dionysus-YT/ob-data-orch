@@ -7,7 +7,7 @@ import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as 
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { browserApi, taskDetailErrorMessage, taskListPageSizes, type TaskListItem, type TaskListPageSize } from '@/api/browser'
-import { taskNeedsReconciliation, taskProgressLabel, taskStageLabel, taskStateClass, taskStateLabel, taskTypeLabel } from './taskListPresentation'
+import { taskNeedsReconciliation, taskProgressLabel, taskStageLabel, taskStateClass, taskStateLabel, taskTypeLabel } from '@/workbench/tasks/taskListPresentation'
 
 const api = browserApi()
 const tasks = ref<readonly TaskListItem[]>([])

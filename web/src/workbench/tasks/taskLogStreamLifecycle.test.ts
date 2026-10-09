@@ -3,6 +3,33 @@ import { describe, expect, it } from 'vitest'
 import { createTaskLogStreamLifecycle } from './taskLogStreamLifecycle'
 
 describe('任务日志流生命周期', () => {
+  it('打开过程同步断开时关闭返回句柄，旧事件资格立即失效', () => {
+    const lifecycle = createTaskLogStreamLifecycle()
+    const close = () => { closed++ }
+    let closed = 0
+    let current!: () => boolean
+    let interrupted = 0
+    expect(lifecycle.open((disconnect, accepts) => {
+      current = accepts
+      expect(current()).toBe(true)
+      disconnect()
+      return { close }
+    }, () => { interrupted++ })).toBe(false)
+    expect(current()).toBe(false)
+    expect(lifecycle.active()).toBe(false)
+    expect(closed).toBe(1)
+    expect(interrupted).toBe(1)
+  })
+
+  it('关闭使当前事件资格失效，不因同任务重连重新有效', () => {
+    const lifecycle = createTaskLogStreamLifecycle()
+    let current!: () => boolean
+    lifecycle.open((_disconnect, accepts) => { current = accepts; return { close() {} } }, () => {})
+    lifecycle.close()
+    lifecycle.open(() => ({ close() {} }), () => {})
+    expect(current()).toBe(false)
+    expect(lifecycle.active()).toBe(true)
+  })
   it('当前连接断开后释放并允许按最后可靠游标重建', () => {
     const lifecycle = createTaskLogStreamLifecycle()
     const callbacks: Array<() => void> = []

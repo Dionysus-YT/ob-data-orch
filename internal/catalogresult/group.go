@@ -15,15 +15,18 @@ type Group struct {
 	Unavailable bool     `json:"unavailable"`
 }
 
+// MaxResponseBytes 是目录响应的资源预算；超限必须整体失败，不能截断为成功。
+const MaxResponseBytes = 16 << 20
+
 var orderedTypes = []string{"TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"}
 
-// ValidGroups 拒绝缺类、重复分类、越界或不安全名称，避免不可信 Agent 扩大目录响应。
+// ValidGroups 拒绝缺类、截断及不安全名称；对象数量不限，响应字节预算由传输边界执行。
 func ValidGroups(groups []Group) bool {
 	if len(groups) != len(orderedTypes) {
 		return false
 	}
 	for index, group := range groups {
-		if group.ObjectType != orderedTypes[index] || group.Objects == nil || len(group.Objects) > 100 ||
+		if group.ObjectType != orderedTypes[index] || group.Objects == nil || group.Truncated ||
 			(group.Unavailable && (len(group.Objects) != 0 || group.Truncated)) {
 			return false
 		}

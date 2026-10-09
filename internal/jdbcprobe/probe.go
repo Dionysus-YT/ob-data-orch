@@ -103,7 +103,7 @@ type CatalogRequest struct {
 	Keyword           string
 }
 
-// CatalogResult 是单类最多 100 项或五类合计最多 500 项的固定目录结果。
+// CatalogResult 保存完整对象目录；仅数据库目录保留 100 项上限和截断标志。
 type CatalogResult struct {
 	Objects   []string
 	Truncated bool
@@ -184,9 +184,9 @@ func ListObjects(ctx context.Context, runtime Runtime, request CatalogRequest) (
 	}
 	input := encodeProbeRequest(catalogProtocolVersion, request.Connection, [][]byte{[]byte(request.CompatibilityMode), []byte(request.Database), []byte(request.ObjectType), []byte(request.Keyword)})
 	defer zero(input)
-	maximum := 64 * 1024
-	if request.ObjectType == "ALL" {
-		maximum = 512 * 1024
+	maximum := catalogresult.MaxResponseBytes
+	if request.ObjectType == "DATABASE" {
+		maximum = 64 * 1024
 	}
 	timeout := probeTimeout
 	if request.ObjectType == "ALL" {
@@ -219,7 +219,8 @@ func parseCatalogResponseForType(output []byte, objectType string) (CatalogResul
 	}
 	if response.Status != "SUCCESS" || response.Code != "" || response.ObjectAccess != "" ||
 		response.ProductName != "" || response.ProductVersion != "" || response.DriverName != "" || response.DriverVersion != "" ||
-		response.Truncated == nil || len(response.Objects) > 100 {
+		response.Truncated == nil || (objectType == "DATABASE" && len(response.Objects) > 100) ||
+		(objectType != "DATABASE" && *response.Truncated) {
 		return CatalogResult{}, ErrProbeFailed
 	}
 	if objectType == "ALL" {
@@ -562,7 +563,8 @@ func readLimited(reader io.Reader, maximum int) ([]byte, error) {
 	}
 	buffer := make([]byte, 1024)
 	defer zero(buffer)
-	result := make([]byte, 0, maximum)
+	// 小目录不预分配整个资源预算，缓冲区随实际响应增长。
+	result := make([]byte, 0, min(maximum, 4096))
 	for {
 		count, err := reader.Read(buffer)
 		if count > 0 {

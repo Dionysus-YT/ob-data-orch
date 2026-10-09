@@ -11,10 +11,8 @@ const { sourceKeyword, fieldPrefix, sourceEnvironment, sourceLoadFailure, loadSo
 
 <template>
   <section class="form-section">
-    <h2>选择已有数据源</h2>
-    <p>向导只选择已启用、当前配置至少一次基础测试成功的数据源；不重复填写地址、用户名或密码。</p>
     <div class="export-field-group">
-      <h3>筛选条件</h3>
+      <h3>筛选数据源</h3>
       <AForm layout="vertical" class="export-source-filter">
         <AFormItem>
           <template #label>按名称筛选数据源</template><AInput v-model:value="sourceKeyword" aria-label="按名称筛选数据源" placeholder="输入数据源名称" allow-clear />
@@ -37,7 +35,7 @@ const { sourceKeyword, fieldPrefix, sourceEnvironment, sourceLoadFailure, loadSo
       </ARadioGroup>
       <AAlert v-if="selectedSource && derivedDraftBindingLocked" type="info" show-icon message="派生草稿固定使用来源任务的数据源；如需更换数据源，请退出派生流程后新建草稿。" />
       <AAlert v-else-if="selectedSource" type="info" show-icon :message="`已选择 ${selectedSource.displayName}。更换数据源会清除当前对象选择；已保存草稿的数据源绑定不可更新，更换后需创建新草稿。`" />
-      <p v-else-if="eligibleSources.length > 0" class="section-hint">请选择一个数据源后继续；任务级对象、权限、路径和空间检查仍将在预检查阶段执行。</p>
+      <p v-else-if="eligibleSources.length > 0" class="section-hint">请选择一个数据源后继续。</p>
     </div>
   </section>
 </template>

@@ -64,6 +64,13 @@
 :is(.export-builder, .export-submit-facts) .export-object-selected .ant-list-item { display: flex; align-items: center; gap: var(--ob-foundation-space-2); }
 :is(.export-builder, .export-submit-facts) .export-object-selected .ant-list-item > span { min-inline-size: 0; overflow-wrap: anywhere; }
 :is(.export-builder, .export-submit-facts) .export-form { display: grid; gap: var(--ob-foundation-space-3); }
+.export-builder .export-output-node { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); padding-block: var(--ob-foundation-space-2); border-block-end: 1px solid var(--ob-color-border); }
+.export-builder .export-output-node-facts { display: flex; align-items: center; gap: var(--ob-foundation-space-3); min-inline-size: 0; flex: 1 1 200px; }
+.export-builder .export-output-node-icon { flex: none; color: var(--ob-color-secondary); font-size: var(--ob-product-typography-section-size); }
+.export-builder .export-output-node-identity { display: grid; gap: var(--ob-foundation-space-1); min-inline-size: 0; overflow-wrap: anywhere; }
+.export-builder .export-output-node-name { font-weight: var(--ob-product-typography-weight); }
+.export-builder .export-output-node-platform { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+.export-builder .export-output-node-action { flex: none; padding-inline: 0; margin-inline-start: auto; }
 :is(.export-builder, .export-submit-facts) .export-advanced-form { max-inline-size: 720px; margin-block: 0; }
 :is(.export-builder, .export-submit-facts) .export-format-panel { margin-block-start: var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4); background: var(--ob-color-subtle); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
 :is(.export-builder, .export-submit-facts) .export-parameter-field { margin-block-start: 0; }
@@ -100,3 +107,9 @@
   :is(.export-builder, .export-submit-facts) .export-precheck-row > :last-child { grid-column: 2; }
   :is(.export-builder, .export-submit-facts) .export-source-filter > :last-child { flex: 1 1 180px; }
 }
+
+/* 大目录只渲染可见行；固定行高保持滚动定位准确，完整名称通过 title 查看。 */
+:is(.export-builder, .export-submit-facts) .export-object-window .ant-list-item { block-size: var(--export-object-row-height); overflow: hidden; }
+:is(.export-builder, .export-submit-facts) .export-object-window .ant-checkbox-wrapper { inline-size: 100%; }
+:is(.export-builder, .export-submit-facts) .export-object-window .ant-checkbox-wrapper > span:last-child { overflow: hidden; white-space: nowrap; }
+:is(.export-builder, .export-submit-facts) .export-object-window .ant-list-item > span[title] { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

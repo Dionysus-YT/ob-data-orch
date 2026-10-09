@@ -90,7 +90,7 @@
     },
     "/api/v1/data-sources/{dataSourceId}:search-export-objects": {
       "parameters": [{ "$ref": "#/components/parameters/DataSourceId" }],
-      "post": { "operationId": "searchExportObjects", "tags": ["DataSources", "Exports"], "security": [{ "BrowserSession": [] }], "description": "在已授权执行节点的短租约内读取最多 100 个数据库/Schema 名、单类对象名，或一次读取五类各最多 100 项；DATABASE 类型要求 database 为空。固定 JDBC 元数据与绑定参数的序列视图查询不接受用户 SQL 或连接材料。需要数据源、节点权限及真实 AGENT_JDBC 连接成功事实。", "x-idempotency": "REQUIRED", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportObjectCatalogQuery" }, "responses": { "200": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "202": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "searchExportObjects", "tags": ["DataSources", "Exports"], "security": [{ "BrowserSession": [] }], "description": "在已授权执行节点的短租约内读取最多 100 个数据库/Schema 名，或完整读取单类/五类对象目录（无对象条数上限）；目录响应预算 16 MiB，超限或超时失败，不返回截断成功结果；DATABASE 类型要求 database 为空。固定 JDBC 元数据与绑定参数的序列视图查询不接受用户 SQL 或连接材料。需要数据源、节点权限及真实 AGENT_JDBC 连接成功事实。", "x-idempotency": "REQUIRED", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportObjectCatalogQuery" }, "responses": { "200": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "202": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-object-catalog-queries/{queryId}": {
       "get": { "operationId": "getExportObjectCatalogQuery", "tags": ["Exports"], "security": [{ "BrowserSession": [] }], "description": "仅原发起主体且仍有数据源读取和节点使用权限时可读取短时结果。", "responses": { "200": { "$ref": "#/components/responses/ExportObjectCatalogQuery" }, "default": { "$ref": "#/components/responses/Error" } } }
@@ -493,12 +493,15 @@
       "ExportObjectCatalogQuery": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "status", "dataSourceId", "nodeId", "database", "objectType", "keyword", "objects", "groups", "truncated", "validUntil"],
-        "properties": { "id": { "$ref": "#/components/schemas/OpaqueId" }, "status": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] }, "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" }, "nodeId": { "$ref": "#/components/schemas/OpaqueId" }, "database": { "type": "string" }, "objectType": { "enum": ["DATABASE", "ALL", "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"] }, "keyword": { "type": "string" }, "objects": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 256 } }, "groups": { "type": "array", "maxItems": 5, "items": { "$ref": "#/components/schemas/ExportObjectCatalogGroup" } }, "truncated": { "type": "boolean" }, "validUntil": { "type": "string", "format": "date-time" } }
+        "properties": { "id": { "$ref": "#/components/schemas/OpaqueId" }, "status": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "UNKNOWN", "EXPIRED", "INVALIDATED"] }, "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" }, "nodeId": { "$ref": "#/components/schemas/OpaqueId" }, "database": { "type": "string" }, "objectType": { "enum": ["DATABASE", "ALL", "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"] }, "keyword": { "type": "string" }, "objects": { "type": "array", "uniqueItems": true, "items": { "type": "string", "maxLength": 256 } }, "groups": { "type": "array", "maxItems": 5, "items": { "$ref": "#/components/schemas/ExportObjectCatalogGroup" } }, "truncated": { "type": "boolean" }, "validUntil": { "type": "string", "format": "date-time" } },
+        "if": { "properties": { "objectType": { "const": "DATABASE" } } },
+        "then": { "properties": { "objects": { "maxItems": 100 } } },
+        "else": { "properties": { "truncated": { "const": false } } }
       },
       "ExportObjectCatalogGroup": {
         "type": "object", "additionalProperties": false,
         "required": ["objectType", "objects", "truncated", "unavailable"],
-        "properties": { "objectType": { "enum": ["TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"] }, "objects": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 256 } }, "truncated": { "type": "boolean" }, "unavailable": { "type": "boolean" } }
+        "properties": { "objectType": { "enum": ["TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"] }, "objects": { "type": "array", "uniqueItems": true, "items": { "type": "string", "maxLength": 256 } }, "truncated": { "const": false }, "unavailable": { "type": "boolean" } }
       },
       "ExportObjectCatalogQueryEnvelope": {
         "type": "object", "additionalProperties": false, "required": ["requestId", "item"],
@@ -814,7 +817,7 @@
           "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_HOST_UNRESOLVABLE", "DATABASE_TCP_REFUSED", "DATABASE_TCP_TIMEOUT", "DATABASE_TCP_UNREACHABLE", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] },
           "sysVerificationStatus": { "enum": ["NOT_CONFIGURED", "SUCCEEDED", "FAILED", "UNKNOWN"] },
           "sysEvidenceCode": { "enum": ["", "SYS_CONNECTED", "SYS_HOST_UNRESOLVABLE", "SYS_TCP_REFUSED", "SYS_TCP_TIMEOUT", "SYS_TCP_UNREACHABLE", "SYS_CONNECTION_FAILED", "SYS_CONNECTION_UNAVAILABLE"] },
-          "catalogObjects": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 256 } },
+          "catalogObjects": { "type": "array", "uniqueItems": true, "items": { "type": "string", "maxLength": 256 } },
           "catalogGroups": { "type": "array", "maxItems": 5, "items": { "$ref": "#/components/schemas/ExportObjectCatalogGroup" } },
           "catalogTruncated": { "type": "boolean" }
         },

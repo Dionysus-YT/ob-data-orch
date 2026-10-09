@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { writeFile } from 'node:fs/promises'
 import { mockFacts } from './fixtures/facts'
 import { DATA_SOURCE_UI_FIXTURES } from '../src/views/dataSourceUiFixture'
 import type { GeneralizedExportConfig } from '../src/api/browser'
@@ -151,11 +152,14 @@ test('导出单选、步骤和摘要不改变草稿语义', async ({ page }, inf
   await expect(drawer).not.toBeVisible()
   await expect(page.getByRole('button', { name: '查看任务摘要', exact: true })).toBeFocused()
   await page.getByRole('button', { name: /选择数据源 已完成/ }).click()
-  await expect(page.getByRole('heading', { name: '选择已有数据源' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '筛选数据源' })).toBeVisible()
   await expect(page.getByRole('radio', { name: /Production finance reporting/ })).toBeChecked()
 })
 
-test('部分导出从节点元数据加载对象并清除跨库旧选择', async ({ page }) => {
+test('部分导出从节点元数据加载对象并清除跨库旧选择', async ({ page }, info) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
   await mockFacts(page)
   const observed: Array<{ database: string; nodeId: string; objectType: string }> = []
   await page.route('**/api/v1/data-sources/*:search-export-objects', async (route) => {
@@ -194,10 +198,23 @@ test('部分导出从节点元数据加载对象并清除跨库旧选择', async
   await candidates.getByRole('checkbox', { name: 'fresh_table' }).check()
   await page.getByRole('button', { name: '下一步：选择数据格式' }).click()
   await page.getByRole('button', { name: '下一步：执行与输出' }).click()
-  await expect(page.getByRole('button', { name: '返回内容与对象修改节点' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '更换节点' })).toBeVisible()
   await expect(page.getByRole('combobox', { name: '执行节点', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: '返回内容与对象修改节点' }).click()
+  const nodeFacts = page.getByRole('group', { name: '执行节点信息' })
+  await expect(nodeFacts.getByText('合成执行节点', { exact: true })).toBeVisible()
+  await expect(nodeFacts.getByText('平台 · WINDOWS_AMD64', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/step=4/)
+  await expect(page).toHaveTitle(/OB Data Orch/)
+  await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+  for (const width of [1440, 925, 720]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(nodeFacts.getByRole('button', { name: '更换节点' })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await page.screenshot({ path: info.outputPath(`export-output-node-${width}.png`), fullPage: false })
+  }
+  await page.getByRole('button', { name: '更换节点' }).click()
   await expect(page.getByRole('heading', { name: '已选 1 项' })).toBeVisible()
+  expect(errors).toEqual([])
 })
 
 test('步骤 2 刷新恢复同会话选择并重新读取目录，数据源修订变化清除旧数据库', async ({ page }) => {
@@ -236,18 +253,18 @@ test('步骤 2 刷新恢复同会话选择并重新读取目录，数据源修�
 
   await page.getByRole('button', { name: '下一步：选择数据格式' }).click()
   await page.reload()
-  await expect(page.getByRole('heading', { name: '文件格式与交付约定', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '数据文件设置', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '下一步：执行与输出' }).click()
-  await expect(page.getByRole('heading', { name: '输出位置与执行资源' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '输出设置' })).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('heading', { name: '输出位置与执行资源' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '输出设置' })).toBeVisible()
   await page.getByRole('button', { name: '上一步' }).click()
   await page.getByRole('button', { name: '上一步' }).click()
   await expect(page.getByRole('heading', { name: '已选 1 项' })).toBeVisible()
 
   sourceRevision = 102
   await page.reload()
-  await expect(page.locator('.export-field-body .ant-select').nth(1)).toContainText('请选择数据库 / Schema')
+  await expect(page.locator('.export-field-body .ant-select').nth(1)).toContainText('请选择数据库')
   await expect(page.getByText('选择数据库后显示导出对象')).toBeVisible()
   await expect(page.getByRole('heading', { name: '已选 1 项' })).toHaveCount(0)
 
@@ -520,6 +537,76 @@ test('对象选择超过 100 项时框尺寸固定且内部滚动，分类图标
   await selected.getByRole('button', { name: '清空', exact: true }).click()
   await expect(selected.getByRole('heading', { name: '已选 0 项' })).toBeVisible()
   await expect.poll(paneHeights).toEqual(initialHeights)
+})
+
+test('五万对象完整加载，虚拟列表控制 DOM，尾部搜索和全选使用完整集合', async ({ page }, info) => {
+  await mockFacts(page)
+  const types = ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE'] as const
+  const names = Object.fromEntries(types.map(type => [type, Array.from({ length: 10000 }, (_, index) => `${type}_${index}`)]))
+  let requests = 0
+  await page.route('**/api/v1/data-sources/*:search-export-objects', async route => {
+    const input = route.request().postDataJSON() as { objectType: string }
+    requests++
+    await route.fulfill({ json: { item: { id: 'large-catalog', status: 'SUCCEEDED', dataSourceId: 'ui-fixture-production-finance-reporting', ...input,
+      objects: input.objectType === 'DATABASE' ? ['finance_reporting'] : input.objectType === 'ALL' ? [] : names[input.objectType],
+      groups: input.objectType === 'ALL' ? catalogGroups(names) : [], truncated: false, validUntil: '2099-01-01T00:00:00Z' } } })
+  })
+  await page.goto('/exports/new')
+  await page.getByRole('radio').first().check()
+  await page.getByRole('button', { name: '下一步：导出内容与对象' }).click()
+  const started = Date.now()
+  await chooseDatabase(page)
+  await page.getByText('仅导出结构', { exact: true }).click()
+  await expect(page.getByRole('heading', { name: '选择对象(50000)' })).toBeVisible()
+  const loadMs = Date.now() - started
+  const candidates = page.getByRole('region', { name: '选择导出对象' })
+  await candidates.getByRole('button', { name: '展开表分类' }).click()
+  await expect.poll(() => candidates.locator('.ant-list-item').count()).toBeLessThan(40)
+  const candidateRowsWhenExpanded = await candidates.locator('.ant-list-item').count()
+  const scroll = page.getByRole('region', { name: '候选对象滚动区', exact: true })
+  await scroll.evaluate(element => { element.scrollTop = element.scrollHeight - element.clientHeight - 120 })
+  await expect(candidates.getByRole('checkbox', { name: 'TABLE_9999', exact: true })).toBeVisible()
+  await candidates.getByRole('checkbox', { name: 'TABLE_9999', exact: true }).check()
+  await expect(page.getByRole('heading', { name: '已选 1 项' })).toBeVisible()
+  await page.getByRole('textbox', { name: '搜索候选对象' }).fill('TABLE_9999')
+  await expect(candidates.getByRole('checkbox', { name: 'TABLE_9999', exact: true })).toBeChecked()
+  await page.getByRole('button', { name: '搜索或刷新对象' }).click()
+  await expect.poll(() => requests).toBe(3)
+  await page.getByRole('textbox', { name: '搜索候选对象' }).clear()
+  const selectionStarted = Date.now()
+  await scroll.evaluate(element => { element.scrollTop = 0 })
+  await candidates.getByRole('checkbox', { name: '选择全部可见表', exact: true }).check()
+  await expect(page.getByRole('heading', { name: '已选 10000 项' })).toBeVisible()
+  const selectMs = Date.now() - selectionStarted
+  const selected = page.getByRole('region', { name: '已选导出对象' })
+  await expect.poll(() => selected.locator('.ant-list-item').count()).toBeLessThan(40)
+  await selected.getByRole('textbox', { name: '搜索已选对象' }).fill('TABLE_9999')
+  await selected.getByRole('button', { name: '移除已选对象 TABLE_9999', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '已选 9999 项' })).toBeVisible()
+  await selected.getByRole('textbox', { name: '搜索已选对象' }).clear()
+  await page.getByRole('button', { name: '下一步：选择数据格式' }).click()
+  await page.getByRole('button', { name: '上一步', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '已选 9999 项' })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '已选 9999 项' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '选择对象(50000)' })).toBeVisible()
+  const batchSelectionStarted = Date.now()
+  await candidates.getByRole('checkbox', { name: '选择全部可见表', exact: true }).check()
+  for (const label of ['视图', '函数', '存储过程', '序列']) await candidates.getByRole('checkbox', { name: `选择全部${label}`, exact: true }).check()
+  await expect(page.getByRole('heading', { name: '已选 50000 项' })).toBeVisible()
+  const batchSelectMs = Date.now() - batchSelectionStarted
+  const selectedScroll = page.getByRole('region', { name: '已选对象滚动区', exact: true })
+  await selectedScroll.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await expect(selected.getByRole('button', { name: '移除已选对象 SEQUENCE_9999', exact: true })).toBeVisible()
+  await selected.getByRole('button', { name: '移除已选对象 SEQUENCE_9999', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '已选 49999 项' })).toBeVisible()
+  await expect.poll(() => selected.locator('.ant-list-item').count()).toBeLessThan(40)
+  await page.setViewportSize({ width: 720, height: 900 })
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  const metricsPath = info.outputPath('catalog-performance.json')
+  await writeFile(metricsPath, JSON.stringify({ objects: 50000, selected: 49999, loadMs, selectMs, batchSelectMs, candidateRowsWhenExpanded, renderedCandidateRows: await candidates.locator('.ant-list-item').count(), renderedSelectedRows: await selected.locator('.ant-list-item').count() }, null, 2))
+  await info.attach('catalog-performance', { path: metricsPath, contentType: 'application/json' })
+  await page.screenshot({ path: info.outputPath('large-catalog.png'), fullPage: true })
 })
 
 test('五类对象从固定元数据目录加载并可同时勾选', async ({ page }) => {
@@ -840,8 +927,8 @@ for (const mode of ['MYSQL', 'ORACLE'] as const) {
     await page.getByRole('radio').first().check()
     await page.screenshot({ path: info.outputPath('source-baseline.png') })
     await page.getByRole('button', { name: /^下一步：/ }).click()
-    await expect(page.getByRole('button', { name: '读取元数据的执行节点参数说明', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('combobox', { name: '读取元数据的执行节点', exact: true }).locator('xpath=ancestor::*[contains(@class, "export-format-panel")]')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '读取执行节点参数说明', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('combobox', { name: '读取执行节点', exact: true }).locator('xpath=ancestor::*[contains(@class, "export-format-panel")]')).toHaveCount(0)
     await expect(page.locator('h3 .export-option-hint')).toHaveCount(0)
     await page.locator('.export-field-body .ant-select').first().click()
     await page.getByText('合成执行节点 · WINDOWS_AMD64').last().click()
@@ -1413,7 +1500,7 @@ test('更换执行节点后创建新草稿以遵守绑定不可变契约', async
   await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/synthetic')
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '返回内容与对象修改节点' }).click()
+  await page.getByRole('button', { name: '更换节点' }).click()
   await page.locator('.export-field-body .ant-select').first().click()
   await page.getByText('合成执行节点 2 · WINDOWS_AMD64').last().click()
   await expect(page.getByText('草稿尚未创建')).toBeVisible()
@@ -1455,7 +1542,7 @@ test('卸数整改保留空格分隔符、整库排除表、自动压缩与文�
   await page.getByRole('textbox', { name: '排除表' }).fill('synthetic_excluded')
   await expect(page.getByRole('button', { name: /高级设置.*已配置 1 项/ })).toBeVisible()
   await page.getByRole('button', { name: /^下一步：/ }).click()
-  await expect(page.getByRole('heading', { name: '文件格式与交付约定' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '数据文件设置' })).toBeVisible()
   await expect(page.getByRole('radiogroup', { name: '读取一致性' })).toHaveCount(0)
   await page.getByRole('region', { name: '其他选项' }).getByRole('checkbox', { name: /一致性快照/ }).check()
   await chooseExportOption(page, '字段分隔符', '自定义…')
