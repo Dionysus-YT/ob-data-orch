@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DATA_SOURCE_UI_FIXTURES } from '@/views/dataSourceUiFixture'
+import { DATA_SOURCE_UI_FIXTURES } from '@/workbench/sources/dataSourceUiFixture'
 import { blankSourceForm, connectionFact, connectionListFact, formatVerifiedTime, invalidatesConnection, sourceUpdate } from './sourcePresentation'
 
 describe('新工作区的数据源呈现边界', () => {

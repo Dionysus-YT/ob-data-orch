@@ -50,9 +50,11 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 
 ## 前端业务模块架构
 
-2026-10-09 治理第一阶段将原有工程边界推广为全前端开发约束，实际重构只涉及任务详情和任务辅助文件归属。[任务维护索引](../../web/src/workbench/tasks/README.md)与[阶段记录](evidence/frontend-business-phase1-2026-10-09.md)提供状态所有者、审计问题、改动和实际验证；节点、存储凭据、数据源及模板问题待相应阶段确认，不据本节提前实施。
+2026-10-09 治理第一阶段将原有工程边界推广为全前端开发约束，该阶段实际重构涉及任务详情和任务辅助文件归属。[任务维护索引](../../web/src/workbench/tasks/README.md)与[阶段记录](evidence/frontend-business-phase1-2026-10-09.md)提供状态所有者、审计问题、改动和实际验证；其余模块随后按用户确认的阶段开展。
 
-第二阶段经用户确认后治理执行节点列表、登记/编辑与详情，维护入口为[节点维护索引](../../web/src/workbench/nodes/README.md)，实际改动与验收见[第二阶段记录](evidence/frontend-business-phase2-2026-10-09.md)。节点会话绑定 ID 和表单模式；版本写入使先前事实读取失效，环境检查最多一个延迟复读，注册材料拥有独立弹层生命周期。没有新增注册协议、权限推断或公共 UI Wrapper。存储凭据及其他必要模块仍待第三阶段确认，正式全业务静态门禁仍按第四阶段收口。
+第二阶段经用户确认后治理执行节点列表、登记/编辑与详情，维护入口为[节点维护索引](../../web/src/workbench/nodes/README.md)，实际改动与验收见[第二阶段记录](evidence/frontend-business-phase2-2026-10-09.md)。节点会话绑定 ID 和表单模式；版本写入使先前事实读取失效，环境检查最多一个延迟复读，注册材料拥有独立弹层生命周期。没有新增注册协议、权限推断或公共 UI Wrapper。
+
+第三、四阶段随后按用户授权完成：[凭据索引](../../web/src/workbench/credentials/README.md)、[模板索引](../../web/src/workbench/templates/README.md)、[数据源索引](../../web/src/workbench/sources/README.md)说明实际职责；[第三阶段证据](evidence/frontend-business-phase3-2026-10-09.md)、[第四阶段证据](evidence/frontend-business-phase4-2026-10-09.md)记录治理及验证。sources 对 views 的反向依赖已消除，专属组件移回 feature；简单页面与未开发的导入等模块保持原范围，API 模块只审计。下述门禁已实施，不再处于规划状态。
 
 ### 强制约束
 
@@ -67,7 +69,17 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 
 人工复核关注独立生命周期混在页面、状态副本、未受控迟到回调、重复规则、单个 composable 接管无关能力、业务专属组件被误当公共基础 UI 等问题。源码规模只辅助定位，不作为失败阈值；简单页面和业务能力明确的长文件不机械拆分。
 
-现有 ESLint、TypeScript、Vitest、Playwright、Token 和平台审计继续执行；`audit:wizards` 仍只自动覆盖向导。全前端依赖检查器、正反测试及 verify/CI 接入属于第四阶段：需覆盖 feature 反向依赖页面、循环值依赖、禁止的跨层请求、共享归属和职责复核信号；静态无法判定的状态副本或业务语义仍需人工与行为验证。第一阶段没有放宽现有断言或把已知反向依赖加入豁免来声称全局通过。
+现有 ESLint、TypeScript、Vitest、Playwright、Token 和平台审计继续执行。`audit:business` 已纳入 Windows/Linux verify 和 CI Web quality，运行正反测试后审计所有生产 TS/JS/Vue；测试文件不参与业务图，DEV 业务夹具仍参与依赖检查。向导专属检查保留 `audit:wizards`，两者共用 AST/文件读取/循环分析，不维护两套解析规则。
+
+| 自动失败的约束 | 执行内容 |
+| --- | --- |
+| 业务反向依赖 | `workbench/` 不依赖 `views/`、`router/`，含类型依赖 |
+| 公共与平台/API 边界 | 公共 components/composables 不依赖具体业务、页面或路由；platform 不依赖业务/API/UI；api 不依赖业务/UI/平台实现 |
+| 循环值依赖 | 全生产图的静态导入、再导出、字面量动态导入、index、require；类型边不判作运行时循环 |
+| 请求与订阅 | fetch/XMLHttpRequest/EventSource/WebSocket 及常见网络客户端只能经 api；识别全局属性、别名与解构，局部同名绑定不误判。既有 ProductHeader `/logout` 是准确文件/端点的认证例外，不豁免业务请求 |
+| 向导步骤 | API 类型端口可引用，运行时 API 客户端依赖失败 |
+
+人工 REVIEW 覆盖公共能力仅单业务使用、复杂页面多类直接 API/异步生命周期、非字面量动态依赖，以及 >400 总行或 >300 脚本行。阈值只辅助复核，CLI 不据此失败。公共外壳 ProductShell/Header 是应用基础设施，不要求两个业务消费者。判断状态副本、规则语义、反射调用、动态路径与完整权限仍需源码复核和行为测试；静态通过不证明业务等价、无秘密或真实能力可用。当前 5 个规模信号逐项复核见第四阶段记录，不添加机械 max-lines 门禁或宽泛模块豁免。
 
 未来新增复杂模块先查任务地图准入、P0/P1 与业务契约；建立实际所需的状态、规则与异步所有者，并登记维护入口、失效/卸载/重复负例。未开发的普通导入、旁路导入、日志、设置和权限保持原边界，不提前创建业务实现。
 
@@ -111,7 +123,8 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 
 | 检查 | 执行边界 |
 | --- | --- |
-| ESLint | 原有 Vue/TS 规则；向导入口及步骤禁止直接使用全局 fetch / XMLHttpRequest |
+| ESLint | 原有 Vue/TS 规则；views/workbench/composables/platform 禁止直接使用全局 fetch、XMLHttpRequest、EventSource、WebSocket；其他跨层及全局属性由全业务检查补充 |
+| `npm run audit:business` | 全前端依赖、请求边界与正反测试；归属、动态依赖、职责及规模只打印 REVIEW |
 | `npm run audit:wizards` | 运行检查器负例，再检查业务反向依赖页面、步骤 API 值导入与 feature 值依赖循环；规模信号仅打印，不阻断 |
 | `npm run typecheck`、`npm run build` | 端口、模型与模板类型，以及生产编译 |
 | Vitest | 参数转换、互斥与条件清值、绑定失效、保存/预检/提交防重、请求竞态和卸载负例 |

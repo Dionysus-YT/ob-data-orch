@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DATA_SOURCE_UI_FIXTURES } from '@/views/dataSourceUiFixture'
+import { DATA_SOURCE_UI_FIXTURES } from '@/workbench/sources/dataSourceUiFixture'
 import { createVisualSourceGateway } from './sourceGateway'
 import { blankSourceForm } from './sourcePresentation'
 

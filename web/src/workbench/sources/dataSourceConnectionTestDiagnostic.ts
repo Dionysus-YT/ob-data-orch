@@ -1,4 +1,4 @@
-import type { DataSourceConnectionTest } from '../api/browser'
+import type { DataSourceConnectionTest } from '@/api/browser'
 
 export type DataSourceDiagnosticTarget = 'connection' | 'execution-node' | 'sys-credential'
 

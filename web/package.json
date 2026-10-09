@@ -16,6 +16,7 @@
     "test:browser": "playwright test",
     "audit:platform": "node scripts/audit-platform.mjs",
     "audit:wizards": "node --test scripts/audit-wizards.test.mjs && node scripts/audit-wizards.mjs",
+    "audit:business": "node --test scripts/audit-business.test.mjs && node scripts/audit-business.mjs",
     "tokens:generate": "node scripts/generate-tokens.mjs",
     "tokens:check": "node scripts/generate-tokens.mjs --check"
   },

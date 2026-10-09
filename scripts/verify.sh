@@ -30,6 +30,7 @@ done
   npm ci
   npm run lint
   npm run audit:wizards
+  npm run audit:business
   npm run typecheck
   npm run test
   npm run build

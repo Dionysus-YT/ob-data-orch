@@ -3,8 +3,8 @@ import { toRefs } from 'vue'
 import { EditOutlined, HddOutlined } from '@ant-design/icons-vue'
 import type { ExportOutputStepModel } from '../exportStepModels'
 import { Alert as AAlert, Form as AForm, FormItem as AFormItem, Button as AButton, Skeleton as ASkeleton, RadioGroup as ARadioGroup, Radio as ARadio, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Checkbox as ACheckbox } from 'ant-design-vue'
-import ExportOptionHint from '@/components/ExportOptionHint.vue'
-import ExportAdvancedSettings from '@/components/ExportAdvancedSettings.vue'
+import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue'
+import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvancedSettings.vue'
 
 const props = defineProps<{ model: ExportOutputStepModel }>()
 const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCandidates, loadingNodes, selectedNode, derivedDraftBindingLocked, moveToStep, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, fieldPrefix, storageCredentialLoadFailure, loadStorageCredentials, loadingStorageCredentials, storageCredentialID, matchingStorageCredentials, filePath, outputPathPlaceholder, logPath, skipCheckDir, executionAdvancedCount, dataOptionsActive, maxFileSize, thread, pageSize, parallelMacro, selectedSource, fetchSize, jvmMemory, tmpPath, draftFailure } = toRefs(props.model)

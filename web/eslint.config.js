@@ -24,11 +24,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/views/*WizardView.vue', 'src/workbench/{export,import}/**/steps/*.vue'],
+    files: ['src/views/**/*.{vue,ts}', 'src/workbench/**/*.{vue,ts}', 'src/composables/**/*.{vue,ts}', 'src/platform/**/*.{vue,ts}'],
     rules: {
       'no-restricted-globals': ['error',
-        { name: 'fetch', message: '向导网络请求经 api 边界与业务异步管理器处理。' },
-        { name: 'XMLHttpRequest', message: '向导网络请求经 api 边界与业务异步管理器处理。' },
+        { name: 'fetch', message: '业务请求经 api 边界与异步管理器处理。' },
+        { name: 'XMLHttpRequest', message: '业务请求经 api 边界与异步管理器处理。' },
+        { name: 'EventSource', message: '实时订阅经 api 边界与生命周期管理器处理。' },
+        { name: 'WebSocket', message: '实时订阅经 api 边界与生命周期管理器处理。' },
       ],
     },
   },

@@ -4,9 +4,9 @@ import { useExportObjectViewport } from '../useExportObjectViewport'
 import type { ExportObjectsStepModel } from '../exportStepModels'
 import { Form as AForm, FormItem as AFormItem, RadioGroup as ARadioGroup, RadioButton as ARadioButton, Skeleton as ASkeleton, Select as ASelect, SelectOption as ASelectOption, SelectOptGroup as ASelectOptGroup, Button as AButton, Alert as AAlert, Radio as ARadio, Input as AInput, Modal as AModal, Checkbox as ACheckbox, Empty as AEmpty, List as AList, ListItem as AListItem } from 'ant-design-vue'
 import { CaretDownOutlined, CaretRightOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons-vue'
-import SqlQueryEditor from '@/components/SqlQueryEditor.vue'
-import ExportAdvancedSettings from '@/components/ExportAdvancedSettings.vue'
-import ExportOptionHint from '@/components/ExportOptionHint.vue'
+import SqlQueryEditor from '@/workbench/export/components/SqlQueryEditor.vue'
+import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvancedSettings.vue'
+import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue'
 
 const props = defineProps<{ model: ExportObjectsStepModel }>()
 const { exportMode, scopeKind, contentKind, fieldPrefix, nodeLoadFailure, loadingNodes, selectedNodeID, derivedDraftBindingLocked, nodes, attemptedStep, database, selectedSource, databaseDropdownOpen, databaseCatalogLoading, onDatabaseDropdownVisibleChange, scheduleDatabaseCatalog, selectDatabaseOption, databaseOptions, databaseCatalogFailure, databaseCatalogLoaded, manualDatabaseInput, manualDatabaseError, manualDatabaseOpen, loadDatabaseCatalog, databaseCatalogTruncated, querySql, queryResultLimit, objectInputMessage, confirmManualDatabase, enteredObjectCount, allSelectedObjects, candidateTotalCount, candidateObjectKeyword, loadCatalog, catalogLoading, catalogKeywordTooLong, catalogFailure, visibleObjectCategories, objectType, candidateGroupExpanded, chooseObjectCategory, selectableCategoryNames, categorySelectedCount, toggleCategorySelection, catalogCount, candidateObjectNames, catalogLoaded, visibleCandidateObjectNames, objectNames, toggleCandidate, clearObjectNameRows, selectedObjectKeyword, visibleSelectedGroups, selectedGroupExpanded, clearObjectCategory, removeObjectNameRow, objectAdvancedCount, dataOptionsActive, excludeTablesSupported, excludeTablesText, includeColumnNames, excludeColumnNames, excludeDataTypes, whereSupported, where, partitionSupported, partition, migrateLegacyQuery } = toRefs(props.model)

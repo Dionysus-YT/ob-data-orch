@@ -27,7 +27,7 @@
 | `exportWizard.css` | 搬迁前的业务布局声明，作用域只覆盖导出工作面与确认事实；复用平台 Token |
 | `exportStepModels.ts` | 步骤、摘要和确认消费的明确类型端口，不持有状态 |
 
-步骤组件为 `steps/ExportSourceStep.vue`、`ExportObjectsStep.vue`、`ExportFormatStep.vue`、`ExportOutputStep.vue`、`ExportReviewStep.vue`。`ExportSummary.vue` 只展示事实；`ExportSubmitConfirmation.vue` 负责既有确认 UI、安全取消焦点及其计时器，提交由生命周期能力管理。现有 ExportAdvancedSettings、ExportOptionHint、ExportFormatChoice、SqlQueryEditor 继续复用，不新增通用 Wrapper。
+步骤组件为 `steps/ExportSourceStep.vue`、`ExportObjectsStep.vue`、`ExportFormatStep.vue`、`ExportOutputStep.vue`、`ExportReviewStep.vue`。`ExportSummary.vue` 只展示事实；`ExportSubmitConfirmation.vue` 负责既有确认 UI、安全取消焦点及其计时器，提交由生命周期能力管理。ExportAdvancedSettings、ExportOptionHint、ExportFormatChoice、SqlQueryEditor 位于本模块 `components/`，是已有导出业务组件；原实现与视觉保留，不标记为尚未经验证的跨业务共享，也不新增通用 Wrapper。
 
 ## 常见改动路径
 

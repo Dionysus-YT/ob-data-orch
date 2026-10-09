@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import { mockFacts } from './fixtures/facts'
-import { DATA_SOURCE_UI_FIXTURES } from '../src/views/dataSourceUiFixture'
+import { DATA_SOURCE_UI_FIXTURES } from '../src/workbench/sources/dataSourceUiFixture'
 import type { GeneralizedExportConfig } from '../src/api/browser'
 
 async function chooseDatabase(page: Page, name = 'finance_reporting') {

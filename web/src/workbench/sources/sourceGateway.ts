@@ -1,5 +1,5 @@
 import { browserApi, type DataSourceSummary, type DataSourceUpdate } from '@/api/browser'
-import { dataSourceUiFixtureForSearch } from '@/views/dataSourceUiFixture'
+import { dataSourceUiFixtureForSearch } from '@/workbench/sources/dataSourceUiFixture'
 
 export type SourceGateway = Pick<ReturnType<typeof browserApi>, 'listDataSources' | 'getDataSource' | 'createDataSource' | 'updateDataSource' | 'changeDataSourceState' | 'deleteDataSource' | 'archiveDataSource' | 'listDataSourceConnectionTestNodeCandidates' | 'startDataSourceConnectionTest' | 'getDataSourceConnectionTest'>
 

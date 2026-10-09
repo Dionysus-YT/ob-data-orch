@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { DATA_SOURCE_UI_FIXTURES } from '../src/views/dataSourceUiFixture'
+import { DATA_SOURCE_UI_FIXTURES } from '../src/workbench/sources/dataSourceUiFixture'
 
 test('新建环境从默认提示中显式选择，预生产存量仍可编辑', async ({ page }) => {
   await page.route('**/api/v1/**', route => route.abort())

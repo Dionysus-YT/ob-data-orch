@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { DataSourceConnectionTest } from '../api/browser'
+import type { DataSourceConnectionTest } from '@/api/browser'
 import { dataSourceConnectionTestDiagnostic } from './dataSourceConnectionTestDiagnostic'
 
 function result(resultCode: string, status: DataSourceConnectionTest['status'] = 'FAILED'): DataSourceConnectionTest {

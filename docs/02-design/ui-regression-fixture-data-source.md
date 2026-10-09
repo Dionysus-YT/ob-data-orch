@@ -18,8 +18,8 @@ Fixture 是稳定 UI Regression 数据源，不是自动 Screenshot Diff 系统�
 
 ## 2. 代码位置
 
-- 数据定义与启用规则：[web/src/views/dataSourceUiFixture.ts](../../web/src/views/dataSourceUiFixture.ts)
-- 规则测试：[web/src/views/dataSourceUiFixture.test.ts](../../web/src/views/dataSourceUiFixture.test.ts)
+- 数据定义与启用规则：[web/src/workbench/sources/dataSourceUiFixture.ts](../../web/src/workbench/sources/dataSourceUiFixture.ts)
+- 规则测试：[web/src/workbench/sources/dataSourceUiFixture.test.ts](../../web/src/workbench/sources/dataSourceUiFixture.test.ts)
 - 现役页面：[SourceWorkspace.vue](../../web/src/workbench/sources/SourceWorkspace.vue)
 - 内存网关与验证：[sourceGateway.ts](../../web/src/workbench/sources/sourceGateway.ts)、[sourceGateway.test.ts](../../web/src/workbench/sources/sourceGateway.test.ts)
 
@@ -84,7 +84,7 @@ Fixture 模式下，现役 `SourceWorkspace` 和 `SourceEditor` 使用内存数�
 
 ```powershell
 cd web
-npm run test -- src/views/dataSourceUiFixture.test.ts src/workbench/sources/sourceGateway.test.ts
+npm run test -- src/workbench/sources/dataSourceUiFixture.test.ts src/workbench/sources/sourceGateway.test.ts
 npm run typecheck
 ```
 

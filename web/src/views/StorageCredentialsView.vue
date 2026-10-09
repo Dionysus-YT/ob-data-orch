@@ -1,144 +1,20 @@
 <script setup lang="ts">
-import { Form as AForm, FormItem as AFormItem } from 'ant-design-vue'
-import OrchOperationalTable from '@/components/OrchOperationalTable.vue'
-const columns = [{ key: 'c0', title: '凭据' }, { key: 'c1', title: '提供方' }, { key: 'c2', title: '当前修订' }, { key: 'c3', title: '更新时间' }, { key: 'c4', title: '操作', width: '16%' }]
-
-import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
-import { computed, onMounted, ref } from 'vue'
+import { Form as AForm, FormItem as AFormItem, Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
+import { onMounted } from 'vue'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, DeleteOutlined } from '@ant-design/icons-vue'
-
-import { browserApi, storageCredentialErrorMessage, type StorageCredentialListItem, type StorageCredentialProvider, type StorageCredentialWrite } from '@/api/browser'
+import OrchOperationalTable from '@/components/OrchOperationalTable.vue'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
-import { filterStorageCredentials, storageCredentialProviders, validateStorageCredentialWrite, type StorageCredentialFieldErrors } from './storageCredentialList'
+import { storageCredentialProviders } from '@/workbench/credentials/storageCredentialList'
+import { useCredentialList } from '@/workbench/credentials/useCredentialList'
+import { useCredentialEditor } from '@/workbench/credentials/useCredentialEditor'
+import { useCredentialDeletion } from '@/workbench/credentials/useCredentialDeletion'
 
-const api = browserApi()
-const credentials = ref<StorageCredentialListItem[]>([])
-const loading = ref(true)
-const loadFailure = ref('')
-const feedback = ref('')
-const notice = ref('')
-const keyword = ref('')
-const providerFilter = ref('')
-const actionID = ref('')
-
-const editorOpen = ref(false)
-const editingID = ref<string | null>(null)
-const formName = ref('')
-const formProvider = ref<StorageCredentialProvider>('OSS')
-const formAccessKey = ref('')
-const formSecretKey = ref('')
-const formErrors = ref<StorageCredentialFieldErrors>({})
-const saving = ref(false)
-
-const pendingDelete = ref<StorageCredentialListItem>()
-
-const visibleCredentials = computed(() => filterStorageCredentials(credentials.value, { keyword: keyword.value, provider: providerFilter.value }))
-
-onMounted(() => {
-  void loadCredentials()
-})
-
-async function loadCredentials() {
-  loading.value = true
-  await refreshCredentials()
-  loading.value = false
-}
-
-async function refreshCredentials() {
-  loadFailure.value = ''
-  try {
-    credentials.value = await api.listStorageCredentials()
-  } catch (error) {
-    loadFailure.value = storageCredentialErrorMessage(error, '无法加载存储凭据，请稍后重试。')
-  }
-}
-
-function resetForm() {
-  formName.value = ''
-  formProvider.value = 'OSS'
-  formAccessKey.value = ''
-  formSecretKey.value = ''
-  formErrors.value = {}
-}
-
-function openCreate() {
-  editingID.value = null
-  resetForm()
-  editorOpen.value = true
-}
-
-function openRotate(credential: StorageCredentialListItem) {
-  editingID.value = credential.id
-  formName.value = credential.displayName
-  formProvider.value = credential.provider
-  formAccessKey.value = ''
-  formSecretKey.value = ''
-  formErrors.value = {}
-  editorOpen.value = true
-}
-
-function closeEditor() {
-  editorOpen.value = false
-  editingID.value = null
-  resetForm()
-}
-
-async function submitForm() {
-  const input: StorageCredentialWrite = {
-    displayName: formName.value,
-    provider: formProvider.value,
-    accessKey: formAccessKey.value,
-    secretKey: formSecretKey.value,
-  }
-  formErrors.value = validateStorageCredentialWrite(input)
-  if (Object.keys(formErrors.value).length > 0) return
-  saving.value = true
-  feedback.value = ''
-  notice.value = ''
-  const target = editingID.value ? credentials.value.find((item) => item.id === editingID.value) : undefined
-  try {
-    if (target) {
-      // 轮换使用 If-Match 乐观锁与幂等键；成功后以新修订替换当前行。
-      const rotated = await api.rotateStorageCredential(target.id, target.revision, input)
-      actionID.value = target.id
-      credentials.value = credentials.value.map((item) => item.id === rotated.id ? rotated : item)
-      notice.value = `凭据「${rotated.displayName}」已轮换为修订 ${rotated.currentRevision}；历史任务快照不受影响。`
-    } else {
-      const created = await api.createStorageCredential(input)
-      credentials.value = [...credentials.value, created]
-      notice.value = `凭据「${created.displayName}」已创建；密钥只以加密信封保存，任何读取响应都不会回显。`
-    }
-    closeEditor()
-  } catch (error) {
-    feedback.value = storageCredentialErrorMessage(error, target ? '凭据轮换失败。' : '凭据创建失败。')
-  } finally {
-    saving.value = false
-    actionID.value = ''
-  }
-}
-
-function requestDelete(credential: StorageCredentialListItem) {
-  pendingDelete.value = credential
-}
-
-async function confirmDelete() {
-  const target = pendingDelete.value
-  if (!target) return
-  actionID.value = target.id
-  feedback.value = ''
-  notice.value = ''
-  try {
-    await api.deleteStorageCredential(target.id, target.revision)
-    credentials.value = credentials.value.filter((item) => item.id !== target.id)
-    notice.value = `凭据「${target.displayName}」已删除；已冻结任务的历史快照只保留引用标识。`
-  } catch (error) {
-    feedback.value = storageCredentialErrorMessage(error, '凭据删除失败。')
-  } finally {
-    actionID.value = ''
-    pendingDelete.value = undefined
-  }
-}
-
+const columns = [{ key: 'c0', title: '凭据' }, { key: 'c1', title: '提供方' }, { key: 'c2', title: '当前修订' }, { key: 'c3', title: '更新时间' }, { key: 'c4', title: '操作', width: '16%' }]
+const list = useCredentialList()
+const { credentials, loading, loadFailure, feedback, notice, keyword, providerFilter, actionID, visibleCredentials, loadCredentials } = list
+const { editorOpen, editingID, formName, formProvider, formAccessKey, formSecretKey, formErrors, saving, openCreate, openRotate, closeEditor, submitForm } = useCredentialEditor(list)
+const { pendingDelete, requestDelete, confirmDelete, cancelDelete } = useCredentialDeletion(list)
+onMounted(() => { void loadCredentials() })
 function updatedAtLabel(value: string) {
   const time = new Date(value)
   return Number.isNaN(time.getTime()) ? value : time.toLocaleString()
@@ -203,7 +79,7 @@ function updatedAtLabel(value: string) {
       </OrchOperationalTable>
     </section>
 
-    <OrchDangerConfirm :open="Boolean(pendingDelete)" :title="`删除存储凭据：${pendingDelete?.displayName ?? ''}`" confirm-label="确认删除" destructive :busy="Boolean(actionID)" @confirm="confirmDelete" @cancel="pendingDelete = undefined">
+    <OrchDangerConfirm :open="Boolean(pendingDelete)" :title="`删除存储凭据：${pendingDelete?.displayName ?? ''}`" confirm-label="确认删除" destructive :busy="Boolean(actionID)" @confirm="confirmDelete" @cancel="cancelDelete">
       <p>删除后凭据及其全部加密信封修订将被物理移除，无法恢复。已提交任务的历史快照只保留引用标识，不会因此改写或回填密钥。</p>
     </OrchDangerConfirm>
 

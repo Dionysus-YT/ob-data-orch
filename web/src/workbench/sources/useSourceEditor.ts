@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { dataSourceErrorMessage, type DataSourceConnectionTest, type DataSourceDetail, type ExecutionNodeCandidate } from '@/api/browser'
-import { dataSourceFieldErrorsFromApi, validateDataSourceForm, type DataSourceFormErrors } from '@/views/dataSourceFormErrors'
-import { parseDataSourceConnectionString } from '@/views/dataSourceConnectionString'
+import { dataSourceFieldErrorsFromApi, validateDataSourceForm, type DataSourceFormErrors } from '@/workbench/sources/dataSourceFormErrors'
+import { parseDataSourceConnectionString } from '@/workbench/sources/dataSourceConnectionString'
 import { blankSourceForm, invalidatesConnection, sourceUpdate } from './sourcePresentation'
 import type { SourceGateway } from './sourceGateway'
 

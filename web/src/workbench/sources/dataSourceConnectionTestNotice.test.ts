@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { DataSourceConnectionTest } from '../api/browser'
+import type { DataSourceConnectionTest } from '@/api/browser'
 import { dataSourceConnectionTestNotice, sysCredentialVerificationNotice } from './dataSourceConnectionTestNotice'
 
 function testResult(overrides: Partial<DataSourceConnectionTest> = {}): DataSourceConnectionTest {

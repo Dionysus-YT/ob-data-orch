@@ -48,6 +48,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed with exit code $LASTEXITCODE" }
     npm run audit:wizards
     if ($LASTEXITCODE -ne 0) { throw "Wizard architecture audit failed with exit code $LASTEXITCODE" }
+    npm run audit:business
+    if ($LASTEXITCODE -ne 0) { throw "Business architecture audit failed with exit code $LASTEXITCODE" }
     npm run typecheck
     if ($LASTEXITCODE -ne 0) { throw "Frontend typecheck failed with exit code $LASTEXITCODE" }
     npm run test

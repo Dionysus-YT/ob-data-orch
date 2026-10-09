@@ -4,7 +4,7 @@ import { DownOutlined, FileSearchOutlined, MenuUnfoldOutlined, RedoOutlined, Und
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker'
 import type { editor as MonacoEditor } from 'monaco-editor/editor/editor.api'
-import '../../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css'
+import '../../../../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css'
 
 const props = defineProps<{
   modelValue: string

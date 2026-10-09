@@ -1,4 +1,4 @@
-import type { DataSourceConnectionTest } from '../api/browser'
+import type { DataSourceConnectionTest } from '@/api/browser'
 
 export function dataSourceConnectionTestNotice(result: DataSourceConnectionTest) {
   if (result.status === 'SUCCEEDED' && result.verificationSource === 'G2_SYNTHETIC') {

@@ -1,4 +1,4 @@
-import { DATA_SOURCE_UI_FIXTURES } from '../../src/views/dataSourceUiFixture'
+import { DATA_SOURCE_UI_FIXTURES } from '../../src/workbench/sources/dataSourceUiFixture'
 
 export async function mockFacts(page: import('@playwright/test').Page) {
   await page.route('**/api/v1/**', async (route) => {
