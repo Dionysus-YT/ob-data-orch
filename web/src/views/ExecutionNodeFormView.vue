@@ -1,167 +1,23 @@
 <script setup lang="ts">
 import { Form as AForm, FormItem as AFormItem } from 'ant-design-vue'
 import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Textarea as ATextarea } from 'ant-design-vue'
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useNodeForm } from '@/workbench/nodes/useNodeForm'
 
-import { browserApi, executionNodeErrorMessage, type ApiError, type ExecutionNodeDetail, type ExecutionNodePlatform, type ExecutionNodeWrite } from '@/api/browser'
-
-type NodeFormField = 'displayName' | 'platform' | 'allowedRoots' | 'toolHome' | 'javaPath'
-type NodeFormErrors = Partial<Record<NodeFormField, string>>
-
-const api = browserApi()
 const route = useRoute()
 const router = useRouter()
-const node = ref<ExecutionNodeDetail>()
-const loading = ref(route.name !== 'node-new')
-const busy = ref(false)
-const failure = ref('')
-const notice = ref('')
 const errorSummary = ref<HTMLElement>()
-const formErrors = reactive<NodeFormErrors>({})
-const form = reactive({
-  displayName: '',
-  platform: 'WINDOWS_AMD64' as ExecutionNodePlatform,
-  allowedRootsText: '',
-  toolHome: '',
-  javaPath: '',
-})
-
 const nodeID = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const isNew = computed(() => route.name === 'node-new')
+const { node, loading, busy, failure, notice, formErrors, form, errorEntries, loadNode, save, clearError, validateField } = useNodeForm(
+  nodeID, isNew,
+  id => router.replace({ name: 'node-detail', params: { id }, query: { registration: 'created' } }),
+  async active => { await nextTick(); if (active()) errorSummary.value?.focus() },
+)
 const rootPlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? '/E:/ob-data/exports' : '/var/lib/ob-data-orch/exports')
 const toolHomePlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? 'E:\\tools\\ob-loader-dumper-4.3.5-RELEASE' : '/opt/ob-loader-dumper-4.3.5-RELEASE')
 const javaPathPlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? 'C:\\Program Files\\Java\\jdk8\\bin\\java.exe' : '/usr/lib/jvm/java-8/bin/java')
-const fieldLabels: Record<NodeFormField, string> = {
-  displayName: '节点名称', platform: '目标平台', allowedRoots: '导出数据目录白名单',
-  toolHome: 'OB Loader/Dumper 安装目录', javaPath: '工具专用 Java 8 路径',
-}
-const fieldIds: Record<NodeFormField, string> = {
-  displayName: 'node-display-name', platform: 'node-platform', allowedRoots: 'node-allowed-roots',
-  toolHome: 'node-tool-home', javaPath: 'node-java-path',
-}
-const errorEntries = computed(() => (Object.keys(formErrors) as NodeFormField[])
-  .filter((field) => Boolean(formErrors[field]))
-  .map((field) => ({ field, id: fieldIds[field], label: fieldLabels[field], message: formErrors[field] })))
-
-onMounted(() => {
-  if (!isNew.value) void loadNode()
-})
-
-async function loadNode() {
-  if (!nodeID.value) {
-    failure.value = '未指定执行节点。'
-    return
-  }
-  loading.value = true
-  failure.value = ''
-  try {
-    node.value = await api.getExecutionNode(nodeID.value)
-    fillForm(node.value)
-  } catch (error) {
-    failure.value = executionNodeErrorMessage(error, '执行节点加载失败。')
-  } finally {
-    loading.value = false
-  }
-}
-
-function fillForm(value: ExecutionNodeDetail) {
-  form.displayName = value.displayName
-  form.platform = value.platform
-  form.allowedRootsText = value.allowedRoots.join('\n')
-  form.toolHome = value.toolHome
-  form.javaPath = value.javaPath
-  clearErrors()
-}
-
-function writeInput(): ExecutionNodeWrite {
-  return {
-    displayName: form.displayName.trim(),
-    platform: form.platform,
-    allowedRoots: form.allowedRootsText.split(/\r?\n/).map((root) => root.trim()).filter(Boolean),
-    toolHome: form.toolHome.trim(),
-    javaPath: form.javaPath.trim(),
-  }
-}
-
-function validate(input: ExecutionNodeWrite): NodeFormErrors {
-  const errors: NodeFormErrors = {}
-  if (!input.displayName || input.displayName.length > 200) errors.displayName = '请输入不超过 200 个字符的节点名称。'
-  if (!input.toolHome) errors.toolHome = '请填写 OB Loader/Dumper 安装目录。'
-  if (!input.javaPath) errors.javaPath = '请填写工具专用 Java 8 可执行文件路径。'
-  if (!input.allowedRoots.length) errors.allowedRoots = '请按行填写至少一个节点侧导出数据目录。'
-  if (input.platform === 'WINDOWS_AMD64' && input.allowedRoots.some((root) => !/^\/[A-Za-z]:\//.test(root) || root.includes('\\') || root.split('/').some((part) => part === '.' || part === '..'))) {
-    errors.allowedRoots = 'Windows 节点的每个导出数据目录必须使用 /E:/exports 形式。'
-  }
-  if (input.platform !== 'WINDOWS_AMD64' && input.allowedRoots.some((root) => !root.startsWith('/'))) {
-    errors.allowedRoots = 'Linux 节点的每个导出数据目录必须是以 / 开头的绝对路径。'
-  }
-  return errors
-}
-
-async function save() {
-  const input = writeInput()
-  const validation = validate(input)
-  setErrors(validation)
-  if (Object.keys(validation).length) {
-    await nextTick()
-    errorSummary.value?.focus()
-    return
-  }
-  if (!isNew.value && !node.value) return
-  busy.value = true
-  failure.value = ''
-  notice.value = ''
-  try {
-    if (isNew.value) {
-      const createdID = await api.createExecutionNode(input)
-      await router.replace({ name: 'node-detail', params: { id: createdID }, query: { registration: 'created' } })
-      return
-    }
-    if (!node.value) return
-    node.value = await api.updateExecutionNode(node.value.id, node.value.revision, input)
-    fillForm(node.value)
-    notice.value = '节点配置已保存，Agent 将在空闲时自动同步并检查环境，无需重新注册。'
-  } catch (error) {
-    applyApiErrors(error)
-    if (!Object.keys(formErrors).length) failure.value = executionNodeErrorMessage(error, '执行节点保存失败。')
-    else {
-      await nextTick()
-      errorSummary.value?.focus()
-    }
-  } finally {
-    busy.value = false
-  }
-}
-
-function applyApiErrors(error: unknown) {
-  clearErrors()
-  const apiError = error as Partial<ApiError>
-  for (const fieldError of apiError.fieldErrors ?? []) {
-    if (fieldError.field === 'displayName' || fieldError.field === 'platform' || fieldError.field === 'allowedRoots' || fieldError.field === 'toolHome' || fieldError.field === 'javaPath') {
-      formErrors[fieldError.field] = fieldError.message || '该字段不符合要求。'
-    }
-  }
-}
-
-function clearErrors() {
-  for (const field of Object.keys(formErrors) as NodeFormField[]) delete formErrors[field]
-}
-
-function clearError(field: NodeFormField) {
-  delete formErrors[field]
-}
-
-function setErrors(errors: NodeFormErrors) {
-  clearErrors()
-  Object.assign(formErrors, errors)
-}
-
-function validateField(field: NodeFormField) {
-  const message = validate(writeInput())[field]
-  if (message) formErrors[field] = message
-  else delete formErrors[field]
-}
 </script>
 
 <template>

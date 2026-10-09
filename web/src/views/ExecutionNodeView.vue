@@ -1,52 +1,25 @@
 <script setup lang="ts">
 import { EllipsisOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { Alert as AAlert, Badge as ABadge, Button as AButton, ConfigProvider, Dropdown as ADropdown, Input as AInput, Menu as AMenu, MenuItem as AMenuItem, Select as ASelect, SelectOption as ASelectOption, Skeleton as ASkeleton, type TableColumnsType } from 'ant-design-vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-
-import { browserApi, executionNodeErrorMessage, type ApiError, type ExecutionNodeSummary } from '@/api/browser'
+import type { ExecutionNodeSummary } from '@/api/browser'
 import EmptyState from '@/components/EmptyState.vue'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
 import OrchOperationalTable from '@/components/OrchOperationalTable.vue'
 import { managementTheme } from '@/platform/theme'
+import { useNodeList } from '@/workbench/nodes/useNodeList'
+import { useNodeListActions } from '@/workbench/nodes/useNodeListActions'
 import {
   nodeAssociationLabel, nodeCapacityLabel, nodeCapacitySummary, nodeEnvironmentLabel,
   nodeHeartbeatLabel, nodeManagementLabel, nodePlatformLabel, nodePrimaryAction,
   nodeTimeLabel, nodeUnavailableReasonLabel,
-} from './executionNodePresentation'
+} from '@/workbench/nodes/executionNodePresentation'
 
-const api = browserApi()
 const router = useRouter()
-const nodes = ref<ExecutionNodeSummary[]>([])
-const keyword = ref('')
-const management = ref('')
-const heartbeat = ref('')
-const environment = ref('')
-const acceptance = ref('')
-const loading = ref(true)
-const refreshing = ref(false)
-const restricted = ref(false)
-const failure = ref('')
-const actionFailure = ref('')
-const notice = ref('')
-const lastLoadedAt = ref('')
-const actionBusy = ref('')
-const deletionTarget = ref<ExecutionNodeSummary>()
-let requestSequence = 0
-let refreshTimer: ReturnType<typeof setTimeout> | undefined
-
-const hasFilters = computed(() => Boolean(keyword.value || management.value || heartbeat.value || environment.value || acceptance.value))
-// 列表接口一次返回当前身份的完整授权范围；筛选只处理已返回事实，不扩展对象可见性。
-const visibleNodes = computed(() => {
-  const query = keyword.value.trim().toLocaleLowerCase()
-  return nodes.value.filter((node) =>
-    (!query || node.displayName.toLocaleLowerCase().includes(query) || node.id.toLocaleLowerCase().includes(query)) &&
-    (!management.value || node.managementState === management.value) &&
-    (!heartbeat.value || node.heartbeatStatus === heartbeat.value) &&
-    (!environment.value || node.environmentStatus === environment.value) &&
-    (!acceptance.value || String(node.acceptsNewTasks) === acceptance.value),
-  )
-})
+const list = useNodeList()
+const { nodes, keyword, management, heartbeat, environment, acceptance, loading, refreshing, restricted, failure, lastLoadedAt, hasFilters, visibleNodes, loadNodes, clearFilters } = list
+const { actionFailure, notice, actionBusy, deletionTarget, runPrimaryAction, deleteOrArchiveNode } = useNodeListActions(list)
 const columns: TableColumnsType<ExecutionNodeSummary> = [
   { key: 'identity', title: '节点名称', width: 210 },
   { key: 'platform', title: '目标平台', width: 150 },
@@ -59,37 +32,6 @@ const columns: TableColumnsType<ExecutionNodeSummary> = [
 ]
 
 onMounted(() => { void loadNodes() })
-onBeforeUnmount(() => { requestSequence++; clearTimeout(refreshTimer) })
-
-async function loadNodes(preserve = false) {
-  const sequence = ++requestSequence
-  if (preserve) refreshing.value = true
-  else loading.value = true
-  failure.value = ''
-  try {
-    const result = await api.listExecutionNodes()
-    if (sequence !== requestSequence) return
-    nodes.value = result
-    restricted.value = false
-    lastLoadedAt.value = new Date().toLocaleString('zh-CN')
-  } catch (error) {
-    if (sequence !== requestSequence) return
-    const status = (error as Partial<ApiError>).status
-    restricted.value = status === 401 || status === 403
-    if (!preserve || restricted.value) nodes.value = []
-    failure.value = executionNodeErrorMessage(error, '无法读取执行节点，请稍后重试。')
-  } finally {
-    if (sequence === requestSequence) { loading.value = false; refreshing.value = false }
-  }
-}
-
-function clearFilters() {
-  keyword.value = ''
-  management.value = ''
-  heartbeat.value = ''
-  environment.value = ''
-  acceptance.value = ''
-}
 
 function rowAction(node: ExecutionNodeSummary, action: string) {
   if (actionBusy.value) return
@@ -98,50 +40,6 @@ function rowAction(node: ExecutionNodeSummary, action: string) {
   if (action === nodePrimaryAction(node)) void runPrimaryAction(node, action)
 }
 
-async function runPrimaryAction(node: ExecutionNodeSummary, action: 'environment-check' | 'enable') {
-  actionBusy.value = node.id
-  actionFailure.value = ''
-  notice.value = ''
-  try {
-    const updated = action === 'enable'
-      ? await api.enableExecutionNode(node.id, node.revision)
-      : await api.requestExecutionNodeEnvironmentCheck(node.id, node.revision)
-    nodes.value = nodes.value.map((current) => current.id === updated.id ? updated : current)
-    notice.value = action === 'enable'
-      ? `节点“${updated.displayName}”已启用；具体任务仍需预检查。`
-      : `已请求“${updated.displayName}”检查环境，等待 Agent 回传。`
-    if (action === 'environment-check') refreshTimer = setTimeout(() => { void loadNodes(true) }, 2500)
-  } catch (error) {
-    actionFailure.value = executionNodeErrorMessage(error, action === 'enable' ? '执行节点启用失败。' : '环境检查请求失败。')
-    await loadNodes(true)
-  } finally {
-    actionBusy.value = ''
-  }
-}
-
-async function deleteOrArchiveNode() {
-  const target = deletionTarget.value
-  if (!target || actionBusy.value) return
-  actionBusy.value = target.id
-  actionFailure.value = ''
-  notice.value = ''
-  try {
-    const result = await api.deleteOrArchiveExecutionNode(target.id, target.revision)
-    deletionTarget.value = undefined
-    await loadNodes(true)
-    notice.value = result.outcome === 'DELETED'
-      ? `节点“${target.displayName}”已删除。`
-      : result.agentAccessRevoked
-        ? `节点“${target.displayName}”已归档；Agent 身份和未使用注册码已撤销。`
-        : `节点“${target.displayName}”已归档。`
-  } catch (error) {
-    deletionTarget.value = undefined
-    actionFailure.value = executionNodeErrorMessage(error, '执行节点删除或归档失败。')
-    await loadNodes(true)
-  } finally {
-    actionBusy.value = ''
-  }
-}
 </script>
 
 <template>

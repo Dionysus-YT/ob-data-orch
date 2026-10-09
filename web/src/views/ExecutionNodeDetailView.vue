@@ -1,56 +1,36 @@
 <script setup lang="ts">
 import { ReloadOutlined } from '@ant-design/icons-vue'
 import { Alert as AAlert, Badge as ABadge, Button as AButton, ConfigProvider, Modal as AModal, Textarea as ATextarea } from 'ant-design-vue'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-
-import { browserApi, executionNodeErrorMessage, type ApiError, type ExecutionNodeDetail, type ExecutionNodeEnrollment } from '@/api/browser'
 import { activateModal } from '@/components/modalFocus'
 import { overlayTheme } from '@/platform/theme'
 import { component } from '@/platform/tokens'
-import { agentRegistrationCode, agentRegistrationCommand, requiresAgentRegistration } from './executionNodeEnrollmentInstructions'
+import { agentRegistrationCommand } from '@/workbench/nodes/executionNodeEnrollmentInstructions'
+import { useNodeDetail } from '@/workbench/nodes/useNodeDetail'
+import { useNodeEnrollment } from '@/workbench/nodes/useNodeEnrollment'
 import {
   nodeAssociationLabel, nodeCapacityLabel, nodeCapacitySummary, nodeEnvironmentLabel,
-  nodeHeartbeatLabel, nodeManagementLabel, nodePlatformLabel, nodePrimaryAction,
-  nodeTimeLabel, nodeUnavailableReasonLabel,
-} from './executionNodePresentation'
+  nodeHeartbeatLabel, nodeManagementLabel, nodePlatformLabel, nodeTimeLabel,
+  nodeUnavailableReasonLabel, percentageLabel, byteLabel, bootIdSummary,
+} from '@/workbench/nodes/executionNodePresentation'
 
-const api = browserApi()
 const route = useRoute()
-const node = ref<ExecutionNodeDetail>()
-const loading = ref(true)
-const refreshing = ref(false)
-const failure = ref('')
-const actionFailure = ref('')
-const actionNotice = ref('')
-const actionBusy = ref(false)
-const enrollmentDialogOpen = ref(false)
-const enrollment = ref<ExecutionNodeEnrollment>()
-const enrollmentBusy = ref(false)
-const enrollmentFailure = ref('')
-const copyNotice = ref('')
-const modalCloseButton = ref<{ $el: HTMLButtonElement }>()
 const nodeID = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
+const { session, node, loading, refreshing, failure, actionFailure, actionNotice, actionBusy, primaryAction, loadNode, performPrimaryAction } = useNodeDetail(nodeID)
+const { enrollmentDialogOpen, enrollment, enrollmentBusy, enrollmentFailure, copyNotice, registrationRequired, registrationCode, issueEnrollment: requestEnrollment, clearEnrollment, copyEnrollmentValue } = useNodeEnrollment(node, session)
+const modalCloseButton = ref<{ $el: HTMLButtonElement }>()
+let enrollmentInvoker: HTMLElement | null = null
 const registrationJustCreated = computed(() => route.query.registration === 'created' && node.value?.agentAssociationStatus === 'PENDING')
-const registrationRequired = computed(() => node.value !== undefined && requiresAgentRegistration(node.value.agentAssociationStatus))
-const primaryAction = computed(() => node.value ? nodePrimaryAction(node.value) : undefined)
 const enrollmentCommand = computed(() => node.value ? agentRegistrationCommand(node.value.platform) : '')
-const registrationCode = computed(() => node.value && enrollment.value ? agentRegistrationCode(node.value.id, enrollment.value.enrollmentId, enrollment.value.enrollmentMaterial) : '')
 const agentPackageUrl = computed(() => {
   const platforms = { WINDOWS_AMD64: 'windows-amd64', LINUX_AMD64: 'linux-amd64', LINUX_ARM64: 'linux-arm64' } as const
   return `/ob-data-orch-agent-${platforms[node.value?.platform ?? 'WINDOWS_AMD64']}.zip`
 })
-let requestSequence = 0
-let enrollmentRequestVersion = 0
-let refreshTimer: ReturnType<typeof setTimeout> | undefined
-let enrollmentInvoker: HTMLElement | null = null
-
-watch(nodeID, () => {
-  clearEnrollment()
-  node.value = undefined
-  void loadNode()
-}, { immediate: true })
-onBeforeUnmount(() => { requestSequence++; clearTimeout(refreshTimer); clearEnrollment() })
+function issueEnrollment() {
+  if (!enrollmentDialogOpen.value) enrollmentInvoker = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  void requestEnrollment()
+}
 
 // 注册码弹层用共享焦点栈约束键盘，并在关闭时将焦点还给发起按钮。
 watch([enrollmentDialogOpen, modalCloseButton], async ([open], _previous, cleanup) => {
@@ -64,102 +44,6 @@ watch([enrollmentDialogOpen, modalCloseButton], async ([open], _previous, cleanu
   if (!disposed && root && button) release = activateModal(root, button, clearEnrollment, enrollmentInvoker)
 }, { flush: 'post' })
 
-async function loadNode(preserve = false) {
-  const id = nodeID.value
-  if (!id) { failure.value = '未指定执行节点。'; loading.value = false; return }
-  const sequence = ++requestSequence
-  if (preserve) refreshing.value = true
-  else loading.value = true
-  failure.value = ''
-  try {
-    const result = await api.getExecutionNode(id)
-    if (sequence === requestSequence) node.value = result
-  } catch (error) {
-    if (sequence === requestSequence) {
-      if ([401, 403, 404].includes((error as Partial<ApiError>).status ?? 0)) node.value = undefined
-      failure.value = executionNodeErrorMessage(error, '执行节点加载失败。')
-    }
-  } finally {
-    if (sequence === requestSequence) { loading.value = false; refreshing.value = false }
-  }
-}
-
-async function performPrimaryAction() {
-  const current = node.value
-  const action = primaryAction.value
-  if (!current || !action || actionBusy.value) return
-  actionBusy.value = true
-  actionFailure.value = ''
-  actionNotice.value = ''
-  try {
-    node.value = action === 'enable'
-      ? await api.enableExecutionNode(current.id, current.revision)
-      : await api.requestExecutionNodeEnvironmentCheck(current.id, current.revision)
-    actionNotice.value = action === 'enable'
-      ? '节点已启用；提交具体任务前仍需任务级预检查。'
-      : '环境检查已请求，等待 Agent 回传固定运行时结果。'
-    if (action === 'environment-check') refreshTimer = setTimeout(() => { void loadNode(true) }, 2500)
-  } catch (error) {
-    actionFailure.value = executionNodeErrorMessage(error, action === 'enable' ? '执行节点启用失败。' : '环境检查请求失败。')
-    await loadNode(true)
-  } finally {
-    actionBusy.value = false
-  }
-}
-
-async function issueEnrollment() {
-  if (!node.value || !registrationRequired.value || enrollmentBusy.value) return
-  const requestVersion = ++enrollmentRequestVersion
-  if (!enrollmentDialogOpen.value) enrollmentInvoker = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  enrollmentDialogOpen.value = true
-  enrollment.value = undefined
-  enrollmentFailure.value = ''
-  copyNotice.value = ''
-  enrollmentBusy.value = true
-  try {
-    const result = await api.issueExecutionNodeEnrollment(node.value.id)
-    if (requestVersion === enrollmentRequestVersion && enrollmentDialogOpen.value) enrollment.value = result
-  } catch (error) {
-    if (requestVersion === enrollmentRequestVersion && enrollmentDialogOpen.value) enrollmentFailure.value = executionNodeErrorMessage(error, '关联材料签发失败。')
-  } finally {
-    if (requestVersion === enrollmentRequestVersion) enrollmentBusy.value = false
-  }
-}
-
-function clearEnrollment() {
-  enrollmentRequestVersion++
-  enrollment.value = undefined
-  enrollmentFailure.value = ''
-  copyNotice.value = ''
-  enrollmentBusy.value = false
-  enrollmentDialogOpen.value = false
-}
-
-async function copyEnrollmentValue(label: string, value: string) {
-  copyNotice.value = ''
-  try {
-    await navigator.clipboard.writeText(value)
-    copyNotice.value = `${label}已复制。`
-  } catch {
-    copyNotice.value = `${label}复制失败，请手动选择复制。`
-  }
-}
-
-function percentageLabel(value: number | undefined) {
-  return value === undefined ? '尚未采集' : `${value.toFixed(1)}%`
-}
-
-function byteLabel(value: number) {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let size = value
-  let index = 0
-  while (size >= 1024 && index < units.length - 1) { size /= 1024; index++ }
-  return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
-}
-
-function bootIdSummary(value: string) {
-  return value.length <= 20 ? value : `${value.slice(0, 12)}…${value.slice(-4)}`
-}
 </script>
 
 <template>

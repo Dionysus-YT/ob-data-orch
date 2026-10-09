@@ -13,7 +13,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。按当�
 | 页面应该长什么样 | [P0 MASTER](../design-system/MASTER.md) | [数据源标准页](../design-system/pages/data-sources.md)及对应页面 P1 |
 | 前端基础控件、Token、样式与升级 | [前端平台基线](03-technical/frontend-platform-baseline.md) | Qualification、浏览器回归和静态审计入口 |
 | 复杂向导如何组织与维护 | [统一向导架构](03-technical/frontend-platform-baseline.md#复杂向导架构与开发规范) | [导出维护索引](../web/src/workbench/export/README.md)、强制约束/人工复核/自动检查；导入仍按任务地图准入 |
-| 前端业务模块职责、状态与异步治理 | [前端业务架构](03-technical/frontend-platform-baseline.md#前端业务模块架构) | [任务维护索引](../web/src/workbench/tasks/README.md)、[第一阶段审计与验收](03-technical/evidence/frontend-business-phase1-2026-10-09.md)；其余模块按阶段确认 |
+| 前端业务模块职责、状态与异步治理 | [前端业务架构](03-technical/frontend-platform-baseline.md#前端业务模块架构) | [任务维护索引](../web/src/workbench/tasks/README.md)、[第一阶段验收](03-technical/evidence/frontend-business-phase1-2026-10-09.md)、[节点维护索引](../web/src/workbench/nodes/README.md)、[第二阶段验收](03-technical/evidence/frontend-business-phase2-2026-10-09.md)；其余模块按阶段确认 |
 | 如何安装、使用网页、启停和升级 | [安装、使用与运维手册](03-technical/deployment-operations.md) | 首次安装、Agent 注册、真实执行条件、旧部署迁移和故障定位；快速开始见 [README](../README.md) |
 | 系统如何实现、接口有哪些边界 | [技术契约索引](03-technical/README.md) | 只读受影响的契约 |
 | 某项能力有什么验证证据 | [验证记录索引](03-technical/README.md#evidence) | 区分合成验证、Windows 实测和正式发布 |

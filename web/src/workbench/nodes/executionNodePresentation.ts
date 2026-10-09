@@ -70,3 +70,19 @@ export function nodePrimaryAction(node: ExecutionNodeSummary): 'environment-chec
   if (node.managementState === 'DISABLED' && node.capacityStatus === 'AVAILABLE') return 'enable'
   return undefined
 }
+
+export function percentageLabel(value: number | undefined) {
+  return value === undefined ? '尚未采集' : `${value.toFixed(1)}%`
+}
+
+export function byteLabel(value: number) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let index = 0
+  while (size >= 1024 && index < units.length - 1) { size /= 1024; index++ }
+  return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+
+export function bootIdSummary(value: string) {
+  return value.length <= 20 ? value : `${value.slice(0, 12)}…${value.slice(-4)}`
+}
