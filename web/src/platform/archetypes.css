@@ -73,22 +73,6 @@
   color: var(--ob-color-form-secondary);
   text-align: center;
 }
-.feedback {
-  margin: 0 0 var(--ob-foundation-space-4);
-  padding: var(--ob-foundation-space-2) var(--ob-foundation-space-3);
-  border-radius: var(--ob-component-control-radius);
-  font-size: var(--ob-component-field-label-size);
-}
-.feedback-error {
-  border: 1px solid var(--ob-foundation-danger-border);
-  color: var(--ob-color-danger);
-  background: var(--ob-foundation-danger-surface);
-}
-.feedback-notice {
-  border: 1px solid var(--ob-color-border);
-  color: var(--ob-color-success);
-  background: var(--ob-color-subtle);
-}
 .section-placeholder h2 {
   margin: 0 0 var(--ob-foundation-space-4);
   color: var(--ob-color-form-text);
@@ -219,11 +203,6 @@
   color: var(--ob-color-form-text);
   font-size: var(--ob-product-typography-section-size);
 }
-.task-failure-card h2 {
-  margin: var(--ob-foundation-space-1) 0 var(--ob-foundation-space-2);
-  color: var(--ob-color-form-text);
-  font-size: var(--ob-product-typography-section-size);
-}
 .task-run-summary p {
   margin: 0;
   color: var(--ob-color-form-secondary);
@@ -242,12 +221,6 @@
   font-size: var(--ob-component-field-label-size);
   line-height: 1.65;
 }
-.task-failure-card p {
-  margin: 0;
-  color: var(--ob-color-form-secondary);
-  font-size: var(--ob-component-field-label-size);
-  line-height: 1.65;
-}
 .task-detail-card .summary-definition div {
   padding: var(--ob-foundation-space-2) 0;
 }
@@ -258,15 +231,6 @@
 .task-log-card {
   margin-top: var(--ob-foundation-space-4);
   padding: var(--ob-foundation-space-6);
-}
-.task-failure-card {
-  margin-top: var(--ob-foundation-space-4);
-  padding: var(--ob-foundation-space-6);
-  border-color: var(--ob-foundation-danger-border);
-  background: var(--ob-foundation-danger-surface);
-}
-.task-failure-card .link-button {
-  margin-top: var(--ob-foundation-space-2);
 }
 .task-log-heading {
   display: flex;

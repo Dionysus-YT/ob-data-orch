@@ -38,6 +38,7 @@ export function useExportReferences(deps: Pick<ExportForm, 'selectedDataSourceID
   const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeID.value))
 
   let disposed = false
+  let nodeCandidatesLoaded = false
   const epochs = { sources: 0, nodes: 0, credentials: 0 }
   onScopeDispose(() => { disposed = true })
 
@@ -67,14 +68,23 @@ export function useExportReferences(deps: Pick<ExportForm, 'selectedDataSourceID
     try {
       const items = await api.listExportNodeCandidates()
       if (disposed || epoch !== epochs.nodes) return
+      const initialLoad = !nodeCandidatesLoaded
+      nodeCandidatesLoaded = true
       nodes.value = items
-      if (!nodes.value.some((node) => node.id === selectedNodeID.value)) selectedNodeID.value = nodes.value.length === 1 ? nodes.value[0]!.id : ''
+      if (!nodes.value.some((node) => node.id === selectedNodeID.value)) {
+        // 初次未选择时沿用单候选预选；已有节点失效时清除绑定，不能自动改派到新注册节点。
+        selectedNodeID.value = initialLoad && !selectedNodeID.value && nodes.value.length === 1 ? nodes.value[0]!.id : ''
+      }
     } catch (error) {
       if (disposed || epoch !== epochs.nodes) return
       nodeLoadFailure.value = exportDraftErrorMessage(error, '无法加载可选执行节点，请稍后重试。')
     } finally {
       if (!disposed && epoch === epochs.nodes) loadingNodes.value = false
     }
+  }
+
+  function onNodeDropdownVisibleChange(open: boolean) {
+    if (open && !loadingNodes.value) void loadNodeCandidates()
   }
 
   async function loadStorageCredentials() {
@@ -100,7 +110,7 @@ export function useExportReferences(deps: Pick<ExportForm, 'selectedDataSourceID
     sources, nodes, loadingSources, loadingNodes, sourceLoadFailure, nodeLoadFailure, sourceKeyword,
     sourceEnvironment, storageCredentials, loadingStorageCredentials, storageCredentialLoadFailure,
     eligibleSources, visibleSources, selectedSource, selectedSourceRevision, selectedNode, loadSources,
-    loadNodeCandidates, loadStorageCredentials,
+    loadNodeCandidates, onNodeDropdownVisibleChange, loadStorageCredentials,
   }
 }
 

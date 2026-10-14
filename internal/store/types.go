@@ -1,6 +1,4 @@
-// Package store implements the small, explicit SQLite write boundaries used by
-// the first vertical slice. It deliberately does not expose a generic CRUD or
-// a generic JSON persistence API.
+// Package store 提供明确的 SQLite 读写边界，不暴露通用 CRUD 或任意 JSON 持久化能力。
 package store
 
 import (
@@ -8,6 +6,8 @@ import (
 	"time"
 
 	"ob-data-orch/internal/catalogresult"
+	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/nodefacts"
 )
 
 var (
@@ -77,6 +77,9 @@ type DraftUpdate struct {
 	UpdatedAt         time.Time
 	// ConfigVersion 标记更新后草稿配置的结构版本（v5 或 v6），不等同于参数元数据版本。
 	ConfigVersion string
+	// MetadataVersion/CapabilityVersion 只在用户显式新增参数时原子升级，历史任务不变更。
+	MetadataVersion   string
+	CapabilityVersion string
 	// 结构化子配置 JSON，仅 v6 草稿写入非空值；v5 更新时重置为 '{}'。
 	ObjectScopeJSON       string
 	ContentSelectionJSON  string
@@ -201,10 +204,30 @@ type ExecutionResultFile struct {
 // TaskListQuery 是授权任务列表的固定游标查询。
 // SubjectID 必须来自已认证浏览器身份；游标只改变排序位置，不能扩大对象范围。
 type TaskListQuery struct {
+	// TaskID 与 ParentTaskID 只用于详情内部的精确对象范围，不由列表请求直接赋值。
+	TaskID       string
+	ParentTaskID string
+	// GlobalRead 必须来自可信全局读取授权，不能由请求直接赋值。
+	GlobalRead bool
+	// NodeID 与 OwnedOnly 是节点任务入口的查询范围，仍受当前主体授权裁剪。
+	NodeID          string
+	OwnedOnly       bool
 	SubjectID       string
 	BeforeSubmitted time.Time
 	BeforeTaskID    string
 	Limit           int
+	// 以下为任务中心筛选（DEC-050）。所有条件只在授权范围内收窄结果，不能扩大范围；
+	// 空值表示不筛选。时间边界为半开区间 [From, To)。
+	Keyword      string
+	Types        []string
+	States       []string
+	CreatedFrom  time.Time
+	CreatedTo    time.Time
+	StartedFrom  time.Time
+	StartedTo    time.Time
+	DataSourceID string
+	Environment  string
+	CreatorID    string
 }
 
 // TaskListItem 是任务中心列表可读取的最小安全投影。
@@ -223,6 +246,35 @@ type TaskListItem struct {
 	StartedAt              time.Time
 	FinishedAt             time.Time
 	UpdatedAt              time.Time
+	// 以下为任务中心展示与资格事实；名称来自提交时冻结的展示事实，缺失表示对象已删除。
+	ScopeKind             string
+	SnapshotVersion       string
+	DataSourceName        string
+	Environment           string
+	NodeName              string
+	CreatorName           string
+	CancellationRequested bool
+	CheckpointPresent     bool
+	DerivationKind        string
+	// DataSourceDeleted / NodeDeleted 表示当前配置已删除，仅用于在历史名称后标注。
+	DataSourceDeleted bool
+	NodeDeleted       bool
+	// Operable 表示当前主体是创建者或持有数据源任务操作范围；全局只读不代表可写。
+	Operable bool
+}
+
+// TaskListFilterOption 是任务中心筛选候选值，只来自当前主体可读任务的快照事实。
+type TaskListFilterOption struct {
+	ID    string
+	Label string
+}
+
+// TaskListFilterOptions 汇总各维度候选值；每个维度有固定上限，不暴露范围外对象。
+type TaskListFilterOptions struct {
+	DataSources  []TaskListFilterOption
+	Nodes        []TaskListFilterOption
+	Creators     []TaskListFilterOption
+	Environments []string
 }
 
 type Claim struct {
@@ -302,6 +354,7 @@ type ExecutionControl struct {
 // ExecutionClaimNext 是受认证 Agent 领取本节点下一条冻结导出任务的最小输入。
 // Agent 不能指定 taskId、参数、路径或凭据；这些事实均由控制面在短事务中重新读取。
 type ExecutionClaimNext struct {
+	RequestDigest       string
 	AgentID             string
 	NodeID              string
 	ExecutionID         string
@@ -371,12 +424,18 @@ type EncryptedExecutionDatabaseConnection struct {
 	KeyID          string
 	Nonce          []byte
 	Ciphertext     []byte
+	// SysCredential 仅在冻结任务引用与当前材料一致时返回，不用新修订替代旧引用。
+	SysCredential *EncryptedSysCredential
 }
 
 // Destroy 尽力清除执行槽位中的短时敏感字节。
 func (c *EncryptedExecutionDatabaseConnection) Destroy() {
 	if c == nil {
 		return
+	}
+	if c.SysCredential != nil {
+		c.SysCredential.Destroy()
+		c.SysCredential = nil
 	}
 	for _, value := range [][]byte{c.Username, c.Nonce, c.Ciphertext} {
 		for index := range value {
@@ -490,6 +549,8 @@ type ExecutionNodeSummary struct {
 // ExecutionNode 是节点管理页面可读取的受控配置投影。
 // Platform 与 AllowedRoots 是管理员声明的任务路由配置，不是 Agent 已验证的机器环境事实。
 type ExecutionNode struct {
+	// BudgetPolicy 仅约束新任务分配，不能覆盖 Agent 的物理资源或既有分配。
+	BudgetPolicy    executionbudget.Policy
 	NodeID          string
 	DisplayName     string
 	Platform        string
@@ -534,6 +595,14 @@ type ExecutionNodeAgent struct {
 // AgentEnvironmentFacts 是受认证 Agent 的受控环境摘要。
 // 它只表达机器自报的运行时事实，不能替代工具、Java、目录和任务路径的固定环境检查。
 type AgentEnvironmentFacts struct {
+	Host                       *nodefacts.HostInventory
+	RuntimeInspection          *nodefacts.RuntimeInspection
+	StartedAt                  *time.Time
+	RuntimeVersions            *nodefacts.RuntimeVersions
+	ExecutionObservation       *nodefacts.ExecutionObservation
+	LogQueue                   *nodefacts.LogQueue
+	MemoryTotalBytes           uint64
+	MemoryAvailableBytes       uint64
 	OperatingSystem            string
 	Architecture               string
 	AgentVersion               string
@@ -623,6 +692,7 @@ type AgentHeartbeat struct {
 // ExecutionNodeCreate 将节点配置、审计和幂等结果绑定在同一个短事务中。
 // 新节点必须保持禁用，不能因浏览器写入而伪造 Agent 关联或环境检查结果。
 type ExecutionNodeCreate struct {
+	BudgetPolicy     *executionbudget.Policy
 	NodeID           string
 	CreatorSubjectID string
 	DisplayName      string
@@ -646,6 +716,7 @@ type ExecutionNodeCreateResult struct {
 // ExecutionNodeUpdate 是版本保护的节点管理配置更新。
 // 它不承载 Agent、工具、心跳、资源或环境检查字段，避免浏览器覆盖机器事实。
 type ExecutionNodeUpdate struct {
+	BudgetPolicy     *executionbudget.Policy
 	NodeID           string
 	ActorSubjectID   string
 	ExpectedRevision int64
@@ -662,12 +733,14 @@ type ExecutionNodeUpdate struct {
 // ExecutionNodeEnvironmentCheckRequest 由已授权节点管理员发起一次固定本机运行时核验。
 // 浏览器不携带检查项、路径、命令或 Agent 身份，检查范围由 Agent 端固定实现。
 type ExecutionNodeEnvironmentCheckRequest struct {
-	NodeID           string
-	ActorSubjectID   string
-	ExpectedRevision int64
-	CheckID          string
-	RequestID        string
-	RequestedAt      time.Time
+	// VersionProbeAllowed 仅由明确发起固定版本检查的浏览器动作赋值，自动刷新不能继承。
+	VersionProbeAllowed bool
+	NodeID              string
+	ActorSubjectID      string
+	ExpectedRevision    int64
+	CheckID             string
+	RequestID           string
+	RequestedAt         time.Time
 }
 
 // ExecutionNodeEnvironmentCheckRequestResult 表示已写入的固定检查请求版本。
@@ -690,12 +763,14 @@ type ExecutionNodeEnvironmentCheckRefresh struct {
 // PendingExecutionNodeEnvironmentCheck 是控制面仅向当前受认证 Agent 下发的固定检查标识。
 // 它不包含路径、命令、秘密、连接参数或可扩展的检查清单。
 type PendingExecutionNodeEnvironmentCheck struct {
-	CheckID string
+	VersionProbeAllowed bool
+	CheckID             string
 }
 
 // AgentExecutionNodeEnvironmentCheckCompletion 是 Agent 对唯一固定运行时检查的安全回执。
 // Code 只能是预先登记的稳定证据码，不能包含本机路径、命令输出或底层异常文本。
 type AgentExecutionNodeEnvironmentCheckCompletion struct {
+	Inspection    *nodefacts.RuntimeInspection
 	NodeID        string
 	AgentID       string
 	CheckID       string
@@ -727,7 +802,8 @@ type ExecutionNodeDeletion struct {
 	DeletedAt        time.Time
 }
 
-// ExecutionNodeDeletionResult 只返回实际处置结果、归档后的新版本和机器身份撤销事实。
+// ExecutionNodeDeletionResult 只返回实际处置结果、版本和机器身份撤销事实。
+// 永久删除固定为 DELETED 与 revision=0；ARCHIVED 仅用于遗留底层归档回归。
 // 物理删除不再有可读取的节点版本，因此 Revision 为零；归档不会删除任务、预检查、连接测试或审计历史。
 type ExecutionNodeDeletionResult struct {
 	Outcome            string
@@ -958,8 +1034,7 @@ type DataFormat struct {
 }
 
 // TimestampFormatConfig 表达时间值格式（EX-F055~F060、EX-F062~F064）。
-// 仅 MySQL DATE/DATETIME 两项已观察到输出效果；其他字段尚缺行为或 Oracle 场景证据，
-// 继续保持 VALIDATION_GATED。--preserve-zero-datetime（EX-F061）未进入该结构。
+// 值格式仅 CSV/CUT 活动；Oracle NLS 字段表达会话格式，不能作为导出值格式展示。
 type TimestampFormatConfig struct {
 	DateValueFormat         string `json:"dateValueFormat,omitempty"`
 	TimeValueFormat         string `json:"timeValueFormat,omitempty"`
@@ -970,6 +1045,8 @@ type TimestampFormatConfig struct {
 	NlsDateFormat           string `json:"nlsDateFormat,omitempty"`
 	NlsTimestampFormat      string `json:"nlsTimestampFormat,omitempty"`
 	NlsTimestampTzFormat    string `json:"nlsTimestampTzFormat,omitempty"`
+	// PreserveZeroDatetime 仅 MySQL CSV/CUT 数据输出活动，不改变源列。
+	PreserveZeroDatetime bool `json:"preserveZeroDatetime,omitempty"`
 }
 
 // CsvOptions 是 EX-I3 已启用的 CSV 序列化参数集合；仅数据格式为 CSV 时参与活动，
@@ -1061,7 +1138,7 @@ type FilterConfig struct {
 // DDLBehavior 表达 DDL 行为参数。
 type DDLBehavior struct {
 	DropObject *bool `json:"dropObject,omitempty"`
-	// AddExtraMessage 尚缺 DDL 行为、sys 权限事实和秘密槽位绑定，当前携带 true 时失败关闭。
+	// AddExtraMessage 仅表 DDL 使用，并要求冻结当前 sys 槽位与固定视图权限证据。
 	AddExtraMessage *bool  `json:"addExtraMessage,omitempty"`
 	RetainSchema    *bool  `json:"retainSchema,omitempty"`
 	CompactSchema   *bool  `json:"compactSchema,omitempty"`
@@ -1118,6 +1195,8 @@ type ExportDraft struct {
 // TaskDerivationSource 是派生操作（基于原配置新建/从头重新执行/从检查点继续）需要读取的冻结任务事实。
 // 它包含非敏感配置与执行摘要，绝不包含凭据明文、日志正文或原始错误；调用方必须在授权谓词下使用。
 type TaskDerivationSource struct {
+	// ReconciliationRequired 包含未完成的状态核对或命令摘要不一致，禁止据不可信终态发起派生。
+	ReconciliationRequired    bool
 	TaskID                    string
 	CreatorSubjectID          string
 	DataSourceID              string
@@ -1178,22 +1257,25 @@ type ExportDraftCreateResult struct {
 
 // PrecheckRun 是提交前固定检查的非敏感绑定与状态投影。
 type PrecheckRun struct {
-	PrecheckID         string
-	DraftID            string
-	DraftRevision      int64
-	ConfigFingerprint  string
-	DataSourceID       string
-	CredentialID       string
-	CredentialRevision int64
-	NodeID             string
-	NodeFactsRevision  int64
-	BindingAgentID     string
-	BindingDigest      string
-	Status             string
-	IntegrityStatus    string
-	Results            []PrecheckCheckResult
-	ValidUntil         time.Time
-	CreatedAt          time.Time
+	// SysCredentialID/SysCredentialRevision 只保存冻结引用，不包含 sys 账号或秘密。
+	SysCredentialID       string
+	SysCredentialRevision int64
+	PrecheckID            string
+	DraftID               string
+	DraftRevision         int64
+	ConfigFingerprint     string
+	DataSourceID          string
+	CredentialID          string
+	CredentialRevision    int64
+	NodeID                string
+	NodeFactsRevision     int64
+	BindingAgentID        string
+	BindingDigest         string
+	Status                string
+	IntegrityStatus       string
+	Results               []PrecheckCheckResult
+	ValidUntil            time.Time
+	CreatedAt             time.Time
 	// StorageCredentialID/StorageCredentialRevision 是 EX-V1 存储凭据探测预检查
 	// 冻结的对象存储凭据引用（对象存储输出草稿绑定凭据时非空，否则为空）。
 	StorageCredentialID       string
@@ -1234,6 +1316,9 @@ type PrecheckBinding struct {
 	// 对象存储凭据引用；本地输出或未绑定凭据的草稿保持为空。
 	StorageCredentialID       string
 	StorageCredentialRevision int64
+	// SysCredentialID/SysCredentialRevision 在轮换或撤销后使原预检查失效。
+	SysCredentialID       string
+	SysCredentialRevision int64
 }
 
 // PrecheckClaim 是受认证 Agent 对固定预检查短租约的领取请求。
@@ -1287,10 +1372,19 @@ type PrecheckExecutionContext struct {
 	OutputPath        string
 	LogPath           string
 	SkipCheckDir      bool
-	TargetPlatform    string
-	AllowedRoots      []string
-	OutputKind        string // LOCAL | OSS | S3 | COS | OBS
-	StorageTarget     *PrecheckStorageTarget
+	// 专家参数只扩展固定对象预检查，不接收 SQL 或任意操作。
+	WeakRead        bool
+	EnableHiddenPk  bool
+	AddExtraMessage bool
+	// 选择检查仅携带标识符；静态资源要求由控制面按当前节点政策计算。
+	IncludeColumnNames  []string
+	ExcludeColumnNames  []string
+	Partitions          []string
+	ResourceRequirement *executionbudget.PreflightRequirement
+	TargetPlatform      string
+	AllowedRoots        []string
+	OutputKind          string // LOCAL | OSS | S3 | COS | OBS
+	StorageTarget       *PrecheckStorageTarget
 }
 
 // PrecheckStorageTarget 是预检查上下文中的对象存储目标段；
@@ -1331,12 +1425,18 @@ type EncryptedPrecheckDatabaseConnection struct {
 	KeyID          string
 	Nonce          []byte
 	Ciphertext     []byte
+	// SysCredential 仅冻结参数要求 sys 权限时携带，加密材料在事务外短时解密。
+	SysCredential *EncryptedSysCredential
 }
 
 // Destroy 尽力清除连接槽位中的敏感字节，避免它们在后续普通路径中继续存活。
 func (c *EncryptedPrecheckDatabaseConnection) Destroy() {
 	if c == nil {
 		return
+	}
+	if c.SysCredential != nil {
+		c.SysCredential.Destroy()
+		c.SysCredential = nil
 	}
 	for _, value := range [][]byte{c.Username, c.Nonce, c.Ciphertext} {
 		for index := range value {

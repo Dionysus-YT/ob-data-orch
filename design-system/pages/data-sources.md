@@ -69,6 +69,8 @@ The initial sort order and any sortable headers are shown only when a P3/API con
 
 可用状态切换仅由当前行 `Switch` 展示处理中与服务端返回的结果，不显示顶部成功消息或独立加载提示。失败仍保留明确错误原因；删除保留成功反馈与确认语义。
 
+操作反馈统一沿用 [P0 状态与反馈规范](../patterns/status-feedback.md)：删除、保存与连接串解析使用短时 Ant Message，未修改使用 info；错误保持 Ant Alert，连接测试结果仍在原结果区，保存不表示连接测试成功。
+
 ## 4. Status domains and lifecycle
 
 Never collapse these domains into a single badge.
@@ -118,6 +120,8 @@ Drawer anatomy:
 7. **Footer** — right-aligned `取消` and primary `确定`. Confirm saves only; it never starts a connection test.
 
 Node selection and results remain inline in the same form when the test area is expanded; the list test action opens that area and focuses node selection. The body scrolls independently; the 520px drawer is capped at the viewport width on narrow screens. Address and account groups use a flat muted surface without nested cards. Required name/tenant/password validation remains unchanged; cluster is optional and participates in the derived ODP identity only when supplied. The naming dialog preserves the connection draft on cancellation or save failure; successful creation keeps the drawer and selected node available for a separate test. The 2026-09-28 layout reference updates grouping and order only; its project selector and direct test semantics are not part of the product contract.
+
+2026-10-13 节点候选展示统一为当前登记名称、操作系统分类和 CPU 架构，例如 `节点名称 · Windows · x86_64`、`节点名称 · Linux · aarch64`；复用执行节点页的显示规则，不直接展示 `WINDOWS_AMD64` 等协议枚举，不列发行版或系统版本。名称由接口的 `displayName` 动态显示；每次展开节点下拉框重读当前候选，保留控件与已有候选并显示读取状态。选择值使用节点标识，同一标识改名保留选择，标识已消失则清除选择，不按同名推断新旧节点关系；读取中阻断连接测试，失败按原位反馈处理。
 
 ### 5.1 Form grouping and conditions
 

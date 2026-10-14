@@ -8,6 +8,17 @@ mkdir -p "$test_root/bin"
 cat > "$test_root/bin/systemctl" <<'EOF'
 #!/bin/sh
 printf 'systemctl %s\n' "$*" >> "$EVENTS"
+case "$1" in
+    cat) exit "${SERVICE_MISSING:-0}" ;;
+    show)
+        case "$3" in
+            WorkingDirectory) printf 'WorkingDirectory=%s\n' "$SERVICE_ROOT" ;;
+            User) printf 'User=%s\n' "${SERVICE_USER:-ob-data-orch-agent}" ;;
+            ActiveState) printf 'ActiveState=%s\n' "${SERVICE_STATE:-inactive}" ;;
+        esac ;;
+    stop) exit "${STOP_EXIT:-0}" ;;
+    start) exit "${START_EXIT:-0}" ;;
+esac
 exit 0
 EOF
 cat > "$test_root/bin/runuser" <<'EOF'
@@ -43,9 +54,11 @@ EOF
     printf '#!/bin/sh\nprintf "new launcher\\n"\n' > "$source/start.sh"
     if [ "$scenario" = missing-launcher ]; then rm "$source/start.sh"; fi
     EVENTS="$test_root/$scenario/events"
+    SERVICE_ROOT="$root"
+    SERVICE_STATE=inactive
     HEALTH_EXIT=0
     if [ "$scenario" = health-failure ]; then HEALTH_EXIT=9; fi
-    export EVENTS HEALTH_EXIT
+    export EVENTS HEALTH_EXIT SERVICE_ROOT SERVICE_STATE
     status=0
     printf '3\n%s\n' "$source" | sh "$root/start.sh" > "$test_root/$scenario/output" 2>&1 || status=$?
     if [ "$scenario" = missing-launcher ]; then
@@ -66,5 +79,102 @@ EOF
     fi
     [ "$(cat "$root/data/identity")" = original-identity ]
     [ "$(cat "$root/control-plane-ca.pem")" = original-ca ]
+    printf 'PASS: %s\n' "$scenario"
+done
+
+# 重新注册与恢复只在合成服务中验证，不能创建宿主机账户或写入 systemd 目录。
+cat > "$test_root/bin/id" <<'EOF'
+#!/bin/sh
+[ "$1" = -u ] || exit 1
+printf '%s\n' "${USER_ID:-0}"
+EOF
+chmod +x "$test_root/bin/id"
+for scenario in register-success register-failure stop-failure still-active wrong-directory wrong-account uninstalled non-root control-plane start-retry start-failure already-running start-transition start-failed-service unknown-state start-service-failure start-wrong-directory start-wrong-account; do
+    root="$test_root/$scenario/installed"
+    mkdir -p "$root/data"
+    cp "$script_dir/../distribution/start.sh" "$root/start.sh"
+    printf 'original-config\n' > "$root/agent-config.json"
+    printf 'original-ca\n' > "$root/control-plane-ca.pem"
+    printf 'original-identity\n' > "$root/data/identity"
+    cat > "$root/agent" <<'EOF'
+#!/bin/sh
+printf 'binary %s\n' "$*" >> "$EVENTS"
+case "$*" in
+    '-register -initialize') exit "$REGISTER_EXIT" ;;
+    '-initialize') exit "$INIT_EXIT" ;;
+    *) exit 99 ;;
+esac
+EOF
+    chmod +x "$root/agent"
+    EVENTS="$test_root/$scenario/events"
+    SERVICE_ROOT="$root"
+    SERVICE_USER=ob-data-orch-agent
+    SERVICE_STATE=inactive
+    SERVICE_MISSING=0
+    STOP_EXIT=0
+    START_EXIT=0
+    REGISTER_EXIT=0
+    INIT_EXIT=0
+    USER_ID=0
+    action=5
+    case "$scenario" in
+        register-failure) REGISTER_EXIT=9 ;;
+        stop-failure) STOP_EXIT=9 ;;
+        still-active) SERVICE_STATE=active ;;
+        wrong-directory) SERVICE_ROOT="$test_root/other" ;;
+        wrong-account) SERVICE_USER=other-service ;;
+        uninstalled) SERVICE_MISSING=1 ;;
+        non-root) USER_ID=1001 ;;
+        control-plane) rm "$root/agent-config.json" ;;
+        start-retry) action=1 ;;
+        start-failure) action=1; INIT_EXIT=9 ;;
+        already-running) action=1; SERVICE_STATE=active ;;
+        start-transition) action=1; SERVICE_STATE=activating ;;
+        start-failed-service) action=1; SERVICE_STATE=failed ;;
+        unknown-state) action=1; SERVICE_STATE=unknown ;;
+        start-service-failure) START_EXIT=9 ;;
+        start-wrong-directory) action=1; SERVICE_ROOT="$test_root/other" ;;
+        start-wrong-account) action=1; SERVICE_USER=other-service ;;
+    esac
+    export EVENTS SERVICE_ROOT SERVICE_USER SERVICE_STATE SERVICE_MISSING STOP_EXIT START_EXIT REGISTER_EXIT INIT_EXIT USER_ID
+    : > "$EVENTS"
+    status=0
+    printf '%s\n' "$action" | sh "$root/start.sh" > "$test_root/$scenario/output" 2>&1 || status=$?
+    case "$scenario" in
+        register-success)
+            [ "$status" -eq 0 ]
+            stop_line=$(awk '/systemctl stop / { print NR; exit }' "$EVENTS")
+            register_line=$(awk '/^binary -register -initialize$/ { print NR; exit }' "$EVENTS")
+            start_line=$(awk '/systemctl start / { print NR; exit }' "$EVENTS")
+            [ "$stop_line" -lt "$register_line" ] && [ "$register_line" -lt "$start_line" ]
+            [ "$(grep -c '^binary ' "$EVENTS")" -eq 1 ]
+            grep -q '重新注册完成' "$test_root/$scenario/output" ;;
+        start-retry|start-failed-service)
+            [ "$status" -eq 0 ]
+            grep -q '^binary -initialize$' "$EVENTS"
+            ! grep -q '^binary -register' "$EVENTS"
+            grep -q 'systemctl start' "$EVENTS" ;;
+        already-running|start-transition)
+            [ "$status" -eq 0 ]
+            ! grep -q '^binary ' "$EVENTS"
+            grep -q 'systemctl start' "$EVENTS" ;;
+        start-service-failure)
+            [ "$status" -ne 0 ]
+            grep -q '^binary -register -initialize$' "$EVENTS"
+            ! grep -q '重新注册完成' "$test_root/$scenario/output" ;;
+        *)
+            [ "$status" -ne 0 ]
+            ! grep -q 'systemctl start' "$EVENTS"
+            ! grep -q '重新注册完成' "$test_root/$scenario/output"
+            if [ "$scenario" != register-failure ] && [ "$scenario" != start-failure ]; then
+                ! grep -q '^binary ' "$EVENTS"
+            fi
+            case "$scenario" in
+                wrong-directory|wrong-account|uninstalled|non-root|control-plane|start-wrong-directory|start-wrong-account) ! grep -q 'systemctl stop' "$EVENTS" ;;
+            esac ;;
+    esac
+    [ "$(cat "$root/control-plane-ca.pem")" = original-ca ]
+    [ "$(cat "$root/data/identity")" = original-identity ]
+    if [ "$scenario" != control-plane ]; then [ "$(cat "$root/agent-config.json")" = original-config ]; fi
     printf 'PASS: %s\n' "$scenario"
 done

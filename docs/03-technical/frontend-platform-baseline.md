@@ -45,6 +45,7 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 - `OrchSourceActions`：数据源领域行菜单，仅编辑/删除；服务端未知资格失败关闭，原因常显；方向键打开后等待真实布局聚焦，Up/Down/Home/End 跳过禁用项，ESC 关闭后返回行触发器。此适配补齐 Ant Vue 4.2.6 MenuItem 仅处理 Enter 的边界，不改变动作授权。
 - `OrchTaskStepRail` / `WizardFrame`：保留三类向导的原步骤与门禁，访问过步骤不表示配置已验证；完整摘要按需进入 Drawer。
 - Ant `Badge` / `ConnectionTestResult`：短状态由领域 tone 映射到 Ant Badge；连接测试结果继续作为 Feature Component 使用 Ant Alert/Spin 投影证据，不以 Ant 的交互状态推断连接可用性或执行成功。
+- Ant `Message` / `Alert`：统一遵守 [P0 状态与反馈规范](../../design-system/patterns/status-feedback.md)。`useOperationMessage` 仅共享原生 Message 的主题上下文、短时展示和销毁；结果及严重程度仍由各业务会话唯一持有，不接管请求、业务状态、导航或秘密。持续结果和字段校验直接消费 Ant Alert / Form.Item，不建立通知总线或基础包装。
 
 基础 Button、Input、Select、Radio、Checkbox、Switch、Dropdown、Tooltip、Form 直接使用 Ant Design Vue；不建立等价 Orch wrapper。尚未接入的设置分区仍只读，不借迁移接入新行为。
 

@@ -63,8 +63,8 @@ export function useCredentialEditor(list: ReturnType<typeof useCredentialList>) 
         ? list.credentials.value.map(item => item.id === result.id ? result : item)
         : [...list.credentials.value, result]
       list.notice.value = current
-        ? `凭据「${result.displayName}」已轮换为修订 ${result.currentRevision}；历史任务快照不受影响。`
-        : `凭据「${result.displayName}」已创建；密钥只以加密信封保存，任何读取响应都不会回显。`
+        ? `凭据「${result.displayName}」已轮换为修订 ${result.currentRevision}。`
+        : `凭据「${result.displayName}」已创建。`
       closeEditor()
     } catch (error) {
       if (valid()) list.feedback.value = storageCredentialErrorMessage(error, current ? '凭据轮换失败。' : '凭据创建失败。')

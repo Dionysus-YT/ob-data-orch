@@ -20,6 +20,7 @@ import (
 	"ob-data-orch/internal/controlplane"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/precheckcontract"
 	"ob-data-orch/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -71,10 +72,26 @@ func TestDEV04SyntheticSQLiteHTTPChain(t *testing.T) {
 	}
 	decodeJSON(t, precheckClaim, &precheckGrant)
 	request(t, handler, http.MethodPost, "/agent/v1/prechecks/"+precheckID+":complete", `{"requestId":"precheck-complete-1","leaseId":"precheck-lease-1","leaseEpoch":`+itoa(precheckGrant.Grant.LeaseEpoch)+`,"succeeded":true}`, nil, http.StatusOK)
+	// 历史布尔回执不能为新提交提供当前完整证明；其余旧链路使用显式完整合成夹具验证。
+	request(t, handler, http.MethodPost, "/api/v1/export-drafts/"+draftID+":submit", `{"precheckId":"`+precheckID+`"}`, map[string]string{"If-Match": `"rev-1"`, "Idempotency-Key": "synthetic-task-rejected-idempotency"}, http.StatusUnprocessableEntity)
+	seedCurrentSyntheticPrecheckProof(t, databasePath, precheckID)
 
 	taskID := requestID(t, handler, http.MethodPost, "/api/v1/export-drafts/"+draftID+":submit", `{"precheckId":"`+precheckID+`"}`, map[string]string{"If-Match": `"rev-1"`, "Idempotency-Key": "synthetic-task-idempotency"}, http.StatusCreated)
 	overview := request(t, handler, http.MethodGet, "/api/v1/tasks/"+taskID, "", nil, http.StatusOK)
-	if !bytes.Contains(overview, []byte(`"type":"OBDUMPER_EXPORT"`)) || bytes.Contains(overview, []byte("plannedCommand")) || bytes.Contains(overview, []byte("WAITING_SCHEDULE")) {
+	var overviewPage struct {
+		Item struct {
+			ID           string          `json:"id"`
+			Type         string          `json:"type"`
+			State        json.RawMessage `json:"state"`
+			Presentation struct {
+				ID    string `json:"id"`
+				State string `json:"state"`
+			} `json:"presentation"`
+		} `json:"item"`
+	}
+	decodeJSON(t, overview, &overviewPage)
+	// 状态只经授权后的展示投影返回，基础任务对象仍不混入执行字段或计划命令。
+	if overviewPage.Item.ID != taskID || overviewPage.Item.Type != "OBDUMPER_EXPORT" || overviewPage.Item.Presentation.ID != taskID || overviewPage.Item.Presentation.State != "WAITING_SCHEDULE" || len(overviewPage.Item.State) != 0 || bytes.Contains(overview, []byte("plannedCommand")) {
 		t.Fatalf("task overview did not preserve its projection boundary: %s", overview)
 	}
 	command := request(t, handler, http.MethodGet, "/api/v1/tasks/"+taskID+"/command-evidence", "", nil, http.StatusOK)
@@ -180,6 +197,34 @@ func seedSyntheticMetadata(t *testing.T, databasePath string) {
 		if _, err := database.Exec(statement.query, statement.args...); err != nil {
 			t.Fatalf("seed synthetic metadata statement %d: %v", index+1, err)
 		}
+	}
+}
+
+// seedCurrentSyntheticPrecheckProof 仅给旧链路测试补齐当前证明，不为运行时增加布尔回执放行。
+func seedCurrentSyntheticPrecheckProof(t *testing.T, databasePath, precheckID string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(databasePath)+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	checks := []store.PrecheckCheckResult{}
+	for _, name := range precheckcontract.FixedChecks() {
+		checks = append(checks, store.PrecheckCheckResult{Check: name, Status: "PASSED", EvidenceCode: "SYNTHETIC_OK"})
+	}
+	resultJSON, err := json.Marshal(map[string]any{"checks": checks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factsJSON, err := json.Marshal(store.AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "synthetic-agent-v1", ObservedAt: time.Now().UTC(), MemoryTotalBytes: 16 << 30, MemoryAvailableBytes: 12 << 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE precheck_runs SET result_json=? WHERE precheck_id=?`, string(resultJSON), precheckID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE agents SET facts_json=? WHERE agent_id='agent-1'`, string(factsJSON)); err != nil {
+		t.Fatal(err)
 	}
 }
 

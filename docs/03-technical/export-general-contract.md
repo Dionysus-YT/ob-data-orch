@@ -2,7 +2,7 @@
 
 > 文档状态：Export v1 技术 Canonical（EX-D2 产出持续维护）
 > 创建日期：2026-08-05
-> 最近更新：2026-08-22
+> 最近更新：2026-10-13
 > 依据：[开发任务地图](development-task-map.md) 第 5.2 节、[导出模块 Canonical](../02-design/export-module.md)
 > 关联契约：[API/SQLite](api-sqlite-data-contract.md)、[参数/命令](parameter-command-contract.md)、[Agent/状态](agent-task-state-contract.md)、[工具启动](tool-launch-isolation-contract.md)、[凭据/安全](credential-access-security-contract.md)、[日志/证据](log-collection-evidence-contract.md)
 > 安全说明：不记录真实端点、身份、密码、密钥、完整命令或工具原始输出
@@ -41,6 +41,18 @@
 - 页面卸载终止 HTTP 等待、目录定时器和预检轮询，并拒绝旧响应写回；这不代表取消已被服务端接受的任务。目录没有逐查询服务端取消接口，不新增该契约。
 
 这些结论只经前端合成验证，不扩展真实数据库、凭据、Agent 或 OBDUMPER 支持状态；[验收证据](evidence/frontend-wizard-refactor-2026-10-08.md)明确区分通过项与仍阻断的既有平台检查。
+
+### 0.3 2026-10-13 专家参数接入
+
+用户明确要求接入此前固定禁用的四项开关，以及日期时间格式和序列策略。本节取代下文 v7/2026-10-08 的禁用状态描述；历史资源、任务和真实证据不改写，实施和验证见[本轮记录](evidence/export-expert-parameters-2026-10-13.md)。
+
+- 新增不可变参数目录 `obdumper-4.3.5-slice-v11-expert-parameters`，继承 v10，共 79 项。新参数活动时选择 v11；旧草稿只是读取/预览时仍用原版本，明确编辑加入新参数才在同一更新事务中升级版本与指纹。未设置字段不发射默认值。
+- `filterConfig.weakRead/enableHiddenPk` 仅普通对象的数据内容；隐藏主键限整库或指定纯表。`ddlBehavior.addExtraMessage` 限包含表定义并绑定当前 sys 凭据；`ddlBehavior.sequencePolicy` 限包含序列定义，PRESERVE/RESTART 映射小写 CLI。结果集不接入弱读、隐藏主键或 DDL 参数。
+- `dataFormat.timestampFormats` 保留九个字符串字段并增加 `preserveZeroDatetime`。DATE/TIMESTAMP 值格式适用 MySQL/Oracle CSV/CUT；TIME/DATETIME/零日期仅 MySQL，TZ/LTZ 仅 Oracle。三项 NLS 仅 Oracle 数据会话，SQL 数据也可用，与文件值格式独立。格式串最多 256 字节且拒绝控制字符和越界字符；无数据内容时拒绝这些字段。
+- 固定 JDBC v6 只接受冻结对象、三项检查标志和同端点的短时 sys 材料；不接收外部 SQL、URL、驱动或主类。弱读执行受限常量读取，隐藏主键核对 OB 版本/主键元数据/零行隐藏列访问，sys 核对固定 TABLEGROUP 视图。普通连接或对象可读证据不能替代 `PARAMETER_REQUIREMENTS_VERIFIED`；拒绝、未知、权限/版本不足均阻断提交。
+- 迁移 0026 冻结预检查的 sys 引用与修订，参与绑定摘要但不进入浏览器投影。提交快照只在内部增加 `_sysCredential` 引用；从模板或原配置新建重新取得当前引用。sys 密码在预检查/执行解密后返回前复验当前 ACTIVE 修订、租约和授权；执行密码进入官方加密属性 `oceanbase.jdbc.sys.password`，不进入 argv/环境。
+- 内部冻结 argv 可包含官方所需的普通 sys 账号；浏览器命令、任务摘要、复制与日志脱敏该身份。两个密码始终只使用安全文件槽位；Agent 在启动前复核附加定义参数与 sys 材料匹配。固定令牌预算为 160，覆盖目录中 79 项且拒绝密码令牌。
+- 本轮是 G2 实现及合成验收；未进行真实数据库/密码解析、OBDUMPER 启动、现役迁移或服务更新，不提升 EX-V1/G3/G4。
 
 ---
 
@@ -678,9 +690,10 @@ type ExportConfigTemplate struct {
 ### 6.2 执行顺序
 
 1. **控制面本地检查**（无秘密）：FORMAT_COMPATIBILITY → RISK_CONFIRMATION
-2. **Agent 无秘密检查**：OUTPUT_PATH → OUTPUT_EMPTY → AVAILABLE_SPACE → NODE_RESOURCE
-3. **Agent 秘密检查**（全部无秘密通过后）：DATABASE_CONNECTIVITY → OBJECT_ACCESS → SYS_PRIVILEGE
-4. **汇总判定**：全部通过 → SUCCEEDED；任一失败 → FAILED
+2. **Agent 无秘密检查**：TOOL_ENVIRONMENT 及当前输出类型适用的路径、空性、空间检查；相互独立的项目继续收集事实。
+3. **Agent 数据库检查**（工具环境通过后）：DATABASE_CONNECTIVITY → OBJECT_ACCESS；连接未通过只阻断对象检查，目录或空间失败不阻断数据库检查。固定专家参数的权限检查仍归 OBJECT_ACCESS。
+4. **Agent 存储检查**：STORAGE_CONNECTIVITY 独立于数据库和本机组；STORAGE_AUTH 依赖端点通过及既有凭据探测授权。
+5. **汇总判定**：全部必需项通过 → SUCCEEDED；任一 FAILED 或 UNKNOWN → FAILED。未执行的依赖项与已执行但无法确认均保持 UNKNOWN，分别使用阻断证据码和既有不可用证据码。
 
 ### 6.3 capabilityVersion 绑定
 
@@ -695,15 +708,17 @@ EX-I2 实施收敛：三个新能力已接入固定六项检查。OBJECT_ACCESS 
 **EX-I6 存储层实施（2026-08-14）**：对象存储输出任务的预检查使用“存储形态清单”——`DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → AVAILABLE_SPACE → STORAGE_CONNECTIVITY → STORAGE_AUTH`（裁剪不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY；AVAILABLE_SPACE 转向 `--tmp-path` 卷，未指定时 UNKNOWN）。本地输出保持冻结六项不变。两项存储检查由 Agent 探测：
 
 - STORAGE_CONNECTIVITY：受控 TCP 端点可达性探测，仅在显式运行开关（`OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE=true`）开启时装配；Agent 二进制直接启动时默认 UNKNOWN。本机 MVP/Agent 包启动器固定开启该开关，运行启动器即视为对该 Agent 生命周期内受控 provider endpoint TCP 建连的持续授权，关闭开关或停止进程即撤销；探针不发送凭据或业务数据，该授权不扩展到 STORAGE_AUTH、工具执行或数据库操作。
-- STORAGE_AUTH：凭据有效性探测接口与失败关闭默认实现已就位。预检查创建会冻结已校验的存储凭据引用；只有在数据库/对象检查和 STORAGE_CONNECTIVITY 均通过后，且探测器显式声明需要凭据时，才可经独立 `STORAGE_CREDENTIAL` 槽位短时解析该引用。默认探测器不解析凭据并返回 UNKNOWN；真实四类云厂商签名探测归 EX-V1。
+- STORAGE_AUTH：凭据有效性探测接口与失败关闭默认实现已就位。预检查创建会冻结已校验的存储凭据引用；按 2026-10-13 用户确认，认证只依赖 STORAGE_CONNECTIVITY 通过且探测器显式声明需要凭据，不再依赖数据库/对象或本机空间结果。满足条件后才可经独立 `STORAGE_CREDENTIAL` 槽位短时解析该引用。默认探测器不解析凭据并返回 UNKNOWN；真实四类云厂商签名探测仍归 EX-V1。
 
 任务提交门禁由结果驱动：对象存储输出要求两项存储检查均 PASSED（`STORAGE_PRECHECK_REQUIRED`），未启用探测时保持 UNKNOWN 并失败关闭。旧 `STORAGE_PRECHECK_UNAVAILABLE` 功能门禁已移除；STORAGE_AUTH 真实凭据取证仍须另行授权。
 
-### 6.4 local-first 策略保持
+### 6.4 按真实依赖执行（2026-10-13）
 
-预检查保持当前 local-first 策略不变：
-- 无秘密检查先执行，不消耗数据库连接资源
-- 全部无秘密检查通过后才解析秘密槽位
+按用户确认替代原“全部本地检查通过后才解析凭据”的策略：
+- 本机无秘密检查仍先执行；工具环境通过后，数据库组独立检查，目录或空间问题不会隐藏数据库侧问题。
+- 对象依赖数据库连接；存储认证依赖端点连通性和探测授权；对应前置未通过时不调用后续 Probe，也不解析该槽位。
+- 无法安全定位导出目录时，目录空性与空间项明确记为未执行；已填写日志路径失败不影响合法导出目录的独立事实。
+- 四个固定 `PRECHECK_BLOCKED_BY_*` 证据码只允许 UNKNOWN，按共享 `precheckcontract` 与 OpenAPI 白名单复核；报告顺序和通过门禁不变。
 - 秘密材料只在短租约内存在，完成后立即销毁
 - 检查点继续（CHECKPOINT_COMPATIBILITY）作为未来扩展层，V1.0 为 VALIDATION_GATED
 
@@ -935,3 +950,18 @@ EX-I4 交付收敛：CUT（export-odp-cut-v1）与 SQL（export-odp-sql-v1）已
 ### 2026-10-08 读取一致性与筛选入口修订
 
 第二步删除读取一致性区域；`--snapshot` 移至第三步其他选项，`--flashback-scn` 和 Oracle 专属 `--flashback-timestamp` 移至第三步高级设置，并计入区内已配置项数。持久化仍使用 filterConfig 原字段；快照/闪回互斥、结果集禁用与租户校验不变，前端步骤错误指向第三步。第二步条件与分区筛选不再因整库或混合类型而消失，而是禁用并说明仅指定表范围可用；对象资格变化继续清除不适用值。布局变更不提升参数能力状态，不改变指纹、DTO 或唯一命令生成器。
+
+## 2026-10-13 预检查完整性整改
+
+本节取代前文六项清单的现役约束，历史定义仅用于已有报告读取。当前清单以 `internal/precheckcontract` 和 OpenAPI 为准：
+
+- 本地：`DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → NODE_RESOURCE → OUTPUT_PATH → OUTPUT_EMPTY → AVAILABLE_SPACE`。
+- 存储：`DATABASE_CONNECTIVITY → OBJECT_ACCESS → TOOL_ENVIRONMENT → NODE_RESOURCE → OUTPUT_PATH → AVAILABLE_SPACE → STORAGE_CONNECTIVITY → STORAGE_AUTH → STORAGE_WRITE`。
+
+`NODE_RESOURCE` 是控制面按冻结 JVM 堆（未填按既有执行预算默认 4G）、堆外开销、绑定 Agent 内存事实与节点政策计算的静态资格；未知内存保持 UNKNOWN，超过总额度为 FAILED。它不预留资源，也不替代执行领取时物理空闲量、并发占用与政策复验。控制面拒绝与当前政策不符的资源回执；新提交还须在事务内复核完整当前清单与静态资格。
+
+存储 `OUTPUT_PATH` 只核对节点本地临时分块及可选日志目录的安全与父目录可写性，空间落在临时分块卷；不会把 URI 当本机目录，不创建用户目录。缺少 tmp-path 保持未知，页面常用区要求明确填写。日志目录允许传入正式执行，但仍必须满足目标平台与节点允许根目录。日志失败不阻断合法临时卷空间检查。
+
+所选表的包含列、排除列、分区名进入固定 JDBC 列与分区元数据检查，列名与分区名精确匹配元数据字面名称，不外推工具的大小写容错，复合分区只接受子分区。对象/选择检查使用 `OBJECT_SELECTION_VERIFIED/REJECTED`，元数据不可用继续 UNKNOWN；表或读取权限失败也不能被解读成已确认列不存在。普通 ALL 和 QUERY_RESULT 仍只作连接级投影；探针不接收 where、查询 SQL 或日期时间表达式。日期时间格式校验不证明真实序列化效果。
+
+存储认证只依赖连通性，写权限只依赖认证；独立目录、空间、资源或数据库失败不阻断存储组。AUTH/WRITE 的默认真实探测均未接入，保持未知或明确的前置阻断。合成探测适配器和清理未确认的 UNKNOWN 码用于验证失败关闭，不代表云厂商签名、写入或清理已经实现；EX-V1 真实准入与授权不变。

@@ -86,6 +86,7 @@ CodeGraph 使用条件沿用全局规则；查询前检查索引新鲜度，结�
 - `design-system/MASTER.md` 是全局 UI/UX 的 P0 权威。首次处理页面须读 P0、存在的 `design-system/pages/<page>.md`，以及 `design-system/pages/data-sources.md` 的定版与复用规则；业务契约与验证矩阵按受影响行为读取，已读未变内容复用。
 - 数据源页于 2026-09-14 定版，后续页面以其为视觉与组件标准。管理列表沿用工作面、操作层级与右下角分页；其他页面按自身 Archetype 复用外壳、字体、控件与反馈。冻结版本、实现入口及替代关系以 P0/P1 为准，不以旧页面或截图为标准。
 - 不得自行新建全局 token、修改 Product Shell 或 Page Archetype、引入第二套视觉语言、复制历史页面 CSS 作为规范，或依据已删除的设计资料恢复旧布局。
+- 全平台反馈沿用 [状态与反馈规范](design-system/patterns/status-feedback.md)：主动操作结果用短时 Ant Message，持续说明/风险/错误用 Ant Alert，字段错误归 Form.Item；行内开关、刷新和领域检查保留原位反馈。业务会话重置或卸载须清除提示，迟到响应不得重放成功；不自绘提示条或引入全局通知状态。
 - 现有实现只表示 P4 事实，不自动优先于 P0/P1。发现冲突时先记录并判定为 implementation debt、业务约束或 MASTER defect；只有确认是 MASTER defect 时，才可提议更新 P0。
 
 ### 7.4 复杂向导架构

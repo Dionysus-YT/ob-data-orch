@@ -31,7 +31,7 @@ export function useTemplateCatalog(createApi: (signal: AbortSignal) => TemplateA
       if (!valid()) return
       // 仅成功的授权读取能恢复操作；临时故障不能解除授权阻断。
       if ([401, 403].includes((error as Partial<ApiError>).status ?? 0)) accessDenied.value = true
-      if (accessDenied.value) templates.value = []
+      if (accessDenied.value) { templates.value = []; notice.value = '' }
       loadFailure.value = taskDetailErrorMessage(error, '无法加载模板，请稍后重试。')
     } finally {
       if (valid()) loading.value = false
@@ -42,6 +42,7 @@ export function useTemplateCatalog(createApi: (signal: AbortSignal) => TemplateA
     readVersion++
     loading.value = false
     actionBusy.value = id
+    notice.value = loadFailure.value = ''
     return true
   }
   function endAction() { if (active()) actionBusy.value = '' }

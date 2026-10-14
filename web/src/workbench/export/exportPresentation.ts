@@ -22,7 +22,7 @@ export const blockSizeChoicesMB = [
   { value: '2048', label: '2048 MB' },
 ]
 
-export const dateFormatChoices = [{ value: '', label: '继承工具默认（yyyy-MM-dd）' }, ...['yyyy-MM-dd', 'yyyyMMdd', 'yyyy/MM/dd'].map((value) => ({ value, label: value }))]
+export const dateFormatChoices = [{ value: '', label: '继承工具默认（按租户模式）' }, ...['yyyy-MM-dd', 'yyyyMMdd', 'yyyy/MM/dd'].map((value) => ({ value, label: value }))]
 
 export const datetimeFormatChoices = [{ value: '', label: '继承工具默认（保留源精度）' }, ...['yyyy-MM-dd HH:mm:ss', 'yyyyMMddHHmmss', "yyyy-MM-dd'T'HH:mm:ss.SSS"].map((value) => ({ value, label: value }))]
 

@@ -3,16 +3,51 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$root"
 if [ -f agent-config.json ]; then name=ob-data-orch-agent; binary=agent; else name=ob-data-orch; binary=control-plane; fi
+agent_initialized=
+check_agent_installation() {
+    systemctl cat "$name" >/dev/null 2>&1 || { printf 'Agent 尚未安装，请选择“1 启动”完成首次注册与安装。\n'; return 1; }
+    # 前台关联必须使用原目录和专用账户，不能为其他安装位置创建第二份身份。
+    [ "$(systemctl show -p WorkingDirectory "$name")" = "WorkingDirectory=$root" ] &&
+      [ "$(systemctl show -p User "$name")" = "User=$name" ] || { printf '已有服务的目录或账户不匹配，请使用原安装目录的启动入口。\n'; return 1; }
+}
 start_and_check() {
+    # 停止的 Agent 先在专用账户下完成前台关联，不能让后台服务读取注册码。
+    if [ "$binary" = agent ] && [ "${1:-}" != initialized ]; then
+        case "$(systemctl show -p ActiveState "$name")" in
+            ActiveState=inactive|ActiveState=failed)
+                check_agent_installation
+                if ! runuser -u "$name" -- "$root/$binary" -initialize; then
+                    printf 'Agent 关联未完成，未启动服务；请检查上方错误或身份目录中的 service.log。\n'
+                    return 1
+                fi ;;
+            ActiveState=active|ActiveState=activating|ActiveState=deactivating|ActiveState=reloading) ;;
+            *) printf '无法确认 Agent 服务状态，未初始化或启动服务。\n'; return 1 ;;
+        esac
+    fi
     systemctl start "$name"
     systemctl is-active "$name"
     if [ "$binary" = control-plane ]; then runuser -u "$name" -- "$root/$binary" -health-check; fi
 }
 printf '1 启动（首次自动安装）  2 停止  3 升级  4 查看状态\n'
+if [ "$binary" = agent ]; then printf '5 重新注册（关联到新节点）\n'; fi
 read -r action
 case "$action" in
   2) systemctl stop "$name"; exit ;;
   4) systemctl status "$name"; exit ;;
+  5)
+    [ "$binary" = agent ] || { printf '重新注册仅适用于 Agent，请使用 Agent 原安装目录的启动入口。\n'; exit 1; }
+    [ "$(id -u)" = 0 ] || { printf '重新注册请使用 sudo 运行同一个启动入口。\n'; exit 1; }
+    check_agent_installation
+    printf '请先在平台删除旧节点，再新建节点并生成未使用的注册码。此操作会停止服务并替换本机节点身份，保留安装目录、配置、信任和日志。\n'
+    systemctl stop "$name"
+    [ "$(systemctl show -p ActiveState "$name")" = ActiveState=inactive ] || { printf 'Agent 服务尚未停止，未替换身份；请检查服务状态后重试。\n'; exit 1; }
+    if ! runuser -u "$name" -- "$root/$binary" -register -initialize; then
+      printf '重新注册未完成，服务保持停止；请选择“1 启动”继续已有待关联请求。不要删除身份目录。\n'
+      exit 1
+    fi
+    start_and_check initialized
+    printf '重新注册完成，Agent 服务已启动；请在新节点页面确认心跳、完成环境检查并启用节点。\n'
+    exit ;;
   3)
     printf '输入新版安装包解压目录：'; read -r source
     source=$(CDPATH= cd -- "$source" && pwd)
@@ -58,6 +93,7 @@ if ! systemctl cat "$name" >/dev/null 2>&1; then
         unset password
     else
         runuser -u "$name" -- "$root/$binary" -initialize
+        if [ "$binary" = agent ]; then agent_initialized=initialized; fi
     fi
     # systemd 的路径引号和控制字符需要拒绝，不能把安装目录解释为 unit 指令。
     case "$root" in *'"'*|*'%'*|*'\'* ) printf '安装目录含不支持的字符。\n'; exit 1;; esac
@@ -65,5 +101,5 @@ if ! systemctl cat "$name" >/dev/null 2>&1; then
     systemctl daemon-reload
     systemctl enable "$name"
 fi
-start_and_check
+start_and_check "$agent_initialized"
 printf '服务已启动；配置与身份保留在原安装目录。\n'

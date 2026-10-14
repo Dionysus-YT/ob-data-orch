@@ -15,6 +15,7 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/session":                                         {"get"},
 		"/api/v1/execution-nodes":                                 {"get", "post"},
 		"/api/v1/execution-nodes/{nodeId}":                        {"get", "patch", "delete"},
+		"/api/v1/execution-nodes/{nodeId}:delete":                 {"post"},
 		"/api/v1/execution-nodes/{nodeId}:enrollments":            {"post"},
 		"/api/v1/execution-nodes/{nodeId}:environment-check":      {"post"},
 		"/api/v1/execution-nodes/{nodeId}:enable":                 {"post"},
@@ -27,18 +28,20 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/data-sources/{dataSourceId}:enable":              {"post"},
 		"/api/v1/export-config-templates":                         {"get", "post"},
 		"/api/v1/export-config-templates/{templateId}":            {"get", "patch", "delete"},
-		"/api/v1/export-drafts":                                   {"post"},
-		"/api/v1/export-drafts/{draftId}":                         {"get", "patch"},
+		"/api/v1/export-drafts":                                   {"get", "post"},
+		"/api/v1/export-drafts/{draftId}":                         {"get", "patch", "delete"},
 		"/api/v1/export-drafts/{draftId}:precheck":                {"post"},
 		"/api/v1/prechecks/{precheckId}":                          {"get"},
 		"/api/v1/export-drafts/{draftId}:preview-command":         {"post"},
 		"/api/v1/export-drafts/{draftId}:submit":                  {"post"},
 		"/api/v1/tasks":                                           {"get"},
+		"/api/v1/tasks/filter-options":                            {"get"},
 		"/api/v1/tasks/{taskId}":                                  {"get"},
 		"/api/v1/tasks/{taskId}/snapshot":                         {"get"},
 		"/api/v1/tasks/{taskId}/command-evidence":                 {"get"},
 		"/api/v1/tasks/{taskId}/execution":                        {"get"},
 		"/api/v1/tasks/{taskId}/logs":                             {"get"},
+		"/api/v1/tasks/{taskId}/operations":                       {"get"},
 		"/api/v1/tasks/{taskId}/logs/stream":                      {"get"},
 		"/api/v1/tasks/{taskId}/logs:download":                    {"post"},
 		"/agent/v1/enrollments:exchange":                          {"post"},
@@ -100,8 +103,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 72 {
-		t.Fatalf("operation count = %d, want 72", operationCount)
+	if operationCount != 77 {
+		t.Fatalf("operation count = %d, want 77", operationCount)
 	}
 }
 
@@ -623,6 +626,15 @@ func TestOpenAPITaskListUsesDedicatedSafeProjection(t *testing.T) {
 			t.Fatalf("task list safe property %s is missing", required)
 		}
 	}
+	for _, required := range []string{"displayName", "availableActions", "dataSourceDeleted"} {
+		if _, ok := properties[required]; !ok {
+			t.Fatalf("task list display property %s is missing", required)
+		}
+	}
+	options := object(t, object(t, schemas, "TaskFilterOptionsEnvelope"), "properties")
+	if _, ok := options["creatorFilterAvailable"]; !ok {
+		t.Fatal("task filter options must declare creator filter availability")
+	}
 	envelope := object(t, schemas, "TaskListEnvelope")
 	envelopeProperties := object(t, envelope, "properties")
 	if _, ok := envelopeProperties["totalPages"]; !ok {
@@ -717,8 +729,38 @@ func TestOpenAPIAgentEnrollmentAndHeartbeatContracts(t *testing.T) {
 		t.Fatal("heartbeat payload must reject unknown fields")
 	}
 	assertRequiredProperties(t, payload, "operatingSystem", "architecture", "agentVersion", "observedAt", "capacityTotal", "capacityUsed")
-	if object(t, object(t, payload, "properties"), "capacityTotal")["const"] != float64(1) {
-		t.Fatal("heartbeat capacityTotal must remain fixed at one")
+	for _, field := range []string{"capacityTotal", "capacityUsed"} {
+		rule := object(t, object(t, payload, "properties"), field)
+		if rule["type"] != "integer" || rule["minimum"] != float64(0) || rule["maximum"] != float64(1024) {
+			t.Fatal("心跳并行上界缺少有限整数约束")
+		}
+	}
+	for _, field := range []string{"memoryTotalBytes", "memoryAvailableBytes"} {
+		rule := object(t, object(t, payload, "properties"), field)
+		if rule["type"] != "integer" || rule["minimum"] != float64(0) || rule["maximum"] != float64(9007199254740991) {
+			t.Fatal("物理内存事实未限制为安全整数")
+		}
+	}
+}
+
+func Test浏览器节点内存事实成对且安全(t *testing.T) {
+	schemas := object(t, object(t, loadOpenAPI(t), "components"), "schemas")
+	facts := object(t, object(t, object(t, schemas, "ExecutionNodeSummary"), "properties"), "agentFacts")
+	properties := object(t, facts, "properties")
+	dependencies := object(t, facts, "dependentRequired")
+	for _, field := range []struct {
+		name    string
+		partner string
+		minimum float64
+	}{{"memoryTotalBytes", "memoryAvailableBytes", 1}, {"memoryAvailableBytes", "memoryTotalBytes", 0}} {
+		rule := object(t, properties, field.name)
+		if rule["type"] != "integer" || rule["minimum"] != field.minimum || rule["maximum"] != float64(9007199254740991) || rule["readOnly"] != true {
+			t.Fatal("浏览器内存事实缺少只读安全整数约束")
+		}
+		partners, ok := dependencies[field.name].([]any)
+		if !ok || len(partners) != 1 || partners[0] != field.partner {
+			t.Fatal("浏览器内存事实未要求成对返回")
+		}
 	}
 }
 
@@ -829,8 +871,8 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		t.Fatal("precheck check set must offer exactly the local and storage shapes")
 	}
 	localCheckVariant, storageCheckVariant := variantObject(t, checkVariants[0]), variantObject(t, checkVariants[1])
-	assertFixedPrecheckArray(t, localCheckVariant, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE"})
-	assertFixedPrecheckArray(t, storageCheckVariant, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH"})
+	assertFixedPrecheckArray(t, localCheckVariant, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "NODE_RESOURCE", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE"})
+	assertFixedPrecheckArray(t, storageCheckVariant, []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "NODE_RESOURCE", "OUTPUT_PATH", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH", "STORAGE_WRITE"})
 	results := object(t, schemas, "AgentPrecheckResults")
 	resultVariants, ok := results["oneOf"].([]any)
 	if !ok || len(resultVariants) != 2 {
@@ -841,13 +883,13 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		if variantObject["items"] != false {
 			t.Fatal("precheck results must reject extra checks")
 		}
-		if rawPrefixItems, ok := variantObject["prefixItems"].([]any); !ok || len(rawPrefixItems) != 6 {
-			t.Fatalf("precheck results variant %d must contain the six fixed checks in order", variantIndex)
+		if rawPrefixItems, ok := variantObject["prefixItems"].([]any); !ok || len(rawPrefixItems) != []int{7, 9}[variantIndex] {
+			t.Fatalf("预检查结果形态 %d 必须使用当前完整清单", variantIndex)
 		}
 	}
-	// 存储形态的最后两项必须是受控存储检查结果 schema。
+	// 存储形态的最后三项必须是受控存储检查结果 schema。
 	storagePrefixItems := variantObject(t, resultVariants[1])["prefixItems"].([]any)
-	if fmt.Sprint(storagePrefixItems[4].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageConnectivityResult" || fmt.Sprint(storagePrefixItems[5].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageAuthResult" {
+	if fmt.Sprint(storagePrefixItems[6].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageConnectivityResult" || fmt.Sprint(storagePrefixItems[7].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageAuthResult" || fmt.Sprint(storagePrefixItems[8].(map[string]any)["$ref"]) != "#/components/schemas/AgentPrecheckStorageWriteResult" {
 		t.Fatal("storage precheck results must reference the storage check result schemas")
 	}
 	for _, resultContract := range []struct {
@@ -855,14 +897,16 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 		check    string
 		evidence []string
 	}{
-		{"AgentPrecheckDatabaseConnectivityResult", "DATABASE_CONNECTIVITY", []string{"SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"}},
-		{"AgentPrecheckObjectAccessResult", "OBJECT_ACCESS", []string{"SYNTHETIC_OK", "OBJECT_ACCESSIBLE", "OBJECT_NOT_ACCESSIBLE", "OBJECT_ACCESS_UNAVAILABLE"}},
+		{"AgentPrecheckDatabaseConnectivityResult", "DATABASE_CONNECTIVITY", []string{"SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE", "PRECHECK_BLOCKED_BY_TOOL"}},
+		{"AgentPrecheckObjectAccessResult", "OBJECT_ACCESS", []string{"SYNTHETIC_OK", "OBJECT_ACCESSIBLE", "OBJECT_NOT_ACCESSIBLE", "OBJECT_SELECTION_VERIFIED", "OBJECT_SELECTION_REJECTED", "OBJECT_ACCESS_UNAVAILABLE", "PARAMETER_REQUIREMENTS_VERIFIED", "PARAMETER_REQUIREMENTS_REJECTED", "PRECHECK_BLOCKED_BY_TOOL", "PRECHECK_BLOCKED_BY_DATABASE"}},
 		{"AgentPrecheckToolEnvironmentResult", "TOOL_ENVIRONMENT", []string{"SYNTHETIC_OK", "TOOL_RUNTIME_READY", "TOOL_RUNTIME_INVALID", "TOOL_RUNTIME_UNAVAILABLE"}},
+		{"AgentPrecheckNodeResourceResult", "NODE_RESOURCE", []string{"SYNTHETIC_OK", "NODE_RESOURCE_READY", "NODE_RESOURCE_INSUFFICIENT", "NODE_RESOURCE_UNAVAILABLE"}},
 		{"AgentPrecheckOutputPathResult", "OUTPUT_PATH", []string{"SYNTHETIC_OK", "OUTPUT_PATH_WRITABLE", "OUTPUT_PATH_NOT_WRITABLE", "OUTPUT_PATH_UNAVAILABLE"}},
-		{"AgentPrecheckOutputEmptyResult", "OUTPUT_EMPTY", []string{"SYNTHETIC_OK", "OUTPUT_PATH_EMPTY", "OUTPUT_EMPTY_CHECK_SKIPPED", "OUTPUT_PATH_NOT_EMPTY", "OUTPUT_PATH_UNAVAILABLE"}},
-		{"AgentPrecheckAvailableSpaceResult", "AVAILABLE_SPACE", []string{"SYNTHETIC_OK", "OUTPUT_SPACE_SUFFICIENT", "OUTPUT_SPACE_INSUFFICIENT", "OUTPUT_SPACE_UNAVAILABLE"}},
+		{"AgentPrecheckOutputEmptyResult", "OUTPUT_EMPTY", []string{"SYNTHETIC_OK", "OUTPUT_PATH_EMPTY", "OUTPUT_EMPTY_CHECK_SKIPPED", "OUTPUT_PATH_NOT_EMPTY", "OUTPUT_PATH_UNAVAILABLE", "PRECHECK_BLOCKED_BY_OUTPUT_PATH"}},
+		{"AgentPrecheckAvailableSpaceResult", "AVAILABLE_SPACE", []string{"SYNTHETIC_OK", "OUTPUT_SPACE_SUFFICIENT", "OUTPUT_SPACE_INSUFFICIENT", "OUTPUT_SPACE_UNAVAILABLE", "PRECHECK_BLOCKED_BY_OUTPUT_PATH"}},
 		{"AgentPrecheckStorageConnectivityResult", "STORAGE_CONNECTIVITY", []string{"SYNTHETIC_OK", "STORAGE_ENDPOINT_REACHABLE", "STORAGE_ENDPOINT_UNREACHABLE", "STORAGE_CONNECTIVITY_UNAVAILABLE"}},
-		{"AgentPrecheckStorageAuthResult", "STORAGE_AUTH", []string{"SYNTHETIC_OK", "STORAGE_CREDENTIAL_VERIFIED", "STORAGE_CREDENTIAL_REJECTED", "STORAGE_AUTH_UNAVAILABLE"}},
+		{"AgentPrecheckStorageAuthResult", "STORAGE_AUTH", []string{"SYNTHETIC_OK", "STORAGE_CREDENTIAL_VERIFIED", "STORAGE_CREDENTIAL_REJECTED", "STORAGE_AUTH_UNAVAILABLE", "PRECHECK_BLOCKED_BY_STORAGE_CONNECTIVITY"}},
+		{"AgentPrecheckStorageWriteResult", "STORAGE_WRITE", []string{"SYNTHETIC_OK", "STORAGE_WRITE_VERIFIED", "STORAGE_WRITE_REJECTED", "STORAGE_WRITE_UNAVAILABLE", "STORAGE_WRITE_CLEANUP_UNCONFIRMED", "PRECHECK_BLOCKED_BY_STORAGE_AUTH"}},
 	} {
 		result := object(t, schemas, resultContract.schema)
 		if result["additionalProperties"] != false {
@@ -904,7 +948,7 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 	if executionContext["additionalProperties"] != false {
 		t.Fatal("precheck execution context must reject unknown fields")
 	}
-	assertRequiredProperties(t, executionContext, "compatibilityMode", "database", "table", "outputPath", "logPath", "skipCheckDir", "targetPlatform", "allowedRoots")
+	assertRequiredProperties(t, executionContext, "compatibilityMode", "database", "objects", "objectTypes", "contentKind", "outputPath", "logPath", "skipCheckDir", "targetPlatform", "allowedRoots")
 	if !reflect.DeepEqual(object(t, object(t, executionContext, "properties"), "compatibilityMode")["enum"], []any{"MYSQL", "ORACLE"}) {
 		t.Fatal("precheck execution context must constrain the OceanBase compatibility mode")
 	}

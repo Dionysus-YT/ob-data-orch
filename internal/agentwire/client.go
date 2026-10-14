@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/nodefacts"
 )
 
 const (
@@ -50,16 +51,23 @@ type heartbeatRequest struct {
 }
 
 type heartbeatPayload struct {
-	OperatingSystem            string                 `json:"operatingSystem"`
-	Architecture               string                 `json:"architecture"`
-	AgentVersion               string                 `json:"agentVersion"`
-	ObservedAt                 string                 `json:"observedAt"`
-	CapacityTotal              int                    `json:"capacityTotal"`
-	CapacityUsed               int                    `json:"capacityUsed"`
-	CPUUsagePercent            *int                   `json:"cpuUsagePercent,omitempty"`
-	MemoryUsagePercent         *int                   `json:"memoryUsagePercent,omitempty"`
-	RuntimeConfigurationDigest string                 `json:"runtimeConfigurationDigest,omitempty"`
-	DataRootUsages             []dataRootUsagePayload `json:"dataRootUsages,omitempty"`
+	Host                       *nodefacts.HostInventory        `json:"host,omitempty"`
+	StartedAt                  *time.Time                      `json:"startedAt,omitempty"`
+	RuntimeVersions            *nodefacts.RuntimeVersions      `json:"runtimeVersions,omitempty"`
+	ExecutionObservation       *nodefacts.ExecutionObservation `json:"executionObservation,omitempty"`
+	LogQueue                   *nodefacts.LogQueue             `json:"logQueue,omitempty"`
+	MemoryTotalBytes           uint64                          `json:"memoryTotalBytes,omitempty"`
+	MemoryAvailableBytes       uint64                          `json:"memoryAvailableBytes,omitempty"`
+	OperatingSystem            string                          `json:"operatingSystem"`
+	Architecture               string                          `json:"architecture"`
+	AgentVersion               string                          `json:"agentVersion"`
+	ObservedAt                 string                          `json:"observedAt"`
+	CapacityTotal              int                             `json:"capacityTotal"`
+	CapacityUsed               int                             `json:"capacityUsed"`
+	CPUUsagePercent            *int                            `json:"cpuUsagePercent,omitempty"`
+	MemoryUsagePercent         *int                            `json:"memoryUsagePercent,omitempty"`
+	RuntimeConfigurationDigest string                          `json:"runtimeConfigurationDigest,omitempty"`
+	DataRootUsages             []dataRootUsagePayload          `json:"dataRootUsages,omitempty"`
 }
 
 type dataRootUsagePayload struct {
@@ -96,14 +104,15 @@ type RuntimeConfiguration struct {
 }
 
 type heartbeatResponsePayload struct {
-	FactsRevision        int64  `json:"factsRevision"`
-	EnvironmentStatus    string `json:"environmentStatus"`
-	EnvironmentCheckID   string `json:"environmentCheckId,omitempty"`
-	RealExecutionEnabled *bool  `json:"realExecutionEnabled"`
+	EnvironmentVersionProbeAllowed bool   `json:"environmentVersionProbeAllowed,omitempty"`
+	FactsRevision                  int64  `json:"factsRevision"`
+	EnvironmentStatus              string `json:"environmentStatus"`
+	EnvironmentCheckID             string `json:"environmentCheckId,omitempty"`
+	RealExecutionEnabled           *bool  `json:"realExecutionEnabled"`
 }
 
 // executionNodeEnvironmentCheckCompletionRequest 是 Agent 对唯一固定运行时检查的回执。
-// 载荷不包含路径、命令、工具输出、连接参数或任意可扩展检查项。
+// 载荷只包含固定清单、受控路径事实和纯版本标识，不含命令、原始输出或连接参数。
 type executionNodeEnvironmentCheckCompletionRequest struct {
 	ProtocolVersion string                                  `json:"protocolVersion"`
 	AgentID         string                                  `json:"agentId"`
@@ -116,9 +125,10 @@ type executionNodeEnvironmentCheckCompletionRequest struct {
 }
 
 type executionNodeEnvironmentCheckCompletion struct {
-	FactsRevision int64  `json:"factsRevision"`
-	Status        string `json:"status"`
-	Code          string `json:"code"`
+	Inspection    *nodefacts.RuntimeInspection `json:"inspection,omitempty"`
+	FactsRevision int64                        `json:"factsRevision"`
+	Status        string                       `json:"status"`
+	Code          string                       `json:"code"`
 }
 
 // newHTTPSClient 构造仅允许 HTTPS 的控制面客户端。
@@ -204,6 +214,10 @@ func (c *httpsClient) sendHeartbeat(ctx context.Context, state *identityState, r
 		SentAt:          input.SentAt.UTC().Format(time.RFC3339Nano),
 		PayloadType:     "HEARTBEAT",
 		Payload: heartbeatPayload{
+			Host:      input.Facts.Host,
+			StartedAt: input.Facts.StartedAt, RuntimeVersions: input.Facts.RuntimeVersions,
+			ExecutionObservation: input.Facts.ExecutionObservation, LogQueue: input.Facts.LogQueue,
+			MemoryTotalBytes: input.Facts.MemoryTotalBytes, MemoryAvailableBytes: input.Facts.MemoryAvailableBytes,
 			OperatingSystem:    input.Facts.OperatingSystem,
 			Architecture:       input.Facts.Architecture,
 			AgentVersion:       input.Facts.AgentVersion,
@@ -229,7 +243,12 @@ func (c *httpsClient) sendHeartbeat(ctx context.Context, state *identityState, r
 		if status >= http.StatusInternalServerError {
 			return HeartbeatResult{}, ErrControlPlaneUnavailable
 		}
-		return HeartbeatResult{}, ErrAgentAuthenticationDenied
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			return HeartbeatResult{}, ErrAgentAuthenticationDenied
+		}
+		// 旧控制面可因不认识新心跳字段而返回 400，不能据此认定机器身份失效。
+		// 仅保留安全的操作名与 HTTP 状态，不传播响应正文或凭据。
+		return HeartbeatResult{}, fmt.Errorf("%w: 心跳 HTTP %d，请检查控制面与 Agent 的协议是否匹配", ErrProtocolRejected, status)
 	}
 	envelope, err := decodeResponseEnvelope(responseBody, "ACCEPTED")
 	if err != nil {
@@ -239,7 +258,10 @@ func (c *httpsClient) sendHeartbeat(ctx context.Context, state *identityState, r
 	if err := decodeStrictJSON(envelope.Payload, &payload); err != nil || payload.FactsRevision < 1 || payload.EnvironmentStatus != "NOT_CHECKED" || !validOptionalEnvironmentCheckID(payload.EnvironmentCheckID) || payload.RealExecutionEnabled == nil || *payload.RealExecutionEnabled {
 		return HeartbeatResult{}, ErrProtocolRejected
 	}
-	return HeartbeatResult{FactsRevision: payload.FactsRevision, EnvironmentCheckID: payload.EnvironmentCheckID}, nil
+	if payload.EnvironmentVersionProbeAllowed && payload.EnvironmentCheckID == "" {
+		return HeartbeatResult{}, ErrProtocolRejected
+	}
+	return HeartbeatResult{FactsRevision: payload.FactsRevision, EnvironmentCheckID: payload.EnvironmentCheckID, EnvironmentVersionProbeAllowed: payload.EnvironmentVersionProbeAllowed}, nil
 }
 
 func dataRootUsagesPayload(usages []DataRootUsage) []dataRootUsagePayload {
@@ -253,7 +275,7 @@ func dataRootUsagesPayload(usages []DataRootUsage) []dataRootUsagePayload {
 	return result
 }
 
-func (c *httpsClient) completeExecutionNodeEnvironmentCheck(ctx context.Context, state *identityState, requestID, bootID, checkID string, factsRevision int64, status, code string, sentAt time.Time) error {
+func (c *httpsClient) completeExecutionNodeEnvironmentCheck(ctx context.Context, state *identityState, requestID, bootID, checkID string, factsRevision int64, status, code string, sentAt time.Time, inspections ...*nodefacts.RuntimeInspection) error {
 	if state == nil || !validOpaqueValue(bootID, 256) || !validEnvironmentCheckID(checkID) || factsRevision < 1 || !validEnvironmentCheckResult(status, code) || sentAt.IsZero() {
 		return ErrProtocolRejected
 	}
@@ -261,6 +283,15 @@ func (c *httpsClient) completeExecutionNodeEnvironmentCheck(ctx context.Context,
 		ProtocolVersion: state.ProtocolVersion, AgentID: state.AgentID, NodeID: state.NodeID, BootID: bootID,
 		RequestID: requestID, SentAt: sentAt.UTC().Format(time.RFC3339Nano), PayloadType: "EXECUTION_NODE_ENVIRONMENT_CHECK_COMPLETE",
 		Payload: executionNodeEnvironmentCheckCompletion{FactsRevision: factsRevision, Status: status, Code: code},
+	}
+	if len(inspections) > 1 {
+		return ErrProtocolRejected
+	}
+	if len(inspections) == 1 {
+		if nodefacts.ValidateInspection(inspections[0]) != nil {
+			return ErrProtocolRejected
+		}
+		request.Payload.Inspection = inspections[0]
 	}
 	content, err := json.Marshal(request)
 	if err != nil {

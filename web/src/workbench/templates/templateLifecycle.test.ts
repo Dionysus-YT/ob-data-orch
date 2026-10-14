@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { DataSourceSummary, ExportConfigTemplateItem } from '@/api/browser'
+import type { DataSourceSummary, ExecutionNodeCandidate, ExportConfigTemplateItem } from '@/api/browser'
+import { DATA_SOURCE_UI_FIXTURES } from '@/workbench/sources/dataSourceUiFixture'
 import { useTemplateCatalog } from './useTemplateCatalog'
 import { useTemplateActions } from './useTemplateActions'
 import { useTemplateDraft } from './useTemplateDraft'
@@ -9,7 +10,7 @@ const item = (id = 'synthetic-template'): ExportConfigTemplateItem => ({ id, dis
 const scopes: ReturnType<typeof effectScope>[] = []
 afterEach(() => { scopes.splice(0).forEach(scope => scope.stop()) })
 function setup() {
-  const api = { listExportConfigTemplates: vi.fn(async () => [item()]), renameExportConfigTemplate: vi.fn(async () => 2), deleteExportConfigTemplate: vi.fn(async () => {}), listDataSources: vi.fn(async (): Promise<DataSourceSummary[]> => []), listExportNodeCandidates: vi.fn(async () => []), createDraftFromTemplate: vi.fn(async () => 'synthetic-draft') }
+  const api = { listExportConfigTemplates: vi.fn(async () => [item()]), renameExportConfigTemplate: vi.fn(async () => 2), deleteExportConfigTemplate: vi.fn(async () => {}), listDataSources: vi.fn(async (): Promise<DataSourceSummary[]> => []), listExportNodeCandidates: vi.fn(async (): Promise<ExecutionNodeCandidate[]> => []), createDraftFromTemplate: vi.fn(async () => 'synthetic-draft') }
   const navigate = vi.fn(async () => {}); const scope = effectScope(); scopes.push(scope)
   const value = scope.run(() => { const catalog = useTemplateCatalog(() => api); return { catalog, actions: useTemplateActions(catalog), draft: useTemplateDraft(catalog, navigate) } })!
   return { ...value, api, navigate, scope }
@@ -53,6 +54,53 @@ describe('模板事实、编辑与派生生命周期', () => {
     const { draft, api } = setup(); const read = deferred<DataSourceSummary[]>(); api.listDataSources.mockImplementationOnce(() => read.promise)
     const pending = draft.loadChoices(); const duplicate = draft.loadChoices(); expect(api.listDataSources).toHaveBeenCalledTimes(1); read.reject({ status: 503 }); await Promise.all([pending, duplicate]); expect(draft.nodes.value).toHaveLength(0)
     await draft.loadChoices(); await draft.loadChoices(); expect(api.listDataSources).toHaveBeenCalledTimes(2); expect(draft.sourcesLoading.value).toBe(false)
+  })
+
+  it('强制刷新更新同一节点名称，删除后的同名新节点不替换旧选择', async () => {
+    const { draft, api } = setup()
+    const source = DATA_SOURCE_UI_FIXTURES[0]!
+    const node: ExecutionNodeCandidate = { id: 'synthetic-node', displayName: '合成旧名称', platform: 'WINDOWS_AMD64' }
+    api.listDataSources.mockResolvedValue([source])
+    api.listExportNodeCandidates.mockResolvedValue([node])
+    await draft.loadChoices()
+    draft.draftSourceID.value = source.id
+    draft.draftNodeID.value = node.id
+    api.listExportNodeCandidates.mockResolvedValue([{ ...node, displayName: '合成新名称' }])
+    await draft.loadChoices(true)
+    expect(draft.nodes.value[0]?.displayName).toBe('合成新名称')
+    expect(draft.draftNodeID.value).toBe(node.id)
+    expect(draft.draftSourceID.value).toBe(source.id)
+    api.listExportNodeCandidates.mockResolvedValue([{ ...node, id: 'synthetic-new-node' }])
+    await draft.loadChoices(true)
+    expect(draft.draftNodeID.value).toBe('')
+    await draft.createDraft(item())
+    expect(api.createDraftFromTemplate).not.toHaveBeenCalled()
+  })
+
+  it('刷新候选期间不创建草稿，失败清除引用且可重新加载', async () => {
+    const { draft, api } = setup()
+    const source = DATA_SOURCE_UI_FIXTURES[0]!
+    api.listDataSources.mockResolvedValue([source])
+    api.listExportNodeCandidates.mockResolvedValue([{ id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64' }])
+    await draft.loadChoices()
+    draft.draftSourceID.value = source.id
+    draft.draftNodeID.value = 'synthetic-node'
+    const response = deferred<ExecutionNodeCandidate[]>()
+    api.listExportNodeCandidates.mockReturnValueOnce(response.promise)
+    const pending = draft.loadChoices(true)
+    const duplicate = draft.loadChoices(true)
+    await draft.createDraft(item())
+    expect(api.createDraftFromTemplate).not.toHaveBeenCalled()
+    expect(api.listExportNodeCandidates).toHaveBeenCalledTimes(2)
+    response.reject({ status: 403 })
+    await Promise.all([pending, duplicate])
+    expect(draft.nodes.value).toEqual([])
+    expect(draft.eligibleSources.value).toEqual([])
+    expect(draft.draftSourceID.value).toBe('')
+    expect(draft.draftNodeID.value).toBe('')
+    await draft.loadChoices()
+    expect(draft.nodes.value).toHaveLength(1)
+    expect(draft.draftNodeID.value).toBe('')
   })
   it('未绑定对象不创建；草稿方法防重，捕获源和节点并保持导航回调', async () => {
     const { catalog, draft, api, navigate } = setup(); await draft.createDraft(item()); expect(api.createDraftFromTemplate).not.toHaveBeenCalled()

@@ -583,7 +583,7 @@ func TestDeleteExecutionNodeReturnsActualOutcome(t *testing.T) {
 		revoked  bool
 	}{
 		{name: "physical delete", outcome: "DELETED", revision: 0},
-		{name: "archive referenced", outcome: "ARCHIVED", revision: 2, revoked: true},
+		{name: "delete referenced", outcome: "DELETED", revision: 0, revoked: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			deleter := &recordingExecutionNodeDeleter{result: store.ExecutionNodeDeletionResult{Outcome: testCase.outcome, Revision: testCase.revision, AgentAccessRevoked: testCase.revoked}}
@@ -1544,7 +1544,7 @@ func TestExportDraftV6DDLBehaviorFailClosed(t *testing.T) {
 }
 
 // TestExportDraftV6Batch2ParametersFlow 验证 EX-I7 第二批的收缩边界：
-// 只发射已观察到效果的分区、类型排除和 MySQL DATE/DATETIME 格式；其余能力继续失败关闭。
+// 分区、类型排除和 MySQL DATE/DATETIME 格式保持原有映射；越界组合仍失败关闭。
 func TestExportDraftV6Batch2ParametersFlow(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
@@ -1569,12 +1569,12 @@ func TestExportDraftV6Batch2ParametersFlow(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"隐藏主键缺少预检查":     `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"enableHiddenPk":true}}}`,
-		"附加信息缺少 sys 权限": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"addExtraMessage":true}}}`,
-		"未观察 TIME 行为":   `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"timeValueFormat":"HH:mm:ss"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
-		"时间格式包含制表符":     `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\tMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
-		"时间格式包含回车":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\rMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
-		"时间格式包含换行":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\nMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"隐藏主键仅结构越界":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"enableHiddenPk":true}}}`,
+		"附加信息缺少 sys 权限":  `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"addExtraMessage":true}}}`,
+		"SQL 携带 TIME 格式": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"SQL","timestampFormats":{"timeValueFormat":"HH:mm:ss"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"时间格式包含制表符":      `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\tMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"时间格式包含回车":       `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\rMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
+		"时间格式包含换行":       `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy\nMM"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
 		request.Header.Set("Idempotency-Key", "synthetic-exi7-gated-"+name+"-key-000")
@@ -1664,9 +1664,8 @@ func TestNormalizeExportConfigV6AllowsOrdinaryQuerySQL(t *testing.T) {
 	}
 }
 
-// TestExportDraftV7TimestampFormatsRequireMySQL 验证当前仅有 MySQL 行为证据的格式参数
-// 不会在 Oracle 兼容模式下被错误发射。
-func TestExportDraftV7TimestampFormatsRequireMySQL(t *testing.T) {
+// TestExportDraftTimestampFormatsRejectOracleTime 验证 MySQL TIME 格式不会在 Oracle 模式下发射。
+func TestExportDraftTimestampFormatsRejectOracleTime(t *testing.T) {
 	t.Parallel()
 	generator, err := commandgen.NewDefault()
 	if err != nil {
@@ -1684,7 +1683,7 @@ func TestExportDraftV7TimestampFormatsRequireMySQL(t *testing.T) {
 		CredentialRefs: staticCredentialReferenceReader{}, Nodes: staticNodeReader{}, Drafts: drafts,
 		Generator: generator, GeneralizedGenerator: generalized, CSRF: allowedCSRF{},
 	})
-	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy/MM/dd"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`
+	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"timeValueFormat":"HH:mm:ss"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/export-drafts", bytes.NewBufferString(body))
 	request.Header.Set("Idempotency-Key", "synthetic-oracle-timestamp-gate-key")
 	response := httptest.NewRecorder()
@@ -1719,7 +1718,7 @@ func TestExportDraftV6RemainingParametersFlow(t *testing.T) {
 
 // TestExportDraftV6RemainingParametersFailClosed 验证第一批参数的越界失败关闭：
 // --where 仅限明确表范围且与 query-sql 互斥；--snapshot 与闪回互斥；
-// --compact-schema 仅限表 DDL；--weak-read/--retry 在专用预检查与恢复链路完成前保持关闭。
+// --compact-schema 仅限表 DDL；弱读仅限数据；--retry 仍由专用续跑入口生成。
 func TestExportDraftV6RemainingParametersFailClosed(t *testing.T) {
 	t.Parallel()
 	drafts := &recordingDraftStore{}
@@ -1733,7 +1732,7 @@ func TestExportDraftV6RemainingParametersFailClosed(t *testing.T) {
 		"一致性快照与闪回组合":         `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"snapshot":true,"flashbackScn":100}}}`,
 		"数据内容携带紧凑 Schema":    `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"compactSchema":true}}}`,
 		"视图 DDL 携带紧凑 Schema": `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["VIEW"],"expressions":[{"name":"synthetic_view"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"ddlBehavior":{"compactSchema":true}}}`,
-		"备库弱读缺少预检查":          `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"weakRead":true}}}`,
+		"仅结构携带弱读":            `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"weakRead":true}}}`,
 		"新建草稿携带保存点续跑":        `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"performanceConfig":{"retry":true}}}`,
 	}
 	for name, body := range cases {
@@ -2333,7 +2332,7 @@ func TestExportDraftVersionRoutingFailsClosed(t *testing.T) {
 		"排除数据类型需数据内容": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"excludeDataTypes":["BLOB"]}}}`, http.StatusUnprocessableEntity},
 		"排除数据类型名非法":   {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"excludeDataTypes":["DECIMAL(10,2)"]}}}`, http.StatusUnprocessableEntity},
 		// EX-F077 隐藏主键仍缺表结构、版本和权限预检查，任何 true 值均失败关闭。
-		"隐藏主键缺少预检查": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"enableHiddenPk":true}}}`, http.StatusUnprocessableEntity},
+		"隐藏主键仅结构越界": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"},"filterConfig":{"enableHiddenPk":true}}}`, http.StatusUnprocessableEntity},
 		// 时间格式只启用 MySQL DATE/DATETIME 两项；即使已启用字段也必须满足格式与内容边界。
 		"时间戳格式需 CSV/CUT": {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"SQL","timestampFormats":{"dateValueFormat":"yyyy/MM/dd"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
 		"时间戳格式串非法":       {`{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"synthetic_table"}]},"contentSelection":{"contentKind":"DATA_ONLY"},"dataFormat":{"formatKind":"CSV","timestampFormats":{"dateValueFormat":"yyyy;DROP"}},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/tmp/out"}}}`, http.StatusUnprocessableEntity},
@@ -3218,7 +3217,7 @@ func (d *recordingDataSourceDeleter) ArchiveDataSource(_ context.Context, input 
 	return d.result, d.err
 }
 
-func (d *recordingExecutionNodeDeleter) DeleteOrArchiveExecutionNode(_ context.Context, input store.ExecutionNodeDeletion) (store.ExecutionNodeDeletionResult, error) {
+func (d *recordingExecutionNodeDeleter) DeleteExecutionNode(_ context.Context, input store.ExecutionNodeDeletion) (store.ExecutionNodeDeletionResult, error) {
 	d.input = input
 	return d.result, d.err
 }
@@ -3456,6 +3455,9 @@ func (s *recordingDraftStore) GetExportDraft(context.Context, string) (store.Exp
 
 func (s *recordingDraftStore) UpdateDraft(_ context.Context, input store.DraftUpdate) (int64, error) {
 	s.created.ConfigJSON, s.created.ConfigFingerprint, s.created.Revision, s.created.ConfigVersion = input.ConfigJSON, input.ConfigFingerprint, input.ExpectedRevision+1, input.ConfigVersion
+	if input.MetadataVersion != "" {
+		s.created.MetadataVersion, s.created.CapabilityVersion = input.MetadataVersion, input.CapabilityVersion
+	}
 	return s.created.Revision, nil
 }
 
@@ -3493,6 +3495,7 @@ type recordingTaskStore struct {
 	listItems         []store.TaskListItem
 	listQuery         store.TaskListQuery
 	countSubject      string
+	countQuery        store.TaskListQuery
 	countErr          error
 	authorizedSubject string
 }
@@ -3783,7 +3786,27 @@ func (s *recordingTaskStore) DeriveTaskFromCheckpoint(_ context.Context, input s
 
 func (s *recordingTaskStore) ListTaskSummaries(_ context.Context, input store.TaskListQuery) ([]store.TaskListItem, error) {
 	s.listQuery = input
+	if input.TaskID != "" {
+		summary, err := s.GetAuthorizedTaskSummary(context.Background(), input.TaskID, input.SubjectID)
+		if err != nil {
+			return nil, err
+		}
+		if summary.TaskID != input.TaskID {
+			return nil, nil
+		}
+		return []store.TaskListItem{{TaskID: summary.TaskID, CreatorSubjectID: summary.CreatorSubjectID, DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, State: summary.State, Database: summary.Database, Table: summary.Table, SubmittedAt: summary.SubmittedAt, UpdatedAt: summary.UpdatedAt, TaskType: "OBDUMPER_EXPORT", SnapshotVersion: summary.SnapshotVersion, ReconciliationRequired: summary.ReconciliationRequired}}, nil
+	}
 	return append([]store.TaskListItem(nil), s.listItems...), nil
+}
+
+// CountFilteredTaskSummaries 记录计数所用查询，验证计数与列表共用同一筛选。
+func (s *recordingTaskStore) CountFilteredTaskSummaries(_ context.Context, input store.TaskListQuery) (int, error) {
+	s.countSubject = input.SubjectID
+	s.countQuery = input
+	if s.countErr != nil {
+		return 0, s.countErr
+	}
+	return len(s.listItems), nil
 }
 
 func (s *recordingTaskStore) CountAuthorizedTaskSummaries(_ context.Context, subjectID string) (int, error) {
@@ -3852,7 +3875,7 @@ func TestAPIDomainsFailClosedWithSafeErrorEnvelope(t *testing.T) {
 
 // TestTaskDerivationEndpoints 验证 EX-I8 派生端点：
 // 1) rebuild-draft 从失败任务冻结快照重建 v6 派生草稿（来源标记落库）；
-// 2) 非失败任务与未知任务失败关闭；
+// 2) 活动任务与未知任务失败关闭，可信终态按已确认操作矩阵开放；
 // 3) resume-checkpoint 按仓储结论创建继续任务或返回稳定门禁错误。
 func TestTaskDerivationEndpoints(t *testing.T) {
 	t.Parallel()
@@ -3876,10 +3899,10 @@ func TestTaskDerivationEndpoints(t *testing.T) {
 	if drafts.created.SourceTaskID != "task-failed" || drafts.created.SourceDerivation != "RERUN_FROM_SCRATCH" {
 		t.Fatalf("derived draft source = %#v", drafts.created)
 	}
-	// 2) 非失败任务与未知任务失败关闭。
+	// 2) 活动任务与未知任务失败关闭。
 	pendingTasks := &recordingTaskStore{derivationSource: func() store.TaskDerivationSource {
 		source := failedSource
-		source.TaskID, source.State = "task-pending", "SUCCEEDED"
+		source.TaskID, source.State = "task-pending", "RUNNING"
 		return source
 	}()}
 	handler = newGeneralizedFlowHandler(t, drafts, prechecks, pendingTasks)
@@ -3887,7 +3910,7 @@ func TestTaskDerivationEndpoints(t *testing.T) {
 	rebuild.Header.Set("Idempotency-Key", "synthetic-derivation-rebuild-key-0002")
 	rebuilt = httptest.NewRecorder()
 	handler.ServeHTTP(rebuilt, rebuild)
-	if rebuilt.Code != http.StatusUnprocessableEntity || !bytes.Contains(rebuilt.Body.Bytes(), []byte("TASK_NOT_FAILED")) {
+	if rebuilt.Code != http.StatusUnprocessableEntity || !bytes.Contains(rebuilt.Body.Bytes(), []byte("TASK_DERIVATION_UNAVAILABLE")) {
 		t.Fatalf("non-failed rebuild response=%d body=%s", rebuilt.Code, rebuilt.Body.String())
 	}
 	missingTasks := &recordingTaskStore{}

@@ -14,6 +14,7 @@ import (
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/jdbcprobe"
 	"ob-data-orch/internal/outputpath"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 var (
@@ -109,6 +110,8 @@ type Probe struct {
 	AvailableBytes        func(string) (uint64, error)
 	StorageConnectivity   StorageConnectivityProber
 	StorageAuth           StorageAuthProber
+	// StorageWrite 只检查固定临时 multipart 上传，不允许修改现有对象。
+	StorageWrite CredentialStorageWriteProber
 	// StorageCredentials 只在明确启用凭据探测的 STORAGE_AUTH 检查中短时解析。
 	// 默认失败关闭探测器不会调用它，避免尚未获授权的实现接触存储秘密。
 	StorageCredentials agentpreflight.StorageCredentialResolver
@@ -124,6 +127,8 @@ func (p Probe) Probe(ctx context.Context, check agentpreflight.CheckID, request 
 		return p.jdbcResult(ctx, check, request)
 	case agentpreflight.CheckToolEnvironment:
 		return p.runtimeResult(ctx, check), nil
+	case agentpreflight.CheckNodeResource:
+		return nodeResourceResult(request), nil
 	case agentpreflight.CheckOutputPath:
 		return p.outputPathResult(request), nil
 	case agentpreflight.CheckOutputEmpty:
@@ -134,6 +139,8 @@ func (p Probe) Probe(ctx context.Context, check agentpreflight.CheckID, request 
 		return p.storageConnectivityResult(ctx, request)
 	case agentpreflight.CheckStorageAuth:
 		return p.storageAuthResult(ctx, request)
+	case agentpreflight.CheckStorageWrite:
+		return p.storageWriteResult(ctx, request)
 	default:
 		return agentpreflight.Result{}, agentpreflight.ErrInvalidRequest
 	}
@@ -166,6 +173,14 @@ func (p Probe) runtimeResult(ctx context.Context, check agentpreflight.CheckID) 
 
 func (p Probe) outputPathResult(request agentpreflight.Request) agentpreflight.Result {
 	paths := []string{request.OutputPath}
+	missingTemporaryPath := false
+	if request.OutputKind.IsStorageOutput() {
+		paths = nil
+		missingTemporaryPath = request.StorageTarget == nil || request.StorageTarget.TmpPath == ""
+		if !missingTemporaryPath {
+			paths = append(paths, request.StorageTarget.TmpPath)
+		}
+	}
 	if request.LogPath != "" {
 		paths = append(paths, request.LogPath)
 	}
@@ -189,6 +204,9 @@ func (p Probe) outputPathResult(request agentpreflight.Request) agentpreflight.R
 			return unavailableResult(agentpreflight.CheckOutputPath)
 		}
 	}
+	if missingTemporaryPath {
+		return unavailableResult(agentpreflight.CheckOutputPath)
+	}
 	return agentpreflight.Result{Check: agentpreflight.CheckOutputPath, Status: agentpreflight.StatusPassed, EvidenceCode: "OUTPUT_PATH_WRITABLE"}
 }
 
@@ -198,7 +216,7 @@ func (p Probe) outputEmptyResult(request agentpreflight.Request) agentpreflight.
 	}
 	directory, err := secureOutputDirectory(request)
 	if err != nil {
-		return unavailableResult(agentpreflight.CheckOutputEmpty)
+		return agentpreflight.Result{Check: agentpreflight.CheckOutputEmpty, Status: agentpreflight.StatusUnknown, EvidenceCode: precheckcontract.EvidenceBlockedByOutputPath}
 	}
 	// OBDUMPER 会在实际启动时创建尚不存在的导出目录；该目录在创建前必然为空，预检查不抢先创建它。
 	if !directory.exists {
@@ -227,13 +245,13 @@ func (p Probe) availableSpaceResult(request agentpreflight.Request) agentpreflig
 		}
 		directory, err := secureDirectory(request, request.StorageTarget.TmpPath)
 		if err != nil {
-			return unavailableResult(agentpreflight.CheckAvailableSpace)
+			return agentpreflight.Result{Check: agentpreflight.CheckAvailableSpace, Status: agentpreflight.StatusUnknown, EvidenceCode: precheckcontract.EvidenceBlockedByOutputPath}
 		}
 		probePath = directory.probeDirectory
 	} else {
 		directory, err := secureOutputDirectory(request)
 		if err != nil {
-			return unavailableResult(agentpreflight.CheckAvailableSpace)
+			return agentpreflight.Result{Check: agentpreflight.CheckAvailableSpace, Status: agentpreflight.StatusUnknown, EvidenceCode: precheckcontract.EvidenceBlockedByOutputPath}
 		}
 		probePath = directory.probeDirectory
 	}
@@ -353,14 +371,20 @@ func validLocalPlatform(platform commandgen.Platform) bool {
 }
 
 func obdumperLauncher(toolHome string, platform commandgen.Platform) (string, bool) {
-	if !filepath.IsAbs(toolHome) {
+	return ToolLauncherPath(toolHome, platform, "obdumper")
+}
+
+// ToolLauncherPath 根据已支持平台返回官方工具的固定启动文件。
+// toolHome 始终是包含 lib/conf 的安装根；只接受两个固定工具，不把目录事实扩成任意命令。
+func ToolLauncherPath(toolHome string, platform commandgen.Platform, tool string) (string, bool) {
+	if !filepath.IsAbs(toolHome) || (tool != "obdumper" && tool != "obloader") {
 		return "", false
 	}
 	switch platform {
 	case commandgen.PlatformWindowsAMD64:
-		return filepath.Join(toolHome, "bin", "windows", "obdumper.bat"), true
+		return filepath.Join(toolHome, "bin", "windows", tool+".bat"), true
 	case commandgen.PlatformLinuxAMD64, commandgen.PlatformLinuxARM64:
-		return filepath.Join(toolHome, "bin", "obdumper"), true
+		return filepath.Join(toolHome, "bin", tool), true
 	default:
 		return "", false
 	}
@@ -374,6 +398,8 @@ func unavailableResult(check agentpreflight.CheckID) agentpreflight.Result {
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "OBJECT_ACCESS_UNAVAILABLE"}
 	case agentpreflight.CheckToolEnvironment:
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "TOOL_RUNTIME_UNAVAILABLE"}
+	case agentpreflight.CheckNodeResource:
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "NODE_RESOURCE_UNAVAILABLE"}
 	case agentpreflight.CheckOutputPath, agentpreflight.CheckOutputEmpty:
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "OUTPUT_PATH_UNAVAILABLE"}
 	case agentpreflight.CheckAvailableSpace:
@@ -382,6 +408,8 @@ func unavailableResult(check agentpreflight.CheckID) agentpreflight.Result {
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_CONNECTIVITY_UNAVAILABLE"}
 	case agentpreflight.CheckStorageAuth:
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_AUTH_UNAVAILABLE"}
+	case agentpreflight.CheckStorageWrite:
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_WRITE_UNAVAILABLE"}
 	default:
 		return agentpreflight.Result{}
 	}

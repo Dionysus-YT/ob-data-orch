@@ -54,6 +54,7 @@ const completeValues: ExportDraftFormValues = {
   flashbackScn: '',
   flashbackTimestamp: '',
   snapshot: false,
+  weakRead: false,
   thread: '',
   pageSize: '',
   parallelMacro: '',
@@ -64,6 +65,7 @@ const completeValues: ExportDraftFormValues = {
   retainSchema: false,
   compactSchema: false,
   addExtraMessage: false,
+  sequencePolicy: '',
   partition: '',
   excludeDataTypes: '',
   enableHiddenPk: false,
@@ -76,9 +78,15 @@ const completeValues: ExportDraftFormValues = {
   nlsDateFormat: '',
   nlsTimestampFormat: '',
   nlsTimestampTzFormat: '',
+  preserveZeroDatetime: false,
 }
 
 describe('泛化导出草稿输入', () => {
+  it('NONE 包围模式必须显式提供转义字符', () => {
+    expect(validateExportDraftInput({ ...completeValues, columnQuoteMode: 'none' })).toMatchObject({ valid: false, message: expect.stringContaining('转义字符') })
+    expect(validateExportDraftInput({ ...completeValues, columnQuoteMode: 'none', escapeCharacter: '\\' })).toMatchObject({ valid: true })
+  })
+
   it('整库排除表不会在草稿转换时丢失', () => {
     const result = validateExportDraftInput({ ...completeValues, scopeKind: 'ALL', objectNames: [], excludeTables: ['synthetic_excluded'] })
     expect(result).toMatchObject({ valid: true })
@@ -427,10 +435,12 @@ describe('泛化导出草稿输入', () => {
       storagePath: '/exports',
       storageEndpoint: 'oss-cn-hangzhou.aliyuncs.com',
       storageCredentialId: 'storage-1',
+      tmpPath: '/E:/workespace/tmp/upload',
       storageCredentialRevision: 3,
       storageCredentialProvider: 'OSS',
     })
     expect(bound).toMatchObject({ valid: true })
+    expect(validateExportDraftInput({ ...completeValues, outputKind: 'OSS', storageBucket: 'my-bucket', storagePath: '/exports', storageEndpoint: 'oss-cn-hangzhou.aliyuncs.com', tmpPath: '' })).toMatchObject({ valid: false, message: expect.stringContaining('需要填写本地临时分块目录') })
     if (bound.valid) {
       expect(bound.input.config.outputConfig.storageCredential).toEqual({ storageCredentialId: 'storage-1', revision: 3 })
     }
@@ -439,6 +449,12 @@ describe('泛化导出草稿输入', () => {
     // provider 与输出类型不一致、缺修订均失败关闭。
     expect(validateExportDraftInput({ ...completeValues, outputKind: 'OSS', storageBucket: 'bucket', storagePath: '/exports', storageEndpoint: 'endpoint', storageCredentialId: 'storage-1', storageCredentialRevision: 1, storageCredentialProvider: 'S3' })).toMatchObject({ valid: false, message: expect.stringContaining('不一致') })
     expect(validateExportDraftInput({ ...completeValues, outputKind: 'OSS', storageBucket: 'bucket', storagePath: '/exports', storageEndpoint: 'endpoint', storageCredentialId: 'storage-1', storageCredentialRevision: 0, storageCredentialProvider: 'OSS' })).toMatchObject({ valid: false, message: expect.stringContaining('修订') })
+  })
+
+  it('包含列与排除列的重复名称在进入固定元数据检查前被拒绝', () => {
+    for (const fields of [{ includeColumnNames: 'id,id' }, { excludeColumnNames: 'id,id' }, { partition: 'p0,p0' }]) {
+      expect(validateExportDraftInput({ ...completeValues, ...fields })).toMatchObject({ valid: false, message: expect.stringContaining('不能重复') })
+    }
   })
 
   it('拒绝空字段、非法对象名、视图导出数据和不匹配平台的输出路径', () => {
@@ -559,7 +575,7 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, compactSchema: true })).toMatchObject({ valid: false, message: expect.stringContaining('紧凑 Schema') })
   })
 
-  it('快照与闪回参数互斥，并忽略旧表单残留的 weakRead 与 retry', () => {
+  it('快照与闪回参数互斥，弱读可以提交而旧表单 retry 不进入草稿', () => {
     const snapshot = validateExportDraftInput({ ...completeValues, snapshot: true })
     expect(snapshot).toMatchObject({ valid: true })
     if (snapshot.valid) {
@@ -568,7 +584,7 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, snapshot: true, flashbackScn: '100' })).toMatchObject({ valid: false, message: expect.stringContaining('一致性快照') })
     expect(validateExportDraftInput({ ...completeValues, snapshot: true, flashbackTimestamp: '2026-08-06 00:00:00' })).toMatchObject({ valid: false, message: expect.stringContaining('一致性快照') })
 
-    // 运行时旧页面残留也不能绕过构造器重新发送已关闭的参数。
+    // 检查点继续仍由独立事务控制；旧页面残留不能直接构造 retry。
     const legacyResidue = validateExportDraftInput({
       ...completeValues,
       snapshot: true,
@@ -579,14 +595,14 @@ describe('泛化导出草稿输入', () => {
     expect(legacyResidue).toMatchObject({ valid: true })
     if (legacyResidue.valid) {
       expect(legacyResidue.input.config.filterConfig).toMatchObject({ snapshot: true })
-      expect(legacyResidue.input.config.filterConfig).not.toHaveProperty('weakRead')
+      expect(legacyResidue.input.config.filterConfig).toMatchObject({ weakRead: true })
       expect(legacyResidue.input.config.performanceConfig).toMatchObject({ thread: 4 })
       expect(legacyResidue.input.config.performanceConfig).not.toHaveProperty('retry')
     }
   })
 
-  // 分区筛选与类型排除已验证；隐藏主键必须在专用预检查完成前保持浏览器门禁。
-  it('为指定表数据发送分区筛选与类型排除，并拒绝越界与隐藏主键残留', () => {
+  // 草稿允许配置隐藏主键；实际条件仍必须由固定预检查复验。
+  it('为指定表数据发送分区筛选与类型排除，并拒绝越界参数', () => {
     const table = validateExportDraftInput({ ...completeValues, partition: 'p0,p2', excludeDataTypes: 'BLOB,decimal' })
     expect(table).toMatchObject({ valid: true })
     if (table.valid) {
@@ -600,10 +616,13 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, partition: 'p0', querySql: 'select 1' })).toMatchObject({ valid: false, message: expect.stringContaining('互斥') })
     expect(validateExportDraftInput({ ...completeValues, partition: 'p0; DROP' })).toMatchObject({ valid: false, message: expect.stringContaining('分区名') })
     expect(validateExportDraftInput({ ...completeValues, excludeDataTypes: 'BLOB;DROP' })).toMatchObject({ valid: false, message: expect.stringContaining('数据类型名') })
-    expect(validateExportDraftInput({ ...completeValues, enableHiddenPk: true })).toMatchObject({ valid: false, message: expect.stringContaining('隐藏主键') })
+    const hidden = validateExportDraftInput({ ...completeValues, enableHiddenPk: true })
+    expect(hidden).toMatchObject({ valid: true })
+    if (hidden.valid) expect(hidden.input.config.filterConfig).toMatchObject({ enableHiddenPk: true })
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', enableHiddenPk: true })).toMatchObject({ valid: false })
   })
 
-  it('仅为 MySQL CSV/CUT 数据内容发送 DATE/DATETIME 时间格式，并拒绝非 ASCII 空白与未验证字段', () => {
+  it('日期时间格式按租户与输出格式活动，并拒绝非 ASCII 空白和越界字段', () => {
     const csv = validateExportDraftInput({ ...completeValues, dateValueFormat: 'yyyy/MM/dd', datetimeValueFormat: 'yyyy/MM/dd HH:mm:ss' })
     expect(csv).toMatchObject({ valid: true })
     if (csv.valid) {
@@ -611,7 +630,7 @@ describe('泛化导出草稿输入', () => {
     }
     const cut = validateExportDraftInput({ ...completeValues, formatKind: 'CUT', dateValueFormat: 'yyyy/MM/dd' })
     expect(cut).toMatchObject({ valid: true })
-    // SQL、仅 DDL 与 Oracle 均不能携带时间格式；格式串拒绝注入字符与制表符、回车、换行。
+    // 值格式只随 CSV/CUT 数据活动，格式串拒绝注入字符与非法空白。
     expect(validateExportDraftInput({ ...completeValues, formatKind: 'SQL', dateValueFormat: 'yyyy/MM/dd' })).toMatchObject({ valid: false, message: expect.stringContaining('MySQL') })
     expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', dateValueFormat: 'yyyy/MM/dd' })).toMatchObject({ valid: false, message: expect.stringContaining('MySQL') })
     expect(validateExportDraftInput({ ...completeValues, datetimeValueFormat: 'yyyy;DROP' })).toMatchObject({ valid: false, message: expect.stringContaining('不支持的字符') })
@@ -622,37 +641,49 @@ describe('泛化导出草稿输入', () => {
     expect(validateExportDraftInput({ ...completeValues, dateValueFormat: ' yyyy/MM/dd' })).toMatchObject({ valid: false, message: expect.stringContaining('首尾') })
     expect(validateExportDraftInput({ ...completeValues, dateValueFormat: 'yyyy/MM/dd ' })).toMatchObject({ valid: false, message: expect.stringContaining('首尾') })
     for (const unverifiedTimestampFormat of [
-      { timeValueFormat: 'HH:mm:ss' },
-      { timestampValueFormat: 'yyyy-MM-dd HH:mm:ss' },
       { timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
       { timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss' },
       { nlsDateFormat: 'yyyy-MM-dd' },
       { nlsTimestampFormat: 'yyyy-MM-dd HH:mm:ss' },
       { nlsTimestampTzFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
     ] as const) {
-      expect(validateExportDraftInput({ ...completeValues, ...unverifiedTimestampFormat })).toMatchObject({ valid: false, message: expect.stringContaining('DATE 与 DATETIME') })
+      expect(validateExportDraftInput({ ...completeValues, ...unverifiedTimestampFormat })).toMatchObject({ valid: false, message: expect.stringContaining('Oracle') })
     }
     for (const oracleTimestampFormat of [
-      { dateValueFormat: 'yyyy/MM/dd' },
       { timeValueFormat: 'HH:mm:ss' },
       { datetimeValueFormat: 'yyyy/MM/dd HH:mm:ss' },
-      { timestampValueFormat: 'yyyy-MM-dd HH:mm:ss' },
-      { timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
-      { timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss' },
-      { nlsDateFormat: 'yyyy-MM-dd' },
-      { nlsTimestampFormat: 'yyyy-MM-dd HH:mm:ss' },
-      { nlsTimestampTzFormat: 'yyyy-MM-dd HH:mm:ss TZD' },
     ] as const) {
       expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', ...oracleTimestampFormat })).toMatchObject({ valid: false, message: expect.stringContaining('MySQL') })
     }
   })
 
-  it('附加对象信息在 sys 权限预检查完成前对所有内容组合失败关闭', () => {
+  it('附加对象信息要求表 DDL 与当前 sys 凭据', () => {
     for (const contentKind of ['DATA_ONLY', 'DDL_ONLY', 'DDL_AND_DATA'] as const) {
       expect(validateExportDraftInput({ ...completeValues, contentKind, addExtraMessage: true })).toMatchObject({
         valid: false,
-        message: expect.stringContaining('sys 权限预检查'),
       })
     }
+    const configured = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', addExtraMessage: true, sysCredentialState: 'AVAILABLE' })
+    expect(configured).toMatchObject({ valid: true })
+    if (configured.valid) expect(configured.input.config.ddlBehavior).toMatchObject({ addExtraMessage: true })
+  })
+
+  it('发送全部活动时间字段，NLS 与文件值格式分别校验', () => {
+    const mysql = validateExportDraftInput({ ...completeValues, timeValueFormat: 'HH:mm:ss', timestampValueFormat: 'yyyy-MM-dd HH:mm:ss', preserveZeroDatetime: true })
+    expect(mysql).toMatchObject({ valid: true })
+    if (mysql.valid) expect(mysql.input.config.dataFormat?.timestampFormats).toMatchObject({ timeValueFormat: 'HH:mm:ss', timestampValueFormat: 'yyyy-MM-dd HH:mm:ss', preserveZeroDatetime: true })
+    const oracle = validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', dateValueFormat: 'yyyy-MM-dd HH:mm:ss', timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss', timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss', nlsDateFormat: 'YYYY-MM-DD HH24:MI:SS', nlsTimestampFormat: 'YYYY-MM-DD HH24:MI:SS:FF9', nlsTimestampTzFormat: 'YYYY-MM-DD HH24:MI:SS TZR' })
+    expect(oracle).toMatchObject({ valid: true })
+    if (oracle.valid) expect(oracle.input.config.dataFormat?.timestampFormats).toMatchObject({ nlsDateFormat: 'YYYY-MM-DD HH24:MI:SS', timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss' })
+    expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', formatKind: 'SQL', nlsDateFormat: 'YYYY-MM-DD' })).toMatchObject({ valid: true })
+    expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', preserveZeroDatetime: true })).toMatchObject({ valid: false })
+  })
+
+  it('序列策略仅随序列 DDL 构造，结果集不能携带读取开关', () => {
+    const sequence = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', objectType: 'SEQUENCE', sequencePolicy: 'RESTART' })
+    expect(sequence).toMatchObject({ valid: true })
+    if (sequence.valid) expect(sequence.input.config.ddlBehavior).toMatchObject({ sequencePolicy: 'RESTART' })
+    expect(validateExportDraftInput({ ...completeValues, sequencePolicy: 'RESTART' })).toMatchObject({ valid: false })
+    expect(validateExportDraftInput({ ...completeValues, scopeKind: 'QUERY_RESULT', querySql: 'select 1', queryResultLimit: '1000', weakRead: true })).toMatchObject({ valid: false })
   })
 })

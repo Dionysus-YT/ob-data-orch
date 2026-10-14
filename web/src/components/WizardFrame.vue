@@ -34,7 +34,7 @@ const steps = computed(() => {
     <OrchTaskStepRail v-else :steps="steps" :active-step="activeStep ?? 1" />
     <div class="orch-task-decision"><div class="orch-task-context"><slot name="actions" /><Button @click="openSummary">查看任务摘要</Button></div><section class="orch-task-workspace"><slot /></section></div>
     <div class="orch-task-actions"><slot name="footer"><footer class="wizard-footer"><Button disabled aria-describedby="import-disabled-reason">上一步</Button><span id="import-disabled-reason" class="wizard-baseline-note">当前导入流程尚未开放草稿保存与任务提交。</span><span class="footer-grow" /><Button type="primary" disabled aria-describedby="import-disabled-reason">下一步</Button></footer></slot></div>
-    <Drawer :open="summaryOpen" :width="product.inspector.width" root-class-name="orch-inspector" @close="summaryOpen = false" @after-open-change="afterSummaryOpenChange">
+    <Drawer :open="summaryOpen" :width="kind === 'export' ? 'min(100vw, var(--ob-product-inspector-width))' : product.inspector.width" :body-style="kind === 'export' ? { padding: 0 } : undefined" root-class-name="orch-inspector" @close="summaryOpen = false" @after-open-change="afterSummaryOpenChange">
       <template #title><h2 :id="summaryTitleId" ref="summaryHeading" class="ant-drawer-title" tabindex="-1">任务摘要</h2></template>
       <div class="orch-task-summary"><slot name="summary" /></div>
     </Drawer>

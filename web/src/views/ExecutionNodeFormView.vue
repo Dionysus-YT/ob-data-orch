@@ -1,106 +1,197 @@
 <script setup lang="ts">
-import { Form as AForm, FormItem as AFormItem } from 'ant-design-vue'
-import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Textarea as ATextarea } from 'ant-design-vue'
-import { computed, nextTick, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { Alert as AAlert, Button as AButton, Collapse as ACollapse, CollapsePanel as ACollapsePanel, Drawer as ADrawer, Form as AForm, FormItem as AFormItem, Input as AInput, InputNumber as AInputNumber, Select as ASelect, SelectOption as ASelectOption, Skeleton as ASkeleton, Textarea as ATextarea } from 'ant-design-vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
+import { useAntDrawerDialog } from '@/composables/useAntDrawerDialog'
+import { useOperationMessage } from '@/composables/useOperationMessage'
+import { product } from '@/platform/tokens'
+import type { NodeFormField } from '@/workbench/nodes/nodeFormRules'
 import { useNodeForm } from '@/workbench/nodes/useNodeForm'
+import { nodePlatformHelp } from '@/workbench/nodes/nodePlatformRules'
 
+const props = defineProps<{ listRestricted?: boolean }>()
+const emit = defineEmits<{ saved: []; saving: [value: boolean] }>()
 const route = useRoute()
 const router = useRouter()
 const errorSummary = ref<HTMLElement>()
+const advancedPanels = ref<string[]>([])
+const confirmClose = ref(false)
 const nodeID = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const isNew = computed(() => route.name === 'node-new')
-const { node, loading, busy, failure, notice, formErrors, form, errorEntries, loadNode, save, clearError, validateField } = useNodeForm(
+let navigatingCreated = false
+let resolveNavigation: ((leave: boolean) => void) | undefined
+const { session, node, loading, busy, restricted, dirty, failure, notice, formErrors, form, operatingSystem, cpuArchitecture, operatingSystemOptions, cpuArchitectureOptions, errorEntries, loadNode, save, clearError, validateField, revokeAccess } = useNodeForm(
   nodeID, isNew,
-  id => router.replace({ name: 'node-detail', params: { id }, query: { registration: 'created' } }),
-  async active => { await nextTick(); if (active()) errorSummary.value?.focus() },
+  async id => {
+    // 仅已创建事务的后续导航可越过保存锁；其他关闭与路由操作仍受未保存确认约束。
+    navigatingCreated = true
+    try { await router.replace({ name: 'node-detail', params: { id }, query: { registration: 'created' } }) }
+    finally { navigatingCreated = false }
+  },
+  async active => {
+    if (formErrors.budgetPolicy) advancedPanels.value = ['budget']
+    await nextTick()
+    if (active()) { errorSummary.value?.focus(); errorSummary.value?.scrollIntoView({ block: 'nearest' }) }
+  },
 )
-const rootPlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? '/E:/ob-data/exports' : '/var/lib/ob-data-orch/exports')
-const toolHomePlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? 'E:\\tools\\ob-loader-dumper-4.3.5-RELEASE' : '/opt/ob-loader-dumper-4.3.5-RELEASE')
-const javaPathPlaceholder = computed(() => form.platform === 'WINDOWS_AMD64' ? 'C:\\Program Files\\Java\\jdk8\\bin\\java.exe' : '/usr/lib/jvm/java-8/bin/java')
+const titleID = useId()
+const { MessageContext } = useOperationMessage(notice)
+const { heading: drawerHeading, afterOpenChange } = useAntDrawerDialog(titleID, close, () => busy.value)
+void drawerHeading
+const platformHelp = computed(() => nodePlatformHelp(form.platform))
+
+watch(busy, value => emit('saving', value), { flush: 'sync' })
+watch(() => props.listRestricted, denied => { if (denied) revokeAccess() }, { immediate: true, flush: 'sync' })
+watch([nodeID, isNew], () => { advancedPanels.value = [] }, { flush: 'sync' })
+watch(node, value => {
+  if (value?.budgetPolicy?.systemReservedBytes || value?.budgetPolicy?.taskOverheadBytes) advancedPanels.value = ['budget']
+})
+
+function close() { if (!busy.value) void router.replace({ name: 'nodes' }) }
+function guardNavigation() {
+  if (navigatingCreated) return true
+  if (busy.value) return false
+  if (!dirty.value) return true
+  // 新导航替代旧意图，取消旧等待，不能让多个待决导航共享一次确认。
+  resolveNavigation?.(false)
+  confirmClose.value = true
+  return new Promise<boolean>(resolve => { resolveNavigation = resolve })
+}
+function finishNavigation(leave: boolean) {
+  confirmClose.value = false
+  const resolve = resolveNavigation
+  resolveNavigation = undefined
+  resolve?.(leave)
+}
+onBeforeRouteLeave(guardNavigation)
+onBeforeRouteUpdate(guardNavigation)
+onBeforeUnmount(() => { finishNavigation(false); emit('saving', false) })
+
+async function saveForm() {
+  if (props.listRestricted) return
+  const active = session.capture()
+  if (await save() && active()) emit('saved')
+}
+async function focusField(field: NodeFormField, id: string) {
+  const active = session.capture()
+  if (field === 'budgetPolicy') advancedPanels.value = ['budget']
+  await nextTick()
+  if (!active()) return
+  const input = document.getElementById(id)
+  input?.focus()
+  input?.scrollIntoView({ block: 'nearest' })
+}
 </script>
 
 <template>
-  <section class="page-heading node-form-heading">
-    <div>
-      <h1>{{ isNew ? '注册执行节点' : '编辑执行节点' }}</h1>
-      <p>登记目标平台与本机路径。保存后由目标机器上的 Agent 回写运行事实，管理字段不能代替环境检查。</p>
-    </div>
-    <RouterLink v-slot="{ href, navigate }" to="/nodes" custom><AButton :href="href" @click="navigate">返回执行节点</AButton></RouterLink>
-  </section>
-
-  <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }}</p>
-  <p v-else-if="notice" class="feedback feedback-notice" role="status">{{ notice }}</p>
-
-  <section v-if="loading" class="content-card loading-state">正在加载执行节点…</section>
-  <section v-else-if="!isNew && !node" class="content-card empty-state">
-    <h2>无法打开执行节点</h2>
-    <p>{{ failure || '节点详情不可用。' }}</p>
-    <AButton @click="loadNode">重试</AButton>
-  </section>
-
-  <div v-else class="node-form-workspace">
-    <AForm :model="form" :disabled="busy" layout="vertical" class="node-form-surface" @submit.prevent="save">
-      <div v-if="errorEntries.length" ref="errorSummary" class="node-error-summary" role="alert" tabindex="-1">
-        <strong>请检查以下字段</strong>
-        <ul><li v-for="entry in errorEntries" :key="entry.field"><a :href="`#${entry.id}`">{{ entry.label }}：{{ entry.message }}</a></li></ul>
-      </div>
-      <section class="node-form-section" aria-labelledby="node-basics-title">
-        <h2 id="node-basics-title">节点标识</h2>
-        <p>名称用于任务和日志中识别节点；目标平台决定 Agent 安装包与路径格式。</p>
-        <div class="node-form-grid">
-          <AFormItem label="节点名称" name="displayName" html-for="node-display-name" required :validate-status="formErrors.displayName ? 'error' : undefined" :help="formErrors.displayName">
-            <AInput id="node-display-name" v-model:value.trim="form.displayName" :aria-invalid="Boolean(formErrors.displayName)" :maxlength="200" @input="clearError('displayName')" @blur="validateField('displayName')" />
-          </AFormItem>
-          <AFormItem label="目标平台" name="platform" html-for="node-platform" required :validate-status="formErrors.platform ? 'error' : undefined" :help="formErrors.platform" extra="这是任务路由声明；实际操作系统与架构以后续 Agent 上报为准。">
-            <ASelect id="node-platform" v-model:value="form.platform" :aria-invalid="Boolean(formErrors.platform)" @change="clearError('platform')">
-              <ASelectOption value="WINDOWS_AMD64">Windows AMD64</ASelectOption>
-              <ASelectOption value="LINUX_AMD64">Kylin Linux AMD64</ASelectOption>
-              <ASelectOption value="LINUX_ARM64">Kylin Linux ARM64</ASelectOption>
-            </ASelect>
-          </AFormItem>
+  <MessageContext />
+  <ADrawer :open="true" :width="'min(' + product.source.editorWidth + 'px, 100vw)'" :closable="!busy" :keyboard="!busy" :mask-closable="false" :push="false" root-class-name="orch-inspector" class="orch-ui node-editor" @close="close" @after-open-change="afterOpenChange">
+    <template #title><h2 :id="titleID" ref="drawerHeading" class="ant-drawer-title" tabindex="-1">{{ isNew ? '注册执行节点' : '编辑执行节点' }}</h2></template>
+    <ASkeleton v-if="loading" active :paragraph="{ rows: 8 }" role="status" aria-label="正在加载执行节点配置" />
+    <template v-else>
+      <AAlert v-if="failure" class="orch-feedback" type="error" :message="restricted ? '节点已不可访问' : '操作未完成'" :description="failure" show-icon>
+        <template #action><AButton v-if="!isNew && !node && !listRestricted" @click="loadNode">重新读取</AButton></template>
+      </AAlert>
+      <AForm v-if="!restricted && (isNew || node)" id="node-configuration" :model="form" :disabled="busy" layout="vertical" aria-label="执行节点配置" novalidate @submit.prevent="saveForm">
+        <p class="node-editor-intro">{{ isNew ? '填写目标机器上的配置，保存后继续 Agent 关联。' : '修改后由 Agent 在空闲时同步配置，无需重新注册。' }}</p>
+        <div v-if="errorEntries.length" ref="errorSummary" class="node-error-summary" tabindex="-1">
+          <AAlert type="error" message="请检查以下字段" show-icon role="alert">
+            <template #description><ul><li v-for="entry in errorEntries" :key="entry.field"><a :href="'#' + entry.id" @click.prevent="focusField(entry.field, entry.id)">{{ entry.label }}：{{ entry.message }}</a></li></ul></template>
+          </AAlert>
         </div>
-      </section>
-      <section class="node-form-section" aria-labelledby="node-runtime-title">
-        <h2 id="node-runtime-title">工具运行时</h2>
-        <p>路径只作为目标机器上的声明配置；Agent 同步后会在本机核验。</p>
-        <div class="node-form-grid">
-          <AFormItem label="OB Loader/Dumper 安装目录" name="toolHome" html-for="node-tool-home" required :validate-status="formErrors.toolHome ? 'error' : undefined" :help="formErrors.toolHome" extra="填写目标执行机上的工具安装根目录；首次关联后由 Agent 在本机核验。">
-            <AInput id="node-tool-home" v-model:value.trim="form.toolHome" :aria-invalid="Boolean(formErrors.toolHome)" :placeholder="toolHomePlaceholder" @input="clearError('toolHome')" @blur="validateField('toolHome')" />
-          </AFormItem>
-          <AFormItem label="工具专用 Java 8 路径" name="javaPath" html-for="node-java-path" required :validate-status="formErrors.javaPath ? 'error' : undefined" :help="formErrors.javaPath" extra="填写 Java 可执行文件的绝对路径；不会读取系统 PATH，也不修改机器环境变量。">
-            <AInput id="node-java-path" v-model:value.trim="form.javaPath" :aria-invalid="Boolean(formErrors.javaPath)" :placeholder="javaPathPlaceholder" @input="clearError('javaPath')" @blur="validateField('javaPath')" />
-          </AFormItem>
-        </div>
-      </section>
-      <section class="node-form-section" aria-labelledby="node-roots-title">
-        <h2 id="node-roots-title">导出数据目录</h2>
-        <p>只允许导出写入列出的节点侧目录；具体任务还会独立复核路径与空间。</p>
-        <AFormItem label="导出数据目录白名单" name="allowedRoots" html-for="node-allowed-roots" required :validate-status="formErrors.allowedRoots ? 'error' : undefined" :help="formErrors.allowedRoots" extra="每行一个绝对目录。Windows 使用 /E:/exports 形式；Linux 使用 / 开头的绝对路径。">
-          <ATextarea id="node-allowed-roots" v-model:value="form.allowedRootsText" :aria-invalid="Boolean(formErrors.allowedRoots)" :rows="4" :placeholder="rootPlaceholder" @input="clearError('allowedRoots')" @blur="validateField('allowedRoots')" />
-        </AFormItem>
-      </section>
-      <div class="node-form-boundary" role="note">{{ isNew ? '新节点固定为已禁用、待关联。保存后进入一次性 Agent 关联。' : '修改配置后保留当前管理状态；Agent 空闲时同步配置并重新检查环境。' }}未取得有效环境事实前，节点不能接收新任务。</div>
-      <div class="node-form-actions">
-        <AButton :loading="busy" html-type="submit" type="primary">{{ isNew ? '保存并继续 Agent 关联' : '保存修改' }}</AButton>
-        <RouterLink v-slot="{ href, navigate }" to="/nodes" custom><AButton :href="href" @click="navigate">取消</AButton></RouterLink>
+        <fieldset :disabled="busy" class="node-editor-fields">
+          <section class="node-editor-section" aria-labelledby="node-basics-title">
+            <h3 id="node-basics-title">基本信息</h3>
+            <div class="node-editor-group node-editor-grid">
+              <AFormItem class="node-editor-name" label="节点名称" name="displayName" html-for="node-display-name" required :validate-status="formErrors.displayName ? 'error' : undefined">
+                <AInput id="node-display-name" v-model:value.trim="form.displayName" :aria-invalid="Boolean(formErrors.displayName)" :aria-describedby="formErrors.displayName ? 'node-name-error' : undefined" :maxlength="200" placeholder="便于识别的节点名称" @input="clearError('displayName')" @blur="validateField('displayName')" />
+                <template v-if="formErrors.displayName" #help><span id="node-name-error">{{ formErrors.displayName }}</span></template>
+              </AFormItem>
+              <AFormItem label="操作系统" name="platform" html-for="node-platform" required :validate-status="formErrors.platform ? 'error' : undefined">
+                <ASelect id="node-platform" v-model:value="operatingSystem" :aria-invalid="Boolean(formErrors.platform)" :aria-describedby="formErrors.platform ? 'node-platform-error' : undefined">
+                  <ASelectOption v-for="option in operatingSystemOptions" :key="option.value" :value="option.value">{{ option.label }}</ASelectOption>
+                </ASelect>
+                <template v-if="formErrors.platform" #help><span id="node-platform-error">{{ formErrors.platform }}</span></template>
+              </AFormItem>
+              <!-- Select 不把描述属性传给内部输入框，用字段分组关联选择控件与架构帮助。 -->
+              <AFormItem label="CPU 架构" html-for="node-cpu-architecture" role="group" aria-label="CPU 架构" :aria-describedby="formErrors.platform ? 'node-platform-error node-architecture-hint' : 'node-architecture-hint'" required :validate-status="formErrors.platform ? 'error' : undefined">
+                <ASelect id="node-cpu-architecture" v-model:value="cpuArchitecture" :aria-invalid="Boolean(formErrors.platform)">
+                  <ASelectOption v-for="option in cpuArchitectureOptions" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</ASelectOption>
+                </ASelect>
+                <template #extra><span id="node-architecture-hint">{{ platformHelp.architectureHint }}</span></template>
+              </AFormItem>
+            </div>
+          </section>
+          <section class="node-editor-section" aria-labelledby="node-runtime-title">
+            <h3 id="node-runtime-title">工具运行时</h3>
+            <div class="node-editor-group">
+              <AFormItem label="OB Loader/Dumper 安装目录" name="toolHome" html-for="node-tool-home" required :validate-status="formErrors.toolHome ? 'error' : undefined">
+                <AInput id="node-tool-home" v-model:value.trim="form.toolHome" class="node-path" :aria-invalid="Boolean(formErrors.toolHome)" :aria-describedby="formErrors.toolHome ? 'node-tool-error node-tool-hint' : 'node-tool-hint'" :placeholder="platformHelp.toolHomePlaceholder" @input="clearError('toolHome')" @blur="validateField('toolHome')" />
+                <template v-if="formErrors.toolHome" #help><span id="node-tool-error">{{ formErrors.toolHome }}</span></template>
+                <template #extra><span id="node-tool-hint">{{ platformHelp.toolHomeHint }}</span></template>
+              </AFormItem>
+              <AFormItem label="工具专用 Java 8 路径" name="javaPath" html-for="node-java-path" required :validate-status="formErrors.javaPath ? 'error' : undefined">
+                <AInput id="node-java-path" v-model:value.trim="form.javaPath" class="node-path" :aria-invalid="Boolean(formErrors.javaPath)" :aria-describedby="formErrors.javaPath ? 'node-java-error node-java-hint' : 'node-java-hint'" :placeholder="platformHelp.javaPathPlaceholder" @input="clearError('javaPath')" @blur="validateField('javaPath')" />
+                <template v-if="formErrors.javaPath" #help><span id="node-java-error">{{ formErrors.javaPath }}</span></template>
+                <template #extra><span id="node-java-hint">{{ platformHelp.javaPathHint }}</span></template>
+              </AFormItem>
+            </div>
+          </section>
+          <section class="node-editor-section" aria-labelledby="node-roots-title">
+            <h3 id="node-roots-title">导出数据目录</h3>
+            <AFormItem label="导出数据目录白名单" name="allowedRootsText" html-for="node-allowed-roots" required :validate-status="formErrors.allowedRoots ? 'error' : undefined">
+              <ATextarea id="node-allowed-roots" v-model:value="form.allowedRootsText" class="node-path" :aria-invalid="Boolean(formErrors.allowedRoots)" :aria-describedby="formErrors.allowedRoots ? 'node-roots-error node-roots-hint' : 'node-roots-hint'" :rows="3" :placeholder="platformHelp.rootPlaceholder" @input="clearError('allowedRoots')" @blur="validateField('allowedRoots')" />
+              <template v-if="formErrors.allowedRoots" #help><span id="node-roots-error">{{ formErrors.allowedRoots }}</span></template>
+              <template #extra><span id="node-roots-hint">{{ platformHelp.rootHint }}仅允许导出写入这些目录。</span></template>
+            </AFormItem>
+          </section>
+          <ACollapse v-model:active-key="advancedPanels" ghost class="node-budget-disclosure">
+            <ACollapsePanel key="budget" header="执行内存预算（可选）">
+              <p class="node-editor-hint">默认 JVM 堆为 4 GiB，任务可覆盖。以下比例是可调整的工程默认值。</p>
+              <AFormItem label="系统与 Agent 预留（GiB）" name="budgetPolicy" html-for="node-budget-policy" :validate-status="formErrors.budgetPolicy ? 'error' : undefined">
+                <AInputNumber id="node-budget-policy" :value="form.systemReservedGiB ?? undefined" class="node-budget-input" :aria-invalid="Boolean(formErrors.budgetPolicy)" :aria-describedby="formErrors.budgetPolicy ? 'node-budget-error node-system-reserve-hint' : 'node-system-reserve-hint'" :min="0" :step="0.25" :precision="2" placeholder="自动" @update:value="value => form.systemReservedGiB = value == null ? undefined : Number(value)" @change="clearError('budgetPolicy')" @blur="validateField('budgetPolicy')" />
+                <template v-if="formErrors.budgetPolicy" #help><span id="node-budget-error">{{ formErrors.budgetPolicy }}</span></template>
+                <template #extra><span id="node-system-reserve-hint">留空或填 0：总内存的 20%，至少 2 GiB。</span></template>
+              </AFormItem>
+              <AFormItem label="每任务堆外预算（GiB）" html-for="node-task-overhead">
+                <AInputNumber id="node-task-overhead" :value="form.taskOverheadGiB ?? undefined" class="node-budget-input" :aria-invalid="Boolean(formErrors.budgetPolicy)" :aria-describedby="formErrors.budgetPolicy ? 'node-budget-error node-task-overhead-hint' : 'node-task-overhead-hint'" :min="0" :step="0.25" :precision="2" placeholder="自动" @update:value="value => form.taskOverheadGiB = value == null ? undefined : Number(value)" @change="clearError('budgetPolicy')" @blur="validateField('budgetPolicy')" />
+                <template #extra><span id="node-task-overhead-hint">留空或填 0：实际 JVM 堆的 25%，至少 1 GiB。</span></template>
+              </AFormItem>
+            </ACollapsePanel>
+          </ACollapse>
+        </fieldset>
+        <p class="node-editor-boundary" role="note">{{ isNew ? '新节点保存为已禁用、待关联；完成 Agent 关联与环境检查后才能启用。' : '保存保留当前管理状态；配置变更需要 Agent 同步并复验环境。' }}</p>
+      </AForm>
+    </template>
+    <template #footer>
+      <div class="node-editor-actions">
+        <AButton :disabled="busy" @click="close">取消</AButton>
+        <AButton type="primary" html-type="submit" form="node-configuration" :loading="busy" :disabled="loading || restricted || listRestricted || (!isNew && !node)">{{ isNew ? '保存并继续 Agent 关联' : '保存修改' }}</AButton>
       </div>
-    </AForm>
-  </div>
+    </template>
+  </ADrawer>
+  <OrchDangerConfirm :open="confirmClose" title="放弃未保存的节点配置？" confirm-label="放弃修改" cancel-label="继续编辑" destructive @cancel="finishNavigation(false)" @confirm="finishNavigation(true)">
+    <p>尚有未保存的节点配置。离开后这些修改将丢失。</p>
+  </OrchDangerConfirm>
 </template>
 
 <style scoped>
-.node-form-workspace { max-width: 960px; }
-.node-form-surface { border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-table-radius); background: var(--ob-color-surface); }
-.node-form-section { padding: var(--ob-foundation-space-6); }
-.node-form-section + .node-form-section { border-top: 1px solid var(--ob-color-border); }
-.node-form-section h2 { margin: 0 0 var(--ob-foundation-space-1); color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); }
-.node-form-section > p { margin: 0 0 var(--ob-foundation-space-4); color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-label-size); line-height: 1.6; }
-.node-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--ob-foundation-space-4); }
-.node-form-boundary { margin: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-4); padding: var(--ob-foundation-space-3); color: var(--ob-color-form-secondary); background: var(--ob-color-subtle); font-size: var(--ob-component-field-label-size); line-height: 1.6; }
-.node-form-actions { display: flex; flex-wrap: wrap; gap: var(--ob-foundation-space-2); padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6); border-top: 1px solid var(--ob-color-border); }
-.node-error-summary { margin: var(--ob-foundation-space-6) var(--ob-foundation-space-6) 0; padding: var(--ob-foundation-space-3); border: 1px solid var(--ob-foundation-danger-border); color: var(--ob-color-danger); background: var(--ob-foundation-danger-surface); }
-.node-error-summary ul { margin: var(--ob-foundation-space-2) 0 0; padding-left: var(--ob-foundation-space-6); }
+.node-editor-intro, .node-editor-hint, .node-editor-boundary { color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-helper-size); line-height: var(--ob-component-field-helper-line-height); overflow-wrap: anywhere; }
+.node-editor-intro { margin: 0 0 var(--ob-foundation-space-6); }
+.node-editor-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.node-editor-section { margin-bottom: var(--ob-foundation-space-6); }
+.node-editor-section h3 { margin: 0 0 var(--ob-foundation-space-3); color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); font-weight: 500; }
+.node-editor-group { min-width: 0; padding: var(--ob-foundation-space-4); background: var(--ob-color-subtle); }
+.node-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--ob-foundation-space-4); }
+.node-editor-name { grid-column: 1 / -1; }
+.node-path { font-family: var(--ob-foundation-font-mono); }
+.node-budget-input { width: 100%; }
+.node-editor-hint { margin: 0 0 var(--ob-foundation-space-4); }
+.node-editor-boundary { margin: var(--ob-foundation-space-4) 0 0; padding-top: var(--ob-foundation-space-4); border-top: 1px solid var(--ob-color-border); }
+.node-editor-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
+.node-error-summary { margin-bottom: var(--ob-foundation-space-4); }
+.node-error-summary ul { margin: 0; padding-left: var(--ob-foundation-space-4); }
 .node-error-summary a { color: inherit; }
-@media (max-width: 720px) { .node-form-grid { grid-template-columns: 1fr; }.node-form-section { padding: var(--ob-foundation-space-4); }.node-form-boundary { margin-inline: var(--ob-foundation-space-4); }.node-form-actions { padding-inline: var(--ob-foundation-space-4); } }
+@media (max-width: 480px) { .node-editor-grid { grid-template-columns: minmax(0, 1fr); }.node-editor-actions { flex-wrap: nowrap; } }
 </style>

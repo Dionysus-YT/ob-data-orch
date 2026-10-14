@@ -29,6 +29,8 @@ npm --prefix web ci
 
 浏览器访问 **`https://127.0.0.1:18443`**。首次需信任 `var/dev/control-plane/data/control-plane-ca.pem` 公钥，再以 `admin` 登录。创建 Windows 节点后，将注册码粘贴到第二个终端；开发 Agent 无需下载和安装服务。
 
+开发控制面启动和重建同时生成三平台 Agent 下载资源，节点详情页可下载绑定本机控制面地址与 CA 的安装包。
+
 - 修改 Vue、TypeScript、CSS：Vite 即时更新页面，无需打包。
 - 修改 Go、契约 JSON 或迁移 SQL：真实模式下提示待更新，结束当前测试后在对应终端输入 `r` 并回车，完成正常停止、重编译和重启；不用打包。合成模式保留自动重启。控制面重启后需重新登录。
 - `Ctrl+C` 退出对应入口。开发数据库、身份和证书保留在 `var/dev/`，不复用安装版数据，也不自动迁移旧 Local MVP。
@@ -44,9 +46,9 @@ Vite 由开发入口管理，浏览器统一访问上面的 HTTPS 地址。稳�
 
 | 包名 | 目标 |
 |---|---|
-| `ob-data-orch-windows-amd64.zip` | Windows AMD64 |
-| `ob-data-orch-linux-amd64.zip` | 指定麒麟 AMD64 目标 |
-| `ob-data-orch-linux-arm64.zip` | 指定麒麟 ARM64 目标 |
+| `ob-data-orch-windows-x86_64.zip` | Windows · x86_64 |
+| `ob-data-orch-linux-x86_64.zip` | 指定麒麟目标 · x86_64 |
+| `ob-data-orch-linux-aarch64.zip` | 指定麒麟目标 · aarch64 |
 
 Linux 包仅对应[技术栈列明的三个麒麟目标](docs/03-technical/technology-stack.md)，不代表任意 Linux 发行版均受支持；目标机原生认证仍待完成。没有成品包时，按下方“从源码构建”生成。
 

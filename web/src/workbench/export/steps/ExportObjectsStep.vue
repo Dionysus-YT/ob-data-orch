@@ -7,9 +7,10 @@ import { CaretDownOutlined, CaretRightOutlined, DeleteOutlined, SearchOutlined }
 import SqlQueryEditor from '@/workbench/export/components/SqlQueryEditor.vue'
 import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvancedSettings.vue'
 import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue'
+import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 
 const props = defineProps<{ model: ExportObjectsStepModel }>()
-const { exportMode, scopeKind, contentKind, fieldPrefix, nodeLoadFailure, loadingNodes, selectedNodeID, derivedDraftBindingLocked, nodes, attemptedStep, database, selectedSource, databaseDropdownOpen, databaseCatalogLoading, onDatabaseDropdownVisibleChange, scheduleDatabaseCatalog, selectDatabaseOption, databaseOptions, databaseCatalogFailure, databaseCatalogLoaded, manualDatabaseInput, manualDatabaseError, manualDatabaseOpen, loadDatabaseCatalog, databaseCatalogTruncated, querySql, queryResultLimit, objectInputMessage, confirmManualDatabase, enteredObjectCount, allSelectedObjects, candidateTotalCount, candidateObjectKeyword, loadCatalog, catalogLoading, catalogKeywordTooLong, catalogFailure, visibleObjectCategories, objectType, candidateGroupExpanded, chooseObjectCategory, selectableCategoryNames, categorySelectedCount, toggleCategorySelection, catalogCount, candidateObjectNames, catalogLoaded, visibleCandidateObjectNames, objectNames, toggleCandidate, clearObjectNameRows, selectedObjectKeyword, visibleSelectedGroups, selectedGroupExpanded, clearObjectCategory, removeObjectNameRow, objectAdvancedCount, dataOptionsActive, excludeTablesSupported, excludeTablesText, includeColumnNames, excludeColumnNames, excludeDataTypes, whereSupported, where, partitionSupported, partition, migrateLegacyQuery } = toRefs(props.model)
+const { sequencePolicy, sequencePolicySupported, exportMode, scopeKind, contentKind, fieldPrefix, nodeLoadFailure, loadingNodes, onNodeDropdownVisibleChange, selectedNodeID, derivedDraftBindingLocked, nodes, attemptedStep, database, selectedSource, databaseDropdownOpen, databaseCatalogLoading, onDatabaseDropdownVisibleChange, scheduleDatabaseCatalog, selectDatabaseOption, databaseOptions, databaseCatalogFailure, databaseCatalogLoaded, manualDatabaseInput, manualDatabaseError, manualDatabaseOpen, loadDatabaseCatalog, databaseCatalogTruncated, querySql, queryResultLimit, objectInputMessage, confirmManualDatabase, enteredObjectCount, allSelectedObjects, candidateTotalCount, candidateObjectKeyword, loadCatalog, catalogLoading, catalogKeywordTooLong, catalogFailure, visibleObjectCategories, objectType, candidateGroupExpanded, chooseObjectCategory, selectableCategoryNames, categorySelectedCount, toggleCategorySelection, catalogCount, candidateObjectNames, catalogLoaded, visibleCandidateObjectNames, objectNames, toggleCandidate, clearObjectNameRows, selectedObjectKeyword, visibleSelectedGroups, selectedGroupExpanded, clearObjectCategory, removeObjectNameRow, objectAdvancedCount, dataOptionsActive, excludeTablesSupported, excludeTablesText, includeColumnNames, excludeColumnNames, excludeDataTypes, whereSupported, where, partitionSupported, partition, migrateLegacyQuery } = toRefs(props.model)
 const candidatePane = ref<HTMLElement>()
 const selectedPane = ref<HTMLElement>()
 const selectedNames = computed(() => new Set(objectNames.value))
@@ -35,8 +36,8 @@ function selectedWindow(type: string, count: number) { return selectedViewport.r
         <div class="export-database-grid">
           <AFormItem :html-for="fieldPrefix + '-catalog-node'" required :help="nodeLoadFailure || undefined">
             <template #label>选择执行节点</template>
-            <ASkeleton v-if="loadingNodes" active :paragraph="{ rows: 1 }" aria-label="正在加载已授权执行节点" />
-            <ASelect v-else :id="fieldPrefix + '-catalog-node'" v-model:value="selectedNodeID" aria-label="读取执行节点" :disabled="derivedDraftBindingLocked" placeholder="请选择执行节点"><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</ASelectOption></ASelect>
+            <ASkeleton v-if="loadingNodes && !nodes.length" active :paragraph="{ rows: 1 }" aria-label="正在加载已授权执行节点" />
+            <ASelect v-else :id="fieldPrefix + '-catalog-node'" v-model:value="selectedNodeID" aria-label="读取执行节点" :loading="loadingNodes" :disabled="derivedDraftBindingLocked" placeholder="请选择执行节点" @dropdown-visible-change="onNodeDropdownVisibleChange"><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ nodePlatformLabel(node.platform) }}</ASelectOption></ASelect>
           </AFormItem>
           <AFormItem :html-for="fieldPrefix + '-database'" required :validate-status="attemptedStep === 2 && !database.trim() ? 'error' : undefined" :help="attemptedStep === 2 && !database.trim() ? '请选择数据库。' : undefined">
             <template #label>数据库</template>
@@ -145,8 +146,8 @@ function selectedWindow(type: string, count: number) { return selectedViewport.r
       <AForm layout="vertical" class="export-advanced-form">
         <template v-if="contentKind !== 'DATA_ONLY'">
           <h3>DDL 与对象处理</h3>
-          <AFormItem :html-for="fieldPrefix + '-sequence-policy'" extra="--sequence-policy 待验证，当前保持关闭。">
-            <template #label><span class="export-field-label">序列策略<ExportOptionHint label="序列策略" parameter="--sequence-policy" description="选择保留序列当前值或重置序列；当前未完成能力验证，保持禁用。" /></span></template><ASelect :id="fieldPrefix + '-sequence-policy'" default-value="preserve（默认）" disabled><ASelectOption value="preserve（默认）">preserve（默认）</ASelectOption><ASelectOption value="restart">restart</ASelectOption></ASelect>
+          <AFormItem :html-for="fieldPrefix + '-sequence-policy'" :extra="sequencePolicySupported ? '保留当前值承接导出时的序列值；使用初始值会改变导入后的起始值。' : '仅整库或包含序列定义的对象范围可配置。'">
+            <template #label><span class="export-field-label">序列策略<ExportOptionHint label="序列策略" parameter="--sequence-policy" description="preserve 保留导出时的当前序列值；restart 使用序列原始定义的起始值。只随序列定义导出活动，不修改源序列。" /></span></template><ASelect :id="fieldPrefix + '-sequence-policy'" v-model:value="sequencePolicy" aria-label="序列策略" :disabled="!sequencePolicySupported"><ASelectOption value="">继承工具默认（preserve）</ASelectOption><ASelectOption value="PRESERVE">保留当前值（preserve）</ASelectOption><ASelectOption value="RESTART">使用初始值（restart）</ASelectOption></ASelect>
           </AFormItem>
         </template>
         <h3 v-if="dataOptionsActive || excludeTablesSupported">对象排除与数据筛选</h3>

@@ -14,9 +14,10 @@ export function useTemplateDraft(catalog: ReturnType<typeof useTemplateCatalog>,
   let pending: Promise<void> | undefined
   let loaded = false
   onScopeDispose(() => { draftSourceID.value = draftNodeID.value = '' })
-  function loadChoices(): Promise<void> {
-    if (!catalog.active() || loaded) return Promise.resolve()
+  function loadChoices(refresh = false): Promise<void> {
+    if (!catalog.active() || catalog.accessDenied.value || catalog.actionBusy.value) return Promise.resolve()
     if (pending) return pending
+    if (loaded && !refresh) return Promise.resolve()
     sourcesLoading.value = true
     createDraftFailure.value = ''
     pending = (async () => {
@@ -26,9 +27,16 @@ export function useTemplateDraft(catalog: ReturnType<typeof useTemplateCatalog>,
         if (!catalog.active()) return
         sources.value = sourceItems
         nodes.value = nodeItems
+        if (!eligibleSources.value.some(source => source.id === draftSourceID.value)) draftSourceID.value = ''
+        if (!nodes.value.some(node => node.id === draftNodeID.value)) draftNodeID.value = ''
         loaded = true
       } catch (error) {
-        if (catalog.active()) createDraftFailure.value = dataSourceErrorMessage(error, exportDraftErrorMessage(error, '无法加载数据源或执行节点。'))
+        if (catalog.active()) {
+          loaded = false
+          sources.value = []; nodes.value = []
+          draftSourceID.value = draftNodeID.value = ''
+          createDraftFailure.value = dataSourceErrorMessage(error, exportDraftErrorMessage(error, '无法加载数据源或执行节点。'))
+        }
       } finally {
         if (catalog.active()) sourcesLoading.value = false
         pending = undefined
@@ -36,17 +44,22 @@ export function useTemplateDraft(catalog: ReturnType<typeof useTemplateCatalog>,
     })()
     return pending
   }
+  function onNodeDropdownVisibleChange(open: boolean) {
+    // 模板配置可以缓存，候选节点名称与资格在每次展开时重新核对。
+    if (open) void loadChoices(true)
+  }
   async function createDraft(template: ExportConfigTemplateItem) {
     if (!catalog.active() || catalog.actionBusy.value) return
     createDraftFailure.value = ''
     const sourceID = draftSourceID.value
     const nodeID = draftNodeID.value
     if (!sourceID || !nodeID) { createDraftFailure.value = '请选择数据源与执行节点。'; return }
+    if (sourcesLoading.value) return
     if (!catalog.beginAction(template.id)) return
     try {
       const id = await catalog.api.createDraftFromTemplate(template.id, sourceID, nodeID)
       if (!catalog.active()) return
-      catalog.notice.value = '草稿已创建；模板不复制凭据、预检查与风险确认，请重新完成预检查后再提交。'
+      catalog.notice.value = '草稿已创建。'
       await created(id)
     } catch (error) {
       if (catalog.active()) createDraftFailure.value = exportDraftErrorMessage(error, '由模板创建草稿失败。')
@@ -54,5 +67,5 @@ export function useTemplateDraft(catalog: ReturnType<typeof useTemplateCatalog>,
       catalog.endAction()
     }
   }
-  return { draftSourceID, draftNodeID, sourcesLoading, createDraftFailure, eligibleSources, nodes, loadChoices, createDraft }
+  return { draftSourceID, draftNodeID, sourcesLoading, createDraftFailure, eligibleSources, nodes, loadChoices, onNodeDropdownVisibleChange, createDraft }
 }

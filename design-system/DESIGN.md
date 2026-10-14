@@ -201,8 +201,9 @@ Design Token taxonomy 见 [tokens/README.md](tokens/README.md)。实现唯一值
 | 必须阻断当前流程的确认 | Modal |
 | 简短危险确认 | Popconfirm / Product Danger Confirm |
 | 短状态 | Badge |
+| 主动操作的短时结果 | Message |
 | 分类属性 | Tag |
-| 需要解释的异常 | Alert |
+| 持续说明、风险与需要解释的异常 | Alert |
 | 执行进度 | Progress |
 
 详细规则见 [component-semantics.md](patterns/component-semantics.md)。
@@ -245,9 +246,11 @@ Accessibility 是 P0：
 - Click 后立即有状态变化。
 - Async 有 loading。
 - Loading 阶段按需要防止重复提交。
-- Success 有明确确认。
-- Failure 有可行动解释。
+- Success 使用短时 Ant Message 确认已完成动作，默认 3 秒；行内开关与刷新保留原位反馈，不重复弹出。
+- 持续说明、风险与 Failure 使用 Ant Alert；Failure 有可行动解释，字段错误跟随 Form.Item。
 - Retryable 提供恢复动作。
+
+严重程度、领域检查结果、会话清理和迟到反馈遵守 [Status and Feedback Pattern](patterns/status-feedback.md)，全平台不保留自绘成功横幅或错误框。
 
 ## 13. Reference Pages
 

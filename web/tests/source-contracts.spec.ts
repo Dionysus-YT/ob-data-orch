@@ -198,7 +198,7 @@ test('数据源命名保存清理秘密，测试异步事实与可用状态独�
   await drawer.getByRole('button', { name: '测试连接', exact: true }).click()
   await drawer.getByRole('combobox', { name: /执行节点/ }).focus()
   await page.keyboard.press('ArrowDown')
-  await page.getByText('Visual validation runtime · WINDOWS_AMD64', { exact: true }).click()
+  await page.getByText('Visual validation runtime · Windows · x86_64', { exact: true }).click()
   await drawer.getByRole('button', { name: '开始测试', exact: true }).click()
   await expect(drawer.getByText('等待执行节点回写结果', { exact: true })).toBeVisible()
   await expect(drawer.getByText('合成验证结果', { exact: true })).toBeVisible({ timeout: 10000 })

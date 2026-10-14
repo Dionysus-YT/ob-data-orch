@@ -25,8 +25,9 @@ const (
 	objectSelectionMetadataVersion   = "obdumper-4.3.5-slice-v8-object-selection"
 	combinedObjectMetadataVersion    = "obdumper-4.3.5-slice-v9-combined-object-selection"
 	ddlTextFormatsMetadataVersion    = "obdumper-4.3.5-slice-v10-ddl-text-formats"
+	expertParametersMetadataVersion  = "obdumper-4.3.5-slice-v11-expert-parameters"
 	// maxInheritanceDepth 限制清单继承链深度，避免循环或过长的依赖链。
-	maxInheritanceDepth = 5
+	maxInheritanceDepth = 6
 )
 
 // resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
@@ -106,6 +107,8 @@ type definitionOverride struct {
 	AppendEvidence []string `json:"appendEvidence"`
 	// CapabilityVersions 仅在新修订显式设置时替换，保留历史版本能力绑定。
 	CapabilityVersions []string `json:"capabilityVersions,omitempty"`
+	// DependsOn 仅新修订显式声明时替换依赖，不改变历史目录。
+	DependsOn *[]string `json:"dependsOn,omitempty"`
 }
 
 type Catalog struct {
@@ -143,6 +146,11 @@ func LoadCombinedObjectSelection() (*Catalog, error) {
 // LoadDDLTextFormats 加载结构与 CUT/SQL 数据组合的现行参数目录。
 func LoadDDLTextFormats() (*Catalog, error) {
 	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v10-ddl-text-formats.json")
+}
+
+// LoadExpertParameters 加载 v11 专家参数目录，历史资源不原地修改。
+func LoadExpertParameters() (*Catalog, error) {
+	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v11-expert-parameters.json")
 }
 
 // LoadLegacyGeneralized 加载冻结的 v6 泛化目录，只用于重放升级前已经持久化的草稿。
@@ -338,6 +346,10 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 		if manifest.Inherits != "obdumper-4.3.5-slice-v9-combined-object-selection.json" || manifest.CapabilityVersion != "" || len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 52 || len(manifest.Additions) != 0 {
 			return revisionManifest{}, errors.New("parameter metadata ddl text format revision is invalid")
 		}
+	case expertParametersMetadataVersion:
+		if manifest.Inherits != "obdumper-4.3.5-slice-v10-ddl-text-formats.json" || manifest.CapabilityVersion != "" || len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 13 || len(manifest.Additions) != 4 {
+			return revisionManifest{}, errors.New("parameter metadata expert parameters revision is invalid")
+		}
 	default:
 		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 	}
@@ -387,6 +399,9 @@ func applyOverrides(raw *resource, overrides []definitionOverride) error {
 		if override.CapabilityVersions != nil {
 			raw.Definitions[index].CapabilityVersions = append([]string(nil), override.CapabilityVersions...)
 		}
+		if override.DependsOn != nil {
+			raw.Definitions[index].DependsOn = append([]string(nil), (*override.DependsOn)...)
+		}
 		raw.Definitions[index].OfficialEvidence = append(raw.Definitions[index].OfficialEvidence, override.AppendEvidence...)
 	}
 	return nil
@@ -412,7 +427,7 @@ func validateResource(raw resource) error {
 		if len(raw.Definitions) != 18 {
 			return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion:
 		// v6/v7 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
 		if raw.CapabilityVersion != "" {
 			return errors.New("parameter metadata capability version is unsupported")
@@ -422,12 +437,15 @@ func validateResource(raw resource) error {
 			return errors.New("parameter metadata category order does not match the confirmed command order")
 		}
 		expectedDefinitions := 59
-		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
+		if raw.MetadataVersion != legacyGeneralizedMetadataVersion {
 			// v7 登记第二批 13 个定义；尚未完成专用验证或预检查的定义仍保持门禁。
 			expectedDefinitions = 72
 		}
 		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
 			expectedDefinitions = 75
+		}
+		if raw.MetadataVersion == expertParametersMetadataVersion {
+			expectedDefinitions = 79
 		}
 		if len(raw.Definitions) != expectedDefinitions {
 			return fmt.Errorf("parameter metadata has %d definitions, want %d", len(raw.Definitions), expectedDefinitions)
@@ -537,7 +555,7 @@ func validateResource(raw resource) error {
 		}); err != nil {
 			return err
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion:
 		// v6 已取证子集：EX-I2 六项 + EX-I3 的 CSV 序列化、压缩、文件布局、筛选与资源参数
 		// + EX-I4 的 CUT/SQL 数据格式及其专属序列化参数
 		// + EX-I4 POS 定版（2026-08-07 实测）的 --pos/--ctl-path 与 CUT 专属 --column-splitter
@@ -557,12 +575,16 @@ func validateResource(raw resource) error {
 			"--query-sql", "--where", "--snapshot", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
 		}
-		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
+		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || raw.MetadataVersion == expertParametersMetadataVersion {
 			// 第二批仅四项已观察到可验收效果：MySQL DATE/DATETIME 格式、分区和类型排除。
 			enabled = append(enabled, "--date-value-format", "--datetime-value-format", "--partition", "--exclude-data-types")
 		}
-		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
+		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || raw.MetadataVersion == expertParametersMetadataVersion {
 			enabled = append(enabled, "--function", "--procedure", "--sequence")
+		}
+		if raw.MetadataVersion == expertParametersMetadataVersion {
+			enabled = append(enabled, "--weak-read", "--enable-hidden-pk", "--add-extra-message", "--sequence-policy", "--preserve-zero-datetime", "--sys-user", "--sys-password",
+				"--time-value-format", "--timestamp-value-format", "--timestamp-tz-value-format", "--timestamp-ltz-value-format", "--nls-date-format", "--nls-timestamp-format", "--nls-timestamp-tz-format")
 		}
 		if err := requireNamesByState(raw.Definitions, "ENABLED", enabled); err != nil {
 			return err
@@ -586,6 +608,12 @@ func validateResource(raw resource) error {
 		return errors.New("password metadata must target the official security file")
 	}
 	for _, definition := range raw.Definitions {
+		if definition.LongName == "--sys-password" {
+			if raw.MetadataVersion != expertParametersMetadataVersion || definition.ValueType != "secret-slot" || definition.Sensitivity != "SECRET" || definition.EmissionTarget != "SECURITY_FILE" || definition.SecurityProperty != "oceanbase.jdbc.sys.password" || definition.SourcePolicy != "SECURITY" {
+				return errors.New("sys password metadata must target the official security file")
+			}
+			continue
+		}
 		if definition.LongName != "--password" && definition.EmissionTarget != "ARGV" {
 			return fmt.Errorf("parameter %q must remain an argv target", definition.LongName)
 		}
@@ -651,6 +679,9 @@ func validateRule(parameter string, rule Rule, allowed ...string) error {
 // v7 对已登记但尚未观察行为或缺少专用预检查的第二批参数继续失败关闭。
 func gatedNamesByVersion(metadataVersion string) []string {
 	switch metadataVersion {
+	case expertParametersMetadataVersion:
+		// 检查点继续仍只走 EX-I8 的冻结继续任务入口，不开放任意 retry 参数。
+		return []string{"--retry"}
 	case legacyGeneralizedMetadataVersion:
 		return []string{"--retry", "--weak-read"}
 	case generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion:

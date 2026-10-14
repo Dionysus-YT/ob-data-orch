@@ -1,114 +1,185 @@
 <script setup lang="ts">
-import { FileTextOutlined } from '@ant-design/icons-vue'
-import { Button as AButton, Input as AInput } from 'ant-design-vue'
-import { computed } from 'vue'
+import { ReloadOutlined } from '@ant-design/icons-vue'
+import { Alert as AAlert, Badge as ABadge, Button as AButton, ConfigProvider, Descriptions as ADescriptions, DescriptionsItem as ADescriptionsItem, Dropdown as ADropdown, Empty as AEmpty, Input as AInput, Menu as AMenu, MenuItem as AMenuItem, Select as ASelect, Skeleton as ASkeleton, Tabs as ATabs, TabPane as ATabPane, Tag as ATag, Timeline as ATimeline, TimelineItem as ATimelineItem, TypographyText as ATypographyText } from 'ant-design-vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import type { TaskListAction } from '@/api/browser'
+import { TypographyParagraph as ATypographyParagraph } from 'ant-design-vue'
+import { useOperationMessage } from '@/composables/useOperationMessage'
+import { environmentTagTheme } from '@/platform/theme'
+import TaskActionDialogs from '@/workbench/tasks/TaskActionDialogs.vue'
+import TaskActionMenu from '@/workbench/tasks/TaskActionMenu.vue'
+import { formatBytes } from '@/workbench/tasks/taskDetailPresentation'
+import { taskDetailPrimary, taskLogIsError, taskLogSource, taskOperationLabel, taskOperationResult, taskResultText, taskSnapshotGroups } from '@/workbench/tasks/taskDetailRules'
 import { taskFailureSummary } from '@/workbench/tasks/taskFailurePresentation'
-import { stateLabel, stateClass, dateTime, formatBytes } from '@/workbench/tasks/taskDetailPresentation'
+import { taskActionLabels, taskHistoricalName, taskMoreActions } from '@/workbench/tasks/taskListPresentation'
+import { taskDateTimeText as dateTime, taskDurationText, taskEnvironmentLabel, taskStateBadge, taskStateText } from '@/workbench/tasks/taskStatePresentation'
 import { useTaskDetail } from '@/workbench/tasks/useTaskDetail'
-import { useTaskActions } from '@/workbench/tasks/useTaskActions'
+import { useTaskListActions } from '@/workbench/tasks/useTaskListActions'
+import { useTaskOperations } from '@/workbench/tasks/useTaskOperations'
 
 const route = useRoute()
-const taskID = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
-const {
-  session, overview, execution, snapshot, commandEvidence, logs, loading, failure,
-  executionFailure, snapshotFailure, commandFailure, logFailure, logStreamStatus,
-  refresh, loadExecution, loadSnapshot, loadCommandEvidence,
-} = useTaskDetail(taskID)
-const {
-  derivationFailure, derivationBusy, noticeTemplate, templateNameInput, savingTemplate,
-  checkpointResumeAvailable, rebuildFromTask, resumeFromCheckpoint, saveAsTemplate,
-} = useTaskActions(session, useRouter(), execution)
-const failureSummary = computed(() => taskFailureSummary(execution.value?.state, logs.value))
-const derivationLabel = computed(() => ({ REBUILD_FROM_CONFIG: '基于原配置新建', RERUN_FROM_SCRATCH: '从头重新执行', CHECKPOINT_RESUME: '从检查点继续' })[overview.value?.derivationKind ?? ''] ?? '')
-function executionStateLabel() { return stateLabel(execution.value?.state, execution.value?.reconciliationRequired) }
-function executionEmptyMessage() {
-  return execution.value?.state === 'WAITING_SCHEDULE' ? '任务正等待所选 Agent 领取。' : 'Agent 启动 OBDUMPER 后，标准输出和错误输出会显示在这里。'
+const router = useRouter()
+const detail = useTaskDetail(computed(() => typeof route.params.id === 'string' ? route.params.id : ''))
+const { session, overview, execution, snapshot, commandEvidence, logs, loading, failure, executionFailure, snapshotFailure, commandFailure, logFailure, logsExpired, logStreamStatus } = detail
+const actions = useTaskListActions({ navigate: location => router.push(location), beginMutation: detail.beginMutation, endMutation: detail.endMutation })
+const actionModel = reactive(actions)
+const { MessageContext } = useOperationMessage(actions.notice)
+const operations = reactive(useTaskOperations(session, detail.restrict))
+const task = computed(() => overview.value?.presentation)
+const title = computed(() => task.value?.displayName || snapshot.value?.objectSummary || overview.value?.id || '任务详情')
+const state = computed(() => execution.value?.state ?? task.value?.state)
+const primary = computed(() => taskDetailPrimary(task.value))
+const more = computed(() => task.value ? taskMoreActions(task.value).filter(action => action !== primary.value && action !== 'VIEW_LOGS') : [])
+const activeTab = computed(() => ['overview', 'snapshot', 'command', 'logs', 'operations'].includes(String(route.query.tab)) ? String(route.query.tab) : 'overview')
+const snapshotGroups = computed(() => snapshot.value ? taskSnapshotGroups(snapshot.value) : [])
+const derivationLabel = computed(() => ({ REBUILD_FROM_CONFIG: '基于原配置新建', RERUN_FROM_SCRATCH: '从头重新执行', CHECKPOINT_RESUME: '从检查点继续' } as Record<string, string>)[overview.value?.derivationKind ?? ''] ?? '')
+const safeFailure = computed(() => execution.value?.errorSummary || taskFailureSummary(state.value, logs.value))
+const output = computed(() => execution.value?.outputLocation)
+const remoteResult = computed(() => Boolean(output.value && ['OSS', 'S3', 'COS', 'OBS'].includes(output.value.kind)))
+const result = computed(() => execution.value?.resultSummary)
+const filesExpanded = ref(false)
+const keyword = ref('')
+const source = ref<string>()
+const paused = ref(false)
+const logSurface = ref<HTMLElement>()
+const filteredLogs = computed(() => logs.value.filter(record => (!source.value || record.kind === source.value) && (!keyword.value || record.message.toLocaleLowerCase().includes(keyword.value.toLocaleLowerCase()))))
+const firstError = computed(() => logs.value.findIndex(taskLogIsError))
+const gap = computed(() => logs.value.some(record => record.integrityCode !== 'COMPLETE'))
+const sourceOptions = ['STDOUT', 'STDERR', 'TOOL_FILE', 'AGENT_EVENT'].map(value => ({ value, label: taskLogSource(value) }))
+const returnTo = computed(() => { const back = router.options.history.state.back; return typeof back === 'string' && (back === '/tasks' || back.startsWith('/tasks?')) ? back : '/tasks' })
+function setTab(value: string | number) { return router.replace({ query: { ...route.query, tab: String(value) } }) }
+function request(action: string) { if (task.value) actions.request(task.value, action as TaskListAction) }
+function latest() { const surface = logSurface.value; if (surface) surface.scrollTop = surface.scrollHeight }
+async function showError() {
+  keyword.value = ''; source.value = undefined
+  await setTab('logs')
+  await nextTick()
+  // 缺少明确 ERROR 行时只聚焦日志区，不把 stderr 或未知消息冒充首条错误。
+  const row = logSurface.value?.querySelector<HTMLElement>('[data-log-error="true"]')
+  ;(row ?? logSurface.value)?.focus()
+  row?.scrollIntoView({ block: 'nearest' })
 }
+watch(session, () => { actions.invalidate(); keyword.value = ''; source.value = undefined; paused.value = false; filesExpanded.value = false }, { flush: 'sync' })
+watch([session, activeTab], () => { if (activeTab.value === 'operations' && !operations.loaded) void operations.load() }, { immediate: true })
+watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (!paused.value && activeTab.value === 'logs') latest() }, { flush: 'post' })
 </script>
 
 <template>
-  <section class="page-heading"><div><h1>任务详情</h1><p>任务参数在提交时冻结。页面每两秒刷新执行状态与已脱敏日志，不伪造进度或 ETA。</p></div><RouterLink v-slot="{ href, navigate }" to="/tasks" custom><AButton :href="href" @click="navigate">返回任务中心</AButton></RouterLink></section>
-  <p v-if="failure" class="feedback feedback-error" role="alert">{{ failure }} <AButton type="text" @click="refresh">重试</AButton></p>
-  <div v-else-if="loading" class="content-card loading-state" role="status">正在读取任务概览…</div>
-  <template v-else-if="overview">
-    <section class="content-card task-run-summary">
-      <div><span class="detail-kicker">任务 ID</span><h2>{{ overview.id }}</h2><p><span class="status-dot" :class="stateClass(execution?.state)" />{{ executionStateLabel() }}</p></div>
-      <div class="task-run-mode">{{ overview.type === 'OBDUMPER_EXPORT' ? '单表 CSV 导出任务' : '任务类型核对中' }}</div>
-    </section>
-    <section v-if="overview.derivationKind" class="content-card task-derivation-note"><h2>来源任务</h2><p>本任务由来源任务{{ derivationLabel }}派生：<RouterLink class="link-button" :to="`/tasks/${encodeURIComponent(overview.parentTaskId ?? '')}`">{{ overview.parentTaskId }}</RouterLink></p></section>
-    <section v-if="failureSummary" class="content-card task-failure-card" role="alert"><h2>失败原因</h2><p>{{ failureSummary }}</p><a class="link-button" href="#execution-logs">查看错误日志</a></section>
-    <section v-if="execution?.state === 'SUCCEEDED'" class="content-card task-failure-actions"><h2>成功任务操作</h2><p class="section-hint">保存模板只复制非敏感配置；模板不复制凭据、节点、预检查、风险确认、日志或结果。</p><p v-if="noticeTemplate" class="feedback feedback-notice" role="status">{{ noticeTemplate }}</p><p v-if="derivationFailure" class="feedback feedback-error" role="alert">{{ derivationFailure }}</p><div class="task-derivation-buttons"><AInput v-model:value.trim="templateNameInput" style="min-width: 240px" placeholder="模板名称" /><AButton :disabled="savingTemplate || !templateNameInput.trim()" @click="saveAsTemplate">{{ savingTemplate ? '正在保存…' : '保存为模板' }}</AButton></div></section>
-    <section v-if="execution?.state === 'FAILED'" class="content-card task-failure-actions"><h2>失败任务操作</h2><p class="section-hint">所有派生操作都产生新草稿或新任务并保留来源关系；基于原配置新建可以修改参数，从头重新执行与从检查点继续不允许修改参数。派生操作不复制凭据、预检查结果、风险确认或日志。</p><p v-if="derivationFailure" class="feedback feedback-error" role="alert">{{ derivationFailure }}</p><div class="task-derivation-buttons"><AButton :disabled="Boolean(derivationBusy)" @click="rebuildFromTask('REBUILD_FROM_CONFIG')">{{ derivationBusy === 'REBUILD_FROM_CONFIG' ? '正在创建草稿…' : '基于原配置新建' }}</AButton><AButton :disabled="Boolean(derivationBusy)" @click="rebuildFromTask('RERUN_FROM_SCRATCH')">{{ derivationBusy === 'RERUN_FROM_SCRATCH' ? '正在发起…' : '从头重新执行' }}</AButton><AButton v-if="checkpointResumeAvailable" :disabled="Boolean(derivationBusy)" type="primary" @click="resumeFromCheckpoint">{{ derivationBusy === 'CHECKPOINT_RESUME' ? '正在创建继续任务…' : '从检查点继续（--retry）' }}</AButton><p v-else class="section-hint">从检查点继续不可用：任务不是失败终态，或 Agent 未确认输出目录存在可读 dump.ckpt。</p></div></section>
-    <section class="module-sections task-detail-sections">
-      <article class="content-card section-placeholder task-detail-card"><h2>运行概览</h2><p v-if="executionFailure" class="feedback feedback-error" role="alert">{{ executionFailure }} <AButton type="text" @click="loadExecution">重试</AButton></p><dl v-else-if="execution" class="summary-definition"><div><dt>任务状态</dt><dd>{{ executionStateLabel() }}</dd></div><div><dt>执行编号</dt><dd>{{ execution.executionId || '等待 Agent 领取' }}</dd></div><div><dt>提交时间</dt><dd>{{ dateTime(overview.submittedAt) }}</dd></div><div><dt>开始时间</dt><dd>{{ dateTime(execution.startedAt) }}</dd></div><div><dt>结束时间</dt><dd>{{ dateTime(execution.finishedAt) }}</dd></div><div><dt>最后核对</dt><dd>{{ dateTime(execution.updatedAt) }}</dd></div><div><dt>执行节点</dt><dd>{{ overview.nodeId }}</dd></div><div><dt>阶段与进度</dt><dd>当前没有可验证的工具阶段或进度映射。</dd></div></dl><p v-else class="section-hint">正在读取执行事实…</p></article>
-      <article class="content-card task-detail-card"><h2>执行结果</h2><p v-if="executionFailure" class="section-hint">执行状态不可用，结果事实同样无法读取。</p><p v-else-if="!execution?.resultSummary" class="section-hint">任务尚未完成或 Agent 未上报结果事实；平台不推测文件数、字节数或检查点。</p><dl v-else class="summary-definition"><div><dt>结果结论</dt><dd>{{ execution.resultSummary.result === 'VERIFIED' ? '结果已核验（文件存在且非空）' : '结果未通过核验' }}</dd></div><div><dt>结果文件</dt><dd>{{ execution.resultSummary.fileCount }} 个 · {{ formatBytes(execution.resultSummary.totalBytes) }}</dd></div><div><dt>保存点</dt><dd>{{ execution.resultSummary.checkpointPresent ? '输出目录存在 dump.ckpt（失败任务可据此评估从检查点继续）' : '输出目录不存在 dump.ckpt' }}</dd></div><div><dt>观察时间</dt><dd>{{ dateTime(execution.resultSummary.observedAt) }}</dd></div></dl><details v-if="execution?.resultSummary?.files.length" class="task-result-files"><summary>结果文件清单（相对输出目录）</summary><ul><li v-for="file in execution.resultSummary.files" :key="file.path"><code>{{ file.path }}</code><span>{{ formatBytes(file.size) }}</span></li></ul></details></article>
-      <article class="content-card section-placeholder task-detail-card"><h2>冻结配置</h2><p v-if="snapshotFailure" class="feedback feedback-error" role="alert">{{ snapshotFailure }} <AButton type="text" @click="loadSnapshot">重试</AButton></p><dl v-else-if="snapshot" class="summary-definition"><div><dt>数据源</dt><dd>{{ snapshot.dataSourceId }}</dd></div><div><dt>导出对象</dt><dd>{{ snapshot.objectSummary || '对象摘要不可用' }}</dd></div><div><dt>输出格式</dt><dd>{{ snapshot.format }}</dd></div><div><dt>预检查</dt><dd>{{ snapshot.precheckId }}</dd></div><div><dt>工具版本</dt><dd>{{ snapshot.toolVersion }}</dd></div><div><dt>配置指纹</dt><dd>{{ snapshot.configFingerprint }}</dd></div></dl><p v-else class="section-hint">正在读取冻结配置…</p></article>
-    </section>
-    <section class="content-card task-command-card"><h2>计划命令（默认脱敏）</h2><p v-if="commandFailure" class="feedback feedback-error" role="alert">{{ commandFailure }} <AButton type="text" @click="loadCommandEvidence">重试</AButton></p><template v-else-if="commandEvidence"><pre><code>{{ commandEvidence.command }}</code></pre><p>`-p ******` 仅用于展示；Agent 通过任务级官方安全文件读取密码，密码不进入启动参数或日志。</p></template><p v-else class="section-hint">正在读取脱敏命令证据…</p></section>
-    <section id="execution-logs" class="content-card task-log-card"><div class="task-log-heading"><div><h2>执行日志</h2><p>只显示当前任务已完成双层脱敏的持久日志。</p><p v-if="logStreamStatus === 'connected'" class="section-hint">实时增量已连接；断线后将从最后可靠游标继续读取。</p><p v-else-if="logStreamStatus === 'interrupted'" class="section-hint">实时连接中断，已保留已加载日志；页面会按最后可靠游标重新读取。</p></div><AButton @click="refresh">立即刷新</AButton></div><p v-if="logFailure" class="feedback feedback-error" role="alert">{{ logFailure }}</p><div v-else-if="logs.length === 0" class="empty-state"><div class="empty-mark"><FileTextOutlined class="product-icon" aria-hidden="true" /></div><h2>尚未收到日志</h2><p>{{ executionEmptyMessage() }}</p></div><div v-else class="task-log-list"><div v-for="record in logs" :key="`${record.sourceSeq}-${record.receivedAt}-${record.kind}-${record.message}`" class="task-log-record"><time>{{ dateTime(record.receivedAt) }}</time><span>{{ record.kind }}</span><code>{{ record.message }}</code></div></div></section>
-    <p class="section-hint">当前详情仅展示可授权读取的概览、执行事实、结果摘要、最小冻结快照、脱敏计划命令和本任务日志；路径、凭据、原始执行载荷与原始错误不在本页下发。</p>
-  </template>
+  <MessageContext />
+  <div class="orch-ui task-detail-workspace">
+    <header class="orch-page-header page-heading task-object-header">
+      <div class="task-object-heading">
+        <h1>{{ title }}</h1>
+        <div v-if="overview" class="task-object-meta">
+          <ATypographyText :copyable="{ text: overview.id }" class="task-object-id">{{ overview.id }}</ATypographyText><span>导出</span>
+          <ConfigProvider v-if="task?.environment" :theme="environmentTagTheme(task.environment)"><ATag :bordered="false">{{ taskEnvironmentLabel(task.environment) }}</ATag></ConfigProvider>
+          <ABadge :status="taskStateBadge(state, execution?.reconciliationRequired)" :text="taskStateText(state)" />
+          <ATag v-if="execution?.reconciliationRequired" color="warning">状态核对中</ATag>
+          <span v-if="overview.parentTaskId" class="task-derivation-note">由 <RouterLink :to="`/tasks/${encodeURIComponent(overview.parentTaskId)}`">{{ overview.parentTaskId }}</RouterLink> {{ derivationLabel }}</span>
+          <ADropdown v-if="overview.derivedTaskCount" :trigger="['click']"><AButton type="link">已派生 {{ overview.derivedTaskCount }} 个任务</AButton><template #overlay><AMenu><AMenuItem v-for="child in overview.derivedTasks" :key="child.id"><RouterLink :to="`/tasks/${encodeURIComponent(child.id)}`">{{ child.displayName }} · {{ taskStateText(child.state) }}</RouterLink></AMenuItem><AMenuItem v-if="overview.derivedTaskCount > (overview.derivedTasks?.length ?? 0)" disabled>展示最近 100 个授权任务</AMenuItem></AMenu></template></ADropdown>
+        </div>
+      </div>
+      <div class="task-object-actions">
+        <RouterLink v-slot="{ href, navigate }" :to="returnTo" custom><AButton type="text" :href="href" @click="navigate">返回任务中心</AButton></RouterLink>
+        <AButton type="text" :disabled="loading" aria-label="刷新" @click="detail.refresh()"><template #icon><ReloadOutlined /></template>刷新</AButton>
+        <AButton v-if="primary" :type="primary === 'CANCEL' ? 'default' : 'primary'" :danger="primary === 'CANCEL'" :loading="Boolean(actionModel.busyTaskId)" :disabled="Boolean(actionModel.busyTaskId)" @click="request(primary)">{{ taskActionLabels[primary] }}</AButton>
+        <TaskActionMenu v-if="more.length" :actions="more" label="更多操作" :session-key="overview?.id" :busy="Boolean(actionModel.busyTaskId)" @select="request" />
+      </div>
+    </header>
+    <AAlert v-if="failure" class="orch-feedback" type="error" message="无法加载任务详情" :description="failure" show-icon><template #action><AButton @click="detail.refresh()">重试</AButton></template></AAlert>
+    <ASkeleton v-else-if="loading" active :paragraph="{ rows: 8 }" aria-label="正在读取任务详情" />
+    <template v-else-if="overview">
+      <AAlert v-if="execution?.plannedActualMatch === 'MISMATCHED'" class="orch-feedback" type="error" message="计划与实际命令摘要不一致" description="结果不能视为成功，请核对命令与执行证据。" show-icon><template #action><AButton @click="setTab('command')">核对命令</AButton></template></AAlert>
+      <AAlert v-else-if="state === 'FAILED'" class="orch-feedback" type="error" :message="execution?.errorCode ? `任务失败 · ${execution.errorCode}` : '任务失败'" :description="safeFailure" show-icon><template #action><AButton @click="showError">查看错误日志</AButton></template></AAlert>
+      <AAlert v-else-if="execution?.reconciliationRequired" class="orch-feedback" type="warning" message="状态核对中" :description="`最后可信状态：${taskStateText(state)}；最后核对：${dateTime(execution.updatedAt)}。`" show-icon />
+      <AAlert v-else-if="state === 'CANCELLING'" class="orch-feedback" type="info" message="正在取消任务" :description="`取消截止时间：${dateTime(execution?.cancelDeadline)}。取消不回滚已经写入的文件或数据。`" show-icon />
+      <AAlert v-if="actionModel.failure && !actionModel.confirmation" class="orch-feedback" type="error" message="操作未完成" :description="actionModel.failure" show-icon />
+      <section class="task-detail-surface">
+        <ATabs :active-key="activeTab" @change="setTab">
+          <ATabPane key="overview" tab="运行概览">
+            <AAlert v-if="executionFailure" type="error" message="无法读取执行事实" :description="executionFailure" show-icon><template #action><AButton @click="detail.loadExecution()">重试</AButton></template></AAlert>
+            <template v-else>
+              <ADescriptions title="执行" :column="{ xs: 1, sm: 2, xl: 3 }" size="small">
+                <ADescriptionsItem label="任务状态">{{ taskStateText(state) }}</ADescriptionsItem><ADescriptionsItem label="当前阶段">—</ADescriptionsItem><ADescriptionsItem label="进度证据">工具未提供可靠进度</ADescriptionsItem>
+                <ADescriptionsItem label="提交时间">{{ dateTime(overview.submittedAt) }}</ADescriptionsItem><ADescriptionsItem label="开始时间">{{ dateTime(execution?.startedAt) }}</ADescriptionsItem><ADescriptionsItem label="结束时间">{{ dateTime(execution?.finishedAt) }}</ADescriptionsItem>
+                <ADescriptionsItem label="耗时">{{ taskDurationText(execution?.startedAt, execution?.finishedAt) || '—' }}</ADescriptionsItem><ADescriptionsItem label="最后核对">{{ dateTime(execution?.updatedAt) }}</ADescriptionsItem><ADescriptionsItem label="执行编号"><code>{{ execution?.executionId || '—' }}</code></ADescriptionsItem>
+              </ADescriptions>
+              <ADescriptions title="对象与位置" :column="{ xs: 1, sm: 2, xl: 3 }" size="small">
+                <ADescriptionsItem label="数据源">{{ task ? taskHistoricalName(task.dataSourceName, task.dataSourceId, task.dataSourceDeleted) : overview.dataSourceId }}</ADescriptionsItem><ADescriptionsItem label="执行节点">{{ task ? taskHistoricalName(task.nodeName, task.nodeId, task.nodeDeleted) : overview.nodeId }}</ADescriptionsItem><ADescriptionsItem label="导出对象">{{ task?.objectSummary || snapshot?.objectSummary || '—' }}</ADescriptionsItem>
+                <ADescriptionsItem label="输出类型">{{ output?.kind || '—' }}</ADescriptionsItem><ADescriptionsItem label="输出位置" :span="2"><code>{{ output?.redaction === 'KIND_ONLY' ? '仅创建者可见' : output?.value || '—' }}</code></ADescriptionsItem>
+              </ADescriptions>
+              <ADescriptions title="结果" :column="{ xs: 1, sm: 2, xl: 3 }" size="small">
+                <ADescriptionsItem label="结果结论">{{ taskResultText(result, remoteResult) }}</ADescriptionsItem><ADescriptionsItem label="文件数">{{ result && !remoteResult ? result.fileCount : '—' }}</ADescriptionsItem><ADescriptionsItem label="字节数">{{ result && !remoteResult ? formatBytes(result.totalBytes) : '—' }}</ADescriptionsItem><ADescriptionsItem label="dump.ckpt">{{ result ? result.checkpointPresent ? '存在' : '不存在' : '—' }}</ADescriptionsItem><ADescriptionsItem label="观察时间">{{ dateTime(result?.observedAt) }}</ADescriptionsItem>
+              </ADescriptions>
+              <template v-if="result?.files.length && !remoteResult"><AButton type="link" :aria-expanded="filesExpanded" @click="filesExpanded = !filesExpanded">{{ filesExpanded ? '收起文件清单' : `展开文件清单（${result.files.length}）` }}</AButton><ul v-if="filesExpanded" class="task-result-files"><li v-for="file in result.files" :key="file.path"><code>{{ file.path }}</code><span>{{ formatBytes(file.size) }}</span></li></ul></template>
+            </template>
+          </ATabPane>
+          <ATabPane key="snapshot" tab="配置快照">
+            <AAlert v-if="snapshotFailure" type="error" message="无法读取冻结配置" :description="snapshotFailure" show-icon><template #action><AButton @click="detail.loadSnapshot()">重试</AButton></template></AAlert>
+            <template v-else-if="snapshot">
+              <p class="task-section-note">提交时的生效值保持冻结。历史快照未记录字段来源，统一标记“来源未记录”。</p>
+              <ADescriptions v-for="group in snapshotGroups" :key="group.key" :title="group.label" :column="{ xs: 1, sm: 2 }" size="small"><ADescriptionsItem v-for="field in group.fields" :key="field.key" :label="field.label"><div class="task-snapshot-field"><ATypographyParagraph class="task-snapshot-value" :content="field.value" :ellipsis="{ rows: 3, expandable: true, symbol: '展开' }" /><ATag class="task-origin">来源未记录</ATag></div></ADescriptionsItem></ADescriptions>
+              <ADescriptions title="冻结证据" :column="{ xs: 1, sm: 2 }" size="small"><ADescriptionsItem label="工具版本">{{ snapshot.toolVersion }}</ADescriptionsItem><ADescriptionsItem label="参数元数据版本">{{ snapshot.metadataVersion }}</ADescriptionsItem><ADescriptionsItem label="能力版本">{{ snapshot.capabilityVersion }}</ADescriptionsItem><ADescriptionsItem label="配置指纹"><code>{{ snapshot.configFingerprint }}</code></ADescriptionsItem></ADescriptions>
+            </template>
+          </ATabPane>
+          <ATabPane key="command" tab="命令">
+            <AAlert v-if="commandFailure" type="error" message="无法读取命令证据" :description="commandFailure" show-icon><template #action><AButton @click="detail.loadCommandEvidence()">重试</AButton></template></AAlert>
+            <template v-else-if="commandEvidence"><div class="task-section-heading"><h2>计划执行命令</h2><AButton v-if="task?.availableActions.includes('COPY_COMMAND')" :loading="Boolean(actionModel.busyTaskId)" @click="request('COPY_COMMAND')">复制脱敏命令</AButton></div><pre class="task-evidence"><code>{{ commandEvidence.command }}</code></pre><p class="task-section-note">密码已脱敏，秘密由任务级安全文件提供。</p></template>
+            <ADescriptions title="实际启动证据" :column="{ xs: 1, sm: 2 }" size="small"><ADescriptionsItem label="与计划摘要核对">{{ execution?.plannedActualMatch === 'MATCHED' ? '一致' : execution?.plannedActualMatch === 'MISMATCHED' ? '不一致' : '尚无核对证据' }}</ADescriptionsItem><ADescriptionsItem label="启动时间">{{ dateTime(execution?.startedAt) }}</ADescriptionsItem><ADescriptionsItem label="执行节点">{{ task?.nodeName || overview.nodeId }}</ADescriptionsItem><ADescriptionsItem label="退出码">{{ execution?.exitCode ?? '—' }}</ADescriptionsItem></ADescriptions>
+            <AAlert type="info" message="完整实际启动命令与启动目录未保存" description="当前只展示 Agent 上报的摘要核对事实，不能由计划命令反推实际命令。" show-icon />
+          </ATabPane>
+          <ATabPane key="logs" tab="执行日志">
+            <div class="task-log-toolbar"><AInput v-model:value="keyword" allow-clear placeholder="过滤已加载日志" aria-label="日志关键字" class="task-log-keyword" /><ASelect v-model:value="source" :options="sourceOptions" allow-clear placeholder="全部来源" aria-label="日志来源" class="task-log-source" /><AButton :disabled="firstError < 0" @click="showError">跳转首条错误</AButton><AButton :aria-pressed="paused" @click="paused = !paused">{{ paused ? '恢复自动滚动' : '暂停自动滚动' }}</AButton><AButton @click="latest">跳到最新</AButton><AButton @click="detail.loadLogs()">刷新日志</AButton><ABadge :status="logStreamStatus === 'connected' ? 'processing' : logStreamStatus === 'interrupted' ? 'warning' : 'default'" :text="logStreamStatus === 'connected' ? '实时连接已连接' : logStreamStatus === 'interrupted' ? '实时连接中断' : '实时连接未开启'" /></div>
+            <AAlert v-if="logsExpired" type="info" message="日志已过保留期" description="普通执行日志已清理；任务快照、结果和操作记录仍可查看。" show-icon />
+            <AAlert v-else-if="logFailure" type="error" message="无法读取执行日志" :description="logFailure" show-icon />
+            <AAlert v-if="gap && !logsExpired" type="warning" message="日志完整性需要核对" description="部分记录存在缺口或完整性未知；已加载内容保留，不能视为完整执行证据。" show-icon />
+            <div v-if="!logsExpired" ref="logSurface" class="task-log-list task-evidence" tabindex="0" aria-label="已脱敏执行日志"><AEmpty v-if="!filteredLogs.length" :description="logs.length ? '没有符合条件的已加载日志' : '尚未收到日志'" /><div v-for="(record, index) in filteredLogs" :key="`${record.sourceSeq}-${record.receivedAt}-${record.kind}-${index}`" class="task-log-record" :data-log-error="taskLogIsError(record)" tabindex="-1"><time>{{ dateTime(record.receivedAt) }}</time><span>{{ taskLogSource(record.kind) }}</span><code><strong v-if="taskLogIsError(record)" class="task-log-error">错误 · </strong>{{ record.message }}</code></div></div>
+          </ATabPane>
+          <ATabPane key="operations" tab="操作记录">
+            <AAlert v-if="operations.failure" type="error" message="无法读取操作记录" :description="operations.failure" show-icon><template #action><AButton @click="operations.load()">重试</AButton></template></AAlert>
+            <ASkeleton v-else-if="operations.loading && !operations.operations.length" active />
+            <AEmpty v-else-if="!operations.operations.length" description="暂无操作记录" />
+            <ATimeline v-else class="task-operations"><ATimelineItem v-for="operation in operations.operations" :key="operation.id" :color="operation.result === 'FAILED' || operation.result === 'DENIED' ? 'red' : 'blue'"><div class="task-operation-heading"><strong>{{ taskOperationLabel(operation.action) }}</strong><span>{{ taskOperationResult(operation.result) }}</span></div><p>{{ operation.actorName }} · {{ dateTime(operation.occurredAt) }}</p></ATimelineItem></ATimeline>
+            <AButton v-if="operations.nextCursor" :loading="operations.loading" @click="operations.load(true)">加载更多</AButton>
+          </ATabPane>
+        </ATabs>
+      </section>
+    </template>
+  </div>
+  <TaskActionDialogs :model="actionModel" />
 </template>
 
 <style scoped>
-.task-detail-card, .task-failure-actions, .task-derivation-note {
-  min-width: 0;
-  padding: var(--ob-foundation-space-6);
-}
-.task-failure-actions, .task-derivation-note { margin-bottom: var(--ob-foundation-space-4); }
-.task-detail-card h2, .task-failure-actions h2, .task-derivation-note h2 { margin: 0 0 var(--ob-foundation-space-3); font-size: var(--ob-product-typography-section-size); }
-.task-detail-card dd { overflow-wrap: anywhere; }
-.task-derivation-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ob-foundation-space-2);
-  margin-top: var(--ob-foundation-space-2);
-}
-
-.task-derivation-note p {
-  margin: var(--ob-foundation-space-1) 0 0;
-  color: var(--ob-color-form-secondary);
-  font-size: var(--ob-component-field-label-size);
-}
-
-.task-result-files {
-  margin-top: var(--ob-foundation-space-3);
-  border-top: 1px solid var(--ob-color-border);
-  padding-top: var(--ob-foundation-space-2);
-}
-
-.task-result-files summary {
-  cursor: pointer;
-  color: var(--ob-color-form-secondary);
-  font-size: var(--ob-component-field-label-size);
-}
-
-.task-result-files ul {
-  margin: var(--ob-foundation-space-2) 0 0;
-  padding-left: var(--ob-foundation-space-4);
-  list-style: none;
-}
-
-.task-result-files li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--ob-foundation-space-3);
-  padding: 2px 0;
-  font-size: var(--ob-component-field-helper-size);
-}
-
-.task-result-files code {
-  overflow: hidden;
-  color: var(--ob-product-navigation-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-result-files span {
-  flex: none;
-  color: var(--ob-color-muted);
-  font-variant-numeric: tabular-nums;
-}
+.task-detail-workspace, .task-object-heading { min-width: 0; }
+.task-object-header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--ob-foundation-space-4); }
+.task-object-heading h1 { margin: 0; font-size: var(--ob-product-typography-title-size); line-height: var(--ob-product-typography-title-line-height); overflow-wrap: anywhere; }
+.task-object-meta, .task-object-actions, .task-log-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
+.task-object-meta { margin-top: var(--ob-foundation-space-2); color: var(--ob-color-secondary); }
+.task-object-meta :deep(.ant-tag) { margin: 0; }
+.task-object-id { font-family: var(--ob-foundation-font-mono); font-size: var(--ob-component-table-metadata-size); }
+.task-object-actions { justify-content: flex-end; flex: none; }
+.task-detail-surface { min-width: 0; padding: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-6); background: var(--ob-color-surface); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-table-radius); }
+.task-detail-surface :deep(.ant-descriptions) { margin-bottom: var(--ob-foundation-space-6); }
+.task-detail-surface :deep(.ant-descriptions-item-content) { overflow-wrap: anywhere; min-width: 0; }
+.task-section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-3); }
+.task-section-heading h2 { font-size: var(--ob-product-typography-section-size); margin: 0; }
+.task-section-note, .task-operations p { color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
+.task-origin { margin-inline: var(--ob-foundation-space-2) 0; }
+.task-snapshot-field { min-width: 0; width: 100%; }
+.task-snapshot-value { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-evidence { max-width: 100%; padding: var(--ob-foundation-space-4); overflow: auto; background: var(--ob-color-subtle); font-family: var(--ob-foundation-font-mono); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
+.task-log-toolbar { margin-bottom: var(--ob-foundation-space-4); }
+.task-log-keyword { width: 220px; }
+.task-log-source { width: 150px; }
+.task-log-list { max-height: min(560px, 60vh); margin-top: var(--ob-foundation-space-3); }
+.task-log-record { display: grid; grid-template-columns: 170px 90px minmax(0, 1fr); gap: var(--ob-foundation-space-3); padding-block: var(--ob-foundation-space-1); font-size: var(--ob-component-table-metadata-size); }
+.task-log-record code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-log-error { color: var(--ob-color-danger); }
+.task-result-files { padding-left: var(--ob-foundation-space-4); }
+.task-result-files li, .task-operation-heading { display: flex; justify-content: space-between; align-items: baseline; gap: var(--ob-foundation-space-3); }
+.task-result-files code { overflow-wrap: anywhere; }
+.task-operations { padding-top: var(--ob-foundation-space-3); }
+@media (max-width: 1100px) { .task-object-header { flex-direction: column; } .task-object-actions { justify-content: flex-start; } }
+@media (max-width: 620px) { .task-detail-surface { padding-inline: var(--ob-foundation-space-3); } .task-log-record { grid-template-columns: 1fr; gap: var(--ob-foundation-space-1); } .task-log-keyword { width: 100%; } }
 </style>

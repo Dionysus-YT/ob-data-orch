@@ -10,6 +10,29 @@ import (
 	"ob-data-orch/internal/agentwire"
 )
 
+// TestEmptyTextOutputVerification 验证真实空集合文件事实，不以空目录或 DDL 零字节冒充结果。
+func TestEmptyTextOutputVerification(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "synthetic.csv"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	count, bytes, files, ok := outputFacts(root)
+	if !ok || count != 1 || bytes != 0 || !localOutputVerified([]string{"--csv", "--retain-empty-files"}, count, bytes, files) {
+		t.Fatal("已观察的零字节文本结果不能因字节数零而失败")
+	}
+	for _, argv := range [][]string{{"--ddl"}, {"--ddl", "--csv"}, {"--par"}, {"--pos"}} {
+		if localOutputVerified(argv, count, bytes, files) {
+			t.Fatal("DDL 或非文本格式不能使用纯数据空集合例外")
+		}
+	}
+	if localOutputVerified([]string{"--csv"}, 0, 0, nil) {
+		t.Fatal("无文件不能作为已验证本地结果")
+	}
+	if localOutputVerified([]string{"--csv"}, 1, 0, []outputFileFact{{Path: ".MANIFEST.bin"}}) {
+		t.Fatal("只有空清单不能证明生成了文本数据文件")
+	}
+}
+
 // TestOutputFactsReportsBoundedFileList 验证结果事实枚举：数量/字节数与受限相对路径清单，
 // 并拒绝超长文件名（失败关闭，不把未验证事实当作可靠结果）。
 func TestOutputFactsReportsBoundedFileList(t *testing.T) {
@@ -84,14 +107,15 @@ func TestExecutionPathsAcceptControlledStorageURI(t *testing.T) {
 	paths, ok := executionPathsFromArgv("WINDOWS_AMD64", []string{
 		"--file-path", "cos://synthetic-bucket/exports?endpoint=cos.example.com&storage-class=STANDARD",
 		"--tmp-path", "/E:/tmp/ob-data-orch",
+		"--log-path", "/E:/tmp/logs",
 	})
-	if !ok || !paths.StorageOutput || paths.OutputPath == "" || paths.TmpPath != "/E:/tmp/ob-data-orch" {
+	if !ok || !paths.StorageOutput || paths.OutputPath == "" || paths.TmpPath != "/E:/tmp/ob-data-orch" || paths.LogPath != "/E:/tmp/logs" {
 		t.Fatalf("executionPathsFromArgv() = %#v, %t", paths, ok)
 	}
 	negative := [][]string{
 		{"--file-path", "ftp://synthetic-bucket/exports"},
 		{"--file-path", "s3://synthetic-bucket/exports?access-key=synthetic"},
-		{"--file-path", "oss://synthetic-bucket/exports", "--log-path", "/E:/tmp/logs"},
+		{"--file-path", "oss://synthetic-bucket/exports", "--log-path", "relative/logs"},
 	}
 	for _, argv := range negative {
 		if paths, ok := executionPathsFromArgv("WINDOWS_AMD64", argv); ok {

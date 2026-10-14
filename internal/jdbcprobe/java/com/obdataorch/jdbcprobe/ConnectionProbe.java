@@ -38,6 +38,9 @@ public final class ConnectionProbe {
     private static final int PREFLIGHT_PROTOCOL_VERSION = 3;
     private static final int CATALOG_PROTOCOL_VERSION = 4;
     private static final int BATCH_PREFLIGHT_PROTOCOL_VERSION = 5;
+    private static final int PARAMETER_PREFLIGHT_PROTOCOL_VERSION = 6;
+    private static final int SELECTION_PREFLIGHT_PROTOCOL_VERSION = 7;
+    private static final int SELECTION_PARAMETER_PROTOCOL_VERSION = 8;
     private static final int MAX_HOST_BYTES = 253;
     private static final int MAX_USERNAME_BYTES = 256;
     private static final int MAX_PASSWORD_BYTES = 4096;
@@ -65,7 +68,9 @@ public final class ConnectionProbe {
             properties.setProperty("user", input.usernameText());
             properties.setProperty("password", input.passwordText());
             try (Connection connection = DriverManager.getConnection(input.jdbcUrl(), properties)) {
-                if (input.isCatalog()) {
+                if (input.isParameterPreflight()) {
+                    printParameterPreflightSuccess(connection, input);
+                } else if (input.isCatalog()) {
                     printCatalogSuccess(connection, input);
                 } else if (input.isBatchPreflight()) {
                     printBatchPreflightSuccess(connection, input);
@@ -394,6 +399,10 @@ public final class ConnectionProbe {
             objectAccess = OBJECT_ACCESSIBLE;
             for (ObjectSpec object : input.objects) {
                 String result = checkBatchObjectAccess(connection, metadata, input, object);
+                if (OBJECT_ACCESSIBLE.equals(result) && "TABLE".equals(object.typeText())) {
+                    result = SelectionPreflight.verify(connection, input.isMySQL(), input.databaseText(), object.nameText(),
+                            input.selectionText(input.includeColumnNames), input.selectionText(input.excludeColumnNames), input.selectionText(input.partitions));
+                }
                 if (!OBJECT_ACCESSIBLE.equals(result)) {
                     objectAccess = result;
                     break;
@@ -407,6 +416,40 @@ public final class ConnectionProbe {
                 + "\",\"driverName\":\"" + driverName
                 + "\",\"driverVersion\":\"" + driverVersion
                 + "\",\"objectAccess\":\"" + objectAccess + "\"}");
+    }
+
+    /** 专家参数只输出汇总权限结论；旧连接或零行检查结果不能冒充参数检查通过。 */
+    private static void printParameterPreflightSuccess(Connection connection, ProbeInput input) {
+        String productName = "", productVersion = "", driverName = "", driverVersion = "";
+        String access = OBJECT_UNAVAILABLE;
+        try {
+            DatabaseMetaData metadata = connection.getMetaData();
+            productName = json(metadata.getDatabaseProductName());
+            productVersion = json(metadata.getDatabaseProductVersion());
+            driverName = json(metadata.getDriverName());
+            driverVersion = json(metadata.getDriverVersion());
+            access = OBJECT_ACCESSIBLE;
+            List<String> tables = new ArrayList<String>();
+            for (ObjectSpec object : input.objects) {
+                access = checkBatchObjectAccess(connection, metadata, input, object);
+                if (OBJECT_ACCESSIBLE.equals(access) && "TABLE".equals(object.typeText())) {
+                    access = SelectionPreflight.verify(connection, input.isMySQL(), input.databaseText(), object.nameText(),
+                            input.selectionText(input.includeColumnNames), input.selectionText(input.excludeColumnNames), input.selectionText(input.partitions));
+                }
+                if (!OBJECT_ACCESSIBLE.equals(access)) break;
+                if ("TABLE".equals(object.typeText())) tables.add(object.nameText());
+            }
+            if (OBJECT_ACCESSIBLE.equals(access)) {
+                access = ParameterPreflight.verify(connection, input.isMySQL(), input.databaseText(), tables,
+                        input.objects.isEmpty(), input.usernameText(), input.parameterFlags,
+                        input.jdbcUrl(), input.sysUsername, input.sysPassword);
+            }
+        } catch (SQLException | RuntimeException exception) {
+            access = OBJECT_UNAVAILABLE;
+        }
+        System.out.println("{\"status\":\"SUCCESS\",\"productName\":\"" + productName
+                + "\",\"productVersion\":\"" + productVersion + "\",\"driverName\":\"" + driverName
+                + "\",\"driverVersion\":\"" + driverVersion + "\",\"objectAccess\":\"" + access + "\"}");
     }
 
     private static String checkBatchObjectAccess(Connection connection, DatabaseMetaData metadata, ProbeInput input, ObjectSpec object) {
@@ -586,6 +629,12 @@ public final class ConnectionProbe {
     }
 
     private static final class ProbeInput {
+        private List<byte[]> includeColumnNames = new ArrayList<byte[]>();
+        private List<byte[]> excludeColumnNames = new ArrayList<byte[]>();
+        private List<byte[]> partitions = new ArrayList<byte[]>();
+        private int parameterFlags;
+        private byte[] sysUsername;
+        private byte[] sysPassword;
         private final int version;
         private final byte[] host;
         private final int port;
@@ -622,19 +671,23 @@ public final class ConnectionProbe {
             byte[] database = null;
             byte[] table = null;
             byte[] keyword = null;
+			byte[] sysUsername = null;
+			byte[] sysPassword = null;
+			int parameterFlags = 0;
 			List<ObjectSpec> objects = new ArrayList<ObjectSpec>();
+            List<byte[]> includeColumnNames = new ArrayList<byte[]>(), excludeColumnNames = new ArrayList<byte[]>(), partitions = new ArrayList<byte[]>();
             try {
                 int version = input.readInt();
                 host = readValue(input, MAX_HOST_BYTES);
                 int port = input.readInt();
                 username = readValue(input, MAX_USERNAME_BYTES);
                 password = readValue(input, MAX_PASSWORD_BYTES);
-                if (version == PREFLIGHT_PROTOCOL_VERSION || version == CATALOG_PROTOCOL_VERSION || version == BATCH_PREFLIGHT_PROTOCOL_VERSION) {
+                if (version == PREFLIGHT_PROTOCOL_VERSION || version == CATALOG_PROTOCOL_VERSION || version == BATCH_PREFLIGHT_PROTOCOL_VERSION || version == PARAMETER_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PARAMETER_PROTOCOL_VERSION) {
                     compatibilityMode = readValue(input, 6);
                     database = readValue(input, MAX_IDENTIFIER_BYTES);
-                    if (version == BATCH_PREFLIGHT_PROTOCOL_VERSION) {
+                    if (version == BATCH_PREFLIGHT_PROTOCOL_VERSION || version == PARAMETER_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PARAMETER_PROTOCOL_VERSION) {
                         int count = input.readInt();
-                        if (count <= 0) throw new IllegalArgumentException();
+                        if (count < 0 || ((version == BATCH_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PREFLIGHT_PROTOCOL_VERSION) && count == 0)) throw new IllegalArgumentException();
                         for (int index = 0; index < count; index++) {
                             byte[] objectType = readValue(input, 16);
                             byte[] objectName = null;
@@ -654,17 +707,38 @@ public final class ConnectionProbe {
                         if (version == CATALOG_PROTOCOL_VERSION) keyword = readValue(input, MAX_KEYWORD_BYTES);
                     }
                 }
-                if ((version != CONNECTION_PROTOCOL_VERSION && version != PREFLIGHT_PROTOCOL_VERSION && version != CATALOG_PROTOCOL_VERSION && version != BATCH_PREFLIGHT_PROTOCOL_VERSION)
+                if (version == SELECTION_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PARAMETER_PROTOCOL_VERSION) {
+                    readSelection(input, includeColumnNames); readSelection(input, excludeColumnNames); readSelection(input, partitions);
+                    if (includeColumnNames.isEmpty() && excludeColumnNames.isEmpty() && partitions.isEmpty()) throw new IllegalArgumentException();
+                }
+                if (version == PARAMETER_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PARAMETER_PROTOCOL_VERSION) {
+                    parameterFlags = input.readInt();
+                    sysUsername = readValue(input, MAX_USERNAME_BYTES);
+                    sysPassword = readValue(input, MAX_PASSWORD_BYTES);
+                    if (parameterFlags < 1 || parameterFlags > 7
+                            || !validCompatibilityMode(compatibilityMode) || !validIdentifier(database)
+                            || ((parameterFlags & 4) != 0 && (sysUsername.length == 0 || sysPassword.length == 0))
+                            || ((parameterFlags & 4) == 0 && (sysUsername.length != 0 || sysPassword.length != 0))) throw new IllegalArgumentException();
+                }
+                if ((version != CONNECTION_PROTOCOL_VERSION && version != PREFLIGHT_PROTOCOL_VERSION && version != CATALOG_PROTOCOL_VERSION && version != BATCH_PREFLIGHT_PROTOCOL_VERSION && version != PARAMETER_PREFLIGHT_PROTOCOL_VERSION && version != SELECTION_PREFLIGHT_PROTOCOL_VERSION && version != SELECTION_PARAMETER_PROTOCOL_VERSION)
                         || port < 1 || port > 65535 || !validHost(host) || username.length == 0 || password.length == 0
                         || (version == PREFLIGHT_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validIdentifier(database) || !validIdentifier(table)))
 						|| (version == CATALOG_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validObjectType(table)
 								|| (isDatabaseType(table) ? database.length != 0 : !validIdentifier(database)) || !validKeyword(keyword)))
-                        || (version == BATCH_PREFLIGHT_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validIdentifier(database)))
+                        || ((version == BATCH_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PREFLIGHT_PROTOCOL_VERSION) && (!validCompatibilityMode(compatibilityMode) || !validIdentifier(database)))
                         || input.read() != -1) {
                     throw new IllegalArgumentException();
                 }
-                return new ProbeInput(version, host, port, username, password, compatibilityMode, database, table, keyword, objects);
+                ProbeInput result = new ProbeInput(version, host, port, username, password, compatibilityMode, database, table, keyword, objects);
+                result.parameterFlags = parameterFlags;
+                result.sysUsername = sysUsername;
+                result.sysPassword = sysPassword;
+                result.includeColumnNames = includeColumnNames; result.excludeColumnNames = excludeColumnNames; result.partitions = partitions;
+                return result;
             } catch (IOException exception) {
+                destroySelection(includeColumnNames); destroySelection(excludeColumnNames); destroySelection(partitions);
+                zero(sysUsername);
+                zero(sysPassword);
                 zero(host);
                 zero(username);
                 zero(password);
@@ -675,6 +749,9 @@ public final class ConnectionProbe {
 				for (ObjectSpec object : objects) object.destroy();
                 throw exception;
             } catch (IllegalArgumentException exception) {
+                destroySelection(includeColumnNames); destroySelection(excludeColumnNames); destroySelection(partitions);
+                zero(sysUsername);
+                zero(sysPassword);
                 zero(host);
                 zero(username);
                 zero(password);
@@ -795,7 +872,27 @@ public final class ConnectionProbe {
             return version == PREFLIGHT_PROTOCOL_VERSION;
         }
 
-        boolean isBatchPreflight() { return version == BATCH_PREFLIGHT_PROTOCOL_VERSION; }
+        boolean isBatchPreflight() { return version == BATCH_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PREFLIGHT_PROTOCOL_VERSION; }
+
+        boolean isParameterPreflight() { return version == PARAMETER_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PARAMETER_PROTOCOL_VERSION; }
+
+        /** 新版输入只携带有界标识符；长度、控制字符和重复项在连接前复核。 */
+        private static void readSelection(DataInputStream input, List<byte[]> values) throws IOException {
+            int count = input.readInt();
+            if (count < 0 || count > 4096) throw new IllegalArgumentException();
+            java.util.Set<String> seen = new java.util.HashSet<String>();
+            for (int index = 0; index < count; index++) {
+                byte[] value = readValue(input, MAX_IDENTIFIER_BYTES);
+                values.add(value);
+                if (!validIdentifier(value) || !validObjectName(new String(value, UTF8)) || !seen.add(new String(value, UTF8))) throw new IllegalArgumentException();
+            }
+        }
+
+        private static void destroySelection(List<byte[]> values) { for (byte[] value : values) zero(value); values.clear(); }
+
+        private List<String> selectionText(List<byte[]> values) {
+            List<String> result = new ArrayList<String>(); for (byte[] value : values) result.add(new String(value, UTF8)); return result;
+        }
 
         boolean isCatalog() { return version == CATALOG_PROTOCOL_VERSION; }
 
@@ -820,6 +917,8 @@ public final class ConnectionProbe {
         }
 
         void destroy() {
+            zero(sysUsername);
+            zero(sysPassword);
             zero(host);
             zero(username);
             zero(password);
@@ -828,6 +927,9 @@ public final class ConnectionProbe {
             zero(table);
             zero(keyword);
 			for (ObjectSpec object : objects) object.destroy();
+			destroySelection(includeColumnNames);
+			destroySelection(excludeColumnNames);
+			destroySelection(partitions);
         }
 
         private static void zero(byte[] value) {

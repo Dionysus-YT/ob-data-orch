@@ -1,0 +1,1860 @@
+{
+  "date": "2026-10-14",
+  "scope": "AUTHORIZED_NONPRODUCTION_MYSQL_LOCAL_WINDOWS_AMD64",
+  "counts": {
+    "FAIL": 12,
+    "PASS": 152,
+    "OBSERVED": 2,
+    "BLOCKED": 4,
+    "PARTIAL": 2
+  },
+  "caseCount": 172,
+  "contentCases": 84,
+  "ownedTasks": 133,
+  "taskStates": {
+    "FAILED": 25,
+    "CANCELLED": 4,
+    "SUCCEEDED": 104
+  },
+  "commandEvidenceTasks": 102,
+  "apiSecretAudit": {
+    "status": "AUDITED",
+    "tasks": 133,
+    "plaintextOrRecoverableEncodingPresent": false
+  },
+  "nativeSecretAudit": {
+    "plaintextOrRecoverableEncodingPresent": false,
+    "status": "AUDITED",
+    "files": 520
+  },
+  "securityCleanup": {
+    "executions": 133,
+    "securityRemaining": 0,
+    "rawLogRemaining": 0
+  },
+  "fixtureCleanup": {
+    "status": "CLEANED",
+    "ownershipVerified": true,
+    "databaseAbsent": true
+  },
+  "outputCleanup": {
+    "ownershipVerified": true,
+    "resolvedScopeVerified": true,
+    "directoryAbsent": true
+  },
+  "runtime": {
+    "acceptsNewTasks": true,
+    "activeExecutions": 0,
+    "environmentCheckStatus": "PASSED",
+    "environmentStatus": "NORMAL",
+    "healthStatus": 200,
+    "lastHeartbeatAt": "2026-10-14T07:56:43.3403622Z",
+    "managementState": "ENABLED",
+    "nodeStatus": 200,
+    "ownedTemplatesRemaining": 0
+  },
+  "binaries": {
+    "liveControlPlaneProcesses": 1,
+    "agentHash": "0B158DDC3200E6E9C432DA4AFDC380D1D9F8F85E27FA0CC74B3263D2FF6E6C18",
+    "liveAgentProcesses": 1,
+    "controlPlaneHash": "EF8CA7E615ED4BA7F30676A8DB9ABBA1C0D2A606B6D790B37C7BB7ECC3477839",
+    "bundleMatchesAgent": true,
+    "bundledAgentHash": "0B158DDC3200E6E9C432DA4AFDC380D1D9F8F85E27FA0CC74B3263D2FF6E6C18"
+  },
+  "cases": [
+    {
+      "id": "MX-001",
+      "title": "单表 CSV：真实预检、任务领取、终态与完整内容",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "814183ee-0603-48fc-b3d8-4f364e5b0b24",
+      "state": "FAILED",
+      "errorCode": "PROCESS_EXIT_NONZERO",
+      "exitCode": 1
+    },
+    {
+      "id": "MX-001-LOG",
+      "title": "日志目录与输出目录分离的真实 CSV 主链路",
+      "outcome": "PASS",
+      "taskId": "a6749996-8c0c-47dc-bd74-78c945417dd5",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-002",
+      "title": "相同业务参数在新输出目录的内容一致",
+      "outcome": "PASS",
+      "taskId": "72fe0edb-dd95-4bbf-bac6-55edeb161f50",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837",
+      "independentRunsCompared": 2
+    },
+    {
+      "id": "MX-003",
+      "title": "多个表的数据导出",
+      "outcome": "PASS",
+      "taskId": "340c1e59-b53c-46da-9c43-c88a72e73f44",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e7ebdf09c319538449dbbd63a87967de344f4576ecb09546ca34db9659d8b9c9",
+      "tablesVerified": 2
+    },
+    {
+      "id": "MX-004",
+      "title": "独立夹具库整库导出",
+      "outcome": "FAIL",
+      "code": "TASK_TIMEOUT",
+      "taskId": "8a5954c5-9e22-4eb7-b995-3522c385f94d",
+      "eventualExecution": {
+        "checkpointPresent": false,
+        "errorCode": "PROCESS_WAIT_FAILED",
+        "exitCode": 1,
+        "fileCount": 12,
+        "id": "MX-004",
+        "state": "FAILED",
+        "totalBytes": 27541197
+      }
+    },
+    {
+      "id": "MX-005",
+      "title": "整库排除指定表",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "52eca5fe-1af7-46e6-a3a4-65dbca029bdb",
+      "state": "FAILED",
+      "errorCode": "PROCESS_WAIT_FAILED",
+      "exitCode": 0,
+      "eventualExecution": {
+        "checkpointPresent": false,
+        "errorCode": "PROCESS_WAIT_FAILED",
+        "exitCode": 0,
+        "fileCount": 10,
+        "id": "MX-005",
+        "state": "FAILED",
+        "totalBytes": 1065487
+      }
+    },
+    {
+      "id": "MX-006",
+      "title": "查询结果单条 SELECT 与列别名",
+      "outcome": "PASS",
+      "taskId": "1984776f-90c0-41ce-9459-603c769fad84",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 32,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e1ce97d7095776fae70063934dbd6b769103e5d4e0dd6a75596e5575dd1f04c2"
+    },
+    {
+      "id": "MX-006-MULTILINE",
+      "title": "正常多行 SELECT 经领取、启动与限行导出",
+      "outcome": "PASS",
+      "taskId": "ed2b0623-f617-43a4-9258-870afb81546d",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 38,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e1ce97d7095776fae70063934dbd6b769103e5d4e0dd6a75596e5575dd1f04c2"
+    },
+    {
+      "id": "MX-006-LONG",
+      "title": "超过普通 4096 字节参数上限的合法 SELECT",
+      "outcome": "PASS",
+      "taskId": "2092d8d1-2de7-43a6-b5cc-d07549ebfb47",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-007",
+      "title": "查询结果条数上限",
+      "outcome": "PASS",
+      "taskId": "5da57b7d-8317-4d5b-8da5-7b0515d229fd",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 38,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e1ce97d7095776fae70063934dbd6b769103e5d4e0dd6a75596e5575dd1f04c2"
+    },
+    {
+      "id": "MX-008",
+      "title": "查询结果空集合",
+      "outcome": "PASS",
+      "taskId": "cbd263b0-05ac-4cd0-9bcd-446b2e882e2e",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 0,
+      "fileCount": 2,
+      "bytes": 0,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "MX-009",
+      "title": "查询 SQL 的执行错误由真实工具结束为失败",
+      "outcome": "PASS",
+      "taskId": "300c2409-bbed-4464-92f8-0ab810599c81",
+      "state": "FAILED",
+      "errorCode": "PROCESS_EXIT_NONZERO",
+      "exitCode": 1
+    },
+    {
+      "id": "MX-010",
+      "title": "指定表仅 DDL",
+      "outcome": "PASS",
+      "taskId": "2bca7352-153d-4d28-be35-44738d8476a3",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 495,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-011-CSV",
+      "title": "表 DDL + CSV 数据",
+      "outcome": "PASS",
+      "taskId": "8b135cd1-088c-4395-936d-5404afcfe584",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 3,
+      "bytes": 760,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-011-CUT",
+      "title": "表 DDL + CUT 数据",
+      "outcome": "PASS",
+      "taskId": "0304b90c-5f02-4cd6-9a29-46cf43b47aae",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 674,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-011-SQL",
+      "title": "表 DDL + SQL 数据",
+      "outcome": "PASS",
+      "taskId": "17f28597-ed89-4b21-b277-f429c9026fc6",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 1090,
+      "dataFileCount": 2,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-012-VIEW",
+      "title": "VIEW 的定义导出",
+      "outcome": "PASS",
+      "taskId": "690414c7-a414-429c-a6f2-a93ba9c2fea4",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 208,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-012-FUNCTION",
+      "title": "FUNCTION 的定义导出",
+      "outcome": "PASS",
+      "taskId": "9bdd09ba-5a79-463c-9ce4-7a471ffd4716",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 135,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-012-PROCEDURE",
+      "title": "PROCEDURE 的定义导出",
+      "outcome": "PASS",
+      "taskId": "8c01a9e0-6ea2-4f18-a366-a39dfb1c4b1f",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 108,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-012-SEQUENCE",
+      "title": "SEQUENCE 的定义导出",
+      "outcome": "PASS",
+      "taskId": "4ffaff1b-dc43-4175-8fcb-6937af1385f6",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 107,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-013",
+      "title": "表和视图的结构组合导出",
+      "outcome": "PASS",
+      "taskId": "c051d785-e7e1-4861-8181-b5eda068f7b6",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 2,
+      "bytes": 703,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-014",
+      "title": "非表纯数据内容不得进入任务",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-015",
+      "title": "指定范围不允许空对象",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-016",
+      "title": "对象类型白名单拒绝 TRIGGER",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-017",
+      "title": "非生产测试不创建多语句 SQL 执行任务",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-018",
+      "title": "非 SELECT 的结果集输入拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-019",
+      "title": "结果集与显式对象互斥",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-020",
+      "title": "NULL、空字符串、逗号、引号、反斜杠、换行、Unicode 的精确内容",
+      "outcome": "PASS",
+      "taskId": "f9fcad76-5d55-4312-a8f2-1e609cb441f2",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-021",
+      "title": "无列头",
+      "outcome": "PASS",
+      "taskId": "c155c950-74ea-4843-af9c-d4f2fd115442",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 200,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-022",
+      "title": "自定义分隔符与包围字符",
+      "outcome": "PASS",
+      "taskId": "3a8417a6-c3d2-4035-b611-2ee90e71e9e2",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-023",
+      "title": "全部字段引用模式",
+      "outcome": "PASS",
+      "taskId": "20a0a87d-294d-4d5e-a423-9e4459afc203",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 283,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-024",
+      "title": "按需引用模式",
+      "outcome": "PASS",
+      "taskId": "92f467eb-a23f-44c4-9d5f-4009e179f8e8",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 227,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-025",
+      "title": "非数字引用模式",
+      "outcome": "PASS",
+      "taskId": "0ce1dc1f-fcf2-417a-8f66-245ddce31ba1",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-025-ALL-NOT-NULL",
+      "title": "全部非空值引用模式",
+      "outcome": "PASS",
+      "taskId": "9484c05f-9bbd-4bf0-b011-063258aee782",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 281,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-025-NONE",
+      "title": "none 模式配合必要转义字符",
+      "outcome": "PASS",
+      "taskId": "973d7169-76f9-4b34-8d3b-8ed2bd2dc50f",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 46,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-026",
+      "title": "自定义转义字符",
+      "outcome": "PASS",
+      "taskId": "1b49be42-6e27-4d99-a819-97700c6e4ca8",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 270,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-027",
+      "title": "CRLF 行分隔符与字段内换行",
+      "outcome": "PASS",
+      "taskId": "72104cea-e153-4fd8-b47a-8c87f629fbce",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 270,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-028",
+      "title": "自定义 NULL 标记与空字符串区分",
+      "outcome": "PASS",
+      "taskId": "87649dbd-4d49-407f-94a5-81d77f16f742",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 269,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-029",
+      "title": "去除字段首尾空白",
+      "outcome": "PASS",
+      "taskId": "41c0bd64-1547-415c-8bff-be4c7bcc794d",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 260,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "15ca19ba90b68206193d27a68ac309d22efd3a6641f22f6ee5eddb926a25b2f1"
+    },
+    {
+      "id": "MX-030",
+      "title": "定长分隔字符串与特殊值",
+      "outcome": "PASS",
+      "taskId": "0f1f16bd-7ccc-4855-88f6-578f63e60e69",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 1,
+      "bytes": 203,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-031",
+      "title": "trail-delimiter 的实际方向与内容",
+      "outcome": "OBSERVED",
+      "taskId": "e3be0003-25d3-4cd7-a79d-81405c58638c",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 1,
+      "bytes": 175,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-032",
+      "title": "删除字段内换行",
+      "outcome": "PASS",
+      "taskId": "3f6f3611-7a6f-4b9d-a516-89430bbe1fbf",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 1,
+      "bytes": 176,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "515e900a266edb819d240ab4e17c22a52b171a812ef3de5a76a69128cf516a06"
+    },
+    {
+      "id": "MX-033",
+      "title": "INSERT SQL 的行数、字面值与转义",
+      "outcome": "PASS",
+      "taskId": "72b4cfed-9bfa-4907-bc8b-b06e530b4820",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 1,
+      "bytes": 595,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-034",
+      "title": "SQL 行分隔符与编码",
+      "outcome": "PASS",
+      "taskId": "a6e59454-2bc0-4cfc-8506-347824e52044",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 1,
+      "bytes": 595,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-035-UTF-8",
+      "title": "UTF-8 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "818f66d8-bfd4-409e-99c2-d4554b562b58",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-GBK",
+      "title": "GBK 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "65465b24-7a71-42a0-ba13-22b242ee2057",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-GB2312",
+      "title": "GB2312 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "6f517b0e-d9bd-41fc-ab0f-367a853e873c",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-GB18030",
+      "title": "GB18030 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "bf04ec97-00f8-4af2-be24-2f09a9523dd6",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-Big5",
+      "title": "Big5 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "dd8a7d21-0eab-464b-be92-880147da3a2a",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-ISO-8859-1",
+      "title": "ISO-8859-1 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "97bb0181-21ba-48b7-b0ec-781543f9dd21",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-UTF-16",
+      "title": "UTF-16 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "9641ed06-b76c-4224-872a-f01ce8fb51b7",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 118,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-UTF-32",
+      "title": "UTF-32 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "d7ac41ed-cfe3-41e7-9c72-0b96aad0c47a",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 232,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-035-US-ASCII",
+      "title": "US-ASCII 的受控 ASCII 数据与实际字节解码",
+      "outcome": "PASS",
+      "taskId": "e4ba7125-c256-4c3b-b9a2-21be0f677e0a",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-036-CSV",
+      "title": "CSV 保留空文件",
+      "outcome": "PASS",
+      "taskId": "d8d66e86-c537-4bca-a461-57a76042c560",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 0,
+      "fileCount": 2,
+      "bytes": 0,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "MX-037-CSV",
+      "title": "CSV 默认空表输出事实",
+      "outcome": "PASS",
+      "taskId": "89f88897-aecc-45a0-b89e-9ffadcaa7cd9",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 0,
+      "fileCount": 1,
+      "bytes": 0,
+      "dataFileCount": 0,
+      "contentVerified": true,
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "MX-036-CUT",
+      "title": "CUT 保留空文件",
+      "outcome": "PASS",
+      "taskId": "c14b4a6a-e8a8-46f9-8fd7-9ab4009eae46",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 0,
+      "fileCount": 1,
+      "bytes": 0,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "MX-037-CUT",
+      "title": "CUT 默认空表输出事实",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "7429c0d5-dc87-407b-b2ee-25761f10a7ac",
+      "state": "FAILED",
+      "errorCode": "RESULT_VERIFICATION_FAILED",
+      "exitCode": 0
+    },
+    {
+      "id": "MX-036-SQL",
+      "title": "SQL 保留空文件",
+      "outcome": "PASS",
+      "taskId": "ba0a7fba-dbdb-4774-9bd5-d1670803fd60",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 0,
+      "fileCount": 1,
+      "bytes": 0,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "MX-037-SQL",
+      "title": "SQL 默认空表输出事实",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "90b8408b-3753-4712-9b9b-1bbba3c25a0c",
+      "state": "FAILED",
+      "errorCode": "RESULT_VERIFICATION_FAILED",
+      "exitCode": 0
+    },
+    {
+      "id": "MX-040",
+      "title": "where 过滤产生精确子集",
+      "outcome": "PASS",
+      "taskId": "b2ebed9d-12b2-46bc-bca3-b2c99d18d6e5",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 153,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "2cce5094632476919d1a615ff9e5ecbbc92cf8e52260a53c43e649e7646170af"
+    },
+    {
+      "id": "MX-041",
+      "title": "包含列产生精确列集合",
+      "outcome": "PASS",
+      "taskId": "a2be4b95-7f37-4fd9-b032-c69fad581340",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 58,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-042",
+      "title": "排除列产生精确列集合",
+      "outcome": "PASS",
+      "taskId": "d02acfe1-bf7f-4392-a0b4-f8ebeafd16c8",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 189,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "ac2845ced1e7735724b417ff5a06f29ce09990ef1220eacb725f72d7e9f8407f"
+    },
+    {
+      "id": "MX-043",
+      "title": "排除生成列",
+      "outcome": "PASS",
+      "taskId": "80273b13-59fa-4023-a35e-dbca7dabfbae",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 25,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "9c765400c05528e84b6dbf5f02b4e371f8d8b8640feb990b358995ed5991c5b6"
+    },
+    {
+      "id": "MX-044",
+      "title": "一级分区导出精确行集合",
+      "outcome": "PASS",
+      "taskId": "72c4c546-329b-4bfb-a344-60b7f35653a7",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 31,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "77fa6a400260068f5a9f3f341ce73efc1674c25391258d307950226fb0d2ded3"
+    },
+    {
+      "id": "MX-045",
+      "title": "复合表仅子分区可导出",
+      "outcome": "PASS",
+      "taskId": "20a87697-08ba-46fd-ba64-31ae6854783a",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 1,
+      "fileCount": 2,
+      "bytes": 25,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "020ff512e7a4128c8fe5386326c24c40dc47d9b80a029aa0f16ba94b1a97cb03"
+    },
+    {
+      "id": "MX-046",
+      "title": "复合表父分区预检查失败",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-047",
+      "title": "不存在的列预检失败，连接事实保留",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-048",
+      "title": "列名大小写不一致预检失败",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-049",
+      "title": "不存在的分区预检失败",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-050",
+      "title": "不存在的表预检失败",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-051",
+      "title": "排除数据类型",
+      "outcome": "PASS",
+      "taskId": "ec8cd0db-897d-4081-982d-8db510ec57f5",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 1,
+      "fileCount": 2,
+      "bytes": 30,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "70a0cdac4dc6dd4491ffbaa45e554aea1d4813c61b90dfa1386bebd892bfa131"
+    },
+    {
+      "id": "MX-052",
+      "title": "包含列与排除列互斥",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-053",
+      "title": "重复列拒绝进入固定元数据检查",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-054",
+      "title": "where 与结果集查询互斥",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-055",
+      "title": "partition 与结果集查询互斥",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-056",
+      "title": "列筛选通配符拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-060-dateValueFormat",
+      "title": "dateValueFormat 的实际序列化",
+      "outcome": "PASS",
+      "taskId": "4987ea37-9f44-4096-a387-116b6638ceaa",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 142,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "38b9b20a560e3c46428ca1e849003caab425da824d5c56e6022f623e89545834"
+    },
+    {
+      "id": "MX-060-timeValueFormat",
+      "title": "timeValueFormat 的实际序列化",
+      "outcome": "PASS",
+      "taskId": "ec603fe9-e1c3-43d4-a8e7-d67fca0f368b",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 142,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "bdbaf18501764e932d1e7e172037183df8e9e4ecd7c6ed23bd725d655ca757ea"
+    },
+    {
+      "id": "MX-060-datetimeValueFormat",
+      "title": "datetimeValueFormat 的实际序列化",
+      "outcome": "PASS",
+      "taskId": "1094d405-9f92-4255-ace2-f36b82b34fc6",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 142,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "41b4fee48344381244e714ab8f0d4ea47dba48c7d62737b543d8aef2519b3b45"
+    },
+    {
+      "id": "MX-060-timestampValueFormat",
+      "title": "timestampValueFormat 的实际序列化",
+      "outcome": "PASS",
+      "taskId": "267c97b7-77a5-4c6b-9127-25bdca554a62",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 142,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "a0c459dd24ada98713a2b47bcc7cd5e7792494344a8d472f2620d60653382992"
+    },
+    {
+      "id": "MX-061",
+      "title": "所有 MySQL 值格式组合",
+      "outcome": "PASS",
+      "taskId": "a52ff47c-d98a-47b6-a93e-95126bfa5330",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 2,
+      "bytes": 142,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "5c841e76af6bea82095e56fa3a59538af2e10f964e8a1dd5637dedb9fe83a294"
+    },
+    {
+      "id": "MX-061-CUT",
+      "title": "CUT 的全部 MySQL 日期时间格式",
+      "outcome": "PASS",
+      "taskId": "cccd7007-4c6d-462f-8c5e-a3b2e7f2f4ea",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 2,
+      "fileCount": 1,
+      "bytes": 80,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "5c841e76af6bea82095e56fa3a59538af2e10f964e8a1dd5637dedb9fe83a294"
+    },
+    {
+      "id": "MX-062",
+      "title": "保留零日期时间的实际值",
+      "outcome": "FAIL",
+      "code": "OUTPUT_ROW_SET",
+      "taskId": "bb9ce2a8-92a2-48f3-a5dc-e2bcab61faa5",
+      "state": "SUCCEEDED",
+      "exitCode": 0
+    },
+    {
+      "id": "MX-062-CUT",
+      "title": "CUT 保留零日期时间",
+      "outcome": "FAIL",
+      "code": "OUTPUT_ROW_SET",
+      "taskId": "e696385d-ec2f-4654-9271-4a0d2aabc07e",
+      "state": "SUCCEEDED",
+      "exitCode": 0
+    },
+    {
+      "id": "MX-063",
+      "title": "默认零日期行为单独取证",
+      "outcome": "OBSERVED",
+      "taskId": "6640baf7-59ed-49ec-9b72-9596d3c1ce3a",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 2,
+      "bytes": 39,
+      "contentVerified": false
+    },
+    {
+      "id": "MX-064-timestampTzValueFormat",
+      "title": "MySQL 拒绝 Oracle 专属日期时间参数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-064-timestampLtzValueFormat",
+      "title": "MySQL 拒绝 Oracle 专属日期时间参数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-064-nlsDateFormat",
+      "title": "MySQL 拒绝 Oracle 专属日期时间参数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-064-nlsTimestampFormat",
+      "title": "MySQL 拒绝 Oracle 专属日期时间参数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-064-nlsTimestampTzFormat",
+      "title": "MySQL 拒绝 Oracle 专属日期时间参数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-065",
+      "title": "日期格式中的控制字符拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-066",
+      "title": "仅 DDL 不接受日期值格式",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-070",
+      "title": "快照一致性读取",
+      "outcome": "PASS",
+      "taskId": "faf505cf-8313-4045-b26e-087545abe9ab",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-071",
+      "title": "弱读固定预检查及真实输出",
+      "outcome": "PASS",
+      "taskId": "f1a3f483-57e4-4d93-a442-8643111d72dc",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-072",
+      "title": "无主键表隐藏主键读取",
+      "outcome": "BLOCKED",
+      "code": "FIXTURE_HIDDEN_PK_READABLE_UNAVAILABLE"
+    },
+    {
+      "id": "MX-073",
+      "title": "附加表定义信息与 sys 槽位",
+      "outcome": "BLOCKED",
+      "code": "FIXTURE_SYS_UNAVAILABLE"
+    },
+    {
+      "id": "MX-073-NO-SYS",
+      "title": "缺少 sys 凭据时附加定义信息失败关闭",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-074",
+      "title": "前置 DROP 的定义输出",
+      "outcome": "PASS",
+      "taskId": "c466a273-189e-4f86-bf99-bf83f0e26d31",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 524,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-075",
+      "title": "保留 Schema 前缀的定义",
+      "outcome": "FAIL",
+      "code": "DDL_SCHEMA_MISSING",
+      "taskId": "098112a1-104d-4180-9884-ee8a6f351753",
+      "state": "SUCCEEDED",
+      "exitCode": 0
+    },
+    {
+      "id": "MX-076",
+      "title": "紧凑原生建表定义",
+      "outcome": "PASS",
+      "taskId": "a3ddba8c-fc0f-4e9a-82cc-f68770dbe6b4",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 495,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-077-PRESERVE",
+      "title": "序列策略 PRESERVE 的定义结果",
+      "outcome": "PASS",
+      "taskId": "536729f9-d627-48d2-87c9-fe0c27d4df56",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 107,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-077-RESTART",
+      "title": "序列策略 RESTART 的定义结果",
+      "outcome": "PASS",
+      "taskId": "a4928dd7-72e3-4b6c-9633-e440ca0cfd8c",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "fileCount": 1,
+      "bytes": 107,
+      "contentVerified": true
+    },
+    {
+      "id": "MX-078",
+      "title": "指定 SCN 快照",
+      "outcome": "PASS",
+      "taskId": "e5439c6a-495b-4802-81ee-13c33cb30ded",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-079",
+      "title": "快照与闪回 SCN 互斥",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-080",
+      "title": "MySQL 不接受 Oracle 闪回时间",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-081",
+      "title": "结果集不接受隐藏主键读取",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-082",
+      "title": "普通表不得声明序列策略",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-090",
+      "title": "自定义节点本地日志目录",
+      "outcome": "PASS",
+      "taskId": "8cf1ba65-b23a-4eb5-bed5-ce2c3e7ef4d2",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-091",
+      "title": "输出不生成多级目录",
+      "outcome": "PASS",
+      "taskId": "1fca605a-381b-45bd-a77b-e49a758ccb8d",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-092",
+      "title": "按行拆分与全部文件内容合并校验",
+      "outcome": "PASS",
+      "taskId": "aa00c641-0ddb-4b84-8d54-416e5ac8eb66",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 1024,
+      "fileCount": 5,
+      "bytes": 1064902,
+      "dataFileCount": 4,
+      "contentVerified": true,
+      "contentHash": "acfa0e1e9e22adb5e458e1cb4fea672de455cdeb3efe67262cb1361dfc4388bb"
+    },
+    {
+      "id": "MX-093",
+      "title": "按 MB 拆分",
+      "outcome": "PASS",
+      "taskId": "e90af282-d144-4ae1-bf05-6eb94808e447",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 1024,
+      "fileCount": 3,
+      "bytes": 1064848,
+      "dataFileCount": 2,
+      "contentVerified": true,
+      "contentHash": "acfa0e1e9e22adb5e458e1cb4fea672de455cdeb3efe67262cb1361dfc4388bb"
+    },
+    {
+      "id": "MX-094",
+      "title": "进程导出总量上限允许停止且不冒充拆分",
+      "outcome": "PASS",
+      "taskId": "158a3a75-2162-4f6e-bf6b-8c9cd6423d5f",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 32,
+      "fileCount": 2,
+      "bytes": 33225,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "48d901f6e3f079cb9009b3ffece786975103f8e61aafb810b64addd48b198bad"
+    },
+    {
+      "id": "MX-095",
+      "title": "线程、分页与 JVM 堆的实际启动",
+      "outcome": "PASS",
+      "taskId": "4c15a299-355f-4b7f-9d31-bed09b68ac88",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-096",
+      "title": "每线程宏块数",
+      "outcome": "PASS",
+      "taskId": "c0b896ed-68af-4283-8d3c-2757f6527cae",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-097",
+      "title": "静态额度不足不压掉数据库结果",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-098",
+      "title": "节点根目录外的输出被阻断",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-099",
+      "title": "合法输出与非法日志目录分别取证",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-100",
+      "title": "非空目录失败，数据库结果独立通过",
+      "outcome": "PASS",
+      "submitHttpStatus": 422
+    },
+    {
+      "id": "MX-101",
+      "title": "仅跳过专用目录空性",
+      "outcome": "PASS",
+      "taskId": "b7a23580-225f-4895-be29-7d8974668ed5",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 3,
+      "bytes": 285,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-102",
+      "title": "节点平台与路径形态不匹配",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-103",
+      "title": "线程非正整数拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-104",
+      "title": "非法 JVM 单位拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-105",
+      "title": "MySQL 拒绝 Oracle fetch-size",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-106",
+      "title": "无效文件拆分单位拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-110-zstd",
+      "title": "zstd 导出及解压内容验证",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "68b71442-6e90-44f8-9a8e-2ab05e06c0ea",
+      "state": "FAILED",
+      "errorCode": "PROCESS_WAIT_FAILED",
+      "exitCode": 1
+    },
+    {
+      "id": "MX-110-zlib",
+      "title": "zlib 导出及解压内容验证",
+      "outcome": "PASS",
+      "taskId": "2bab0dbf-561b-4ed1-8da7-c6f6da28bff4",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 214,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-110-gzip",
+      "title": "gzip 导出及解压内容验证",
+      "outcome": "PASS",
+      "taskId": "9f6927e8-2fc8-43ad-b73b-4949ff32ee68",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 226,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-110-snappy",
+      "title": "snappy 导出及解压内容验证",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "90edbbf7-f236-4664-8f5f-dcafdace01c7",
+      "state": "FAILED",
+      "errorCode": "PROCESS_EXIT_NONZERO",
+      "exitCode": 1
+    },
+    {
+      "id": "MX-111",
+      "title": "压缩算法白名单拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-112",
+      "title": "压缩等级越界拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-113",
+      "title": "gzip 不接受压缩等级",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-114",
+      "title": "CSV 分隔符只接受单字符",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-115",
+      "title": "CSV 包围符只接受单字符",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-116",
+      "title": "CSV 转义符只接受单字节",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-117",
+      "title": "NULL 标记控制字符拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-118",
+      "title": "SQL 不接受 CSV 专属参数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-118-NONE-ESCAPE",
+      "title": "NONE 包围模式缺少必要转义字符拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-119-POS",
+      "title": "POS 普通 V1 界面保持门控",
+      "outcome": "PASS"
+    },
+    {
+      "id": "MX-119-PARQUET",
+      "title": "PARQUET 普通 V1 界面保持门控",
+      "outcome": "PASS"
+    },
+    {
+      "id": "MX-119-ORC",
+      "title": "ORC 普通 V1 界面保持门控",
+      "outcome": "PASS"
+    },
+    {
+      "id": "MX-119-AVRO",
+      "title": "AVRO 普通 V1 界面保持门控",
+      "outcome": "PASS"
+    },
+    {
+      "id": "MX-120",
+      "title": "五步页面与真实对象目录",
+      "outcome": "PASS",
+      "taskId": "3584d8b0-a165-46f1-8ec8-782462f890b4",
+      "state": "SUCCEEDED",
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-121",
+      "title": "修改配置使旧预检失效",
+      "outcome": "PASS",
+      "submitStatus": 422
+    },
+    {
+      "id": "MX-122",
+      "title": "保存草稿、预检、提交各自的幂等",
+      "outcome": "PASS",
+      "taskId": "ed401640-5f4c-4faf-8fda-777914814cf0",
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-123",
+      "title": "过期预检不能提交",
+      "outcome": "PASS",
+      "submitStatus": 422
+    },
+    {
+      "id": "MX-124",
+      "title": "重复点击提交不创建第二任务",
+      "outcome": "PASS",
+      "taskId": "e0163448-34d5-429e-b287-db5aaf3a4074",
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-125",
+      "title": "排队取消与一致终态",
+      "outcome": "PASS",
+      "taskId": "33a1249f-9593-42d8-88af-69d5174e3f2c",
+      "state": "CANCELLED"
+    },
+    {
+      "id": "MX-126",
+      "title": "运行取消与受控进程终止",
+      "outcome": "PASS",
+      "taskId": "f391e6b5-fc04-49c1-bb20-9f38b420ecf5",
+      "state": "CANCELLED"
+    },
+    {
+      "id": "MX-127",
+      "title": "无检查点失败任务拒绝继续",
+      "outcome": "PASS",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-128",
+      "title": "有真实检查点的失败任务继续",
+      "outcome": "BLOCKED",
+      "code": "REAL_FAILED_CHECKPOINT_UNAVAILABLE"
+    },
+    {
+      "id": "MX-129",
+      "title": "按原配置新建与从头重跑",
+      "outcome": "PASS",
+      "taskId": "37cc1496-d19a-47f0-96b5-fb5449dc7513",
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-130",
+      "title": "成功任务保存模板再建草稿",
+      "outcome": "PASS",
+      "taskId": "44370721-055e-4d0e-a578-eda2b40a990e",
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-131",
+      "title": "实时日志、下载与两层脱敏",
+      "outcome": "PARTIAL",
+      "code": "LOG_DOWNLOAD_NOT_IMPLEMENTED",
+      "taskId": "296e81fe-df23-4888-99bf-6f215f5078df",
+      "state": "SUCCEEDED",
+      "sseEvents": 5,
+      "reconnectedEvents": 5,
+      "restRecords": 78,
+      "restPages": 1
+    },
+    {
+      "id": "MX-132",
+      "title": "秘密材料与进程结束后清理",
+      "outcome": "PASS",
+      "tasksAudited": 133,
+      "nativeLogsAudited": 520,
+      "securityRemaining": 0,
+      "rawLogRemaining": 0
+    },
+    {
+      "id": "MX-133",
+      "title": "Agent 断联恢复与至少一次投递",
+      "outcome": "BLOCKED",
+      "code": "ACTIVE_PROCESS_REATTACH_ENTRY_UNAVAILABLE"
+    },
+    {
+      "id": "MX-134",
+      "title": "未登录/CSRF/越权 API 失败关闭",
+      "outcome": "PARTIAL",
+      "code": "SECOND_AUTHORIZED_IDENTITY_REQUIRED"
+    },
+    {
+      "id": "MX-135",
+      "title": "四档视口、键盘、完整命令和统一摘要",
+      "outcome": "PASS"
+    },
+    {
+      "id": "MX-136",
+      "title": "保存草稿刷新后读取开关与日期格式不丢失",
+      "outcome": "PASS"
+    },
+    {
+      "id": "MX-140",
+      "title": "结果集条数上限非正数",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-141",
+      "title": "结果集 SQL 文件引用拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-142",
+      "title": "结果集不接受列筛选",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-143",
+      "title": "仅 DDL 不接受读取选项",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-144",
+      "title": "SQL 不接受日期值格式",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-145",
+      "title": "普通文本格式不接受 POS 控制目录",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-147",
+      "title": "分页非正整数拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-148",
+      "title": "文件阈值非正整数拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-149",
+      "title": "压缩算法未开启压缩时拒绝",
+      "outcome": "PASS",
+      "code": "EXPORT_DRAFT_REJECTED",
+      "httpStatus": 422
+    },
+    {
+      "id": "MX-146",
+      "title": "现行元数据允许本地格式携带节点临时目录",
+      "outcome": "PASS",
+      "taskId": "d81919b7-7447-4ea4-8e71-1b5b8fd3d5ac",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 265,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "c36f8748fdad61ee59b877c31f105d5a9681c019a0142dcaebb4eb06e5de8837"
+    },
+    {
+      "id": "MX-150-zstd-1",
+      "title": "zstd 压缩等级边界 1",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "457f86ee-1106-4a09-b9c7-01ba2da7e27a",
+      "state": "FAILED",
+      "errorCode": "PROCESS_WAIT_FAILED",
+      "exitCode": 1
+    },
+    {
+      "id": "MX-150-zstd-22",
+      "title": "zstd 压缩等级边界 22",
+      "outcome": "FAIL",
+      "code": "EXPECTED_TASK_SUCCESS_MISSING",
+      "taskId": "c93d9e36-c2eb-4ce9-ac8e-84621949d632",
+      "state": "FAILED",
+      "errorCode": "PROCESS_WAIT_FAILED",
+      "exitCode": 1
+    },
+    {
+      "id": "MX-150-zlib--1",
+      "title": "zlib 压缩等级边界 -1",
+      "outcome": "PASS",
+      "taskId": "34a5d541-f097-45d1-a395-2bf8d17acb06",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 60,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    },
+    {
+      "id": "MX-150-zlib-9",
+      "title": "zlib 压缩等级边界 9",
+      "outcome": "PASS",
+      "taskId": "3e1314db-deb4-4b8b-b6ae-c85bf61413b2",
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "rows": 4,
+      "fileCount": 2,
+      "bytes": 60,
+      "dataFileCount": 1,
+      "contentVerified": true,
+      "contentHash": "23ae6ff80b47bf8175f40614e86c36df5f4bc1af08b04f8a524b770fc5e31bd0"
+    }
+  ]
+}

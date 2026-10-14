@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/logstream"
 )
 
 // SubjectID 保留既有管理员对象归属，登录机制改变不迁移业务对象。
@@ -31,6 +32,8 @@ type Settings struct {
 	PasswordSalt         []byte `json:"passwordSalt"`
 	PasswordHash         []byte `json:"passwordHash"`
 	RealExecutionEnabled bool   `json:"realExecutionEnabled"`
+	// LogRetentionDays 仅控制普通任务日志；零值继承 30 天，审计与任务历史不随之清理。
+	LogRetentionDays int `json:"logRetentionDays,omitempty"`
 }
 
 // OpenSettings 仅在首次交互启动时初始化；配置损坏或服务无输入时拒绝重置已有身份。
@@ -123,6 +126,9 @@ func validatePublicURL(value string) (*url.URL, error) {
 }
 
 func validateSettings(settings Settings) error {
+	if _, err := logstream.RetentionDays(settings.LogRetentionDays); err != nil {
+		return errors.New("普通日志保留天数须为 7 至 365 天")
+	}
 	if _, err := validatePublicURL(settings.PublicURL); err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
+	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/precheckcontract"
 )
@@ -35,39 +36,37 @@ const (
 	CheckDatabaseConnectivity CheckID = "DATABASE_CONNECTIVITY"
 	CheckObjectAccess         CheckID = "OBJECT_ACCESS"
 	CheckToolEnvironment      CheckID = "TOOL_ENVIRONMENT"
-	CheckOutputPath           CheckID = "OUTPUT_PATH"
-	CheckOutputEmpty          CheckID = "OUTPUT_EMPTY"
-	CheckAvailableSpace       CheckID = "AVAILABLE_SPACE"
-	// EX-I6 存储专用预检查（2026-08-14）：仅对象存储输出任务的两项存储层检查。
+	// CheckNodeResource 复核控制面计算的静态堆与节点总额度，不预留执行资源。
+	// CheckNodeResource 表示基于控制面静态政策的 JVM 资源资格，不预留实时资源。
+	CheckNodeResource   CheckID = "NODE_RESOURCE"
+	CheckOutputPath     CheckID = "OUTPUT_PATH"
+	CheckOutputEmpty    CheckID = "OUTPUT_EMPTY"
+	CheckAvailableSpace CheckID = "AVAILABLE_SPACE"
+	// 对象存储专用检查覆盖端点、认证与写权限，必须分别取得证据。
 	// 真实网络/凭据探测需显式授权（EX-V1）；默认 UNKNOWN，提交门禁按结果失败关闭。
 	CheckStorageConnectivity CheckID = "STORAGE_CONNECTIVITY"
 	CheckStorageAuth         CheckID = "STORAGE_AUTH"
+	// CheckStorageWrite 核对目标前缀的受控写权限；真实请求仍须显式授权。
+	CheckStorageWrite CheckID = "STORAGE_WRITE"
 )
 
-var fixedChecks = fixedChecksFromContract()
+var fixedChecks = checkIDsFromContract(precheckcontract.FixedChecks())
 
 // storageCheckList 是对象存储输出任务的检查清单：
-// 本机检查裁剪掉不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY，空间检查转向 --tmp-path 卷，
-// 最后追加两项存储层检查；顺序固定，任何一项非 PASSED 都使整体失败。
-var storageCheckList = []CheckID{
-	CheckDatabaseConnectivity,
-	CheckObjectAccess,
-	CheckToolEnvironment,
-	CheckAvailableSpace,
-	CheckStorageConnectivity,
-	CheckStorageAuth,
-}
+// OUTPUT_PATH 转向本地辅助目录，空性项不适用 URI；最终清单来自共享契约。
+var storageCheckList = checkIDsFromContract(precheckcontract.StorageOutputChecks())
 
-// localChecks 是无需数据库凭据即可确认的本机前置条件。
-// 它们必须在数据库与对象检查前完成，避免本机运行时、输出路径或空间已失败时仍解析秘密槽位。
+// localChecks 是无需凭据即可确认的本机事实；目录与空间失败只阻断提交，
+// 不阻断依赖受控工具环境的数据库检查。
 var localChecks = []CheckID{
 	CheckToolEnvironment,
+	CheckNodeResource,
 	CheckOutputPath,
 	CheckOutputEmpty,
 	CheckAvailableSpace,
 }
 
-// databaseChecks 依赖受租约约束的短时数据库槽位，只能在全部本机前置条件通过后执行。
+// databaseChecks 依赖工具环境与受租约约束的短时数据库槽位，对象检查还依赖连接通过。
 var databaseChecks = []CheckID{
 	CheckDatabaseConnectivity,
 	CheckObjectAccess,
@@ -158,8 +157,18 @@ type Request struct {
 	OutputPath        string
 	LogPath           string
 	SkipCheckDir      bool
-	AllowedRoots      []string
-	ActiveExecution   bool
+	// 仅固定专家参数检查可消费这些开关，不接受 SQL 或查询计划。
+	WeakRead        bool
+	EnableHiddenPk  bool
+	AddExtraMessage bool
+	// ColumnNames 与 Partitions 只承载冻结标识符；不接受 where 或查询 SQL。
+	IncludeColumnNames []string
+	ExcludeColumnNames []string
+	Partitions         []string
+	// ResourceRequirement 由控制面计算，Agent 不得选择预算政策。
+	ResourceRequirement *executionbudget.PreflightRequirement
+	AllowedRoots        []string
+	ActiveExecution     bool
 	// EX-I6：输出类型与存储目标；本地输出保持 StorageTarget 为空。
 	OutputKind    OutputKind
 	StorageTarget *StorageTarget
@@ -195,63 +204,61 @@ type Probe interface {
 }
 
 // Run 执行按输出类型确定的固定检查清单。报告始终按契约顺序序列化，
-// 但会先完成无秘密本机检查；任一本机前置失败时，数据库与存储结果保持未知且绝不调用 Probe 解析槽位。
+// 但按实际依赖执行：数据库依赖工具环境，对象依赖连接，存储认证依赖端点连通性。
+// 独立检查继续收集事实；被阻断的项目保留 UNKNOWN 并用固定证据码说明未执行原因。
 func Run(ctx context.Context, request Request, probe Probe) (Report, error) {
 	if err := validate(request, probe); err != nil {
 		return Report{}, err
 	}
 	checks := ChecksForOutputKind(request.OutputKind)
 	results := make(map[CheckID]Result, len(checks))
-	localSucceeded := true
 	for _, check := range localCheckList(request.OutputKind) {
 		result, err := probeResult(ctx, probe, check, request)
 		if err != nil {
 			return Report{}, err
 		}
 		results[check] = result
-		if result.Status != StatusPassed {
-			localSucceeded = false
-		}
 	}
-	if localSucceeded {
+	if results[CheckToolEnvironment].Status == StatusPassed {
 		for _, check := range databaseChecks {
+			if check == CheckObjectAccess && results[CheckDatabaseConnectivity].Status != StatusPassed {
+				results[check] = blockedResult(check, precheckcontract.EvidenceBlockedByDatabase)
+				continue
+			}
 			result, err := probeResult(ctx, probe, check, request)
 			if err != nil {
 				return Report{}, err
 			}
 			results[check] = result
 		}
-		if request.OutputKind.IsStorageOutput() {
-			// 存储探测只能建立在数据库连接和对象访问均已通过的事实上。
-			// 连接或对象检查未通过时，不能再连接端点、更不能解析存储凭据。
-			if results[CheckDatabaseConnectivity].Status != StatusPassed || results[CheckObjectAccess].Status != StatusPassed {
-				for _, check := range storageCheckOrder() {
-					results[check] = unavailableStorageResult(check)
-				}
-			} else {
-				connectivity, err := probeResult(ctx, probe, CheckStorageConnectivity, request)
-				if err != nil {
-					return Report{}, err
-				}
-				results[CheckStorageConnectivity] = connectivity
-				if connectivity.Status != StatusPassed {
-					results[CheckStorageAuth] = unavailableStorageResult(CheckStorageAuth)
-				} else {
-					auth, err := probeResult(ctx, probe, CheckStorageAuth, request)
-					if err != nil {
-						return Report{}, err
-					}
-					results[CheckStorageAuth] = auth
-				}
-			}
-		}
 	} else {
-		results[CheckDatabaseConnectivity] = unavailableDatabaseResult()
-		results[CheckObjectAccess] = unavailableObjectResult()
-		if request.OutputKind.IsStorageOutput() {
-			for _, check := range storageCheckOrder() {
-				results[check] = unavailableStorageResult(check)
+		results[CheckDatabaseConnectivity] = blockedResult(CheckDatabaseConnectivity, precheckcontract.EvidenceBlockedByTool)
+		results[CheckObjectAccess] = blockedResult(CheckObjectAccess, precheckcontract.EvidenceBlockedByTool)
+	}
+	if request.OutputKind.IsStorageOutput() {
+		// 固定端点探测不依赖数据库或本地空间；既有探测开关和受控目标边界仍由 Probe 复核。
+		connectivity, err := probeResult(ctx, probe, CheckStorageConnectivity, request)
+		if err != nil {
+			return Report{}, err
+		}
+		results[CheckStorageConnectivity] = connectivity
+		if connectivity.Status != StatusPassed {
+			results[CheckStorageAuth] = blockedResult(CheckStorageAuth, precheckcontract.EvidenceBlockedByStorageConnectivity)
+		} else {
+			auth, err := probeResult(ctx, probe, CheckStorageAuth, request)
+			if err != nil {
+				return Report{}, err
 			}
+			results[CheckStorageAuth] = auth
+		}
+		if results[CheckStorageAuth].Status != StatusPassed {
+			results[CheckStorageWrite] = blockedResult(CheckStorageWrite, precheckcontract.EvidenceBlockedByStorageAuth)
+		} else {
+			write, err := probeResult(ctx, probe, CheckStorageWrite, request)
+			if err != nil {
+				return Report{}, err
+			}
+			results[CheckStorageWrite] = write
 		}
 	}
 	report := Report{PrecheckID: request.PrecheckID, Succeeded: true, Results: make([]Result, 0, len(checks))}
@@ -266,17 +273,12 @@ func Run(ctx context.Context, request Request, probe Probe) (Report, error) {
 }
 
 // localCheckList 按输出类型返回本机前置清单：
-// 对象存储输出不适用本地 OUTPUT_PATH/OUTPUT_EMPTY，空间检查转向 --tmp-path 卷。
+// 对象存储保留本地辅助路径与静态额度，空性不适用 URI；空间检查转向临时分块卷。
 func localCheckList(kind OutputKind) []CheckID {
 	if kind.IsStorageOutput() {
-		return []CheckID{CheckToolEnvironment, CheckAvailableSpace}
+		return []CheckID{CheckToolEnvironment, CheckNodeResource, CheckOutputPath, CheckAvailableSpace}
 	}
 	return localChecks
-}
-
-// storageCheckOrder 返回存储层检查的固定执行顺序（先网络后凭据）。
-func storageCheckOrder() []CheckID {
-	return []CheckID{CheckStorageConnectivity, CheckStorageAuth}
 }
 
 // probeResult 统一复核单项本机事实，防止执行顺序变化后放宽既有结果边界。
@@ -291,23 +293,9 @@ func probeResult(ctx context.Context, probe Probe, check CheckID, request Reques
 	return result, nil
 }
 
-// unavailableDatabaseResult 记录本机前置失败时未尝试数据库连接的安全事实。
-func unavailableDatabaseResult() Result {
-	return Result{Check: CheckDatabaseConnectivity, Status: StatusUnknown, EvidenceCode: "DATABASE_CONNECTION_UNAVAILABLE"}
-}
-
-// unavailableObjectResult 记录本机前置失败时未尝试对象读取的安全事实。
-func unavailableObjectResult() Result {
-	return Result{Check: CheckObjectAccess, Status: StatusUnknown, EvidenceCode: "OBJECT_ACCESS_UNAVAILABLE"}
-}
-
-// unavailableStorageResult 记录前置失败或探测未授权时存储层检查的固定未知结论。
-func unavailableStorageResult(check CheckID) Result {
-	code := "STORAGE_CONNECTIVITY_UNAVAILABLE"
-	if check == CheckStorageAuth {
-		code = "STORAGE_AUTH_UNAVAILABLE"
-	}
-	return Result{Check: check, Status: StatusUnknown, EvidenceCode: code}
+// blockedResult 仅用于明确未调用 Probe 的依赖阻断；不能代替已执行但无法确认的结果。
+func blockedResult(check CheckID, evidence string) Result {
+	return Result{Check: check, Status: StatusUnknown, EvidenceCode: evidence}
 }
 
 // ValidateRequest 只复核固定预检查的非敏感本地投影。
@@ -317,7 +305,7 @@ func ValidateRequest(request Request) error {
 	return validateRequest(request)
 }
 
-// ChecksForOutputKind 返回该输出类型的固定检查清单副本；本地输出保持冻结六项。
+// ChecksForOutputKind 返回当前输出类型的完整固定清单副本。
 func ChecksForOutputKind(kind OutputKind) []CheckID {
 	if kind.IsStorageOutput() {
 		return append([]CheckID(nil), storageCheckList...)
@@ -348,18 +336,17 @@ func ValidateReportFor(kind OutputKind, report Report) error {
 	return nil
 }
 
-// ValidateReport 保持冻结六项报告的校验语义（本地输出）。
+// ValidateReport 按当前本地输出完整清单校验报告。
 func ValidateReport(report Report) error {
 	return ValidateReportFor(OutputKindLocal, report)
 }
 
-// FixedChecks 返回冻结六项清单的副本，避免外部修改影响检查范围或顺序。
+// FixedChecks 返回当前本地清单副本，避免外部修改检查范围与顺序。
 func FixedChecks() []CheckID {
 	return append([]CheckID(nil), fixedChecks...)
 }
 
-func fixedChecksFromContract() []CheckID {
-	checks := precheckcontract.FixedChecks()
+func checkIDsFromContract(checks []string) []CheckID {
 	result := make([]CheckID, 0, len(checks))
 	for _, check := range checks {
 		result = append(result, CheckID(check))
@@ -375,7 +362,10 @@ func validate(request Request, probe Probe) error {
 }
 
 func validateRequest(request Request) error {
-	// 兼容既有本地请求：缺省输出类型按 LOCAL 处理，不改变冻结六项语义。
+	if !precheckcontract.ValidSelectionIdentifiers(request.IncludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(request.ExcludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(request.Partitions) {
+		return ErrInvalidRequest
+	}
+	// 缺省输出类型按 LOCAL 处理，仍须使用当前完整清单。
 	if request.OutputKind == "" {
 		request.OutputKind = OutputKindLocal
 	}
@@ -394,6 +384,9 @@ func validateRequest(request Request) error {
 	if request.ContentKind != "DATA_ONLY" && request.ContentKind != "DDL_ONLY" && request.ContentKind != "DDL_AND_DATA" {
 		return ErrInvalidRequest
 	}
+	if (request.WeakRead || request.EnableHiddenPk) && request.ContentKind == "DDL_ONLY" || request.AddExtraMessage && request.ContentKind == "DATA_ONLY" {
+		return ErrInvalidRequest
+	}
 	// ALL 范围允许空对象清单；SPECIFIED 范围逐项验证冻结名称。
 	for _, object := range request.Objects {
 		if blank(object) || len(object) > 256 || strings.ContainsAny(object, "\x00\r\n") {
@@ -410,6 +403,9 @@ func validateRequest(request Request) error {
 		if objectType != "TABLE" && request.ContentKind == "DATA_ONLY" {
 			return ErrInvalidRequest
 		}
+		if request.EnableHiddenPk && objectType != "TABLE" {
+			return ErrInvalidRequest
+		}
 	}
 	if request.PrecheckID != request.Binding.PrecheckID || request.NodeID != request.Binding.NodeID || !supportedPlatform(request.TargetPlatform) || !validAllowedRoots(request.TargetPlatform, request.AllowedRoots) {
 		return ErrInvalidRequest
@@ -423,8 +419,8 @@ func validateRequest(request Request) error {
 		if request.StorageTarget == nil || request.StorageTarget.URI != request.OutputPath || !validStorageTarget(request, request.OutputKind, request.StorageTarget) || !validStorageURI(request.OutputPath) {
 			return ErrInvalidRequest
 		}
-		// 对象存储任务不携带本地日志路径（向导只对本地输出收集日志路径）。
-		if request.LogPath != "" {
+		// 对象存储的日志仍是节点本地目录，只允许当前平台的绝对路径。
+		if request.LogPath != "" && !validExportOutputPath(request.TargetPlatform, request.LogPath) {
 			return ErrInvalidRequest
 		}
 	} else {

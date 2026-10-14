@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/logstream"
 )
 
@@ -277,10 +278,12 @@ type executionSecretPayload struct {
 	LeaseEpoch     int64  `json:"leaseEpoch"`
 	EnvelopeDigest string `json:"envelopeDigest"`
 	Connection     struct {
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		Username []byte `json:"username"`
-		Password []byte `json:"password"`
+		Host        string `json:"host"`
+		Port        int    `json:"port"`
+		Username    []byte `json:"username"`
+		Password    []byte `json:"password"`
+		SysUsername []byte `json:"sysUsername,omitempty"`
+		SysPassword []byte `json:"sysPassword,omitempty"`
 	} `json:"connection"`
 	// StorageCredential 是 EX-I6 对象存储任务的短时凭据段（本地输出任务缺省）。
 	StorageCredential *struct {
@@ -462,8 +465,9 @@ func (s *StateStore) ResolveExecutionDatabaseConnection(ctx context.Context, inp
 		payload.destroy()
 		return DatabaseConnectionSlot{}, ErrProtocolRejected
 	}
-	connection := DatabaseConnectionSlot{Host: payload.Connection.Host, Port: payload.Connection.Port, Username: payload.Connection.Username, Password: payload.Connection.Password}
+	connection := DatabaseConnectionSlot{Host: payload.Connection.Host, Port: payload.Connection.Port, Username: payload.Connection.Username, Password: payload.Connection.Password, SysUsername: payload.Connection.SysUsername, SysPassword: payload.Connection.SysPassword}
 	payload.Connection.Username, payload.Connection.Password = nil, nil
+	payload.Connection.SysUsername, payload.Connection.SysPassword = nil, nil
 	// EX-I6：对象存储任务附带短时存储凭据段；本地输出任务缺省跳过。
 	if payload.StorageCredential != nil {
 		connection.StorageCredential = &StorageCredentialSlot{Provider: payload.StorageCredential.Provider, AccessKey: payload.StorageCredential.AccessKey, SecretKey: payload.StorageCredential.SecretKey}
@@ -694,6 +698,9 @@ func (p *executionSecretPayload) destroy() {
 	}
 	credential.Zero(p.Connection.Username)
 	credential.Zero(p.Connection.Password)
+	credential.Zero(p.Connection.SysUsername)
+	credential.Zero(p.Connection.SysPassword)
+	p.Connection.SysUsername, p.Connection.SysPassword = nil, nil
 	p.Connection.Username, p.Connection.Password = nil, nil
 }
 
@@ -718,15 +725,7 @@ func validSHA256Hex(value string) bool {
 	return true
 }
 func validExecutionArgv(argv []string) bool {
-	if len(argv) == 0 || len(argv) > 32 {
-		return false
-	}
-	for _, item := range argv {
-		if item == "" || len(item) > 4096 || strings.ContainsRune(item, 0) || strings.ContainsAny(item, "\r\n") || item == "--password" || strings.HasPrefix(item, "--password=") || strings.HasPrefix(item, "-p") {
-			return false
-		}
-	}
-	return true
+	return executionargv.Valid(argv)
 }
 func validExecutionEvent(input ExecutionEvent) bool {
 	if !validExecutionLeaseInput(input.BootID, input.ExecutionID, input.LeaseID, input.LeaseEpoch, input.EnvelopeDigest, input.SentAt) || !validOpaqueValue(input.EventID, 256) || input.EventSeq < 3 || input.Evidence == nil {

@@ -9,7 +9,7 @@ import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvanced
 import { fileEncodingChoices, fieldSeparatorChoices, cutSeparatorChoices, quoteChoices, lineSeparatorChoices, datetimeFormatChoices, dateFormatChoices } from '../exportPresentation'
 
 const props = defineProps<{ model: ExportFormatStepModel }>()
-const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fieldPrefix, formatKind, fileEncoding, ordinaryFormat, draftValidationMessage, columnSeparator, columnSplitter, columnQuote, lineSeparator, columnQuoteMode, nullString, escapeCharacter, dropObject, retainSchema, compactSchemaSupported, compactSchema, scopeKind, querySql, snapshot, flashbackScn, flashbackTimestamp, tableOnlySelection, excludeVirtualColumns, selectedSource, skipHeader, withTrim, trailDelimiter, removeNewline, noNestedDir, retainEmptyFiles, formatAdvancedCount, timestampFormatsSupported, datetimeValueFormat, dateValueFormat, splitUnit, changeSplitUnit, attemptedStep, blockSize, splitThreshold, compress, compressionAlgo, compressionLevel } = toRefs(props.model)
+const { weakRead, addExtraMessage, enableHiddenPk, preserveZeroDatetime, extraMessageSupported, hiddenPkSupported, oracleSessionFormatsSupported, timeValueFormat, timestampValueFormat, timestampTzValueFormat, timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat, blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fieldPrefix, formatKind, fileEncoding, ordinaryFormat, draftValidationMessage, columnSeparator, columnSplitter, columnQuote, lineSeparator, columnQuoteMode, nullString, escapeCharacter, dropObject, retainSchema, compactSchemaSupported, compactSchema, scopeKind, querySql, snapshot, flashbackScn, flashbackTimestamp, excludeVirtualColumns, selectedSource, skipHeader, withTrim, trailDelimiter, removeNewline, noNestedDir, retainEmptyFiles, formatAdvancedCount, timestampFormatsSupported, datetimeValueFormat, dateValueFormat, splitUnit, changeSplitUnit, attemptedStep, blockSize, splitThreshold, compress, compressionAlgo, compressionLevel } = toRefs(props.model)
 </script>
 
 <template>
@@ -83,7 +83,7 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
               <AFormItem><div class="export-option-control"><ACheckbox v-model:checked="dropObject">前置 DROP</ACheckbox><ExportOptionHint label="前置 DROP" parameter="--drop-object" description="在导出的 DDL 中，先添加删除同名对象的语句，再生成创建语句。执行该 DDL 可能删除目标对象及其数据；导出过程不删除源对象。" /></div></AFormItem>
               <AFormItem><div class="export-option-control"><ACheckbox v-model:checked="retainSchema">保留 Schema 前缀</ACheckbox><ExportOptionHint label="保留 Schema 前缀" parameter="--retain-schema" description="在导出的对象定义中保留 Schema 名限定，例如 schema.table，便于明确对象归属。" /></div></AFormItem>
               <AFormItem v-if="compactSchemaSupported"><div class="export-option-control"><ACheckbox v-model:checked="compactSchema">使用原生建表语句</ACheckbox><ExportOptionHint label="使用原生建表语句" parameter="--compact-schema" description="通过 SHOW CREATE TABLE 获取表定义，而非查询系统视图后反拼 DDL。未勾选时继承工具默认策略，不表示显式关闭。" /></div></AFormItem>
-              <AFormItem extra="sys 权限预检查与凭据绑定尚未接入，暂不可用。"><div class="export-option-control"><ACheckbox disabled>附加表定义信息</ACheckbox><ExportOptionHint label="附加表定义信息" parameter="--add-extra-message" description="在导出的表定义中附加表组名称等信息。依赖 sys 租户权限，当前尚未开放。" /></div></AFormItem>
+              <AFormItem v-if="extraMessageSupported" :extra="selectedSource?.sysCredentialState === 'AVAILABLE' ? '需通过 sys 租户权限预检查。' : '请先在数据源配置 sys 账号与凭据。'"><div class="export-option-control"><ACheckbox v-model:checked="addExtraMessage" :disabled="selectedSource?.sysCredentialState !== 'AVAILABLE'">附加表定义信息</ACheckbox><ExportOptionHint label="附加表定义信息" parameter="--add-extra-message" description="在导出的表定义中附加表组名称等信息。使用数据源已配置的 sys 凭据，并在预检查中复核权限。" /></div></AFormItem>
             </div>
             <AAlert v-if="dropObject" class="export-other-options-warning" type="warning" show-icon message="--drop-object 会在导入侧重建对象前删除同名对象，可能造成数据丢失，请确认已了解影响。" />
           </div>
@@ -92,9 +92,9 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
           <h4>数据读取</h4>
           <div class="export-option-content">
             <div class="export-format-toggle-grid">
-              <AFormItem extra="副本可用性与权限预检查尚未接入，暂不可用。"><div class="export-option-control"><ACheckbox disabled>备副本读取</ACheckbox><ExportOptionHint label="备副本读取" parameter="--weak-read" description="从备副本读取数据，采用弱一致性读取，数据可能落后于主副本。副本可用性与权限预检查尚未接入，暂不可用。" /></div></AFormItem>
+              <AFormItem><div class="export-option-control"><ACheckbox v-model:checked="weakRead">备副本读取</ACheckbox><ExportOptionHint label="备副本读取" parameter="--weak-read" description="从备副本采用弱一致性读取，数据可能落后于主副本。预检查复核读取权限与副本可达性。" /></div></AFormItem>
               <AFormItem><div class="export-option-control"><ACheckbox v-model:checked="snapshot" :disabled="!snapshot && Boolean(flashbackScn || flashbackTimestamp)">一致性快照</ACheckbox><ExportOptionHint label="一致性快照" parameter="--snapshot" description="导出最近一次成功合并的基线数据，以获得全局一致性快照；不等同于当前最新数据。与闪回 SCN、闪回时间互斥。" /></div></AFormItem>
-              <AFormItem v-if="scopeKind === 'ALL' || tableOnlySelection" extra="表结构、版本与权限预检查尚未接入，暂不可用。"><div class="export-option-control"><ACheckbox disabled>隐藏主键加速</ACheckbox><ExportOptionHint label="隐藏主键加速" parameter="--enable-hidden-pk" description="利用隐藏主键 __pk_increment 加速无主键表的读取，不表示将隐藏主键列加入导出文件。需确认表结构、数据库版本与权限，当前尚未开放。" /></div></AFormItem>
+              <AFormItem v-if="hiddenPkSupported"><div class="export-option-control"><ACheckbox v-model:checked="enableHiddenPk">隐藏主键加速</ACheckbox><ExportOptionHint label="隐藏主键加速" parameter="--enable-hidden-pk" description="利用隐藏主键 __pk_increment 加速无主键表的读取，不将该列加入导出文件。预检查复核版本、表结构与读取权限；4.0 之前需要官方指定的内部账号。" /></div></AFormItem>
             </div>
           </div>
         </section>
@@ -103,7 +103,7 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
           <div class="export-option-content">
             <div class="export-format-toggle-grid">
               <AFormItem v-if="scopeKind !== 'QUERY_RESULT'"><div class="export-option-control"><ACheckbox v-model:checked="excludeVirtualColumns">排除生成列</ACheckbox><ExportOptionHint label="排除生成列" parameter="--exclude-virtual-columns" description="导出表数据时排除生成列的值；不删除源表列，也不改变导出的表结构定义。" /></div></AFormItem>
-              <AFormItem v-if="ordinaryFormat && selectedSource?.compatibilityMode === 'MYSQL' && (formatKind === 'CSV' || formatKind === 'CUT')" extra="尚未完成零日期时间输出验证，暂不可用。"><div class="export-option-control"><ACheckbox disabled>保留零日期时间</ACheckbox><ExportOptionHint label="保留零日期时间" parameter="--preserve-zero-datetime" description="保留 MySQL DATE、DATETIME、TIMESTAMP 零值的原有表达方式。官方说明中，非空日期时间列读出的 NULL 导出为 0，可空列仍保留 NULL。" /></div></AFormItem>
+              <AFormItem v-if="ordinaryFormat && selectedSource?.compatibilityMode === 'MYSQL' && (formatKind === 'CSV' || formatKind === 'CUT')"><div class="export-option-control"><ACheckbox v-model:checked="preserveZeroDatetime">保留零日期时间</ACheckbox><ExportOptionHint label="保留零日期时间" parameter="--preserve-zero-datetime" description="保留 MySQL DATE、DATETIME、TIMESTAMP 零值的原有表达方式。非空日期时间列读出的 NULL 导出为 0，可空列仍保留 NULL；零值不使用自定义日期时间格式。" /></div></AFormItem>
               <AFormItem v-if="ordinaryFormat && formatKind === 'CSV'"><div class="export-option-control"><ACheckbox :checked="!skipHeader" @update:checked="skipHeader = !$event">包含列名表头</ACheckbox><ExportOptionHint label="包含列名表头" parameter="--skip-header（反向映射）" description="勾选时保留 CSV 第一行列名；取消勾选时传入 --skip-header，跳过列名表头。" /></div></AFormItem>
               <AFormItem v-if="ordinaryFormat && (formatKind === 'CSV' || formatKind === 'CUT')"><div class="export-option-control"><ACheckbox v-model:checked="withTrim">去除首尾空格</ACheckbox><ExportOptionHint label="去除首尾空格" parameter="--with-trim" description="去除导出字段值首尾的空格；字段内的空格保持不变。此处理会改变导出值，不修改源表数据。" /></div></AFormItem>
               <AFormItem v-if="ordinaryFormat && formatKind === 'CUT'"><div class="export-option-control"><ACheckbox v-model:checked="trailDelimiter">行尾分隔符处理</ACheckbox><ExportOptionHint label="行尾分隔符处理" parameter="--trail-delimiter" description="控制 CUT 记录末尾的字段分隔符处理。官方 4.3.5 文档对保留或移除方向描述不一致，启用前需确认实际输出。" /></div></AFormItem>
@@ -139,18 +139,29 @@ const { blockSizeChoices, formatChangeNotice, contentKind, dataOptionsActive, fi
         </template>
         <template v-if="dataOptionsActive && ordinaryFormat && (formatKind === 'CSV' || formatKind === 'CUT')">
           <h3>日期时间输出约定</h3>
-          <p class="section-hint">当前数据源为 {{ selectedSource?.compatibilityMode === 'MYSQL' ? 'MySQL' : selectedSource?.compatibilityMode === 'ORACLE' ? 'Oracle' : '未确认' }} 兼容模式；日期时间参数按租户模式和已验证范围启用。</p>
+          <p class="section-hint">日期时间值格式按当前租户的数据类型设置；留空继承工具默认，零值不使用自定义格式。</p>
           <div v-if="timestampFormatsSupported" class="export-field-grid">
-            <AFormItem :html-for="fieldPrefix + '-datetime-format'">
-              <template #label><span class="export-field-label"><span>DATETIME 值格式</span><ExportOptionHint label="DATETIME 值格式" parameter="--datetime-value-format" description="设置导出 DATETIME 值的文本格式，当前仅开放 MySQL CSV/CUT 的已验证组合。不改变源字段类型；留空继承工具默认。" /></span></template><ExportFormatChoice :id="fieldPrefix + '-datetime-format'" v-model="datetimeValueFormat" label="DATETIME 值格式" :options="datetimeFormatChoices" custom-placeholder="输入自定义 DATETIME 格式" />
+            <AFormItem v-if="selectedSource?.compatibilityMode === 'MYSQL'" :html-for="fieldPrefix + '-datetime-format'">
+              <template #label><span class="export-field-label"><span>DATETIME 值格式</span><ExportOptionHint label="DATETIME 值格式" parameter="--datetime-value-format" description="设置 MySQL CSV/CUT 中 DATETIME 值的文本格式，不改变源字段类型；留空继承工具默认。" /></span></template><ExportFormatChoice :id="fieldPrefix + '-datetime-format'" v-model="datetimeValueFormat" label="DATETIME 值格式" :options="datetimeFormatChoices" custom-placeholder="输入自定义 DATETIME 格式" />
             </AFormItem>
             <AFormItem :html-for="fieldPrefix + '-date-format'">
-              <template #label><span class="export-field-label"><span>DATE 值格式</span><ExportOptionHint label="DATE 值格式" parameter="--date-value-format" description="设置导出 DATE 值的文本格式，例如 yyyy-MM-dd 或 yyyyMMdd。当前仅开放 MySQL CSV/CUT 的已验证组合，Oracle 格式尚未开放。" /></span></template><ExportFormatChoice :id="fieldPrefix + '-date-format'" v-model="dateValueFormat" label="DATE 值格式" :options="dateFormatChoices" custom-placeholder="输入自定义 DATE 格式" />
+              <template #label><span class="export-field-label"><span>DATE 值格式</span><ExportOptionHint label="DATE 值格式" parameter="--date-value-format" description="设置 CSV/CUT 的 DATE 值格式，例如 yyyy-MM-dd。Oracle DATE 可以包含时分秒；此字段不设置 NLS 会话格式。" /></span></template><ExportFormatChoice :id="fieldPrefix + '-date-format'" v-model="dateValueFormat" label="DATE 值格式" :options="dateFormatChoices" custom-placeholder="输入自定义 DATE 格式" />
             </AFormItem>
+            <AFormItem v-if="selectedSource?.compatibilityMode === 'MYSQL'"><template #label><span class="export-field-label">TIME 值格式<ExportOptionHint label="TIME 值格式" parameter="--time-value-format" description="设置 MySQL TIME 值的导出格式，默认 HH:mm:ss，精度继承源列定义。" /></span></template><AInput v-model:value.trim="timeValueFormat" aria-label="TIME 值格式" placeholder="例如 HH:mm:ss" /></AFormItem>
+            <AFormItem><template #label><span class="export-field-label">TIMESTAMP 值格式<ExportOptionHint label="TIMESTAMP 值格式" parameter="--timestamp-value-format" description="设置 CSV/CUT 的 TIMESTAMP 值格式，精度仍受源列定义约束。" /></span></template><AInput v-model:value.trim="timestampValueFormat" aria-label="TIMESTAMP 值格式" placeholder="例如 yyyy-MM-dd HH:mm:ss.SSSSSS" /></AFormItem>
+            <AFormItem v-if="selectedSource?.compatibilityMode === 'ORACLE'"><template #label><span class="export-field-label">TIMESTAMP TZ 值格式<ExportOptionHint label="TIMESTAMP TZ 值格式" parameter="--timestamp-tz-value-format" description="设置 Oracle TIMESTAMP WITH TIME ZONE 的导出值格式。" /></span></template><AInput v-model:value.trim="timestampTzValueFormat" aria-label="TIMESTAMP TZ 值格式" placeholder="例如 yyyy-MM-dd HH:mm:ss.SSSSSS" /></AFormItem>
+            <AFormItem v-if="selectedSource?.compatibilityMode === 'ORACLE'"><template #label><span class="export-field-label">TIMESTAMP LTZ 值格式<ExportOptionHint label="TIMESTAMP LTZ 值格式" parameter="--timestamp-ltz-value-format" description="设置 Oracle TIMESTAMP WITH LOCAL TIME ZONE 的导出值格式。" /></span></template><AInput v-model:value.trim="timestampLtzValueFormat" aria-label="TIMESTAMP LTZ 值格式" placeholder="例如 yyyy-MM-dd HH:mm:ss" /></AFormItem>
           </div>
-          <p v-if="timestampFormatsSupported" class="section-hint">TIME、TIMESTAMP 与零日期保留尚待验证，当前继承工具默认。</p>
-          <p v-else-if="selectedSource?.compatibilityMode === 'ORACLE'" class="section-hint">Oracle 日期时间值格式尚待验证，当前继承工具默认；NLS 会话格式不等同于导出值格式。</p>
-          <p v-else class="section-hint">当前格式或租户模式没有已验证的日期时间值格式选项。</p>
+          <p v-else class="section-hint">请选择兼容模式已确认的数据源。</p>
+        </template>
+        <template v-if="oracleSessionFormatsSupported">
+          <h3>Oracle 会话日期时间格式</h3>
+          <p class="section-hint">NLS 只设置数据库会话格式，与文件中的导出值格式独立。</p>
+          <div class="export-field-grid">
+            <AFormItem><template #label><span class="export-field-label">NLS DATE 格式<ExportOptionHint label="NLS DATE 格式" parameter="--nls-date-format" description="设置 Oracle nls_date_format 会话变量，不直接指定导出 DATE 值格式。" /></span></template><AInput v-model:value.trim="nlsDateFormat" aria-label="NLS DATE 格式" placeholder="例如 YYYY-MM-DD HH24:MI:SS" /></AFormItem>
+            <AFormItem><template #label><span class="export-field-label">NLS TIMESTAMP 格式<ExportOptionHint label="NLS TIMESTAMP 格式" parameter="--nls-timestamp-format" description="设置 Oracle nls_timestamp_format 会话变量，不直接指定导出 TIMESTAMP 值格式。" /></span></template><AInput v-model:value.trim="nlsTimestampFormat" aria-label="NLS TIMESTAMP 格式" placeholder="例如 YYYY-MM-DD HH24:MI:SS:FF9" /></AFormItem>
+            <AFormItem><template #label><span class="export-field-label">NLS TIMESTAMP TZ 格式<ExportOptionHint label="NLS TIMESTAMP TZ 格式" parameter="--nls-timestamp-tz-format" description="设置 Oracle nls_timestamp_tz_format 会话变量，不直接指定导出 TZ 值格式。" /></span></template><AInput v-model:value.trim="nlsTimestampTzFormat" aria-label="NLS TIMESTAMP TZ 格式" placeholder="例如 YYYY-MM-DD HH24:MI:SS:FF9 TZR" /></AFormItem>
+          </div>
         </template>
         <h3>文件拆分</h3>
         <AFormItem>

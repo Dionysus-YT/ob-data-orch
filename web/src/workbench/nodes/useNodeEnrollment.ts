@@ -10,6 +10,7 @@ export function useNodeEnrollment(node: Readonly<Ref<ExecutionNodeDetail | undef
   const enrollmentBusy = ref(false)
   const enrollmentFailure = ref('')
   const copyNotice = ref('')
+  const copyFailure = ref('')
   const registrationRequired = computed(() => node.value !== undefined && requiresAgentRegistration(node.value.agentAssociationStatus))
   const registrationCode = computed(() => node.value && enrollment.value ? agentRegistrationCode(node.value.id, enrollment.value.enrollmentId, enrollment.value.enrollmentMaterial) : '')
   let version = 0
@@ -25,7 +26,7 @@ export function useNodeEnrollment(node: Readonly<Ref<ExecutionNodeDetail | undef
     copyVersion++
     enrollmentDialogOpen.value = true
     enrollment.value = undefined
-    enrollmentFailure.value = copyNotice.value = ''
+    enrollmentFailure.value = copyNotice.value = copyFailure.value = ''
     enrollmentBusy.value = true
     const valid = () => active() && requested === version && enrollmentDialogOpen.value
     try {
@@ -41,7 +42,7 @@ export function useNodeEnrollment(node: Readonly<Ref<ExecutionNodeDetail | undef
     version++
     copyVersion++
     enrollment.value = undefined
-    enrollmentFailure.value = copyNotice.value = ''
+    enrollmentFailure.value = copyNotice.value = copyFailure.value = ''
     enrollmentBusy.value = enrollmentDialogOpen.value = false
   }
   async function copyEnrollmentValue(label: string, value: string) {
@@ -49,14 +50,14 @@ export function useNodeEnrollment(node: Readonly<Ref<ExecutionNodeDetail | undef
     const active = session.capture()
     const requested = ++copyVersion
     const dialogVersion = version
-    copyNotice.value = ''
+    copyNotice.value = copyFailure.value = ''
     const valid = () => active() && requested === copyVersion && dialogVersion === version && enrollmentDialogOpen.value
     try {
       await copy(value)
       if (valid()) copyNotice.value = `${label}已复制。`
     } catch {
-      if (valid()) copyNotice.value = `${label}复制失败，请手动选择复制。`
+      if (valid()) copyFailure.value = `${label}复制失败，请手动选择复制。`
     }
   }
-  return { enrollmentDialogOpen, enrollment, enrollmentBusy, enrollmentFailure, copyNotice, registrationRequired, registrationCode, issueEnrollment, clearEnrollment, copyEnrollmentValue }
+  return { enrollmentDialogOpen, enrollment, enrollmentBusy, enrollmentFailure, copyNotice, copyFailure, registrationRequired, registrationCode, issueEnrollment, clearEnrollment, copyEnrollmentValue }
 }

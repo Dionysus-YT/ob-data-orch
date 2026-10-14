@@ -8,6 +8,7 @@ import type { ExportReferences } from './useExportReferences'
 // useExportParameters 管理参数资格、互斥、清值和草稿输入。
 export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 'selectedSource' | 'storageCredentials' | 'selectedNode' | 'selectedSourceRevision'>) {
   const {
+    weakRead, sequencePolicy, preserveZeroDatetime,
     scopeKind, contentKind, querySql, queryResultLimit, formatKind, excludeTablesText, where, partition,
     flashbackScn, flashbackTimestamp, snapshot, includeColumnNames, excludeColumnNames,
     excludeVirtualColumns, excludeDataTypes, objectType, allSelectedObjects, splitUnit, blockSize,
@@ -65,6 +66,10 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
   const partitionSupported = computed(() => dataOptionsActive.value && whereSupported.value)
 
   const compactSchemaSupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || tableOnlySelection.value))
+  const weakReadSupported = computed(() => dataOptionsActive.value && scopeKind.value !== 'QUERY_RESULT' && !querySql.value)
+  const hiddenPkSupported = computed(() => weakReadSupported.value && (scopeKind.value === 'ALL' || tableOnlySelection.value))
+  const extraMessageSupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || applicableSelectedObjects.value.some((item) => item.type === 'TABLE')))
+  const sequencePolicySupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || applicableSelectedObjects.value.some((item) => item.type === 'SEQUENCE')))
   const formatChangeNotice = ref('')
 
   function changeSplitUnit(unit: 'MB' | 'ROW') {
@@ -86,10 +91,10 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
   }
 
   const configuredCount = (values: readonly (string | boolean)[]) => values.filter((value) => value !== '' && value !== false).length
-  const objectAdvancedCount = computed(() => configuredCount([excludeTablesText.value, includeColumnNames.value, excludeColumnNames.value, excludeDataTypes.value, where.value, partition.value]))
+  const objectAdvancedCount = computed(() => configuredCount([excludeTablesText.value, includeColumnNames.value, excludeColumnNames.value, excludeDataTypes.value, where.value, partition.value, sequencePolicy.value]))
 
-  const formatAdvancedCount = computed(() => configuredCount([flashbackScn.value, flashbackTimestamp.value, dateValueFormat.value, datetimeValueFormat.value, blockSize.value, compress.value, compressionAlgo.value, compressionLevel.value]))
-  const executionAdvancedCount = computed(() => configuredCount([maxFileSize.value, thread.value, pageSize.value, parallelMacro.value, fetchSize.value, jvmMemory.value, tmpPath.value]))
+  const formatAdvancedCount = computed(() => configuredCount([flashbackScn.value, flashbackTimestamp.value, dateValueFormat.value, timeValueFormat.value, datetimeValueFormat.value, timestampValueFormat.value, timestampTzValueFormat.value, timestampLtzValueFormat.value, nlsDateFormat.value, nlsTimestampFormat.value, nlsTimestampTzFormat.value, blockSize.value, compress.value, compressionAlgo.value, compressionLevel.value]))
+  const executionAdvancedCount = computed(() => configuredCount([maxFileSize.value, thread.value, pageSize.value, parallelMacro.value, fetchSize.value, jvmMemory.value]))
 
   const objectOptionsMessage = computed(() => {
     if (!dataOptionsActive.value) return ''
@@ -110,8 +115,9 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     return ''
   })
 
-  // 仅 MySQL CSV/CUT 数据导出开放两个已验证时间格式；Oracle 的九个字段均保持关闭。
-  const timestampFormatsSupported = computed(() => selectedSource.value?.compatibilityMode === 'MYSQL' && contentKind.value !== 'DDL_ONLY' && (formatKind.value === 'CSV' || formatKind.value === 'CUT'))
+  // 值格式只随 CSV/CUT 数据活动；NLS 会话格式按 Oracle 数据内容独立活动。
+  const timestampFormatsSupported = computed(() => ['MYSQL', 'ORACLE'].includes(selectedSource.value?.compatibilityMode ?? '') && contentKind.value !== 'DDL_ONLY' && (formatKind.value === 'CSV' || formatKind.value === 'CUT'))
+  const oracleSessionFormatsSupported = computed(() => selectedSource.value?.compatibilityMode === 'ORACLE' && contentKind.value !== 'DDL_ONLY')
 
   // EX-I6 存储专用预检查（2026-08-14）：对象存储草稿可以发起预检查；
   // 检查清单切换为存储形态，端点连通性与凭据有效性两项未授权探测保持 UNKNOWN，
@@ -142,6 +148,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     nodeId: selectedNodeID.value,
     platform: selectedNode.value?.platform ?? '',
     compatibilityMode: selectedSource.value?.compatibilityMode ?? '',
+    sysCredentialState: selectedSource.value?.sysCredentialState,
     database: database.value,
     scopeKind: scopeKind.value,
     objectType: objectType.value,
@@ -190,6 +197,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     flashbackScn: flashbackScn.value,
     flashbackTimestamp: flashbackTimestamp.value,
     snapshot: snapshot.value,
+    weakRead: weakRead.value,
     thread: thread.value,
     pageSize: pageSize.value,
     parallelMacro: parallelMacro.value,
@@ -200,6 +208,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     retainSchema: retainSchema.value,
     compactSchema: compactSchema.value,
     addExtraMessage: addExtraMessage.value,
+    sequencePolicy: sequencePolicy.value,
     partition: partition.value,
     excludeDataTypes: excludeDataTypes.value,
     enableHiddenPk: enableHiddenPk.value,
@@ -212,6 +221,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     nlsDateFormat: nlsDateFormat.value,
     nlsTimestampFormat: nlsTimestampFormat.value,
     nlsTimestampTzFormat: nlsTimestampTzFormat.value,
+    preserveZeroDatetime: preserveZeroDatetime.value,
   }))
 
   const ordinaryFormat = computed(() => contentKind.value === 'DDL_ONLY' || ['CSV', 'CUT', 'SQL'].includes(formatKind.value))
@@ -219,13 +229,15 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
 
   const draftValidationMessage = computed(() => !ordinaryFormat.value ? '当前格式仅保留历史任务读取；普通新建入口只开放 CSV、CUT 和 SQL。' : draftValidation.value.valid ? contentInputMessage.value || objectInputMessage.value || objectOptionsMessage.value || formatOptionsMessage.value : draftValidation.value.message)
 
-  // clearGatedParameters 清除尚未完成专用预检查的开关，避免状态切换后留下可提交残留。
+  // clearGatedParameters 只清除失去当前内容、对象或 sys 资格的专家参数。
   function clearGatedParameters() {
-    addExtraMessage.value = false
-    enableHiddenPk.value = false
+    if (!extraMessageSupported.value || selectedSource.value?.sysCredentialState !== 'AVAILABLE') addExtraMessage.value = false
+    if (!hiddenPkSupported.value) enableHiddenPk.value = false
+    if (!weakReadSupported.value) weakRead.value = false
+    if (!sequencePolicySupported.value) sequencePolicy.value = ''
   }
 
-  // clearTimestampFormats 清除全部时间格式，Oracle 与未知兼容模式不得保留任何待验证字段。
+  // clearTimestampFormats 在绑定或数据内容失效时清除全部日期时间配置。
   function clearTimestampFormats() {
     dateValueFormat.value = ''
     timeValueFormat.value = ''
@@ -236,17 +248,32 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     nlsDateFormat.value = ''
     nlsTimestampFormat.value = ''
     nlsTimestampTzFormat.value = ''
+    preserveZeroDatetime.value = false
   }
 
-  // clearUnverifiedTimestampFormats 清除 MySQL 已验证 DATE/DATETIME 以外的七个字段。
+  // clearUnverifiedTimestampFormats 清除不适用当前租户、格式或内容的字段，保留活动参数。
   function clearUnverifiedTimestampFormats() {
-    timeValueFormat.value = ''
-    timestampValueFormat.value = ''
-    timestampTzValueFormat.value = ''
-    timestampLtzValueFormat.value = ''
-    nlsDateFormat.value = ''
-    nlsTimestampFormat.value = ''
-    nlsTimestampTzFormat.value = ''
+    if (!timestampFormatsSupported.value) {
+      dateValueFormat.value = ''
+      timeValueFormat.value = ''
+      datetimeValueFormat.value = ''
+      timestampValueFormat.value = ''
+      timestampTzValueFormat.value = ''
+      timestampLtzValueFormat.value = ''
+      preserveZeroDatetime.value = false
+    }
+    if (!oracleSessionFormatsSupported.value) {
+      timestampTzValueFormat.value = ''
+      timestampLtzValueFormat.value = ''
+      nlsDateFormat.value = ''
+      nlsTimestampFormat.value = ''
+      nlsTimestampTzFormat.value = ''
+    }
+    if (selectedSource.value?.compatibilityMode !== 'MYSQL') {
+      timeValueFormat.value = ''
+      datetimeValueFormat.value = ''
+      preserveZeroDatetime.value = false
+    }
   }
 
   watch(selectedSource, (source, previousSource) => {
@@ -313,7 +340,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     if (!supported) excludeTablesText.value = ''
   })
 
-  // 分区筛选失去指定表数据前提时立即清值；时间格式仅保留 MySQL 的两个已验证字段。
+  // 分区筛选失去指定表数据前提时立即清值。
   watch(partitionSupported, (supported) => {
     if (hydratingDerivedDraft.value) return
     if (!supported) partition.value = ''
@@ -323,14 +350,14 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     if (!hydratingDerivedDraft.value && !supported) where.value = ''
   })
 
-  watch(timestampFormatsSupported, (supported) => {
+  watch([timestampFormatsSupported, oracleSessionFormatsSupported, () => selectedSource.value?.compatibilityMode], () => {
     if (hydratingDerivedDraft.value) return
     clearUnverifiedTimestampFormats()
-    if (!supported) {
-      dateValueFormat.value = ''
-      datetimeValueFormat.value = ''
-    }
-  }, { immediate: true })
+  }, { immediate: true, flush: 'sync' })
+
+  watch([weakReadSupported, hiddenPkSupported, extraMessageSupported, sequencePolicySupported, () => selectedSource.value?.sysCredentialState], () => {
+    if (!hydratingDerivedDraft.value) clearGatedParameters()
+  }, { flush: 'sync' })
 
   // 切换到 MySQL 数据源时清除 Oracle 专属值，避免隐藏控件残留造成无法继续。
   watch(() => selectedSource.value?.compatibilityMode, (mode) => {
@@ -450,7 +477,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
 
   return {
     blockSizeChoices, exportMode, dataOptionsActive, tableOnlySelection, excludeTablesSupported,
-    whereSupported, partitionSupported, compactSchemaSupported, formatChangeNotice, changeSplitUnit,
+    whereSupported, partitionSupported, compactSchemaSupported, weakReadSupported, hiddenPkSupported, extraMessageSupported, sequencePolicySupported, oracleSessionFormatsSupported, formatChangeNotice, changeSplitUnit,
     splitThreshold, migrateLegacyQuery, configuredCount, objectAdvancedCount, formatAdvancedCount,
     executionAdvancedCount, objectOptionsMessage, formatOptionsMessage, timestampFormatsSupported,
     storageOutput, matchingStorageCredentials, selectedStorageCredential, objectInputMessage,

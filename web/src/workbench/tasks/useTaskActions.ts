@@ -2,6 +2,7 @@ import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { Router } from 'vue-router'
 import { taskDetailErrorMessage, type TaskExecution } from '@/api/browser'
 import type { TaskDetailSession } from './taskDetailSession'
+import { derivedDraftRoute, derivedTaskRoute } from './taskDerivationRoutes'
 
 // 操作只持有当前会话的输入与忙状态；过期写操作不能跳转、清空新输入或写入新任务反馈。
 export function useTaskActions(session: Readonly<Ref<TaskDetailSession | null>>, router: Pick<Router, 'push'>, execution: Readonly<Ref<TaskExecution | null>>) {
@@ -25,7 +26,7 @@ export function useTaskActions(session: Readonly<Ref<TaskDetailSession | null>>,
     if (!binding || !accepts(binding) || derivationBusy.value || savingTemplate.value) return
     if (kind === 'SAVE_TEMPLATE') savingTemplate.value = true
     else derivationBusy.value = kind
-    derivationFailure.value = ''
+    derivationFailure.value = noticeTemplate.value = ''
     try {
       await operation(binding)
     } catch (error) {
@@ -41,13 +42,13 @@ export function useTaskActions(session: Readonly<Ref<TaskDetailSession | null>>,
   function rebuildFromTask(derivation: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH') {
     return perform(derivation, derivation === 'RERUN_FROM_SCRATCH' ? '从头重新执行发起失败。' : '基于原配置新建发起失败。', async binding => {
       const derived = await binding.api.rebuildTaskDraft(binding.id, derivation)
-      if (accepts(binding)) await router.push({ path: '/exports/new', query: { draft: derived.draftId, step: derivation === 'RERUN_FROM_SCRATCH' ? '5' : '1' } })
+      if (accepts(binding)) await router.push(derivedDraftRoute({ draftId: derived.draftId, derivation }))
     })
   }
   function resumeFromCheckpoint() {
     return perform('CHECKPOINT_RESUME', '从检查点继续发起失败。', async binding => {
       const derived = await binding.api.resumeTaskFromCheckpoint(binding.id)
-      if (accepts(binding)) await router.push(`/tasks/${encodeURIComponent(derived.id)}`)
+      if (accepts(binding)) await router.push(derivedTaskRoute(derived.id))
     })
   }
   function saveAsTemplate() {
@@ -57,7 +58,7 @@ export function useTaskActions(session: Readonly<Ref<TaskDetailSession | null>>,
       await binding.api.saveTaskTemplate(binding.id, displayName)
       if (!accepts(binding)) return
       templateNameInput.value = ''
-      noticeTemplate.value = '模板已保存；模板不复制凭据、节点、预检查或风险确认。'
+      noticeTemplate.value = '模板已保存。'
     })
   }
 

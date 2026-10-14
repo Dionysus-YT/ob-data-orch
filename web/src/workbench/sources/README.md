@@ -6,6 +6,7 @@
 | --- | --- |
 | 列表、服务端筛选/游标、行操作与页面反馈 | `SourceWorkspace.vue`、`sourcePresentation.ts`、`dataSourceListFilters.ts` |
 | 编辑抽屉、唯一表单与敏感输入/异步测试生命周期 | `SourceEditor.vue`、`useSourceEditor.ts` |
+| 节点候选与名称刷新 | `useSourceEditor.ts`；下拉展开重读，独立读取代次拒绝旧响应，名称动态显示、选择只按 ID，读取中阻断测试 |
 | 字段校验、API 字段错误白名单 | `dataSourceFormErrors.ts` |
 | 连接串解析 | `dataSourceConnectionString.ts`；保留原短时输入与清理行为 |
 | 连接测试诊断与提示 | `dataSourceConnectionTestDiagnostic.ts`、`dataSourceConnectionTestNotice.ts`、`ConnectionTestResult.vue` |

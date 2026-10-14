@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/logstream"
 )
 
@@ -24,8 +25,10 @@ const obdumperMainClass = "com.oceanbase.tools.loaddump.cmd.Obdumper"
 var (
 	ErrDirectJavaLaunchInvalid = errors.New("直接 Java 启动请求无效")
 	ErrDirectJavaStartFailed   = errors.New("直接 Java 进程启动失败")
-	ErrDirectJavaWaitFailed    = errors.New("直接 Java 进程等待失败")
-	ErrDirectJavaOutputFailed  = errors.New("直接 Java 输出采集失败")
+	// ErrDirectJavaProcessUncertain 表示进程已创建但进程树监管未建立，不能上报无进程启动拒绝来释放预算。
+	ErrDirectJavaProcessUncertain = errors.New("直接 Java 进程状态待核对")
+	ErrDirectJavaWaitFailed       = errors.New("直接 Java 进程等待失败")
+	ErrDirectJavaOutputFailed     = errors.New("直接 Java 输出采集失败")
 )
 
 var jvmOptionPattern = regexp.MustCompile(`^-(X|XX:)[A-Za-z0-9._:=+\-]+$`)
@@ -75,7 +78,7 @@ type DirectJavaProcess struct {
 
 // StartDirectJava 在写入不可覆盖的启动意图后直接启动包内 Java 主类。
 // Windows 启动参数逐项复刻 OBDUMPER 4.3.5 的 obdumper.bat；官方脚本保持只读，
-// 唯一的任务级替换是安全配置、原始日志和堆转储必须位于 execution 私有目录。
+// 任务级替换包括冻结 --mem 对应的堆，以及 execution 私有安全配置、原始日志和堆转储目录。
 // 该函数仅建立本地进程边界；任务租约、秘密解析、日志脱敏和终态投影必须由上层完成。
 func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch DirectJavaLaunch) (*DirectJavaProcess, error) {
 	if err := validateDirectJavaLaunch(workspace, launch); err != nil {
@@ -88,6 +91,10 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	profile, err := windowsOBDumperReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
 	if err != nil {
 		return nil, ErrDirectJavaLaunchInvalid
+	}
+	profile, err = applyFrozenJVMHeap(profile, launch.BusinessArguments, launch.JVMOptions)
+	if err != nil {
+		return nil, err
 	}
 	if err := WriteStartIntent(workspace, launch.Intent); err != nil {
 		return nil, err
@@ -120,9 +127,11 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 		return nil, ErrDirectJavaStartFailed
 	}
 	if err := controller.attach(command.Process); err != nil {
-		_ = command.Process.Kill()
+		if command.Process.Kill() == nil {
+			_ = command.Wait()
+		}
 		_ = controller.close()
-		return nil, ErrDirectJavaStartFailed
+		return nil, ErrDirectJavaProcessUncertain
 	}
 	outputDone := make(chan error, 1)
 	policy := launch.Output.Policy.Clone()
@@ -279,10 +288,8 @@ func validateDirectJavaLaunch(workspace credential.Workspace, launch DirectJavaL
 			return ErrDirectJavaLaunchInvalid
 		}
 	}
-	for _, argument := range launch.BusinessArguments {
-		if strings.ContainsRune(argument, 0) || strings.ContainsAny(argument, "\r\n") || argument == "--password" || strings.HasPrefix(argument, "--password=") {
-			return ErrDirectJavaLaunchInvalid
-		}
+	if !executionargv.Valid(launch.BusinessArguments) {
+		return ErrDirectJavaLaunchInvalid
 	}
 	if len(launch.Environment) == 0 || hasForbiddenEnvironment(launch.Environment) || !validDirectJavaOutput(launch.Output) {
 		return ErrDirectJavaLaunchInvalid

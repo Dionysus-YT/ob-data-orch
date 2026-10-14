@@ -12,8 +12,43 @@ import (
 	"ob-data-orch/internal/agentpreflight"
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
+	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/outputpath"
+	"ob-data-orch/internal/precheckcontract"
 )
+
+func Test无法定位输出目录时依赖检查明确阻断(t *testing.T) {
+	root := t.TempDir()
+	allowed := filepath.Join(root, "allowed")
+	if err := os.Mkdir(allowed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	request := testRequest(filepath.Join(root, "outside", "output"), allowed)
+	spaceCalls := 0
+	probe := Probe{MinimumAvailableBytes: 64, AvailableBytes: func(string) (uint64, error) { spaceCalls++; return 64, nil }}
+	for _, check := range []agentpreflight.CheckID{agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace} {
+		result, err := probe.Probe(context.Background(), check, request)
+		if err != nil || result.Status != agentpreflight.StatusUnknown || result.EvidenceCode != precheckcontract.EvidenceBlockedByOutputPath {
+			t.Fatalf("目录依赖未明确阻断：%#v，错误 %v", result, err)
+		}
+	}
+	if spaceCalls != 0 {
+		t.Fatal("越界路径仍被传入空间探测")
+	}
+	// 日志路径失败不影响合法导出目录的空性和空间事实。
+	request = testRequest(filepath.Join(allowed, "output"), allowed)
+	request.LogPath = testRequest(filepath.Join(root, "outside", "logs"), allowed).OutputPath
+	result, _ := probe.Probe(context.Background(), agentpreflight.CheckOutputPath, request)
+	if result.Status != agentpreflight.StatusFailed {
+		t.Fatal("越界日志路径应阻断提交")
+	}
+	for _, check := range []agentpreflight.CheckID{agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace} {
+		result, err := probe.Probe(context.Background(), check, request)
+		if err != nil || result.Status != agentpreflight.StatusPassed {
+			t.Fatalf("日志失败错误阻断独立目录事实：%#v，错误 %v", result, err)
+		}
+	}
+}
 
 func TestProbeRunsFixedLocalChecksWithSafeFacts(t *testing.T) {
 	root := t.TempDir()
@@ -245,19 +280,20 @@ func testRequest(output, root string) agentpreflight.Request {
 		output = "/" + strings.ReplaceAll(output, "\\", "/")
 	}
 	return agentpreflight.Request{
-		Capability:        agentpreflight.CapabilityExportPreflight,
-		PrecheckID:        "precheck-1",
-		NodeID:            "node-1",
-		AgentID:           "agent-1",
-		LeaseID:           "lease-1",
-		LeaseEpoch:        1,
-		CompatibilityMode: "MYSQL",
-		Database:          "synthetic_db",
-		Objects:           []string{"synthetic_table"},
-		ContentKind:       "DATA_ONLY",
-		TargetPlatform:    testPlatform(),
-		OutputPath:        output,
-		AllowedRoots:      []string{root},
+		Capability:          agentpreflight.CapabilityExportPreflight,
+		PrecheckID:          "precheck-1",
+		NodeID:              "node-1",
+		AgentID:             "agent-1",
+		LeaseID:             "lease-1",
+		LeaseEpoch:          1,
+		CompatibilityMode:   "MYSQL",
+		Database:            "synthetic_db",
+		Objects:             []string{"synthetic_table"},
+		ContentKind:         "DATA_ONLY",
+		TargetPlatform:      testPlatform(),
+		OutputPath:          output,
+		AllowedRoots:        []string{root},
+		ResourceRequirement: &executionbudget.PreflightRequirement{HeapBytes: 4 << 30, RequiredBytes: 5 << 30, TotalBudgetBytes: 12 << 30},
 		Binding: agentstate.PrecheckBinding{
 			PrecheckID:         "precheck-1",
 			NodeID:             "node-1",

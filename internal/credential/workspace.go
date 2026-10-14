@@ -59,12 +59,30 @@ func CreateWorkspace(root, executionID string) (Workspace, error) {
 	return workspace, nil
 }
 
+// GenerateSecurityMaterial 为单一数据库密码生成官方任务级加密配置。
 func GenerateSecurityMaterial(secret []byte) (SecurityMaterial, error) {
+	return GenerateSecurityMaterialWithSys(secret, nil)
+}
+
+// GenerateSecurityMaterialWithSys 将两类密码写入同一任务的官方加密配置，不向 argv 或环境传递秘密。
+// 未使用 sys 时保持原有密码载荷；两类缓冲由调用方在生成后清零。
+func GenerateSecurityMaterialWithSys(secret, sysSecret []byte) (SecurityMaterial, error) {
 	if len(secret) == 0 || bytesContainLineBreak(secret) {
 		return SecurityMaterial{}, errors.New("security material secret is invalid")
 	}
-	payload := append([]byte(SecurityPropertyKey+"="), secret...)
+	if bytesContainLineBreak(sysSecret) {
+		return SecurityMaterial{}, errors.New("sys security material secret is invalid")
+	}
+	// 预分配完整载荷，避免追加 sys 行时残留未清零的旧密码缓冲。
+	payload := make([]byte, 0, len(SecurityPropertyKey)+len(secret)+len(sysSecret)+32)
+	payload = append(payload, []byte(SecurityPropertyKey+"=")...)
+	payload = append(payload, secret...)
 	payload = append(payload, '\n')
+	if len(sysSecret) > 0 {
+		payload = append(payload, []byte("oceanbase.jdbc.sys.password=")...)
+		payload = append(payload, sysSecret...)
+		payload = append(payload, '\n')
+	}
 	keyBits := len(payload)*8 + 1024
 	privateKey, err := rsa.GenerateKey(rand.Reader, keyBits)
 	if err != nil {

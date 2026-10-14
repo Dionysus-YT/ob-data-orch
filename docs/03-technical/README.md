@@ -33,6 +33,9 @@
 | SQLite、日志脱敏、JDBC、假 Agent 和最小前端 | [隔离组件验证](evidence/component-validation.md) |
 | Windows CSV、权限负例、argv、日志和中断恢复、POS | [Windows 受控验证](evidence/windows-validation.md) |
 | 剩余参数两批实测、存储预检查和结果复用 | [Export 增量验证](evidence/export-increment-validation.md) |
+| 第五步自动预检查、独立检查与依赖阻断、读取恢复及提交门禁 | [第五步重构验证](evidence/export-precheck-review-2026-10-13.md) |
+| MySQL 本地 172 项真实 E2E、失败组合、生命周期、参数追踪与夹具清理 | [2026-10-14 实测结果](evidence/export-mysql-e2e-2026-10-14.md) · [用例矩阵](evidence/export-mysql-e2e-cases.md) · [参数追踪](evidence/export-mysql-parameter-coverage.md) |
+| 任务中心列表重构（阶段 1）：冻结展示事实、服务端筛选与行资格、合成回归 | [任务中心阶段 1 记录](evidence/task-center-phase1-2026-10-14.md) |
 | 解释 DEV/F 阶段或旧桌面组件实现的来由 | [工程历史](evidence/engineering-history.md)，按需追溯 |
 
 日常修改只回写受影响契约、任务地图和对应证据。验证结果不能从“文档有定义”“代码存在”或“构建通过”外推。

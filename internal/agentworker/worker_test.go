@@ -12,6 +12,7 @@ import (
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 func TestRunNextAcknowledgesBeforeSecretResolutionAndCompletes(t *testing.T) {
@@ -133,7 +134,7 @@ func TestRunNextResolvesStorageCredentialOnlyDuringStorageAuth(t *testing.T) {
 	}
 }
 
-func TestRunNextDoesNotResolveSecretWhenLocalPrecheckFails(t *testing.T) {
+func TestRunNextDoesNotResolveSecretWhenToolPrecheckFails(t *testing.T) {
 	t.Parallel()
 	clock := newTestClock(time.Date(2026, time.July, 27, 9, 0, 0, 0, time.UTC))
 	protocol := &protocolStub{grant: testGrant(clock.Now())}
@@ -157,7 +158,7 @@ func TestRunNextDoesNotResolveSecretWhenLocalPrecheckFails(t *testing.T) {
 	if !errors.Is(factoryResolveErr, ErrSecretResolution) {
 		t.Fatalf("ProbeFactory 提前解析错误 = %v，期望 %v", factoryResolveErr, ErrSecretResolution)
 	}
-	if want := []agentpreflight.CheckID{agentpreflight.CheckToolEnvironment, agentpreflight.CheckOutputPath, agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace}; !sameChecks(checks, want) {
+	if want := []agentpreflight.CheckID{agentpreflight.CheckToolEnvironment, agentpreflight.CheckNodeResource, agentpreflight.CheckOutputPath, agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace}; !sameChecks(checks, want) {
 		t.Fatalf("本机前置检查 = %#v，期望 %#v", checks, want)
 	}
 	if protocol.resolveCount() != 0 {
@@ -166,11 +167,43 @@ func TestRunNextDoesNotResolveSecretWhenLocalPrecheckFails(t *testing.T) {
 	if want := []string{"claim", "acknowledge", "complete"}; !sameStrings(protocol.callNames(), want) {
 		t.Fatalf("protocol calls = %v, want %v", protocol.callNames(), want)
 	}
-	if database := outcome.Report.Results[0]; database.Status != agentpreflight.StatusUnknown || database.EvidenceCode != "DATABASE_CONNECTION_UNAVAILABLE" {
+	if database := outcome.Report.Results[0]; database.Status != agentpreflight.StatusUnknown || database.EvidenceCode != precheckcontract.EvidenceBlockedByTool {
 		t.Fatalf("数据库结果 = %#v，期望未解析的未知结果", database)
 	}
-	if object := outcome.Report.Results[1]; object.Status != agentpreflight.StatusUnknown || object.EvidenceCode != "OBJECT_ACCESS_UNAVAILABLE" {
+	if object := outcome.Report.Results[1]; object.Status != agentpreflight.StatusUnknown || object.EvidenceCode != precheckcontract.EvidenceBlockedByTool {
 		t.Fatalf("对象结果 = %#v，期望未解析的未知结果", object)
+	}
+}
+
+func TestRunNextDirectoryFailureAllowsOnlyDatabaseScopeSecret(t *testing.T) {
+	clock := newTestClock(time.Date(2026, time.October, 13, 9, 0, 0, 0, time.UTC))
+	protocol := &protocolStub{grant: testGrant(clock.Now()), slot: agentwire.DatabaseConnectionSlot{
+		Host: "synthetic.internal.test", Port: 2883, Username: []byte("synthetic-user"), Password: []byte("synthetic-password"),
+	}}
+	worker := testWorker(protocol, clock, func(resolver SecretResolver) agentpreflight.Probe {
+		return probeFunc(func(ctx context.Context, check agentpreflight.CheckID, request agentpreflight.Request) (agentpreflight.Result, error) {
+			if check == agentpreflight.CheckDatabaseConnectivity {
+				connection, err := resolver.ResolveDatabaseConnection(ctx, request.Binding)
+				credential.Zero(connection.Username)
+				credential.Zero(connection.Password)
+				if err != nil {
+					t.Fatalf("工具通过后数据库槽位应可用：%v", err)
+				}
+			} else if _, err := resolver.ResolveDatabaseConnection(ctx, request.Binding); !errors.Is(err, ErrSecretResolution) {
+				t.Fatal("独立本地或对象检查错误取得数据库槽位")
+			}
+			if check == agentpreflight.CheckOutputPath {
+				return agentpreflight.Result{Check: check, Status: agentpreflight.StatusFailed, EvidenceCode: "OUTPUT_PATH_NOT_WRITABLE"}, nil
+			}
+			return syntheticPassed(check), nil
+		})
+	})
+	outcome, err := runClaimed(context.Background(), worker)
+	if err != nil || outcome.Report.Succeeded || outcome.State != agentwire.PrecheckFailed || protocol.resolveCount() != 1 {
+		t.Fatalf("目录失败仍须取得一次独立数据库事实且阻断提交：%#v，错误 %v，解析 %d 次", outcome, err, protocol.resolveCount())
+	}
+	if outcome.Report.Results[0].Status != agentpreflight.StatusPassed || outcome.Report.Results[1].Status != agentpreflight.StatusPassed || !allZero(protocol.slot.Password) {
+		t.Fatal("数据库事实或短时秘密清理不符合约束")
 	}
 }
 

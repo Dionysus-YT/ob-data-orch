@@ -125,6 +125,8 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 	appendBool("--drop-object", input.DropObject)
 	appendBool("--retain-schema", input.RetainSchema)
 	appendBool("--compact-schema", input.CompactSchema)
+	appendBool("--add-extra-message", input.AddExtraMessage)
+	appendString("--sequence-policy", strings.ToLower(input.SequencePolicy))
 	appendString("--file-path", input.FilePath)
 	appendString("--log-path", input.LogPath)
 	appendString("--ctl-path", input.ControlFilePath)
@@ -197,12 +199,22 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 	}
 	appendString("--where", input.Where)
 	appendBool("--snapshot", input.Snapshot)
+	appendBool("--weak-read", input.WeakRead)
+	appendBool("--enable-hidden-pk", input.EnableHiddenPk)
 	appendString("--partition", input.Partition)
 	if len(input.ExcludeDataTypes) != 0 {
 		appendString("--exclude-data-types", strings.Join(input.ExcludeDataTypes, ","))
 	}
 	appendString("--date-value-format", input.TimestampFormats.DateValueFormat)
 	appendString("--datetime-value-format", input.TimestampFormats.DateTimeValueFormat)
+	appendString("--time-value-format", input.TimestampFormats.TimeValueFormat)
+	appendString("--timestamp-value-format", input.TimestampFormats.TimestampValueFormat)
+	appendString("--timestamp-tz-value-format", input.TimestampFormats.TimestampTzValueFormat)
+	appendString("--timestamp-ltz-value-format", input.TimestampFormats.TimestampLtzValueFormat)
+	appendString("--nls-date-format", input.TimestampFormats.NlsDateFormat)
+	appendString("--nls-timestamp-format", input.TimestampFormats.NlsTimestampFormat)
+	appendString("--nls-timestamp-tz-format", input.TimestampFormats.NlsTimestampTzFormat)
+	appendBool("--preserve-zero-datetime", input.TimestampFormats.PreserveZeroDatetime)
 	if len(input.IncludeColumns) != 0 {
 		appendString("--include-column-names", strings.Join(input.IncludeColumns, ","))
 	}

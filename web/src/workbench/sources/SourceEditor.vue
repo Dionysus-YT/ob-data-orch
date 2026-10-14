@@ -13,10 +13,13 @@ import type { SourceGateway } from './sourceGateway'
 import { useSourceEditor } from './useSourceEditor'
 import { product } from '@/platform/tokens'
 import { useAntDrawerDialog } from '@/composables/useAntDrawerDialog'
+import { useOperationMessage } from '@/composables/useOperationMessage'
+import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 
 const props = defineProps<{ api: SourceGateway; sourceId: string | null; initialMode: 'MYSQL' | 'ORACLE'; focusTest?: boolean; preview: boolean }>()
 const emit = defineEmits<{ close: []; saved: [id: string] }>()
-const { source, form, clearSys, parserInput, errors, failure, feedback, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, busy, invalidated, testBlocked, load, loadNodes, parseConnection, save, startTest } = useSourceEditor(props.api, props.sourceId, (id) => emit('saved', id), props.initialMode)
+const { source, form, clearSys, parserInput, errors, failure, feedback, feedbackType, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, busy, invalidated, testBlocked, load, loadNodes, onNodeDropdownVisibleChange, parseConnection, save, startTest } = useSourceEditor(props.api, props.sourceId, (id) => emit('saved', id), props.initialMode)
+const { MessageContext } = useOperationMessage([{ content: feedback, type: feedbackType }])
 const modeLabel = computed(() => form.compatibilityMode === 'ORACLE' ? 'OceanBase Oracle' : 'OceanBase MySQL')
 const nameOpen = ref(false)
 const nameDraft = ref('')
@@ -124,12 +127,12 @@ watch(loading, async (value) => {
 </script>
 
 <template>
+  <MessageContext />
   <ADrawer :open="true" :width="`min(${product.source.editorWidth}px, 100vw)`" :closable="!saving" :keyboard="!saving" :mask-closable="false" :push="false" root-class-name="orch-inspector" class="orch-ui orch-source-editor" :body-style="{ padding: 0, overflow: 'hidden' }" @close="close" @after-open-change="afterDrawerOpenChange">
     <template #title><h2 :id="drawerTitleId" ref="drawerHeading" class="ant-drawer-title" tabindex="-1">{{ isNew ? '新建数据源' : '编辑数据源' }}</h2></template>
     <Skeleton v-if="loading" active :paragraph="{ rows: 4 }" aria-label="正在读取配置" />
     <div v-else class="orch-editor-scroll">
       <AAlert v-if="failure" class="orch-feedback" type="error" message="操作未完成" :description="failure" show-icon><template #action><AButton v-if="!isNew && !source" @click="load">重新读取</AButton></template></AAlert>
-      <AAlert v-if="feedback" class="orch-feedback" type="info" :message="feedback" show-icon role="status" />
       <AForm v-if="isNew || source" id="orch-editor-configuration" ref="formElement" layout="vertical" :model="form" :disabled="busy" aria-label="连接配置" novalidate @focusout="validateBlur" @submit.prevent="saveForm">
         <AAlert v-if="Object.keys(errors).length" class="orch-feedback" type="error" :message="`有 ${Object.keys(errors).length} 项配置需要修正`" show-icon><template #action><AButton type="text" @click="focusFirstError">定位错误字段</AButton></template></AAlert>
         <fieldset :disabled="busy" class="orch-fieldset">
@@ -160,9 +163,9 @@ watch(loading, async (value) => {
               <div v-show="testExpanded" id="source-test-details" class="orch-test-details">
                 <div class="orch-inline-test-controls">
                   <AFormItem label="执行节点" html-for="source-test-node" required>
-                    <ASelect id="source-test-node" ref="nodeSelect" v-model:value="nodeId" :disabled="busy || nodeLoading" aria-describedby="orch-test-help">
+                    <ASelect id="source-test-node" ref="nodeSelect" v-model:value="nodeId" :loading="nodeLoading" :disabled="busy || (nodeLoading && !nodes.length)" aria-describedby="orch-test-help" @dropdown-visible-change="onNodeDropdownVisibleChange">
                       <ASelectOption value="">{{ nodeLoading ? '正在加载执行节点' : '请选择执行节点' }}</ASelectOption>
-                      <ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</ASelectOption>
+                      <ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ nodePlatformLabel(node.platform) }}</ASelectOption>
                     </ASelect>
                   </AFormItem>
                   <AButton :disabled="busy || nodeLoading" type="text" aria-label="刷新可测试节点" title="刷新执行节点" class="orch-icon-action" @click="loadNodes"><template #icon><ReloadOutlined class="product-icon" :spin="nodeLoading" aria-hidden="true" /></template></AButton>

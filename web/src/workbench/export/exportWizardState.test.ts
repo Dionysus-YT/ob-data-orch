@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
-import type { BrowserApi, ExportDraft, ExportObjectCatalogQuery, Precheck } from '@/api/browser'
+import type { BrowserApi, ExecutionNodeCandidate, ExportDraft, ExportObjectCatalogQuery, Precheck } from '@/api/browser'
 import type { ExportRuntime } from './exportRuntime'
 import { DATA_SOURCE_UI_FIXTURES } from '@/workbench/sources/dataSourceUiFixture'
 import { createExportForm } from './exportForm'
@@ -67,6 +67,72 @@ async function setup(overrides: Partial<BrowserApi> = {}) {
 }
 
 describe('导出向导单一状态与参数边界', () => {
+  it('专家参数可保存和回填，失去内容或 sys 资格时清除', async () => {
+    const s = await setup()
+    s.references.sources.value = [{ ...s.source, sysCredentialState: 'AVAILABLE' }]
+    s.form.scopeKind.value = 'ALL'
+    s.form.contentKind.value = 'DDL_AND_DATA'
+    await nextTick()
+    s.form.weakRead.value = true
+    s.form.enableHiddenPk.value = true
+    s.form.addExtraMessage.value = true
+    s.form.sequencePolicy.value = 'RESTART'
+    s.form.timeValueFormat.value = 'HH:mm:ss'
+    s.form.timestampValueFormat.value = 'yyyy-MM-dd HH:mm:ss'
+    s.form.preserveZeroDatetime.value = true
+    const input = s.parameters.draftInput.value!
+    expect(input.config.filterConfig).toMatchObject({ weakRead: true, enableHiddenPk: true })
+    expect(input.config.ddlBehavior).toMatchObject({ addExtraMessage: true, sequencePolicy: 'RESTART' })
+    expect(input.config.dataFormat?.timestampFormats).toMatchObject({ timeValueFormat: 'HH:mm:ss', preserveZeroDatetime: true })
+    s.form.hydratingDerivedDraft.value = true
+    populateFormFromDraft({ ...s.form, ...s.catalog }, { ...s.draft, ...input })
+    await nextTick()
+    s.form.hydratingDerivedDraft.value = false
+    expect(s.parameters.draftInput.value).toEqual(input)
+    s.references.sources.value = [{ ...s.source, sysCredentialState: 'UNAVAILABLE' }]
+    await nextTick()
+    expect(s.form.addExtraMessage.value).toBe(false)
+    expect(s.form.weakRead.value).toBe(true)
+    s.form.contentKind.value = 'DDL_ONLY'
+    await nextTick()
+    expect(s.form.weakRead.value).toBe(false)
+    expect(s.form.enableHiddenPk.value).toBe(false)
+    expect(s.form.preserveZeroDatetime.value).toBe(false)
+    expect(s.form.sequencePolicy.value).toBe('RESTART')
+  })
+
+  it('租户和格式切换只清除不适用日期参数，Oracle SQL 保留 NLS', async () => {
+    const s = await setup()
+    s.form.dateValueFormat.value = 'yyyy-MM-dd'
+    s.form.timeValueFormat.value = 'HH:mm:ss'
+    s.form.preserveZeroDatetime.value = true
+    s.references.sources.value = [{ ...s.source, compatibilityMode: 'ORACLE' }]
+    await nextTick()
+    expect(s.form.dateValueFormat.value).toBe('yyyy-MM-dd')
+    expect(s.form.timeValueFormat.value).toBe('')
+    expect(s.form.preserveZeroDatetime.value).toBe(false)
+    s.form.timestampTzValueFormat.value = 'yyyy-MM-dd HH:mm:ss'
+    s.form.nlsDateFormat.value = 'YYYY-MM-DD HH24:MI:SS'
+    s.form.formatKind.value = 'SQL'
+    await nextTick()
+    expect(s.form.dateValueFormat.value).toBe('')
+    expect(s.form.timestampTzValueFormat.value).toBe('')
+    expect(s.parameters.draftInput.value?.config.dataFormat?.timestampFormats).toEqual({ nlsDateFormat: 'YYYY-MM-DD HH24:MI:SS' })
+  })
+
+  it('每个新增参数编辑立即撤销旧预览、预检查和提交确认', async () => {
+    const s = await setup()
+    const changes = [() => { s.form.weakRead.value = true }, () => { s.form.enableHiddenPk.value = true }, () => { s.form.addExtraMessage.value = true }, () => { s.form.sequencePolicy.value = 'PRESERVE' }, () => { s.form.preserveZeroDatetime.value = true }, () => { s.form.timestampValueFormat.value = 'yyyy-MM-dd' }, () => { s.form.nlsDateFormat.value = 'YYYY-MM-DD' }]
+    for (const change of changes) {
+      s.saved()
+      s.lifecycle.submitConfirmationOpen.value = true
+      change()
+      expect(s.lifecycle.commandPreview.value).toBeNull()
+      expect(s.lifecycle.activePrecheck.value).toBeNull()
+      expect(s.lifecycle.submitConfirmationOpen.value).toBe(false)
+    }
+  })
+
   it('内容模式往返保留合法的跨类型对象，格式切换只清不适用字段', async () => {
     const s = await setup()
     s.form.contentKind.value = 'DDL_AND_DATA'
@@ -120,6 +186,162 @@ describe('导出向导单一状态与参数边界', () => {
 })
 
 describe('草稿、预检查与提交竞态', () => {
+  it('进入第五步自动检查一次，返回保留结果且手动重试防重', async () => {
+    const start = vi.fn(async () => 'synthetic-precheck')
+    const poll = vi.fn()
+    const preview = vi.fn()
+    const s = await setup({ startPrecheck: start, getPrecheck: poll, previewExportCommand: preview })
+    s.saved()
+    s.lifecycle.activePrecheck.value = null
+    preview.mockResolvedValue(s.lifecycle.commandPreview.value)
+    poll.mockResolvedValue({ ...s.passed, status: 'FAILED', results: s.passed.results.map(result => result.check === 'OUTPUT_PATH' ? { ...result, status: 'FAILED', evidenceCode: 'OUTPUT_PATH_NOT_WRITABLE' } : result) })
+    expect(start).not.toHaveBeenCalled()
+    s.step.value = 5
+    await vi.waitFor(() => expect(s.lifecycle.activePrecheck.value?.status).toBe('FAILED'))
+    expect(start).toHaveBeenCalledOnce()
+    expect(s.lifecycle.precheckOverview.value.description).toContain('1 项未通过')
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+    s.step.value = 4
+    await nextTick()
+    s.step.value = 5
+    await nextTick()
+    expect(start).toHaveBeenCalledOnce()
+    poll.mockResolvedValue(s.passed)
+    await Promise.all([s.lifecycle.startPrecheck(), s.lifecycle.startPrecheck()])
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(s.lifecycle.canSubmit.value).toBe(true)
+  })
+
+  it('等待草稿和预览准备就绪，自动请求失败后不循环重试', async () => {
+    const response = deferred<Awaited<ReturnType<BrowserApi['previewExportCommand']>>>()
+    const start = vi.fn().mockRejectedValue(new Error('synthetic-request-failed'))
+    const s = await setup({ previewExportCommand: () => response.promise, startPrecheck: start })
+    s.lifecycle.currentDraft.value = s.draft
+    s.step.value = 5
+    const previewing = s.lifecycle.loadCommandPreview()
+    await nextTick()
+    expect(start).not.toHaveBeenCalled()
+    response.resolve({ command: 'synthetic-preview', configFingerprint: s.draft.configFingerprint })
+    await previewing
+    await vi.waitFor(() => expect(s.lifecycle.precheckFailure.value).not.toBe(''))
+    await nextTick()
+    expect(start).toHaveBeenCalledOnce()
+    expect(s.lifecycle.canStartPrecheck.value).toBe(true)
+  })
+
+  it('检查期间配置变化拒绝迟到结果，保存后仅为新版本自动检查', async () => {
+    const old = deferred<Precheck>()
+    const start = vi.fn().mockResolvedValueOnce('synthetic-old-check').mockResolvedValue('synthetic-new-check')
+    const poll = vi.fn().mockReturnValueOnce(old.promise)
+    const preview = vi.fn()
+    const update = vi.fn()
+    const s = await setup({ startPrecheck: start, getPrecheck: poll, previewExportCommand: preview, updateExportDraft: update })
+    s.saved()
+    s.lifecycle.activePrecheck.value = null
+    preview.mockImplementation(async (draft: ExportDraft) => ({ command: 'synthetic-preview', configFingerprint: draft.configFingerprint }))
+    s.step.value = 5
+    await vi.waitFor(() => expect(poll).toHaveBeenCalledOnce())
+    s.form.filePath.value = '/E:/synthetic-new-output'
+    old.resolve({ ...s.passed, id: 'synthetic-old-check' })
+    await nextTick()
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+    const revised = { ...s.draft, revision: 2, configFingerprint: 'synthetic-new-fingerprint', config: s.parameters.draftInput.value!.config }
+    update.mockResolvedValue(revised)
+    poll.mockResolvedValue({ ...s.passed, id: 'synthetic-new-check', draftRevision: 2, configFingerprint: revised.configFingerprint })
+    await s.lifecycle.createDraft(false)
+    await vi.waitFor(() => expect(s.lifecycle.canSubmit.value).toBe(true))
+    expect(start).toHaveBeenCalledTimes(2)
+    expect((s.lifecycle.activePrecheck.value as Precheck | null)?.id).toBe('synthetic-new-check')
+  })
+
+  it('第五步自动检查卸载后不接纳迟到结果', async () => {
+    const response = deferred<Precheck>()
+    const poll = vi.fn(() => response.promise)
+    const preview = vi.fn()
+    const s = await setup({ startPrecheck: async () => 'synthetic-precheck', getPrecheck: poll, previewExportCommand: preview })
+    s.saved()
+    s.lifecycle.activePrecheck.value = null
+    preview.mockResolvedValue(s.lifecycle.commandPreview.value)
+    s.step.value = 5
+    await vi.waitFor(() => expect(poll).toHaveBeenCalledOnce())
+    s.scope.stop()
+    response.resolve(s.passed)
+    await Promise.resolve()
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+  })
+
+  it('节点 A 到 B 再回 A 后拒绝旧自动检查的迟到标识', async () => {
+    const response = deferred<string>()
+    const start = vi.fn(() => response.promise)
+    const poll = vi.fn()
+    const preview = vi.fn()
+    const s = await setup({ startPrecheck: start, getPrecheck: poll, previewExportCommand: preview })
+    s.saved()
+    s.lifecycle.activePrecheck.value = null
+    preview.mockResolvedValue(s.lifecycle.commandPreview.value)
+    s.step.value = 5
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
+    s.form.selectedNodeID.value = 'synthetic-node-b'
+    s.form.selectedNodeID.value = 'synthetic-node'
+    response.resolve('synthetic-old-check')
+    await nextTick()
+    expect(s.lifecycle.precheckID.value).toBe('')
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+    expect(s.lifecycle.currentDraft.value).toBeNull()
+    expect(poll).not.toHaveBeenCalled()
+  })
+
+  it('预检查读取返回其他标识时阻断并保留安全错误', async () => {
+    const preview = vi.fn()
+    const poll = vi.fn()
+    const s = await setup({ startPrecheck: async () => 'synthetic-current-check', getPrecheck: poll, previewExportCommand: preview })
+    s.saved()
+    s.lifecycle.activePrecheck.value = null
+    preview.mockResolvedValue(s.lifecycle.commandPreview.value)
+    poll.mockResolvedValue(s.passed)
+    s.step.value = 5
+    await vi.waitFor(() => expect(s.lifecycle.precheckFailure.value).not.toBe(''))
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+  })
+
+  it('节点等待期间读取失败可恢复同一检查，不再次发起探测', async () => {
+    vi.useFakeTimers()
+    const start = vi.fn(async () => 'synthetic-precheck')
+    const poll = vi.fn()
+    const preview = vi.fn()
+    const s = await setup({ startPrecheck: start, getPrecheck: poll, previewExportCommand: preview })
+    s.saved()
+    s.lifecycle.activePrecheck.value = null
+    preview.mockResolvedValue(s.lifecycle.commandPreview.value)
+    poll.mockResolvedValueOnce({ ...s.passed, status: 'PENDING' }).mockRejectedValueOnce(new Error('synthetic-read-failed')).mockResolvedValue(s.passed)
+    s.step.value = 5
+    await vi.waitFor(() => expect(poll).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(s.lifecycle.precheckFailure.value).not.toBe('')
+    expect(s.lifecycle.precheckWaitingForResults.value).toBe(true)
+    expect(s.lifecycle.precheckRunning.value).toBe(false)
+    expect(s.lifecycle.canStartPrecheck.value).toBe(true)
+    await s.lifecycle.startPrecheck()
+    expect(start).toHaveBeenCalledOnce()
+    expect(s.lifecycle.canSubmit.value).toBe(true)
+  })
+
+  it('缺项或到达有效期的通过结果仍阻断提交，不自动重探', async () => {
+    vi.useFakeTimers()
+    const s = await setup()
+    s.saved()
+    s.lifecycle.activePrecheck.value = { ...s.passed, results: s.passed.results.slice(0, 1) }
+    expect(s.lifecycle.precheckRows.value).toHaveLength(7)
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+    s.lifecycle.activePrecheck.value = { ...s.passed, validUntil: new Date(Date.now() + 1000).toISOString() }
+    expect(s.lifecycle.canSubmit.value).toBe(true)
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+    expect(s.lifecycle.precheckOverview.value.message).toContain('已过期')
+  })
+
   it('恢复读取期间的编辑不会被迟到快照覆盖', async () => {
     const response = deferred<ExportDraft>()
     const s = await setup({ getExportDraft: () => response.promise })
@@ -158,6 +380,7 @@ describe('草稿、预检查与提交竞态', () => {
     expect(s.lifecycle.currentDraft.value?.revision).toBe(2)
     expect(s.lifecycle.draftDirty.value).toBe(true)
     expect(preview).not.toHaveBeenCalled()
+    expect(s.lifecycle.operationNotice.value).toBe('')
     expect(s.runtime.moveToStep).not.toHaveBeenCalled()
   })
 
@@ -307,6 +530,53 @@ describe('引用数据与目录请求生命周期', () => {
     expect(s.references.sources.value).toHaveLength(1)
   })
 
+  it('同一节点改名只更新当前名称，保留草稿绑定和预检查', async () => {
+    const read = vi.fn(async (): Promise<ExecutionNodeCandidate[]> => [{ id: 'synthetic-node', displayName: '合成新登记名称', platform: 'WINDOWS_AMD64' }])
+    const s = await setup({ listExportNodeCandidates: read })
+    s.saved()
+    const draft = s.lifecycle.currentDraft.value
+    const precheck = s.lifecycle.activePrecheck.value
+    await s.references.loadNodeCandidates()
+    await nextTick()
+    expect(s.references.selectedNode.value?.displayName).toBe('合成新登记名称')
+    expect(s.lifecycle.displayedNode.value?.displayName).toBe('合成新登记名称')
+    expect(s.form.selectedNodeID.value).toBe('synthetic-node')
+    expect(s.lifecycle.currentDraft.value).toBe(draft)
+    expect(s.lifecycle.activePrecheck.value).toBe(precheck)
+  })
+
+  it('原节点删除后清除绑定，后续展开不自动改派到唯一新节点', async () => {
+    const read = vi.fn(async (): Promise<ExecutionNodeCandidate[]> => [{ id: 'synthetic-replacement', displayName: '合成节点', platform: 'WINDOWS_AMD64' }])
+    const s = await setup({ listExportNodeCandidates: read })
+    s.saved()
+    await s.references.loadNodeCandidates()
+    await nextTick()
+    expect(s.form.selectedNodeID.value).toBe('')
+    expect(s.lifecycle.currentDraft.value).toBeNull()
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+    await s.references.loadNodeCandidates()
+    expect(s.form.selectedNodeID.value).toBe('')
+  })
+
+  it('节点名称拒绝乱序与卸载后的响应', async () => {
+    const old = deferred<ExecutionNodeCandidate[]>()
+    const newer = deferred<ExecutionNodeCandidate[]>()
+    const late = deferred<ExecutionNodeCandidate[]>()
+    const s = await setup({ listExportNodeCandidates: vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(newer.promise).mockReturnValueOnce(late.promise) })
+    const first = s.references.loadNodeCandidates()
+    const second = s.references.loadNodeCandidates()
+    newer.resolve([{ id: 'synthetic-node', displayName: '合成最新名称', platform: 'WINDOWS_AMD64' }])
+    await second
+    old.resolve([{ id: 'synthetic-node', displayName: '合成旧名称', platform: 'WINDOWS_AMD64' }])
+    await first
+    expect(s.references.selectedNode.value?.displayName).toBe('合成最新名称')
+    const third = s.references.loadNodeCandidates()
+    s.scope.stop()
+    late.resolve([{ id: 'synthetic-node', displayName: '合成迟到名称', platform: 'WINDOWS_AMD64' }])
+    await third
+    expect(s.references.nodes.value[0]?.displayName).toBe('合成最新名称')
+  })
+
   it('切库后的迟到 PENDING 不再建立轮询或填入旧目录', async () => {
     vi.useFakeTimers()
     const response = deferred<ExportObjectCatalogQuery>()
@@ -333,5 +603,63 @@ describe('引用数据与目录请求生命周期', () => {
     await loading
     await vi.runAllTimersAsync()
     expect(poll).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('导出操作反馈的事实与会话', () => {
+  it('有效保存只确认一次，预览或预检查结论仍属于持久结果', async () => {
+    const s = await setup({
+      updateExportDraft: async draft => ({ ...draft, revision: 2 }),
+      previewExportCommand: async draft => ({ command: 'synthetic-preview', configFingerprint: draft.configFingerprint }),
+    })
+    s.saved()
+    await s.lifecycle.createDraft(false)
+    expect(s.lifecycle.operationNotice.value).toBe('草稿已保存。')
+    expect(s.lifecycle.draftNotice.value).toBe('')
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+  })
+
+  it('复制成功与失败分开，失败不会被表达为成功', async () => {
+    const copy = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('synthetic-denied'))
+    vi.stubGlobal('navigator', { clipboard: { writeText: copy } })
+    const s = await setup()
+    s.saved()
+    await s.lifecycle.copyCommand()
+    expect(s.lifecycle.copyNotice.value).toBe('脱敏命令已复制。')
+    expect(s.lifecycle.copyFailure.value).toBe('')
+    await s.lifecycle.copyCommand()
+    expect(s.lifecycle.copyNotice.value).toBe('')
+    expect(s.lifecycle.copyFailure.value).toContain('复制失败')
+  })
+
+  for (const invalidation of ['edit', 'binding', 'unmount'] as const) it('复制在 ' + invalidation + ' 后完成不能恢复旧反馈', async () => {
+    const copied = deferred<void>()
+    vi.stubGlobal('navigator', { clipboard: { writeText: () => copied.promise } })
+    const s = await setup()
+    s.saved()
+    const copying = s.lifecycle.copyCommand()
+    if (invalidation === 'edit') s.form.filePath.value = '/E:/synthetic-new-output'
+    else if (invalidation === 'binding') s.form.selectedNodeID.value = 'synthetic-other-node'
+    else s.scope.stop()
+    copied.resolve(undefined)
+    await copying
+    expect(s.lifecycle.copyNotice.value).toBe('')
+    expect(s.lifecycle.copyFailure.value).toBe('')
+  })
+
+  it('旧复制失败不能覆盖新复制成功', async () => {
+    const old = deferred<void>()
+    const copy = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText: copy } })
+    const s = await setup()
+    s.saved()
+    const copying = s.lifecycle.copyCommand()
+    await s.lifecycle.copyCommand()
+    old.reject(new Error('synthetic-old-denied'))
+    await copying
+    expect(s.lifecycle.copyNotice.value).toBe('脱敏命令已复制。')
+    expect(s.lifecycle.copyFailure.value).toBe('')
   })
 })

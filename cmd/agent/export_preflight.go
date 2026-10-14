@@ -13,6 +13,7 @@ import (
 	"ob-data-orch/internal/agentworker"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/jdbcprobe"
+	"ob-data-orch/internal/nodefacts"
 )
 
 const exportPreflightMinimumAvailableBytes = 1 << 30
@@ -94,6 +95,32 @@ type connectionAndPrecheckRunner struct {
 	executions      interface {
 		RunNext(context.Context) (bool, error)
 	}
+}
+
+// ActiveWorkers 仅返回真实执行器的运行数；连接测试和预检查不伪装为正式任务。
+func (r connectionAndPrecheckRunner) ActiveWorkers() int {
+	if running, ok := r.executions.(interface{ ActiveWorkers() int }); ok {
+		return running.ActiveWorkers()
+	}
+	return 0
+}
+
+// ExecutionObservation 只转发正式执行器的观测，不把预检查或连接测试伪装为任务。
+func (r connectionAndPrecheckRunner) ExecutionObservation() *nodefacts.ExecutionObservation {
+	if observer, ok := r.executions.(interface {
+		ExecutionObservation() *nodefacts.ExecutionObservation
+	}); ok {
+		return observer.ExecutionObservation()
+	}
+	return nil
+}
+
+// LogQueueStats 只转发正式执行器持有的可靠日志队列摘要。
+func (r connectionAndPrecheckRunner) LogQueueStats() *nodefacts.LogQueue {
+	if observer, ok := r.executions.(interface{ LogQueueStats() *nodefacts.LogQueue }); ok {
+		return observer.LogQueueStats()
+	}
+	return nil
 }
 
 // RunNext 先处理一条基础连接测试，再尝试一条导出预检查。

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/nodefacts"
 )
 
 const (
@@ -98,7 +99,10 @@ type Queue struct {
 	// 每次 Open 必须重新扫描，随后仅在 fsync 写入或确认删除成功后更新，避免 1 GiB 队列在每次入队时重复全量扫描。
 	usedBytes    int64
 	gapUsedBytes int64
-	mu           sync.Mutex
+	// 最近上传结果只属于本次进程；重启后保留待上传统计，结果恢复为未知。
+	lastUploadResult string
+	lastUploadAt     *time.Time
+	mu               sync.Mutex
 }
 
 // Open 打开 Agent 身份状态目录下的队列根；根路径只能来自本机受保护配置。
@@ -339,7 +343,51 @@ func (q *Queue) RecordEvidence(evidence Evidence) error {
 	if _, err := file.Write(content); err != nil {
 		return err
 	}
-	return file.Sync()
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if evidence.Type == EvidenceUploadFailed || evidence.Type == EvidenceControlPlaneConfirmed {
+		at := evidence.OccurredAt.UTC()
+		if q.lastUploadAt == nil || !at.Before(*q.lastUploadAt) {
+			q.lastUploadResult = "FAILED"
+			if evidence.Type == EvidenceControlPlaneConfirmed {
+				q.lastUploadResult = "SUCCEEDED"
+			}
+			q.lastUploadAt = &at
+		}
+	}
+	return nil
+}
+
+// Stats 在队列锁内读取待确认文件数量与已同步容量，不加载日志正文。
+// 失败时调用方省略整个统计，不能将不可读队列投影为零积压。
+func (q *Queue) Stats() (*nodefacts.LogQueue, error) {
+	if q == nil {
+		return nil, ErrInvalidInput
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	files, err := os.ReadDir(q.root)
+	if err != nil {
+		return nil, err
+	}
+	result := &nodefacts.LogQueue{PendingBytes: q.usedBytes + q.gapUsedBytes, LastUploadResult: "UNKNOWN"}
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(file.Name(), ".json") {
+			result.PendingBatches++
+		}
+		if strings.HasSuffix(file.Name(), ".gap") {
+			result.PendingGaps++
+		}
+	}
+	if q.lastUploadAt != nil {
+		at := *q.lastUploadAt
+		result.LastUploadAt, result.LastUploadResult = &at, q.lastUploadResult
+	}
+	return result, nil
 }
 
 // EvidenceSnapshot 返回已经 fsync 的安全队列证据，供 Agent 本地恢复核对和测试使用。

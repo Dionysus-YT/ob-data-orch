@@ -87,6 +87,7 @@ export function createExportForm() {
 
   // 一致性快照不能与任一闪回参数共同使用。
   const snapshot = ref(false)
+  const weakRead = ref(false)
   const thread = ref('')
 
   const pageSize = ref('')
@@ -99,21 +100,22 @@ export function createExportForm() {
   const blockSize = ref('')
 
   // 前置 DROP、保留 Schema 仅在 DDL 内容时生效；紧凑 Schema 还必须包含表 DDL。
-  // 附加对象信息仍需 sys 权限预检查，浏览器不提供启用入口。
+  // 附加对象信息依赖当前数据源的 sys 凭据，序列策略仅在序列 DDL 场景活动。
   const dropObject = ref(false)
   const retainSchema = ref(false)
 
   const compactSchema = ref(false)
   const addExtraMessage = ref(false)
+  const sequencePolicy = ref<'PRESERVE' | 'RESTART' | ''>('')
 
   // 分区筛选仅指定表数据并与自定义查询互斥，类型排除仅数据内容。
-  // 隐藏主键仍需对象、版本与权限预检查，浏览器不提供启用入口。
+  // 隐藏主键由 Agent 固定对象、版本与权限预检查复验。
   const partition = ref('')
   const excludeDataTypes = ref('')
 
   const enableHiddenPk = ref(false)
 
-  // 时间格式当前只允许 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME；其余字段必须保持清空。
+  // 日期时间值格式与 Oracle 会话格式共用唯一表单，切换租户或格式时清除不适用值。
   const dateValueFormat = ref('')
   const timeValueFormat = ref('')
 
@@ -127,6 +129,7 @@ export function createExportForm() {
   const nlsTimestampFormat = ref('')
 
   const nlsTimestampTzFormat = ref('')
+  const preserveZeroDatetime = ref(false)
   const allSelectedObjects = computed(() => objectCategories.flatMap((category) => selectedObjectsByType[category.type].map((name, index) => ({ type: category.type, name: name.trim(), index })).filter((item) => item.name)))
 
   const applicableSelectedObjects = computed(() => contentKind.value === 'DATA_ONLY' ? allSelectedObjects.value.filter((item) => item.type === 'TABLE') : allSelectedObjects.value)
@@ -144,10 +147,10 @@ export function createExportForm() {
     columnQuoteMode, escapeCharacter, lineSeparator, nullString, fileEncoding, withTrim, noNestedDir,
     maxFileSize, retainEmptyFiles, compress, compressionAlgo, compressionLevel, querySql, queryResultLimit,
     where, includeColumnNames, excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp,
-    snapshot, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema,
-    compactSchema, addExtraMessage, partition, excludeDataTypes, enableHiddenPk, dateValueFormat,
+    snapshot, weakRead, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject, retainSchema,
+    compactSchema, addExtraMessage, sequencePolicy, partition, excludeDataTypes, enableHiddenPk, dateValueFormat,
     timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat,
-    timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat,
+    timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat, preserveZeroDatetime,
   }
   return {
     ...fields, fields, objectNames, allSelectedObjects, applicableSelectedObjects, enteredObjectCount,

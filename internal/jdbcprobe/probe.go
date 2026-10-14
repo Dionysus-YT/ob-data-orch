@@ -24,6 +24,7 @@ import (
 
 	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 const (
@@ -92,6 +93,15 @@ type BatchPreflightRequest struct {
 	CompatibilityMode CompatibilityMode
 	Database          string
 	Objects           []PreflightObject
+	// 选择条件只用于固定元数据核对，绝不进入用户 SQL 或进程参数。
+	IncludeColumnNames []string
+	ExcludeColumnNames []string
+	Partitions         []string
+}
+
+// HasSelection 表示本请求是否需要固定列与分区元数据核对。
+func (r BatchPreflightRequest) HasSelection() bool {
+	return len(r.IncludeColumnNames) > 0 || len(r.ExcludeColumnNames) > 0 || len(r.Partitions) > 0
 }
 
 // CatalogRequest 只允许列举有界数据库名，或指定数据库内的五类已开放对象名。
@@ -330,6 +340,9 @@ func TestBatchPreflight(ctx context.Context, runtime Runtime, request BatchPrefl
 }
 
 func validBatchPreflightRequest(request BatchPreflightRequest) bool {
+	if !validSelection(request) {
+		return false
+	}
 	if !validRequest(request.Connection) || !validCompatibilityMode(request.CompatibilityMode) || !validObjectIdentifier(request.Database) || len(request.Objects) == 0 {
 		return false
 	}
@@ -346,10 +359,22 @@ func validBatchPreflightRequest(request BatchPreflightRequest) bool {
 	return true
 }
 
+func validSelection(request BatchPreflightRequest) bool {
+	return precheckcontract.ValidSelectionIdentifiers(request.IncludeColumnNames) && precheckcontract.ValidSelectionIdentifiers(request.ExcludeColumnNames) && precheckcontract.ValidSelectionIdentifiers(request.Partitions)
+}
+
 func encodeBatchPreflightRequest(request BatchPreflightRequest) []byte {
 	length := 4 + 4 + len(request.Connection.Host) + 4 + 4 + len(request.Connection.Username) + 4 + len(request.Connection.Password) + 4 + len(request.CompatibilityMode) + 4 + len(request.Database) + 4
 	for _, object := range request.Objects {
 		length += 4 + len(object.Type) + 4 + len(object.Name)
+	}
+	if request.HasSelection() {
+		for _, list := range [][]string{request.IncludeColumnNames, request.ExcludeColumnNames, request.Partitions} {
+			length += 4
+			for _, value := range list {
+				length += 4 + len(value)
+			}
+		}
 	}
 	result := make([]byte, length)
 	offset := 0
@@ -362,7 +387,11 @@ func encodeBatchPreflightRequest(request BatchPreflightRequest) []byte {
 		copy(result[offset:], value)
 		offset += len(value)
 	}
-	writeInt(batchPreflightProtocolVersion)
+	version := batchPreflightProtocolVersion
+	if request.HasSelection() {
+		version = 7
+	}
+	writeInt(version)
 	writeBytes([]byte(request.Connection.Host))
 	writeInt(request.Connection.Port)
 	writeBytes(request.Connection.Username)
@@ -373,6 +402,14 @@ func encodeBatchPreflightRequest(request BatchPreflightRequest) []byte {
 	for _, object := range request.Objects {
 		writeBytes([]byte(object.Type))
 		writeBytes([]byte(object.Name))
+	}
+	if request.HasSelection() {
+		for _, list := range [][]string{request.IncludeColumnNames, request.ExcludeColumnNames, request.Partitions} {
+			writeInt(len(list))
+			for _, value := range list {
+				writeBytes([]byte(value))
+			}
+		}
 	}
 	return result
 }

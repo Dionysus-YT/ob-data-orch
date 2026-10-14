@@ -55,6 +55,12 @@ func Test直接Java启动拒绝密码参数与环境注入(t *testing.T) {
 	if err := validateDirectJavaLaunch(workspace, launch); err != ErrDirectJavaLaunchInvalid {
 		t.Fatalf("密码参数错误 = %v", err)
 	}
+	for _, arguments := range [][]string{{"--sys-password", "synthetic-sys-secret"}, {"--sys-password=synthetic-sys-secret"}} {
+		launch.BusinessArguments = arguments
+		if err := validateDirectJavaLaunch(workspace, launch); err != ErrDirectJavaLaunchInvalid {
+			t.Fatal("sys 密码参数没有在进程启动前被拒绝")
+		}
+	}
 	launch.BusinessArguments = []string{"--csv"}
 	launch.Environment = []string{"PATH=C:\\Windows\\System32", "JAVA_TOOL_OPTIONS=-Dunsafe=true"}
 	if err := validateDirectJavaLaunch(workspace, launch); err != ErrDirectJavaLaunchInvalid {

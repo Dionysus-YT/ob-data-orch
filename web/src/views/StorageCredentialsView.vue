@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Form as AForm, FormItem as AFormItem, Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
+import { Alert as AAlert, Form as AForm, FormItem as AFormItem, Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
 import { onMounted } from 'vue'
 import { PlusOutlined, ReloadOutlined, SyncOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import OrchOperationalTable from '@/components/OrchOperationalTable.vue'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
+import { useOperationMessage } from '@/composables/useOperationMessage'
 import { storageCredentialProviders } from '@/workbench/credentials/storageCredentialList'
 import { useCredentialList } from '@/workbench/credentials/useCredentialList'
 import { useCredentialEditor } from '@/workbench/credentials/useCredentialEditor'
@@ -12,6 +13,7 @@ import { useCredentialDeletion } from '@/workbench/credentials/useCredentialDele
 const columns = [{ key: 'c0', title: '凭据' }, { key: 'c1', title: '提供方' }, { key: 'c2', title: '当前修订' }, { key: 'c3', title: '更新时间' }, { key: 'c4', title: '操作', width: '16%' }]
 const list = useCredentialList()
 const { credentials, loading, loadFailure, feedback, notice, keyword, providerFilter, actionID, visibleCredentials, loadCredentials } = list
+const { MessageContext } = useOperationMessage(notice)
 const { editorOpen, editingID, formName, formProvider, formAccessKey, formSecretKey, formErrors, saving, openCreate, openRotate, closeEditor, submitForm } = useCredentialEditor(list)
 const { pendingDelete, requestDelete, confirmDelete, cancelDelete } = useCredentialDeletion(list)
 onMounted(() => { void loadCredentials() })
@@ -23,6 +25,7 @@ function updatedAtLabel(value: string) {
 
 <template>
   <div class="storage-credential-page">
+    <MessageContext />
     <header class="storage-credential-header">
       <div>
         <h1>存储凭据</h1>
@@ -37,8 +40,8 @@ function updatedAtLabel(value: string) {
       <AButton :disabled="loading" @click="loadCredentials"><template #icon><ReloadOutlined class="product-icon" :spin="loading" aria-hidden="true" /></template>{{ loading ? '刷新中…' : '刷新' }}</AButton>
     </section>
 
-    <p v-if="feedback" class="storage-credential-feedback is-error" role="alert">{{ feedback }}</p>
-    <p v-else-if="notice" class="storage-credential-feedback is-notice" role="status">{{ notice }}</p>
+    <AAlert v-if="feedback" class="orch-feedback" type="error" message="操作未完成" :description="feedback" show-icon />
+    <AAlert v-if="loadFailure" class="orch-feedback" type="error" message="无法加载存储凭据" :description="loadFailure" show-icon><template #action><AButton @click="loadCredentials">重试</AButton></template></AAlert>
 
     <section v-if="editorOpen" class="content-card storage-credential-editor" :aria-label="editingID ? '轮换存储凭据' : '新增存储凭据'">
       <h2>{{ editingID ? '轮换凭据' : '新增凭据' }}</h2>
@@ -75,7 +78,7 @@ function updatedAtLabel(value: string) {
             <AButton :disabled="Boolean(actionID) || editorOpen" type="text" danger class="row-action is-danger" @click="requestDelete(credential)"><template #icon><DeleteOutlined class="product-icon" aria-hidden="true" /></template>删除</AButton>
           </div>
         </template>
-        <template #empty><div v-if="loading">正在加载存储凭据…</div><div v-else-if="loadFailure"><strong>无法加载存储凭据</strong><span>{{ loadFailure }}</span><AButton @click="loadCredentials">重试</AButton></div><div v-else-if="credentials.length === 0"><strong>暂无存储凭据</strong><span>新增后可在导出向导的对象存储输出中选择使用。</span></div><div v-else-if="visibleCredentials.length === 0"><strong>没有符合当前筛选条件的凭据</strong><span>请调整筛选条件。</span></div></template>
+        <template #empty><div v-if="loading">正在加载存储凭据…</div><div v-else-if="loadFailure">列表未读取完成，请重试。</div><div v-else-if="credentials.length === 0"><strong>暂无存储凭据</strong><span>新增后可在导出向导的对象存储输出中选择使用。</span></div><div v-else-if="visibleCredentials.length === 0"><strong>没有符合当前筛选条件的凭据</strong><span>请调整筛选条件。</span></div></template>
       </OrchOperationalTable>
     </section>
 
@@ -127,22 +130,6 @@ function updatedAtLabel(value: string) {
 .storage-credential-filter label {
   min-width: 160px;
   flex: 0 1 260px;
-}
-
-.storage-credential-feedback {
-  margin: var(--ob-foundation-space-3) 0 0;
-  padding: var(--ob-foundation-space-2) var(--ob-foundation-space-3);
-  border-left: 3px solid var(--ob-color-border-strong);
-  color: var(--ob-color-secondary);
-  background: var(--ob-color-page);
-  font-size: var(--ob-component-field-label-size);
-  line-height: 20px;
-}
-
-.storage-credential-feedback.is-error {
-  border-left-color: var(--ob-color-danger);
-  color: var(--ob-color-danger);
-  background: var(--ob-foundation-danger-surface);
 }
 
 .storage-credential-editor {

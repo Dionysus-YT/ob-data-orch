@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Alert as AAlert, Button as AButton, Dropdown as ADropdown, Menu as AMenu, MenuItem as AMenuItem, Modal as AModal, Radio as ARadio, RadioGroup as ARadioGroup, Spin as ASpin, Textarea as ATextarea } from 'ant-design-vue'
+import { Alert as AAlert, Button as AButton, Dropdown as ADropdown, Form as AForm, FormItem as AFormItem, Menu as AMenu, MenuItem as AMenuItem, Modal as AModal, Radio as ARadio, RadioGroup as ARadioGroup, Spin as ASpin, Textarea as ATextarea } from 'ant-design-vue'
 import { DownOutlined, FileSearchOutlined, MenuUnfoldOutlined, RedoOutlined, UndoOutlined } from '@ant-design/icons-vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { useOperationMessage } from '@/composables/useOperationMessage'
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker'
 import type { editor as MonacoEditor } from 'monaco-editor/editor/editor.api'
 import '../../../../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css'
@@ -19,10 +20,14 @@ const hasSelection = ref(false)
 const formatting = ref(false)
 const formatError = ref('')
 const editNotice = ref('')
+const editNoticeType = ref<'success' | 'info'>('success')
+const { MessageContext } = useOperationMessage([{ content: editNotice, type: editNoticeType }])
 const inValuesOpen = ref(false)
 const inValuesText = ref('')
 const inValuesType = ref<'text' | 'number'>('text')
 const inValuesError = ref('')
+const inValuesInputID = useId()
+watch([inValuesText, inValuesType], () => { inValuesError.value = '' }, { flush: 'sync' })
 let editor: MonacoEditor.IStandaloneCodeEditor | undefined
 let disposed = false
 let inValuesSelection: ReturnType<MonacoEditor.IStandaloneCodeEditor['getSelection']> = null
@@ -104,23 +109,27 @@ function editorAction(command: string, refocus = true) {
 
 // 显式选区优先；无选区时转换全文，便于从工具栏直接操作并保持一次撤销可恢复。
 function changeCase(mode: 'upper' | 'lower' | 'title') {
+  editNotice.value = ''
   const selection = editor?.getSelection()
   const model = editor?.getModel()
   if (!editor || !model) return
   const range = selection && !selection.isEmpty() ? selection : model.getFullModelRange()
   const original = model.getValueInRange(range)
   if (!original) {
+    editNoticeType.value = 'info'
     editNotice.value = '请先输入查询 SQL。'
     return
   }
   const replacement = mode === 'upper' ? original.toLocaleUpperCase() : mode === 'lower' ? original.toLocaleLowerCase() : original.toLocaleLowerCase().replace(/\b[a-z]/g, (letter) => letter.toLocaleUpperCase())
   if (replacement === original) {
+    editNoticeType.value = 'info'
     editNotice.value = '当前文本已是所选大小写。'
     return
   }
   model.pushStackElement()
   editor.executeEdits('sql-query-case', [{ range, text: replacement, forceMoveMarkers: true }])
   model.pushStackElement()
+  editNoticeType.value = 'success'
   editNotice.value = selection && !selection.isEmpty() ? '已转换选中文本。' : '已转换全文。'
   editor.focus()
 }
@@ -163,7 +172,9 @@ function insertInValues() {
 // 格式化只改写当前编辑模型，不发送 SQL；超出服务端长度边界时保留原文。
 async function formatSql() {
   if (!editor || formatting.value) return
+  formatError.value = editNotice.value = ''
   if (!editor.getValue().trim()) {
+    editNoticeType.value = 'info'
     editNotice.value = '请先输入查询 SQL。'
     return
   }
@@ -186,12 +197,13 @@ async function formatSql() {
       editor.executeEdits('sql-query-format', [{ range: model.getFullModelRange(), text: result, forceMoveMarkers: true }])
       model.pushStackElement()
     }
+    editNoticeType.value = result === original ? 'info' : 'success'
     editNotice.value = result === original ? '当前 SQL 已是规范格式。' : '已格式化 SQL。'
     editor.focus()
   } catch {
-    formatError.value = 'SQL 格式化失败，请检查当前语句。原文已保留。'
+    if (!disposed) formatError.value = 'SQL 格式化失败，请检查当前语句。原文已保留。'
   } finally {
-    formatting.value = false
+    if (!disposed) formatting.value = false
   }
 }
 
@@ -203,6 +215,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="sql-query-input">
+    <MessageContext />
     <ATextarea v-if="loadFailed" :value="modelValue" aria-label="查询 SQL" :rows="9" spellcheck="false" @update:value="emit('update:modelValue', $event)" />
     <template v-else>
       <div class="sql-query-editor-shell">
@@ -232,14 +245,17 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <span class="sql-query-editor-note">仅编辑导出查询，不在页面执行 SQL；添加的注释须在继续前移除。</span>
-      <AAlert v-if="formatError" class="sql-query-format-error" type="warning" show-icon :message="formatError" />
-      <AAlert v-else-if="editNotice" class="sql-query-format-error" type="info" show-icon :message="editNotice" />
+      <AAlert v-if="formatError" class="sql-query-format-error" type="error" show-icon :message="formatError" />
       <AModal v-model:open="inValuesOpen" title="IN 值转换" ok-text="插入到 SQL" cancel-text="取消" @ok="insertInValues" @cancel="inValuesOpen = false">
         <p class="sql-query-modal-hint">每行、逗号或制表符分隔一个值；转换结果会替换当前选区，未选中时插入光标处。</p>
-        <ATextarea v-model:value="inValuesText" aria-label="待转换的 IN 值" :rows="6" :maxlength="60 * 1024" placeholder="例如：北京&#10;上海" />
+        <AForm layout="vertical">
+          <AFormItem label="待转换的 IN 值" :html-for="inValuesInputID" :validate-status="inValuesError ? 'error' : undefined">
+            <ATextarea :id="inValuesInputID" v-model:value="inValuesText" aria-label="待转换的 IN 值" :aria-invalid="Boolean(inValuesError)" :aria-describedby="inValuesError ? `${inValuesInputID}-error` : undefined" :rows="6" :maxlength="60 * 1024" placeholder="例如：北京&#10;上海" />
+            <template v-if="inValuesError" #help><span :id="`${inValuesInputID}-error`">{{ inValuesError }}</span></template>
+          </AFormItem>
+        </AForm>
         <ARadioGroup v-model:value="inValuesType" class="sql-query-in-type" aria-label="IN 值类型"><ARadio value="text">文本（自动加引号）</ARadio><ARadio value="number">数值</ARadio></ARadioGroup>
         <p v-if="inValuesSql" class="sql-query-in-preview" role="status">已识别 {{ inValues.length }} 个值 · 预览：<code>{{ inValuesPreview }}</code></p>
-        <AAlert v-if="inValuesError" type="warning" show-icon :message="inValuesError" />
       </AModal>
     </template>
     <span v-if="loadFailed" class="sql-query-editor-note" role="status">编辑器加载失败，已切换为普通多行输入。</span>

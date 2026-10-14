@@ -1,4 +1,4 @@
-// Package agenttelemetry 采集已关联 Agent 的固定机器资源与数据目录空间事实。
+// Package agenttelemetry 采集已关联 Agent 的固定资源、目录空间和安装版本元数据。
 // 它不接收控制面下发的路径：采样范围只能来自首次关联后加密保存的本机运行时配置。
 package agenttelemetry
 
@@ -18,6 +18,9 @@ type RuntimeConfigurationReader interface {
 
 // Snapshot 是单次心跳可安全上报的资源事实。
 type Snapshot struct {
+	// MemoryTotalBytes 与 MemoryAvailableBytes 来自同一次物理内存采样，不能用百分比反推。
+	MemoryTotalBytes           uint64
+	MemoryAvailableBytes       uint64
 	CPUUsagePercent            *int
 	MemoryUsagePercent         *int
 	RuntimeConfigurationDigest string
@@ -44,7 +47,13 @@ func (c *Collector) Sample() (Snapshot, error) {
 	if err != nil || configuration.Digest == "" || len(configuration.AllowedRoots) == 0 {
 		return Snapshot{}, errors.New("agent telemetry runtime configuration is unavailable")
 	}
-	cpu, memory := c.system.Sample()
+	cpu, _ := c.system.Sample()
+	totalMemory, availableMemory := physicalMemory()
+	var memory *int
+	if totalMemory > 0 {
+		percent := int((totalMemory - availableMemory) * 100 / totalMemory)
+		memory = &percent
+	}
 	usages := make([]agentwire.DataRootUsage, 0, len(configuration.AllowedRoots))
 	for _, root := range configuration.AllowedRoots {
 		localRoot, pathOK := outputpath.LocalFilesystemPath(configuration.Platform, root)
@@ -57,7 +66,7 @@ func (c *Collector) Sample() (Snapshot, error) {
 		}
 		usages = append(usages, agentwire.DataRootUsage{RootDigest: DataRootDigest(root), TotalBytes: total, AvailableBytes: available})
 	}
-	return Snapshot{CPUUsagePercent: cpu, MemoryUsagePercent: memory, RuntimeConfigurationDigest: configuration.Digest, DataRootUsages: usages}, nil
+	return Snapshot{CPUUsagePercent: cpu, MemoryUsagePercent: memory, MemoryTotalBytes: totalMemory, MemoryAvailableBytes: availableMemory, RuntimeConfigurationDigest: configuration.Digest, DataRootUsages: usages}, nil
 }
 
 // DataRootDigest 把已登记的数据目录映射为稳定摘要，供控制面在不接收 Agent 路径的前提下关联空间数据。

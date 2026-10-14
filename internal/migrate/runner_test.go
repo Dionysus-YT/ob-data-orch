@@ -36,16 +36,16 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	if tableCount != 30 || strictCount != 30 {
-		t.Fatalf("schema tables = %d, strict tables = %d; want 30 and 30", tableCount, strictCount)
+	if tableCount != 35 || strictCount != 35 {
+		t.Fatalf("schema tables = %d, strict tables = %d; want 35 and 35", tableCount, strictCount)
 	}
 
 	var migrationCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 23 {
-		t.Fatalf("migration count = %d, want 23", migrationCount)
+	if migrationCount != 29 {
+		t.Fatalf("migration count = %d, want 29", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -81,7 +81,7 @@ func Test历史解耦迁移保留现有任务(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range names {
-		if strings.HasPrefix(name, "0021_") || strings.HasPrefix(name, "0022_") || strings.HasPrefix(name, "0023_") {
+		if name[:4] >= "0021" {
 			continue
 		}
 		data, err := migrations.Files.ReadFile(name)
@@ -496,6 +496,14 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0018_task_derivation.sql":                            &fstest.MapFile{Data: eighteenthMigration},
 		"0019_precheck_storage_credential.sql":                &fstest.MapFile{Data: nineteenthMigration},
 		"0020_task_execution_cancellation.sql":                &fstest.MapFile{Data: twentiethMigration},
+	}
+	// 新增迁移仍纳入支持版本，保证本例实际验证旧迁移的校验和失败关闭。
+	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql"} {
+		data, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tampered[name] = &fstest.MapFile{Data: data}
 	}
 	if err := ApplyFS(ctx, db, tampered); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("Apply() error = %v, want checksum mismatch", err)

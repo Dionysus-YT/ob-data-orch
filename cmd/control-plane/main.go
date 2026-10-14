@@ -150,6 +150,13 @@ func serveWithDevelopment(ctx context.Context, base, data, devWeb string) (resul
 		}
 	}()
 	api := controlplane.NewHandlerWithDependencies(buildinfo.Current(), dependencies)
+	retentionContext, stopRetention := context.WithCancel(ctx)
+	retentionStopped := make(chan struct{})
+	go func() {
+		defer close(retentionStopped)
+		dependencies.PersistentLogs.RunRetention(retentionContext, settings.LogRetentionDays, func(error) { slog.Error("普通日志清理失败，保留清理账本等待重试") })
+	}()
+	defer func() { stopRetention(); <-retentionStopped }()
 	var handler http.Handler
 	if devWeb == "" {
 		handler, err = browser.Handler(api, filepath.Join(base, "web"), filepath.Join(base, "agents"), data)

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, toRefs, useId } from 'vue'
+import { onBeforeUnmount, reactive, toRef, toRefs, useId } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Alert as AAlert, Button as AButton, Tag as ATag } from 'ant-design-vue'
 import { browserApi } from '@/api/browser'
 import '@/workbench/export/exportWizard.css'
 import WizardFrame from '@/components/WizardFrame.vue'
+import { useOperationMessage } from '@/composables/useOperationMessage'
 import { useExportWizard } from '@/workbench/export/useExportWizard'
 import ExportSourceStep from '@/workbench/export/steps/ExportSourceStep.vue'
 import ExportObjectsStep from '@/workbench/export/steps/ExportObjectsStep.vue'
@@ -17,10 +18,12 @@ import ExportSubmitConfirmation from '@/workbench/export/steps/ExportSubmitConfi
 const requests = new AbortController()
 onBeforeUnmount(() => requests.abort())
 const wizard = reactive(useExportWizard({ api: browserApi(requests.signal), route: useRoute(), router: useRouter(), fieldPrefix: useId(), submitCancelID: useId() }))
-const { draftDirty, createdDraftID, activeStep, stepProgressPercent, moveToStep, draftInput, creatingDraft, createDraft, attemptedStep, currentStepError, previousStep, footerBaselineNote, loadingSources, loadingNodes, canAdvance, nextStep, footerLabel, currentDraft, commandPreview, startingPrecheck, precheckRunning, submitting, startPrecheck, canSubmit, submitTask } = toRefs(wizard)
+const { MessageContext } = useOperationMessage([{ content: toRef(wizard, 'operationNotice') }, { content: toRef(wizard, 'copyNotice') }])
+const { draftDirty, createdDraftID, activeStep, stepProgressPercent, moveToStep, draftInput, creatingDraft, createDraft, attemptedStep, currentStepError, previousStep, footerBaselineNote, loadingSources, loadingNodes, canAdvance, nextStep, footerLabel, canStartPrecheck, submitting, startPrecheck, canSubmit, submitTask } = toRefs(wizard)
 </script>
 
 <template>
+  <MessageContext />
   <section class="page-heading">
     <div>
       <h1>新建导出任务</h1>
@@ -53,7 +56,7 @@ const { draftDirty, createdDraftID, activeStep, stepProgressPercent, moveToStep,
         <span class="footer-grow" />
         <AButton v-if="activeStep < 5" :loading="creatingDraft" :disabled="loadingSources || loadingNodes && activeStep === 4 || activeStep === 2 && !canAdvance" type="primary" @click="nextStep">{{ footerLabel }}</AButton>
         <div v-else class="footer-actions">
-          <AButton :disabled="!currentDraft || draftDirty || !commandPreview || startingPrecheck || precheckRunning || submitting" @click="startPrecheck">{{ footerLabel }}</AButton>
+          <AButton :disabled="!canStartPrecheck" @click="startPrecheck">{{ footerLabel }}</AButton>
           <AButton :disabled="!canSubmit" type="primary" @click="submitTask">{{ submitting ? '正在提交任务…' : '提交并启动导出' }}</AButton>
         </div>
       </footer>

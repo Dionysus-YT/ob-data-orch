@@ -16,6 +16,7 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
   const errors = ref<DataSourceFormErrors>({})
   const failure = ref('')
   const feedback = ref('')
+  const feedbackType = ref<'success' | 'info'>('success')
   const loading = ref(Boolean(initialId))
   const saving = ref(false)
   const testing = ref(false)
@@ -25,6 +26,7 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
   const nodeId = ref('')
   const test = ref<DataSourceConnectionTest>()
   let disposed = false
+  let nodeReadEpoch = 0
   let poll: ReturnType<typeof setTimeout> | undefined
   const isNew = computed(() => !activeId.value)
   const update = computed(() => source.value ? sourceUpdate(form, source.value, clearSys.value) : {})
@@ -55,20 +57,28 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
     finally { if (!disposed) loading.value = false }
   }
   async function loadNodes() {
+    if (disposed) return
+    const epoch = ++nodeReadEpoch
+    const valid = () => !disposed && epoch === nodeReadEpoch
     nodeLoading.value = true; nodeFailure.value = ''
     try {
       const value = await api.listDataSourceConnectionTestNodeCandidates()
-      if (!disposed) { nodes.value = value; if (!value.some((node) => node.id === nodeId.value)) nodeId.value = '' }
-    } catch (error) { if (!disposed) { nodes.value = []; nodeId.value = ''; nodeFailure.value = dataSourceErrorMessage(error, '无法读取可测试的执行节点。') } }
-    finally { if (!disposed) nodeLoading.value = false }
+      if (valid()) { nodes.value = value; if (!value.some((node) => node.id === nodeId.value)) nodeId.value = '' }
+    } catch (error) { if (valid()) { nodes.value = []; nodeId.value = ''; nodeFailure.value = dataSourceErrorMessage(error, '无法读取可测试的执行节点。') } }
+    finally { if (valid()) nodeLoading.value = false }
+  }
+  function onNodeDropdownVisibleChange(open: boolean) {
+    // 展开时重读当前登记名称与候选资格，避免本页保留改名前或删除前的节点引用。
+    if (open && !busy.value && !nodeLoading.value) void loadNodes()
   }
   function parseConnection() {
+    feedback.value = ''
     const parsed = parseDataSourceConnectionString(parserInput.value)
     if (!parsed) { failure.value = '无法解析连接串。请检查 mysql / obclient 地址、端口和用户@租户，可选 #集群。'; return }
     // 模式不匹配时拒绝整次回填，避免部分字段或秘密污染当前草稿。
     if (parsed.compatibilityMode !== form.compatibilityMode) { failure.value = `当前是 OceanBase ${form.compatibilityMode === 'MYSQL' ? 'MySQL' : 'Oracle'} 页面，请使用 ${form.compatibilityMode === 'MYSQL' ? 'mysql' : 'obclient'} 连接串。`; feedback.value = ''; return }
     Object.assign(form, parsed, { defaultDatabase: parsed.defaultDatabase ?? '', password: parsed.password || form.password })
-    parserInput.value = ''; errors.value = {}; failure.value = ''; feedback.value = '已解析到表单，尚未保存。'
+    parserInput.value = ''; errors.value = {}; failure.value = ''; feedbackType.value = 'success'; feedback.value = '连接串已解析到表单，尚未保存。'
   }
   async function save() {
     if (busy.value) return false
@@ -88,13 +98,14 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
       } else {
         if (!source.value) { await load(); return false }
         const changed = update.value
-        if (!Object.keys(changed).length) { parserInput.value = ''; feedback.value = '没有需要保存的更改。'; return true }
+        if (!Object.keys(changed).length) { parserInput.value = ''; feedbackType.value = 'info'; feedback.value = '没有需要保存的更改。'; return true }
         updated = await api.updateDataSource(activeId.value, source.value.revision, changed)
         if (invalidatesConnection(changed)) test.value = undefined
       }
       if (disposed) return false
       fill(updated)
-      feedback.value = '配置已保存。连接测试是独立操作。'
+      feedbackType.value = 'success'
+      feedback.value = '配置已保存。'
       onSaved(updated.id)
       return true
     } catch (error) {
@@ -113,12 +124,12 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
     } catch (error) { if (!disposed) { testing.value = false; failure.value = dataSourceErrorMessage(error, '暂时无法读取测试结果。已提交的测试可能继续运行。') } }
   }
   async function startTest() {
-    if (busy.value || testBlocked.value || !source.value || !nodes.value.some((node) => node.id === nodeId.value)) return
+    if (busy.value || nodeLoading.value || testBlocked.value || !source.value || !nodes.value.some((node) => node.id === nodeId.value)) return
     testing.value = true; failure.value = ''; feedback.value = ''; test.value = undefined
     try { const request = await api.startDataSourceConnectionTest(source.value.id, source.value.revision, nodeId.value); if (!disposed) await pollTest(request.id) }
     catch (error) { if (!disposed) { testing.value = false; failure.value = dataSourceErrorMessage(error, '无法发起连接测试。') } }
   }
   onMounted(() => { void load(); void loadNodes() })
   onBeforeUnmount(() => { disposed = true; if (poll) clearTimeout(poll); form.password = ''; form.sysPassword = ''; parserInput.value = '' })
-  return { activeId, source, form, clearSys, parserInput, errors, failure, feedback, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, connectionDirty, busy, invalidated, testBlocked, load, loadNodes, parseConnection, save, startTest }
+  return { activeId, source, form, clearSys, parserInput, errors, failure, feedback, feedbackType, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, connectionDirty, busy, invalidated, testBlocked, load, loadNodes, onNodeDropdownVisibleChange, parseConnection, save, startTest }
 }

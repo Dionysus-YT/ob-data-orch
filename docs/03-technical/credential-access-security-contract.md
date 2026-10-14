@@ -8,11 +8,21 @@
 > 实现状态：AES-GCM/AAD、根密钥载体、私有目录与官方兼容材料已通过纯核心测试；槽位协议、真实服务账户、Linux 实机和 OBDUMPER 全链路继续阻断
 > 更新日期：2026-08-12
 
-### 2026-09-14 部署修订（DEC-048）
+> 2026-10-12 节点诊断授权：NODE_MANAGE 允许节点安全身份、系统/安装元信息、固定检查证据、节点活动摘要与整体日志队列统计，不授予其他账号任务/执行/租约读取。活动执行与近期任务须按本人或已授权数据源任务范围核对；ALL 必须同时具备可信 ROLE_GLOBAL_ADMIN 与 TASK_READ_ALL。无权项不返回标识、数量或差异错误，读取失败保持未知。详情不包含命令、原始输出、日志正文、机器凭据、账号标识或关联材料；检查只返回本机固化绝对路径事实，不开放路径探测输入。
+> 主机接口地址仅通过机器通道保存，浏览器投影为去重的 IPv4 /24、IPv6 /64 网段摘要。Direct Load 文件固定为 toolHome/conf/session.config.json，未知值保持短时原始字节并清零，不进入响应、审计或公开指纹；只提取官方 4.3.5 的三个数值键，不外传未知键名或整文件摘要。
+> 固定版本进程仅在当前用户请求审计绑定 checkId 且授权主体仍 ACTIVE 时获得许可；Agent 自报 VersionProbeAllowed 不授予权限。自动检查和配置变更不能继承旧许可。版本查询不解析秘密、不访问数据库；原始 stdout/stderr 有界读取并清零，错误只保留稳定码。超时、超限、冲突、漏项和迟到回执失败关闭。机器回执仍须独立认证，浏览器请求仍须 NODE_MANAGE、CSRF、修订和幂等校验。
+
+## 2026-09-14 部署修订（DEC-048）
+
+> 2026-10-10 全局任务读取补充：按用户确认，全局管理员独立于节点管理角色。当前固定初始管理员由可信部署身份提供 `ROLE_GLOBAL_ADMIN` 与 `TASK_READ_ALL`，只有二者同时成立才投影跨账号任务列表、节点统计和任务只读详情/日志；客户端 scope、节点角色、URL 或游标均不得扩大权限。SQLite 仍复验主体 ACTIVE，游标绑定账号、节点、范围和当前全局授权，SSE 续读重新检查。缺少可信 provider 或能力时保持原对象范围。全局只读投影不跳过派生、取消等写事务自身的对象权限、CSRF、幂等、预检查和审计，也不赋予密码、私钥或原始敏感日志的可见权限。本轮没有新增账号管理、SSO、任意角色配置或真实多账号部署验证。
 
 统一启动入口初始化固定 `admin`：PBKDF2-HMAC-SHA256、随机 32 字节盐、600000 次迭代、32 字节派生校验值；不保存登录密码原文。登录后创建内存会话，12 小时到期，Secure/HttpOnly/SameSite=Strict 的 `__Host-ob_data_orch_session` Cookie；CSRF 绑定会话并复验来源。控制面重启要求浏览器重新登录，但不影响 Agent 身份。该明确决策取代下文“暂不建设登录/初始管理员外部输入”的历史范围声明。
 
 浏览器与机器协议仍独立。管理员明确兼任现有节点、数据源和任务操作职责；不提供自定义角色、SSO、MFA。单次注册材料有效期 24 小时，续期不自动生成身份。Windows 服务沿用安装账户，Linux 使用固定专用账户；禁止升级时改变 DPAPI 账户或身份目录绝对路径。
+
+2026-10-12 启动器修正：Windows 的“同一安装账户”按 SID 判断，允许 `.\用户` 与 `机器名\用户` 等别名解析为同一身份；账户不可解析或 SID 不同仍失败关闭，不修改服务账户、DPAPI 作用域或身份目录。验证范围与未运行完整服务启动的限制见[运维修复记录](deployment-operations.md#2026-10-12-启动器账户-sid-校验修复)。
+
+2026-10-13 显式重新注册：仅目标机器的原安装入口在服务停止后接收新的一次性注册码，沿用原 DPAPI/专用账户、CA 和身份目录；平台须先删除旧节点并撤销凭据。普通认证失败不触发自动重置，待关联请求不能被不同材料覆盖。本机加密身份新增可选日志队列命名空间，仅接受与 agentId 相同的规范 UUIDv4；旧状态保留原队列，新身份不使用旧凭据或旧任务日志授权。日志证据保留，不自动确认或跨身份补传；详细流程见[运维说明](deployment-operations.md#重新注册已删除的节点)。
 
 TLS 使用持久的受平台保护信任根（20 年），服务叶证书 90 天、剩余不足 30 天时自动续期；根证书到期或材料不完整失败关闭。Agent 包携带公钥信任，浏览器首次需要由使用环境信任该根。升级不重新生成根。
 
@@ -201,8 +211,8 @@ Agent 认证
 AD-R09 确认的 `EXPORT_PREFLIGHT` 可以在提交前解析当前数据源密码；对象存储输出在满足更窄的前置条件时可解析冻结的存储凭据。两类能力都必须与正式执行隔离：
 
 - 同时校验 precheckId、precheckLeaseId/epoch、nodeId、agentId、草稿 revision、配置指纹、credentialId/revision 和固定检查用途；
-- `DATABASE_CONNECTION` 只返回数据库认证所需的类型化槽位，不返回 sys 或其他未来任务秘密；`STORAGE_CREDENTIAL` 只返回成对 access-key/secret-key，且只能用于当前对象存储输出的 `STORAGE_AUTH`。两个槽位必须独立请求、独立 requestId/摘要/回执，不能在一次响应中混合或复用；
-- 本地输出的 Agent Worker 必须先完成无秘密的工具环境、输出路径、目录空性和可用空间检查；仅当四项均为 `PASSED` 时才可解析数据库槽位并启动固定 JDBC 探针。对象存储输出只先完成工具环境和临时目录空间检查，再完成数据库/对象检查与无秘密 `STORAGE_CONNECTIVITY`；仅当这些前置均为 `PASSED`、草稿已冻结存储凭据引用且认证探测器显式声明需要凭据时，才可解析存储槽位。任一前置项为 `FAILED` 或 `UNKNOWN` 时，不得接触对应凭据，相关检查以固定 `UNKNOWN` 结果收口；
+- `DATABASE_CONNECTION` 返回当前冻结检查所需的类型化材料；2026-10-13 扩展仅在 `addExtraMessage=true` 时附带成对 sysUsername/sysPassword，用于同一固定探针的 sys 视图检查，不作为独立自由槽位。`STORAGE_CREDENTIAL` 只返回成对 access-key/secret-key，且只能用于当前对象存储输出的 `STORAGE_AUTH`。数据库与存储槽位仍独立请求、独立 requestId/摘要/回执；
+- 按 2026-10-13 用户确认，预检查按真实依赖继续执行独立项。本地无秘密检查仍先完成；只有 `TOOL_ENVIRONMENT=PASSED` 时才可解析数据库槽位并启动固定 JDBC 探针，输出路径、目录空性或空间失败不再阻断这次独立数据库检查。`OBJECT_ACCESS` 依赖 `DATABASE_CONNECTIVITY=PASSED`。对象存储的无秘密 `STORAGE_CONNECTIVITY` 独立于工具、空间和数据库组；仅当该项为 `PASSED`、草稿冻结了存储凭据引用且认证探测器显式声明需要凭据时，才可解析存储槽位。未满足对应依赖时不得接触该槽位，使用固定 `PRECHECK_BLOCKED_BY_*` 证据码和 `UNKNOWN` 明确说明未执行；已执行但无法确认的结果沿用原不可用证据码。任一必需项未通过仍阻断提交；
 - 预检查只在内存中建立有限超时数据库连接，不生成 OBDUMPER 安全文件，也不启动 OBDUMPER；允许由固定 Java JDBC 连接探针完成连接、基础元信息和已冻结单表的零行读取验证。探针先用 JDBC 元数据定位对象，再由冻结的 MySQL/Oracle 兼容模式逐段安全引用库或 Schema 与表，固定执行 `SELECT 1 ... WHERE 1 = 0`；不得接受任意 SQL、URL、驱动、主类或环境秘密；
 - 同一槽位的 requestId 在有效短租约内可以重试，但控制面和 Agent 均不缓存或持久化明文响应；默认失败关闭的认证探测器不得解析存储凭据。当前尚未启用任何云厂商签名请求，真实凭据探测仍需 EX-V1 的端点、凭据与网络授权；
 - 完成、失败、失联或租约过期后立即释放内存槽位；预检查凭据不能复用于正式 execution；
@@ -480,7 +490,15 @@ Windows 验证还发现：官方 `.bat` 没有主动设置 `security.configurati
 - 存储：sys 密码使用与数据库密码相同的 AES-GCM 信封（AAD 绑定 credentialId/revision/secretType=SYS_PASSWORD/dataSourceId），存独立表 `sys_credential_revisions`（迁移事务内无法关闭 foreign_keys，重建 credential_revisions 会触发外键失败，故不改历史表约束）；`data_sources` 只保存 `sys_user`、`sys_credential_id`、`sys_credential_revision` 元数据；
 - 创建/更新：账号与密码必须成对提供（一侧为空即 422）；轮换递增 sys 修订并把旧 ACTIVE 修订标记 SUPERSEDED；账号与密码同时置空表示清除（ACTIVE 修订标记 REVOKED）；物理删除数据源时随事务清理 sys 修订；
 - 投影：浏览器只收到派生状态 AVAILABLE/UNAVAILABLE，不下发 sys 账号或任何秘密；`sys_credential_id` 仅供受控写路径识别版本，绝不进入浏览器响应；
-- 解析：sys 凭据的短时解析与任务秘密槽位同机制（本契约第 9 节）；`--add-extra-message` 等依赖 sys 凭据的能力只在数据源 sysCredentialState=AVAILABLE 时考虑启用，当前仍保持关闭（待实测）；
+- 解析：`--add-extra-message` 已按 2026-10-13 用户要求接入。只在数据源 sysCredentialState=AVAILABLE 且包含表 DDL 时活动；预检查冻结 sys 引用/修订，短时槽位完成前复验当前 ACTIVE 修订与租约。固定 sys 视图检查通过才可提交；轮换、撤销或未知结果失败关闭。真实数据库/OBDUMPER 效果仍待授权验证；
 - 幂等摘要：`createRequestDigest` 只以 sys 存在性参与，不落入密码内容或摘要。
 
+2026-10-13 导出执行扩展：sys 引用与修订在预检查冻结，内部任务快照只持有 `_sysCredential` 引用。附加定义信息参数启用时，固定执行槽位附带短时 sys 材料；Agent 复核冻结 argv 与槽位成对，官方安全文件增加 `oceanbase.jdbc.sys.password` 加密属性，实际 argv/环境完全省略两个密码。普通 sys 账号仅用于内部官方 `--sys-user` 参数，显示命令、复制、任务响应和 Agent 日志遮蔽它；日志第二层拒绝未遮蔽的固定 sys 参数/组合身份。轮换或撤销在解密后、响应前再次检查，不返回旧材料。本轮仅合成验证，未解析真实 sys 密码。
+
 - 连接测试（2026-08-10 扩展）：数据源配置了 sys 凭据时，基础连接测试在数据库验证成功后额外用 sys 身份（集群为空时为 `sysUser@sys`，有集群时为 `sysUser@sys#cluster`，平台组装）经固定 JDBC 探针验证 sys 租户认证；sys 结果独立记录（sys_verification_status/sys_result_code，枚举 SYS_CONNECTED/SYS_* 错误码），不阻断数据库启用门禁；未配置 sys 凭据的数据源请求 SYS_CONNECTION 槽位失败关闭；绑定摘要包含 sys 引用，Agent 领取/确认/槽位/完成全程复验。
+
+## 2026-10-13 存储写权限与元数据检查边界
+
+新增 STORAGE_WRITE 依赖 AUTH 通过，二者各自只在同步阶段以一次性令牌解析一次冻结存储槽位；重复、保留旧 context、阶段结束、绑定变化与租约过期都拒绝。默认 AUTH 实现和未装配 WRITE 均不请求秘密，因此此次不扩大真实凭据解析授权。未确认清理的合成事实保持 UNKNOWN，不表示已经发生真实写入。
+
+固定 JDBC 选择协议只传字面列/分区列表，绝不增加外部 SQL、where、驱动或 JDBC URL 输入。列通过 JDBC 固定元数据读取；分区通过固定 catalog 语句绑定数据库与表名。数据库依赖工具，目录/空间/静态额度失败不阻断数据库短时槽位；真实数据库和云存储验证仍须 EX-V1 准入与明确授权。

@@ -78,15 +78,15 @@ func (b *Browser) Authorize(_ context.Context, p identity.Principal, scope ident
 		return identity.ErrDenied
 	}
 	switch scope {
-	case identity.ScopeDataSourceRead, identity.ScopeDataSourceWrite, identity.ScopeNodeUse, identity.ScopeNodeManage, identity.ScopeTaskRead:
+	case identity.ScopeDataSourceRead, identity.ScopeDataSourceWrite, identity.ScopeNodeUse, identity.ScopeNodeManage, identity.ScopeTaskRead, identity.ScopeTaskReadAll:
 		return nil
 	}
 	return identity.ErrDenied
 }
 
-// AuthorizeRole 为固定管理员授予数据源和节点管理职责。
+// AuthorizeRole 为可信固定管理员授予全局、数据源和节点职责，客户端不能自授角色。
 func (b *Browser) AuthorizeRole(_ context.Context, p identity.Principal, role identity.Role) error {
-	if p.Type == identity.BrowserPrincipal && p.ID == SubjectID && (role == identity.RoleDataSourceAdmin || role == identity.RoleNodeAdmin) {
+	if p.Type == identity.BrowserPrincipal && p.ID == SubjectID && (role == identity.RoleDataSourceAdmin || role == identity.RoleNodeAdmin || role == identity.RoleGlobalAdmin) {
 		return nil
 	}
 	return identity.ErrDenied

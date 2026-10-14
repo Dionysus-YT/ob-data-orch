@@ -33,11 +33,22 @@ type CredentialStorageAuthProber interface {
 	RequiresStorageCredentials() bool
 }
 
+// CredentialStorageWriteProber 只检查目标前缀中新建 multipart 上传的部件写入和终止。
+// 未装配或未声明凭据需求时不解析秘密；不能删除或覆盖任何已有对象。
+type CredentialStorageWriteProber interface {
+	RequiresStorageCredentials() bool
+	ProbeWrite(context.Context, string, []byte, []byte, agentpreflight.StorageTarget) (bool, error)
+}
+
 var (
 	// ErrStorageConnectivityUnavailable 表示本机无法对存储端点给出可验证结论。
 	ErrStorageConnectivityUnavailable = errors.New("存储端点连通性不可用")
 	// ErrStorageAuthUnavailable 表示凭据有效性探测未授权或未实现。
 	ErrStorageAuthUnavailable = errors.New("存储凭据探测未授权")
+	// ErrStorageWriteUnavailable 表示写权限检查未启用或未取得受控结论。
+	ErrStorageWriteUnavailable = errors.New("存储写权限探测不可用")
+	// ErrStorageWriteCleanupUnconfirmed 表示新建分块上传的终止尚未确认，不能宣称通过。
+	ErrStorageWriteCleanupUnconfirmed = errors.New("存储写权限探测清理未确认")
 )
 
 // TCPStorageConnectivityProber 对 endpoint 执行单次受控 TCP 建连（默认 443 端口）。
@@ -142,6 +153,30 @@ func (p Probe) storageAuthResult(ctx context.Context, request agentpreflight.Req
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_CREDENTIAL_VERIFIED"}, nil
 	}
 	return agentpreflight.Result{Check: check, Status: agentpreflight.StatusFailed, EvidenceCode: "STORAGE_CREDENTIAL_REJECTED"}, nil
+}
+
+func (p Probe) storageWriteResult(ctx context.Context, request agentpreflight.Request) (agentpreflight.Result, error) {
+	check := agentpreflight.CheckStorageWrite
+	if p.StorageWrite == nil || !p.StorageWrite.RequiresStorageCredentials() || p.StorageCredentials == nil || request.StorageTarget == nil {
+		return unavailableResult(check), nil
+	}
+	material, err := p.StorageCredentials.ResolveStorageCredential(ctx, request.Binding)
+	if err != nil || material.Provider != request.StorageTarget.Provider {
+		material.Destroy()
+		return unavailableResult(check), nil
+	}
+	defer material.Destroy()
+	verified, err := p.StorageWrite.ProbeWrite(ctx, material.Provider, material.AccessKey, material.SecretKey, *request.StorageTarget)
+	if errors.Is(err, ErrStorageWriteCleanupUnconfirmed) {
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "STORAGE_WRITE_CLEANUP_UNCONFIRMED"}, nil
+	}
+	if err != nil {
+		return unavailableResult(check), nil
+	}
+	if !verified {
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusFailed, EvidenceCode: "STORAGE_WRITE_REJECTED"}, nil
+	}
+	return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_WRITE_VERIFIED"}, nil
 }
 
 // UnavailableStorageAuthProber 是 EX-V1 前凭据探测的固定失败关闭实现。

@@ -142,10 +142,10 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 	now := time.Now().UTC()
 	grant, found, err := executions.ClaimNextExecution(r.Context(), store.ExecutionClaimNext{
 		AgentID: machine.AgentID, NodeID: machine.NodeID, ExecutionID: executionID, LeaseID: leaseID,
-		ScheduledEventID: scheduledEventID, RequestID: request.RequestID, LeaseTTL: executionLeaseTTL,
+		ScheduledEventID: scheduledEventID, RequestID: request.RequestID, RequestDigest: executionRequestDigest("CLAIM_NEXT", request.agentExecutionEnvelope, "", request.Payload), LeaseTTL: executionLeaseTTL,
 		HeartbeatFreshAfter: now.Add(-s.heartbeatTTL), Now: now,
 	})
-	if errors.Is(err, store.ErrClaimIneligible) || errors.Is(err, store.ErrPrecheckLeaseRejected) {
+	if errors.Is(err, store.ErrIdempotencyConflict) || errors.Is(err, store.ErrClaimIneligible) || errors.Is(err, store.ErrPrecheckLeaseRejected) {
 		writeError(w, http.StatusConflict, "EXECUTION_CLAIM_REJECTED", "当前任务不满足执行条件", false)
 		return
 	}
@@ -339,6 +339,13 @@ func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *h
 			"provider": encryptedStorage.Provider, "accessKey": accessKeyPlaintext, "secretKey": secretKeyPlaintext,
 		}
 	}
+	sysPlaintext, sysErr := s.decryptExportSysCredential(encrypted.SysCredential, encrypted.DataSourceID)
+	if sysErr != nil {
+		_ = finish(false)
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_SECRET_RESOLUTION_UNAVAILABLE", "导出秘密槽位暂时不可用", true)
+		return
+	}
+	defer credential.Zero(sysPlaintext)
 	if err := finish(true); err != nil {
 		writeExecutionStoreError(w, err)
 		return
@@ -346,7 +353,7 @@ func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *h
 	writeExecutionResponse(w, "EXECUTION_SECRET_SLOTS_RESOLVED", map[string]any{
 		"agentRequestId": request.RequestID, "executionId": executionID, "leaseId": request.Payload.LeaseID,
 		"leaseEpoch": request.Payload.LeaseEpoch, "envelopeDigest": request.Payload.EnvelopeDigest,
-		"connection":           map[string]any{"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext},
+		"connection":           exportConnectionPayload(encrypted.Host, encrypted.Port, encrypted.Username, plaintext, encrypted.SysCredential, sysPlaintext),
 		"storageCredential":    storagePayload,
 		"realExecutionEnabled": true,
 	})

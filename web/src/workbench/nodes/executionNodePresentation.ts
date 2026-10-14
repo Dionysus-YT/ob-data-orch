@@ -1,9 +1,22 @@
-import type { ExecutionNodeSummary } from '@/api/browser'
+import type { ExecutionNodeDetail, ExecutionNodeSummary } from '@/api/browser'
+import { nodeCPUArchitectureOptions, nodeOperatingSystemOptions, nodePlatformClassification } from './nodePlatformRules'
+import { inspectionBlockingSummary } from './nodeInspectionPresentation'
 
+// nodePlatformLabel 将机器平台枚举转换为显示名称，不改变注册协议与安装包目标。
 export function nodePlatformLabel(platform: ExecutionNodeSummary['platform']): string {
-  if (platform === 'WINDOWS_AMD64') return 'Windows AMD64'
-  if (platform === 'LINUX_AMD64') return 'Kylin Linux AMD64'
-  return 'Kylin Linux ARM64'
+  return `${nodeOperatingSystemLabel(platform)} · ${nodeCPUArchitectureLabel(platform)}`
+}
+
+// nodeOperatingSystemLabel 展示已验证平台值对应的操作系统分类。
+export function nodeOperatingSystemLabel(platform: ExecutionNodeSummary['platform']): string {
+  const { operatingSystem } = nodePlatformClassification(platform)
+  return nodeOperatingSystemOptions.find(option => option.value === operatingSystem)!.label
+}
+
+// nodeCPUArchitectureLabel 展示已验证平台值对应的 CPU 架构名称。
+export function nodeCPUArchitectureLabel(platform: ExecutionNodeSummary['platform']): string {
+  const { cpuArchitecture } = nodePlatformClassification(platform)
+  return nodeCPUArchitectureOptions.find(option => option.value === cpuArchitecture)!.label
 }
 
 export function nodeManagementLabel(state: ExecutionNodeSummary['managementState']): string {
@@ -21,14 +34,25 @@ export function nodeHeartbeatLabel(status: ExecutionNodeSummary['heartbeatStatus
 }
 
 export function nodeEnvironmentLabel(status: ExecutionNodeSummary['environmentStatus']): string {
-  if (status === 'NORMAL') return '工具已就绪'
-  if (status === 'ABNORMAL') return '工具异常'
-  return status === 'EXPIRED' ? '已过期' : '未检查'
+  if (status === 'NORMAL') return '检查通过'
+  if (status === 'ABNORMAL') return '检查异常'
+  return status === 'EXPIRED' ? '检查已失效' : '未检查'
 }
 
 export function nodeCapacityLabel(status: ExecutionNodeSummary['capacityStatus']): string {
-  if (status === 'AVAILABLE') return '可用'
-  return status === 'BUSY' ? '繁忙' : '未知'
+  if (status === 'AVAILABLE') return '有空位'
+  return status === 'BUSY' ? '已满' : '未知'
+}
+
+// 各类别独立映射服务端事实；通用接收资格不能扩大为某类导入/导出模块已经可用。
+export function nodeCategoryStates(node: ExecutionNodeSummary): { key: string; label: string; status: 'success' | 'error' | 'warning' | 'default' | 'processing'; text: string }[] {
+  const checking = node.unavailableReasons.includes('ENVIRONMENT_CHECK_IN_PROGRESS')
+  return [
+    { key: 'management', label: '管理', status: node.managementState === 'ENABLED' ? 'success' : node.managementState === 'MAINTENANCE' ? 'warning' : 'default', text: nodeManagementLabel(node.managementState) },
+    { key: 'agent', label: 'Agent', status: node.agentAssociationStatus === 'PENDING' ? 'default' : node.heartbeatStatus === 'ONLINE' ? 'success' : node.heartbeatStatus === 'OFFLINE' ? 'error' : 'default', text: node.agentAssociationStatus === 'PENDING' ? nodeAssociationLabel(node.agentAssociationStatus) : nodeHeartbeatLabel(node.heartbeatStatus) },
+    { key: 'environment', label: '运行环境', status: checking ? 'processing' : node.environmentStatus === 'NORMAL' ? 'success' : node.environmentStatus === 'ABNORMAL' ? 'error' : node.environmentStatus === 'EXPIRED' ? 'warning' : 'default', text: checking ? '检查中' : nodeEnvironmentLabel(node.environmentStatus) },
+    { key: 'capacity', label: '任务槽位', status: node.capacityStatus === 'AVAILABLE' ? 'success' : node.capacityStatus === 'BUSY' ? 'warning' : 'default', text: nodeCapacityLabel(node.capacityStatus) },
+  ]
 }
 
 export function nodeTimeLabel(value: string | null | undefined): string {
@@ -42,22 +66,30 @@ export function nodeCapacitySummary(node: ExecutionNodeSummary): string {
   return `${node.agentFacts.capacityUsed} / ${node.agentFacts.capacityTotal}`
 }
 
-export function nodeUnavailableReasonLabel(reason: string): string {
+export function nodeUnavailableReasonLabel(reason: string, context?: Pick<ExecutionNodeDetail, 'environmentStatus' | 'environmentCheck'>): string {
   if (!reason) return '控制面未提供具体阻断原因'
+  const check = context?.environmentCheck
+  // 只用当前异常检查的清单解释当前阻断，避免旧结果或可选项异常被误认为本次失败原因。
+  if (['TOOL_RUNTIME_INVALID', 'TOOL_RUNTIME_UNAVAILABLE', 'ENVIRONMENT_CHECK_ABNORMAL'].includes(reason) && context?.environmentStatus === 'ABNORMAL' && check?.status === 'FAILED' && check.inspection?.checkId === check.checkId) {
+    const summary = check.inspection && inspectionBlockingSummary(check.inspection)
+    if (summary) return summary
+  }
   const labels: Record<string, string> = {
     AGENT_ASSOCIATION_REQUIRED: '需要完成 Agent 关联',
     HEARTBEAT_REQUIRED: '尚未收到 Agent 心跳',
     HEARTBEAT_OFFLINE: 'Agent 当前离线',
-    ENVIRONMENT_CHECK_REQUIRED: '尚未取得环境检查事实',
-    ENVIRONMENT_CHECK_IN_PROGRESS: '环境检查正在等待 Agent 回传',
-    ENVIRONMENT_CHECK_ABNORMAL: '环境检查发现异常',
-    TOOL_RUNTIME_INVALID: '工具运行时无效：请检查节点上的 OBDUMPER 工具目录与 Java',
-    TOOL_RUNTIME_UNAVAILABLE: '工具运行时暂无法核验，请稍后重新检查环境',
-    ENVIRONMENT_CHECK_EXPIRED: '环境检查事实已过期',
+    ENVIRONMENT_CHECK_REQUIRED: '尚未完成环境检查，请在 Agent 在线后点击「检查节点环境」。',
+    ENVIRONMENT_CHECK_IN_PROGRESS: '环境检查进行中，正在等待 Agent 返回结果。',
+    ENVIRONMENT_CHECK_ABNORMAL: '环境检查未通过，请查看节点详情中的检查项并按提示处理。',
+    TOOL_RUNTIME_INVALID: '环境检查有未通过的必需项，请查看节点详情中的检查结果。',
+    TOOL_RUNTIME_UNAVAILABLE: '环境检查结果不完整，部分必需项没有取得结果；请查看节点详情中的检查提示。',
+    ENVIRONMENT_CHECK_EXPIRED: '环境或配置已变化，上次检查结果已失效，请重新检查。',
     RUNTIME_CONFIGURATION_MISMATCH: '等待 Agent 空闲后同步配置并重新检查环境',
     CAPACITY_UNKNOWN: '任务容量尚未取得',
     CAPACITY_BUSY: '当前任务容量已满',
-    NODE_DISABLED: '节点已禁用',
+    EXECUTION_BUDGET_UNKNOWN: '执行内存额度尚不可核对',
+    EXECUTION_BUDGET_EXHAUSTED: '执行内存额度已满',
+    NODE_DISABLED: '节点尚未启用；环境检查通过后请点击「启用节点」。',
     NODE_MAINTENANCE: '节点处于维护中',
   }
   return labels[reason] ?? '控制面返回了未识别的阻断原因，请在节点详情中核对'

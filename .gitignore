@@ -11,6 +11,7 @@
 /agent.exe
 
 # Local runtime output
+/ob-data/
 /tmp/
 /artifacts/
 /bin/

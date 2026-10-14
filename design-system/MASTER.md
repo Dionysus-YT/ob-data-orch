@@ -102,6 +102,7 @@ Reference Page 对应关系：
 | Overview | Overview | [overview.md](pages/overview.md) |
 | Data Sources | Management / Table | [data-sources.md](pages/data-sources.md) |
 | Export Builder | Task Builder | [export-builder.md](pages/export-builder.md) |
+| Task Center | Task Operations | [task-center.md](pages/task-center.md) |
 | Task Detail | Diagnostic / Detail | [task-detail.md](pages/task-detail.md) |
 
 新页面先选择最接近 Reference / Archetype，再套用 [DESIGN.md](DESIGN.md) 与相关 pattern。禁止直接照 Ant Demo 页面开发。
@@ -182,6 +183,10 @@ long technical identifier
 截图不等同于 DOM、键盘或无障碍验证。
 
 ## 11. Change Control
+
+2026-10-12 全平台操作结果与持续状态的反馈调整已记录于 [Status and Feedback Pattern](patterns/status-feedback.md#全平台反馈规则)，按用户确认统一 Message / Alert / Form.Item，Shell、Archetype 与 Token 保留原权威。
+
+2026-10-13 按 [DEC-050](../docs/01-product/decisions.md#dec-050-任务中心重构范围与收窄规则) 登记 Task Center 页面规则入口，并取代 Task Detail 占位；两份 P1 已经用户评审确认，Archetype、Shell 与 Token 不变。
 
 - 改动 Product Shell、Page Archetype、Task Builder、Table model、Drawer anatomy、Status semantics、风险确认或 Reference Page 身份时，必须记录 Design System Change。
 - Token calibration 只能修改已确认视觉方向中的值，记录影响组件、前后值和验证结果。

@@ -54,6 +54,16 @@ function setup(overrides: Partial<BrowserApi> = {}) {
 }
 
 describe('任务详情会话与读取隔离', () => {
+  it('旧任务写事务的结束不能释放新任务的暂停，只有当前句柄可刷新', async () => {
+    const s = setup(); await settle()
+    const finishA = s.state.beginMutation()
+    s.id.value = 'B'; await settle()
+    const finishB = s.state.beginMutation()
+    const before = vi.mocked(s.api.getTaskExecution).mock.calls.length
+    finishA(true); await vi.advanceTimersByTimeAsync(2500); await settle()
+    expect(s.api.getTaskExecution).toHaveBeenCalledTimes(before)
+    finishB(true); await settle(); expect(s.api.getTaskExecution).toHaveBeenCalledTimes(before + 1)
+  })
   it('同一实例 A → B 立即清空事实、游标、输入和反馈，只接纳 B', async () => {
     const s = setup()
     await settle()

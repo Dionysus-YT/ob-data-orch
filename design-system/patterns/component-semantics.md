@@ -15,8 +15,9 @@
 | 必须阻断当前流程的确认 | `Modal` |
 | 简短危险确认 | `Popconfirm` 或 `OrchDangerConfirm` |
 | 短状态 | `Badge` |
+| 主动操作的短时结果 | `Message` |
 | 分类属性 | `Tag` |
-| 需要解释的异常 | `Alert` |
+| 持续说明、风险与需要解释的异常 | `Alert` |
 | 执行进度 | `Progress` |
 
 禁止：
@@ -27,6 +28,8 @@
 - `Drawer` 代替完整页面。
 - `Modal` 承担复杂长期编辑。
 - 自建基础 Button/Input/Form/Table 状态。
+
+操作成功、持续说明与字段错误的选择及生命周期统一遵守 [Status and Feedback Pattern](status-feedback.md)。
 
 Product Component 允许存在的条件：
 

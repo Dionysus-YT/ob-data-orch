@@ -30,7 +30,7 @@ test('任务游标和页大小沿用服务端请求，不切换为 Table 客户�
   await expect.poll(() => requests.at(-1)?.searchParams.get('cursor')).toBe('synthetic-next')
   await page.getByRole('combobox', { name: '每页显示' }).focus()
   await page.keyboard.press('ArrowDown')
-  await page.getByText('20 条', { exact: true }).click()
+  await page.getByText('20 条/页', { exact: true }).click()
   await expect.poll(() => requests.at(-1)?.searchParams.get('limit')).toBe('20')
   expect(requests.at(-1)?.searchParams.has('cursor')).toBe(false)
 })

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Alert as AAlert, Badge as ABadge, message as antMessage, Skeleton, Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Dropdown as ADropdown, Menu as AMenu, MenuItem as AMenuItem, Switch as ASwitch, type TableColumnsType } from 'ant-design-vue'
+import { Alert as AAlert, Badge as ABadge, Skeleton, Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Dropdown as ADropdown, Menu as AMenu, MenuItem as AMenuItem, Switch as ASwitch, type TableColumnsType } from 'ant-design-vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { DownOutlined, LeftOutlined, RightOutlined, ClearOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, ApiOutlined } from '@ant-design/icons-vue'
 import EmptyState from '@/components/EmptyState.vue'
+import { useOperationMessage } from '@/composables/useOperationMessage'
 import { browserApi, dataSourceErrorMessage, type ApiError, type DataSourceSummary } from '@/api/browser'
 import { filterDataSources, type ConnectionStatusFilter } from '@/workbench/sources/dataSourceListFilters'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
@@ -24,7 +25,8 @@ const refreshing = ref(false)
 const error = ref('')
 const actionError = ref('')
 const restricted = ref(false)
-const [messageApi, MessageContext] = antMessage.useMessage()
+const { MessageContext, success: showSuccess, clear: clearMessage } = useOperationMessage()
+watch(restricted, denied => { if (denied) clearMessage() }, { flush: 'sync' })
 const keyword = ref('')
 const environment = ref('')
 const state = ref('')
@@ -146,10 +148,11 @@ async function performAction(target: { row: DataSourceSummary; action: Lifecycle
   actionBusy.value = true
   busySourceId.value = row.id
   actionError.value = ''
+  clearMessage()
   try {
     if (action === 'delete') await api.deleteDataSource(row.id, row.revision)
     else await api.changeDataSourceState(row.id, row.revision, action === 'enable' ? 'ENABLED' : 'DISABLED')
-    if (action === 'delete') void messageApi.success(`数据源“${row.displayName}”已删除。`)
+    if (action === 'delete') showSuccess(`数据源“${row.displayName}”已删除。`)
     if (action === 'delete' && selectedId.value === row.id) selectedId.value = null
     await load(true)
   } catch (caught) {

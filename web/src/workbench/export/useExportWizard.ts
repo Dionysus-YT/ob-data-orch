@@ -19,22 +19,19 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   const references = useExportReferences({ ...form, ...runtime })
   const parameters = useExportParameters({ ...form, ...references })
   const catalog = useExportCatalog({ ...form, ...references, activeStep, ...runtime })
-  const lifecycle = useExportDraftLifecycle({ ...form, ...references, ...parameters, ...runtime, moveToStep, hydrateDraft: (draft) => populateFormFromDraft({ ...form, ...catalog }, draft) })
+  const lifecycle = useExportDraftLifecycle({ ...form, ...references, ...parameters, ...runtime, activeStep, moveToStep, hydrateDraft: (draft) => populateFormFromDraft({ ...form, ...catalog }, draft) })
   const recovery = useExportRecovery({ ...form, ...references, ...catalog, ...lifecycle, activeStep, ...runtime })
   const {
-    storageOutput, blockingPrecheckRows, canSubmit, currentDraft, attemptedStep, selectedSource,
+    canSubmit, currentDraft, attemptedStep, selectedSource,
     selectedNode, contentInputMessage, objectInputMessage, objectOptionsMessage, ordinaryFormat,
     formatOptionsMessage, draftInput, creatingDraft, scopeKind, enteredObjectCount, database, filePath,
-    precheckRows, startingPrecheck, precheckRunning, precheckID, activePrecheck, draftValidationMessage,
+    precheckRows, startingPrecheck, precheckRunning, precheckWaitingForResults, precheckFailure, precheckID, activePrecheck, draftValidationMessage,
     draftDirty, createDraft } = { ...form, ...references, ...parameters, ...lifecycle,
   }
   const titles = ['选择数据源', '导出内容与对象', '选择数据格式', '执行与输出', '预检查与命令']
   const footerBaselineNote = computed(() => {
     if (activeStep.value === 5) {
-      if (storageOutput.value && blockingPrecheckRows.value.some((row) => row.check === 'STORAGE_CONNECTIVITY' || row.check === 'STORAGE_AUTH')) {
-        return '对象存储输出需要存储端点连通性与凭据有效性两项预检查通过后才能提交；这两项探测尚未授权（归 EX-V1 排期），当前保持未完成。'
-      }
-      return canSubmit.value ? '预检查已通过。提交后，所选 Agent 将领取已冻结的导出任务并启动 OBDUMPER。' : (currentDraft.value ? '草稿已保存；请先完成当前版本的固定预检查，提交后才会启动 OBDUMPER。' : '尚未读取草稿；请返回上一步完成固定字段并创建草稿。')
+      return canSubmit.value ? '提交后，所选执行节点将启动导出。' : (currentDraft.value ? '当前配置的必需检查通过且结果有效后可提交。' : '请返回第四步保存配置。')
     }
     if (currentStepError.value && (attemptedStep.value === activeStep.value || activeStep.value === 2)) return currentStepError.value
     return activeStep.value === 4 ? '创建草稿时服务端会再次校验数据源和节点授权。' : '填写当前步骤后继续；进入下一步前会检查当前输入。'
@@ -59,16 +56,18 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     if (activeStep.value === 3) return ordinaryFormat.value && !formatOptionsMessage.value ? 100 : 0
     if (activeStep.value === 4) return draftInput.value ? 100 : filePath.value.trim() ? 50 : 0
     if (canSubmit.value) return 100
-    return precheckRows.value.length > 0 ? Math.round(precheckRows.value.filter((row) => row.result).length * 100 / precheckRows.value.length) : 0
+    // 第五步只计已通过或按配置允许跳过的项目，失败和依赖阻断不能显示为全部完成。
+    return precheckRows.value.length > 0 ? Math.round(precheckRows.value.filter((row) => row.result?.status === 'PASSED').length * 100 / precheckRows.value.length) : 0
   })
 
   const footerLabel = computed(() => {
     if (activeStep.value === 4) return creatingDraft.value ? '正在保存草稿…' : currentDraft.value ? '保存并进入预检查' : '创建草稿并进入预检查'
     if (activeStep.value === 5) {
-      if (startingPrecheck.value) return '正在发起预检查…'
+      if (startingPrecheck.value) return precheckWaitingForResults.value ? '正在读取预检查…' : '正在发起预检查…'
+      if (precheckFailure.value && precheckID.value) return '重新读取预检查'
       if (precheckRunning.value) return '预检查进行中…'
       if (precheckID.value && !activePrecheck.value) return '重新读取预检查'
-      return activePrecheck.value ? '重新执行预检查' : '执行预检查'
+      return activePrecheck.value ? '重新检查' : '开始预检查'
     }
     return `下一步：${titles[activeStep.value]}`
   })

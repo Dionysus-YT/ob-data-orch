@@ -75,6 +75,7 @@ func TestAuthenticatedPrecheckOverTLS(t *testing.T) {
 		Facts: agentwire.EnvironmentFacts{
 			OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "synthetic-agent-v1",
 			ObservedAt: now, CapacityTotal: 1, CapacityUsed: 0,
+			MemoryTotalBytes: 16 << 30, MemoryAvailableBytes: 12 << 30,
 		},
 	})
 	if err != nil || heartbeat.FactsRevision != 1 {
@@ -104,6 +105,7 @@ func TestAuthenticatedPrecheckOverTLS(t *testing.T) {
 	}
 	expectedProbeChecks := []agentpreflight.CheckID{
 		agentpreflight.CheckToolEnvironment,
+		agentpreflight.CheckNodeResource,
 		agentpreflight.CheckOutputPath,
 		agentpreflight.CheckOutputEmpty,
 		agentpreflight.CheckAvailableSpace,
@@ -167,7 +169,7 @@ func (authenticatedPrecheckSyntheticDecryptor) Decrypt(credential.Envelope) ([]b
 	return []byte("synthetic-placeholder"), nil
 }
 
-// authenticatedPrecheckSyntheticProbe 只消费一次已确认的数据库槽位并返回受控六项合成事实。
+// authenticatedPrecheckSyntheticProbe 消费一次数据库槽位并返回当前完整合成报告。
 // 它不调用 JDBC、文件系统或工具进程，因此 TLS 测试不把合成成功表述为真实环境验证。
 type authenticatedPrecheckSyntheticProbe struct {
 	resolver     agentworker.SecretResolver
@@ -191,6 +193,15 @@ func (p *authenticatedPrecheckSyntheticProbe) Probe(ctx context.Context, check a
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "DATABASE_CONNECTED"}, nil
 	}
 	switch check {
+	case agentpreflight.CheckNodeResource:
+		if request.ResourceRequirement == nil {
+			return agentpreflight.Result{Check: check, Status: agentpreflight.StatusUnknown, EvidenceCode: "NODE_RESOURCE_UNAVAILABLE"}, nil
+		}
+		ready, known := request.ResourceRequirement.Qualification()
+		if !known || !ready {
+			return agentpreflight.Result{}, agentpreflight.ErrInvalidRequest
+		}
+		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "NODE_RESOURCE_READY"}, nil
 	case agentpreflight.CheckObjectAccess:
 		return agentpreflight.Result{Check: check, Status: agentpreflight.StatusPassed, EvidenceCode: "OBJECT_ACCESSIBLE"}, nil
 	case agentpreflight.CheckToolEnvironment, agentpreflight.CheckOutputPath, agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace:

@@ -18,6 +18,7 @@ import (
 
 	"ob-data-orch/internal/agentconnectiontest"
 	"ob-data-orch/internal/agentenvironment"
+	"ob-data-orch/internal/agentexec"
 	"ob-data-orch/internal/agentlocalpreflight"
 	"ob-data-orch/internal/agenttelemetry"
 	"ob-data-orch/internal/agentwire"
@@ -27,7 +28,11 @@ import (
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/featuregate"
 	"ob-data-orch/internal/identifier"
+	"ob-data-orch/internal/nodefacts"
 )
+
+// agentStartedAt 记录当前进程初始化时刻，不由心跳时间或启动标识推算。
+var agentStartedAt = time.Now().UTC()
 
 func main() {
 	if err := run(); err != nil {
@@ -211,6 +216,26 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 		}
 	}
 	environmentCheckWorker := &agentenvironment.Worker{
+		Inspector: agentenvironment.InspectorFunc(func(ctx context.Context, allowed bool) (*nodefacts.RuntimeInspection, error) {
+			runtimeConfig, platform, err := agentRuntimeFromState(stateStore, lookupEnv, operatingSystem, architecture)
+			if err != nil {
+				return nil, err
+			}
+			configuration, err := stateStore.RuntimeConfiguration()
+			if err != nil {
+				return nil, err
+			}
+			queueRoot, err := stateStore.LogQueueDirectory()
+			if err != nil {
+				return nil, err
+			}
+			return (agentenvironment.LocalInspector{Platform: string(platform), JavaPath: runtimeConfig.JavaPath, ToolHome: runtimeConfig.ToolHome, WorkspaceRoot: runtimeConfig.WorkspaceRoot, LogQueueRoot: queueRoot, ConfigurationDigest: configuration.Digest, Clock: time.Now,
+				Versions: agentexec.FixedVersionProber{JavaPath: runtimeConfig.JavaPath, ToolHome: runtimeConfig.ToolHome, WorkspaceRoot: runtimeConfig.WorkspaceRoot, Environment: runtimeConfig.Environment},
+				ResourceReady: func() bool {
+					snapshot, err := agenttelemetry.NewCollector(stateStore).Sample()
+					return err == nil && snapshot.MemoryTotalBytes > 0
+				}}).Inspect(ctx, allowed)
+		}),
 		Protocol: stateStore, Runtime: environmentRuntimeValidator(stateStore, lookupEnv, operatingSystem, architecture), Clock: time.Now, BootID: bootID,
 	}
 	var protocolWork connectionTestRunner = connectionTestWorker
@@ -231,9 +256,9 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 			prechecks: configuredExportPreflightRunner{
 				stateStore: stateStore, lookupEnv: lookupEnv, operatingSystem: operatingSystem, architecture: architecture, bootID: bootID,
 			},
-			executions: &asynchronousExportExecutionRunner{delegate: configuredExportExecutionRunner{
+			executions: &asynchronousExportExecutionRunner{delegate: &configuredExportExecutionRunner{
 				stateStore: stateStore, lookupEnv: lookupEnv, operatingSystem: operatingSystem, architecture: architecture, bootID: bootID,
-			}, logger: logger},
+			}, logger: logger, capacity: agenttelemetry.ExecutionWorkerLimit},
 		}
 	}
 	return runHeartbeatLoop(ctx, stateStore, protocolWork, bootID, operatingSystem, architecture, interval, *once, logger, environmentCheckWorker)
@@ -382,6 +407,8 @@ func runAgentProtocolLoop(ctx context.Context, heartbeat heartbeatProtocol, conn
 		}
 		now := time.Now().UTC()
 		facts := agentwire.EnvironmentFacts{
+			Host:            agenttelemetry.HostSnapshot(),
+			StartedAt:       &agentStartedAt,
 			OperatingSystem: operatingSystem,
 			Architecture:    architecture,
 			AgentVersion:    buildinfo.Current().Version,
@@ -396,8 +423,11 @@ func runAgentProtocolLoop(ctx context.Context, heartbeat heartbeatProtocol, conn
 			}
 		}
 		if telemetry != nil {
+			facts.RuntimeVersions = telemetry.InstalledVersions()
 			if snapshot, telemetryErr := telemetry.Sample(); telemetryErr == nil {
 				facts.CPUUsagePercent = snapshot.CPUUsagePercent
+				facts.MemoryTotalBytes = snapshot.MemoryTotalBytes
+				facts.MemoryAvailableBytes = snapshot.MemoryAvailableBytes
 				facts.MemoryUsagePercent = snapshot.MemoryUsagePercent
 				facts.RuntimeConfigurationDigest = snapshot.RuntimeConfigurationDigest
 				facts.DataRootUsages = snapshot.DataRootUsages
@@ -405,6 +435,23 @@ func runAgentProtocolLoop(ctx context.Context, heartbeat heartbeatProtocol, conn
 				logger.Warn("agent telemetry sampling failed")
 			}
 		}
+		if running, ok := connectionTests.(interface{ ActiveWorkers() int }); ok {
+			facts.CapacityTotal = agenttelemetry.ExecutionWorkerLimit()
+			facts.CapacityUsed = running.ActiveWorkers()
+			// 资源缩小时仍报告已有 Worker，停止新启动而不伪造运行占用下降。
+			facts.CapacityTotal = max(facts.CapacityTotal, facts.CapacityUsed)
+		}
+		if observer, ok := connectionTests.(interface {
+			ExecutionObservation() *nodefacts.ExecutionObservation
+		}); ok {
+			facts.ExecutionObservation = observer.ExecutionObservation()
+		}
+		if observer, ok := connectionTests.(interface{ LogQueueStats() *nodefacts.LogQueue }); ok {
+			facts.LogQueue = observer.LogQueueStats()
+		}
+		// 队列确认可能与资源采样并行；完成采集后取时间，避免有效上传时间晚于观测时间。
+		now = time.Now().UTC()
+		facts.ObservedAt = now
 		heartbeatResult, err := heartbeat.SendHeartbeat(ctx, agentwire.Heartbeat{
 			BootID: bootID,
 			SentAt: now,
@@ -414,7 +461,17 @@ func runAgentProtocolLoop(ctx context.Context, heartbeat heartbeatProtocol, conn
 			return err
 		}
 		if len(environmentChecks) == 1 && environmentChecks[0] != nil {
-			if _, err := environmentChecks[0].Run(ctx, heartbeatResult.EnvironmentCheckID, heartbeatResult.FactsRevision); err != nil {
+			var checkErr error
+			if detailed, ok := environmentChecks[0].(interface {
+				RunWithInspection(context.Context, string, int64, bool) (bool, error)
+			}); ok {
+				_, checkErr = detailed.RunWithInspection(ctx, heartbeatResult.EnvironmentCheckID, heartbeatResult.FactsRevision, heartbeatResult.EnvironmentVersionProbeAllowed)
+			} else if heartbeatResult.EnvironmentVersionProbeAllowed {
+				checkErr = agentenvironment.ErrInvalidConfiguration
+			} else {
+				_, checkErr = environmentChecks[0].Run(ctx, heartbeatResult.EnvironmentCheckID, heartbeatResult.FactsRevision)
+			}
+			if err := checkErr; err != nil {
 				if once || errors.Is(err, agentenvironment.ErrInvalidConfiguration) {
 					return err
 				}

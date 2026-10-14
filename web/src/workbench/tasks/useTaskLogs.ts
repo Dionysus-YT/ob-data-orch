@@ -1,13 +1,14 @@
 import { onScopeDispose, ref, watch, type Ref } from 'vue'
 import { taskDetailErrorMessage, type TaskExecution, type TaskLog } from '@/api/browser'
-import type { TaskDetailSession } from './taskDetailSession'
+import { isTaskAuthorizationError, type TaskDetailSession } from './taskDetailSession'
 import { createTaskLogStreamLifecycle } from './taskLogStreamLifecycle'
 
 // 日志、可靠游标与单条实时流只由此能力持有；HTTP 补读与流事件均绑定当前任务会话。
-export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, execution: Readonly<Ref<TaskExecution | null>>) {
+export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, execution: Readonly<Ref<TaskExecution | null>>, onRestricted: () => void = () => {}) {
   const logs = ref<readonly TaskLog[]>([])
   const logCursor = ref<string>()
   const logFailure = ref('')
+  const logsExpired = ref(false)
   const logStreamStatus = ref<'idle' | 'connected' | 'interrupted'>('idle')
   const lifecycle = createTaskLogStreamLifecycle()
   let pending: { binding: TaskDetailSession; promise: Promise<void> } | undefined
@@ -19,6 +20,7 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
     logs.value = []
     logCursor.value = undefined
     logFailure.value = ''
+    logsExpired.value = false
     logStreamStatus.value = 'idle'
   }, { flush: 'sync' })
   watch(() => execution.value?.state, (state) => {
@@ -39,13 +41,23 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
       try {
         const page = await binding.api.getTaskLogs(binding.id, undefined, cursor)
         if (!accepts(binding)) return
+        if (page.integrity === 'EXPIRED') {
+          logs.value = []
+          logCursor.value = undefined
+          logsExpired.value = true
+          logFailure.value = ''
+          lifecycle.close()
+          logStreamStatus.value = 'idle'
+          return
+        }
+        logsExpired.value = false
         appendLogs(page.items)
         // 实时流可能已走到更晚游标；游标是不透明值，旧 HTTP 结果不能将它倒退。
         if (logCursor.value === cursor) logCursor.value = page.lastReliableCursor ?? logCursor.value
         logFailure.value = ''
         ensureLogStream()
       } catch (error) {
-        if (accepts(binding)) logFailure.value = taskDetailErrorMessage(error, '日志暂时不可读取。')
+        if (accepts(binding)) { if (isTaskAuthorizationError(error)) onRestricted(); else logFailure.value = taskDetailErrorMessage(error, '日志暂时不可读取。') }
       } finally {
         if (pending?.binding === binding) pending = undefined
       }
@@ -56,7 +68,7 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
 
   function ensureLogStream() {
     const binding = session.value
-    if (!binding || !accepts(binding) || lifecycle.active() || (execution.value?.state !== 'STARTING' && execution.value?.state !== 'RUNNING')) return
+    if (!binding || !accepts(binding) || logsExpired.value || lifecycle.active() || typeof document !== 'undefined' && document.visibilityState === 'hidden' || (execution.value?.state !== 'STARTING' && execution.value?.state !== 'RUNNING')) return
     try {
       const opened = lifecycle.open((onDisconnected, isCurrent) => binding.api.streamTaskLogs(binding.id, logCursor.value, (record, cursor) => {
         if (!accepts(binding) || !isCurrent()) return
@@ -84,5 +96,6 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
   }
   function keyOf(record: TaskLog) { return `${record.sourceSeq}|${record.receivedAt}|${record.kind}|${record.message}` }
 
-  return { logs, logCursor, logFailure, logStreamStatus, loadLogs, ensureLogStream }
+  function stopLogStream() { lifecycle.close(); logStreamStatus.value = 'idle' }
+  return { logs, logCursor, logFailure, logsExpired, logStreamStatus, loadLogs, ensureLogStream, stopLogStream }
 }

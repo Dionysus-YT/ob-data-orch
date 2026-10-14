@@ -23,6 +23,22 @@ func testSettings(t *testing.T) Settings {
 	return settings
 }
 
+func Test日志保留部署配置兼容默认与边界(t *testing.T) {
+	settings := testSettings(t)
+	for _, days := range []int{0, 7, 30, 365} {
+		settings.LogRetentionDays = days
+		if err := validateSettings(settings); err != nil {
+			t.Fatal("有效日志保留配置被拒绝", days, err)
+		}
+	}
+	for _, days := range []int{-1, 1, 6, 366} {
+		settings.LogRetentionDays = days
+		if err := validateSettings(settings); err == nil {
+			t.Fatal("非法日志保留配置被接受", days)
+		}
+	}
+}
+
 func TestSettingsRestartPreservesIdentityAndRejectsCorruption(t *testing.T) {
 	directory := t.TempDir()
 	first, err := OpenSettings(directory, strings.NewReader("https://orch.example.test:8080\nsynthetic-password-1234\n"), io.Discard)
@@ -56,7 +72,7 @@ func TestBrowserLoginCSRFAndMachineIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/data-sources", "/ob-data-orch-agent-windows-amd64.zip", "/"} {
+	for _, path := range []string{"/api/v1/data-sources", "/ob-data-orch-agent-windows-x86_64.zip", "/"} {
 		request := httptest.NewRequest("GET", settings.PublicURL+path, nil)
 		request.RemoteAddr = "127.0.0.1:12345"
 		response := httptest.NewRecorder()

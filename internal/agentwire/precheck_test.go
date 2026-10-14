@@ -547,7 +547,7 @@ func TestClaimNextPrecheck接受存储形态上下文与检查清单(t *testing.
 		grant.Context.StorageTarget.Endpoint != "oss-cn-hangzhou.aliyuncs.com" || grant.Context.StorageTarget.TmpPath != "/E:/tmp/upload" {
 		t.Fatalf("存储上下文解析失败: %#v", grant.Context)
 	}
-	if len(grant.CheckSet) != len(agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindOSS)) || grant.CheckSet[4] != agentpreflight.CheckStorageConnectivity || grant.CheckSet[5] != agentpreflight.CheckStorageAuth {
+	if len(grant.CheckSet) != len(agentpreflight.ChecksForOutputKind(agentpreflight.OutputKindOSS)) || grant.CheckSet[6] != agentpreflight.CheckStorageConnectivity || grant.CheckSet[7] != agentpreflight.CheckStorageAuth || grant.CheckSet[8] != agentpreflight.CheckStorageWrite {
 		t.Fatalf("存储检查清单解析失败: %#v", grant.CheckSet)
 	}
 }
@@ -559,9 +559,12 @@ func TestCompletePrecheck接受存储形态结果(t *testing.T) {
 		{Check: agentpreflight.CheckDatabaseConnectivity, Status: agentpreflight.StatusPassed, EvidenceCode: "DATABASE_CONNECTED"},
 		{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: "OBJECT_ACCESSIBLE"},
 		{Check: agentpreflight.CheckToolEnvironment, Status: agentpreflight.StatusPassed, EvidenceCode: "TOOL_RUNTIME_READY"},
+		{Check: agentpreflight.CheckNodeResource, Status: agentpreflight.StatusPassed, EvidenceCode: "NODE_RESOURCE_READY"},
+		{Check: agentpreflight.CheckOutputPath, Status: agentpreflight.StatusPassed, EvidenceCode: "OUTPUT_PATH_WRITABLE"},
 		{Check: agentpreflight.CheckAvailableSpace, Status: agentpreflight.StatusPassed, EvidenceCode: "OUTPUT_SPACE_SUFFICIENT"},
 		{Check: agentpreflight.CheckStorageConnectivity, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_ENDPOINT_REACHABLE"},
 		{Check: agentpreflight.CheckStorageAuth, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_CREDENTIAL_VERIFIED"},
+		{Check: agentpreflight.CheckStorageWrite, Status: agentpreflight.StatusPassed, EvidenceCode: "STORAGE_WRITE_VERIFIED"},
 	}}
 	input := PrecheckCompletion{BootID: "boot-1", PrecheckID: "precheck-storage", LeaseID: "lease-storage", LeaseEpoch: 1, BindingDigest: precheckBindingDigest, SentAt: time.Date(2026, 7, 27, 1, 2, 3, 0, time.UTC), Report: report}
 	if !validPrecheckCompletion(input) {
@@ -569,8 +572,8 @@ func TestCompletePrecheck接受存储形态结果(t *testing.T) {
 	}
 	// 伪造成功结论（结果含 UNKNOWN 但 Succeeded=true）必须拒绝。
 	forged := report
-	forged.Results[4].Status = agentpreflight.StatusUnknown
-	forged.Results[4].EvidenceCode = "STORAGE_CONNECTIVITY_UNAVAILABLE"
+	forged.Results[6].Status = agentpreflight.StatusUnknown
+	forged.Results[6].EvidenceCode = "STORAGE_CONNECTIVITY_UNAVAILABLE"
 	input.Report = forged
 	if validPrecheckCompletion(input) {
 		t.Fatal("伪造成功的存储形态报告被接受")
@@ -600,8 +603,8 @@ func TestValidPrecheckGrant拒绝畸形存储上下文(t *testing.T) {
 		"endpoint 含控制字符": func(grant *PrecheckGrant) {
 			grant.Context.StorageTarget.Endpoint += "\r"
 		},
-		"携带本地日志路径": func(grant *PrecheckGrant) {
-			grant.Context.LogPath = "/E:/tmp/export.log"
+		"日志目录不匹配节点平台": func(grant *PrecheckGrant) {
+			grant.Context.LogPath = "/tmp/logs"
 		},
 		"tmp 路径非目标平台绝对路径": func(grant *PrecheckGrant) {
 			grant.Context.StorageTarget.TmpPath = "relative/tmp"

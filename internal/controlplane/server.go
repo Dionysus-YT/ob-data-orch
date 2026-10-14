@@ -26,11 +26,14 @@ import (
 	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/exportdomain"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/nodefacts"
 	"ob-data-orch/internal/outputpath"
+	"ob-data-orch/internal/precheckcontract"
 	"ob-data-orch/internal/store"
 )
 
@@ -187,10 +190,10 @@ type ExecutionNodeEnvironmentStore interface {
 	EnableExecutionNode(context.Context, store.ExecutionNodeEnable) (int64, error)
 }
 
-// ExecutionNodeDeleter 将节点物理删除与历史保护归档收敛为同一个原子存储边界。
+// ExecutionNodeDeleter 将节点永久删除与历史证据保留收敛为同一个原子存储边界。
 // HTTP 层只提交版本化删除意图，不能依据页面投影猜测节点是否被引用。
 type ExecutionNodeDeleter interface {
-	DeleteOrArchiveExecutionNode(context.Context, store.ExecutionNodeDeletion) (store.ExecutionNodeDeletionResult, error)
+	DeleteExecutionNode(context.Context, store.ExecutionNodeDeletion) (store.ExecutionNodeDeletionResult, error)
 }
 
 // ExecutionNodeCandidateReader 只提供草稿选择所需的最小节点安全投影。
@@ -818,12 +821,28 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 		s.createExportDraft(w, r, principal)
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/export-drafts" {
+		s.listExportDrafts(w, r, principal)
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tasks/filter-options" {
+		s.listTaskFilterOptions(w, r, principal)
+		return
+	}
 	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tasks" {
 		s.listTasks(w, r, principal)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/execution-nodes/") {
 		nodeID := strings.TrimPrefix(r.URL.Path, "/api/v1/execution-nodes/")
+		// 独立动作避免新前端误调用旧控制面的自动归档语义；旧版本对此路径返回 404。
+		if r.Method == http.MethodPost && strings.HasSuffix(nodeID, ":delete") {
+			id := strings.TrimSuffix(nodeID, ":delete")
+			if id != "" && !strings.ContainsAny(id, "/:") {
+				s.deleteExecutionNode(w, r, principal, id)
+				return
+			}
+		}
 		if nodeID != "" && !strings.Contains(nodeID, "/") && !strings.Contains(nodeID, ":") {
 			switch r.Method {
 			case http.MethodGet:
@@ -856,6 +875,9 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 			case r.Method == http.MethodGet && action == "":
 				s.getExportDraft(w, r, principal, draftID)
 				return
+			case r.Method == http.MethodDelete && action == "":
+				s.deleteExportDraft(w, r, principal, draftID)
+				return
 			}
 		}
 	}
@@ -876,6 +898,9 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 				return
 			case "logs":
 				s.listSyntheticLogs(w, r, principal, taskID)
+				return
+			case "operations":
+				s.listTaskOperations(w, r, principal, taskID)
 				return
 			case "logs-stream":
 				s.streamTaskLogs(w, r, principal, taskID)
@@ -1214,11 +1239,12 @@ func validateDataSourceWriteFields(fields dataSourceWritableFields) []fieldError
 // executionNodeWriteRequest 只接收节点管理员在注册时声明的固定本机配置。
 // Agent 会在首次关联后本机复核；心跳、资源采样和检查结论仍不能由浏览器写入。
 type executionNodeWriteRequest struct {
-	DisplayName  string   `json:"displayName"`
-	Platform     string   `json:"platform"`
-	AllowedRoots []string `json:"allowedRoots"`
-	ToolHome     string   `json:"toolHome"`
-	JavaPath     string   `json:"javaPath"`
+	BudgetPolicy *executionbudget.Policy `json:"budgetPolicy,omitempty"`
+	DisplayName  string                  `json:"displayName"`
+	Platform     string                  `json:"platform"`
+	AllowedRoots []string                `json:"allowedRoots"`
+	ToolHome     string                  `json:"toolHome"`
+	JavaPath     string                  `json:"javaPath"`
 }
 
 // exportDraftWriteRequest 接受浏览器导出草稿写入，支持 v5 扁平结构与 v6 泛化配置两种版本。
@@ -1466,12 +1492,8 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 
 	filter := config.FilterConfig
 	// EX-I7 剩余参数第一批（2026-08-11 受控实测定版）：--where 条件筛选与 --snapshot 一致性快照已启用；
-	// --weak-read 缺少副本与权限预检查，携带即失败关闭。
-	// EX-I7 第二批仅启用已观察到效果的 --partition/--exclude-data-types；
-	// --enable-hidden-pk 缺少表结构、版本和权限预检查，继续失败关闭。
-	if filter.WeakRead != nil {
-		return normalizedExportDraft{}, errors.New("v6 weak read option requires replica and permission prechecks")
-	}
+	// 弱读和隐藏主键由领域资格规则校验；执行前还须固定探针验证副本、版本、表结构和权限。
+	normalized.WeakRead = filter.WeakRead != nil && *filter.WeakRead
 	normalized.Where = filter.Where
 	normalized.Snapshot = filter.Snapshot != nil && *filter.Snapshot
 	normalized.QuerySql = filter.QuerySql
@@ -1480,9 +1502,7 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	normalized.FlashbackScn, normalized.FlashbackTimestamp = filter.FlashbackScn, filter.FlashbackTimestamp
 	normalized.Partition = filter.Partition
 	normalized.ExcludeDataTypes = append([]string(nil), filter.ExcludeDataTypes...)
-	if filter.EnableHiddenPk != nil && *filter.EnableHiddenPk {
-		return normalizedExportDraft{}, errors.New("v6 enable hidden pk requires table structure, version and permission prechecks")
-	}
+	normalized.EnableHiddenPk = filter.EnableHiddenPk != nil && *filter.EnableHiddenPk
 	// query-sql 是普通高级筛选，不是通用 SQL 执行入口；它仍须在服务端保持官方已确认的互斥约束。
 	if normalized.QuerySql != "" {
 		if len(normalized.QuerySql) > 64<<10 || strings.ContainsRune(normalized.QuerySql, '\x00') || strings.Contains(strings.ToLower(normalized.QuerySql), "file://") {
@@ -1558,6 +1578,10 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	if len(normalized.IncludeColumns) != 0 && len(normalized.ExcludeColumns) != 0 {
 		return normalizedExportDraft{}, errors.New("v6 include and exclude column names are mutually exclusive")
 	}
+	// 固定元数据协议拒绝重复列；草稿入口同步失败关闭，避免保存无法被探针验证的选择列表。
+	if !precheckcontract.ValidSelectionIdentifiers(normalized.IncludeColumns) || !precheckcontract.ValidSelectionIdentifiers(normalized.ExcludeColumns) {
+		return normalizedExportDraft{}, errors.New("v6 column selection identifiers are invalid")
+	}
 	for _, column := range append(append([]string(nil), normalized.IncludeColumns...), normalized.ExcludeColumns...) {
 		if err := validateExportObjectName(column); err != nil {
 			return normalizedExportDraft{}, errors.New("v6 column name is invalid")
@@ -1566,14 +1590,9 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	ddl := config.DDLBehavior
 	// EX-I7 DDL 行为（2026-08-10）：--drop-object/--retain-schema 仅在 DDL 内容时活动并随 DDL 能力发射；
 	// --compact-schema（2026-08-11 受控实测定版：show create table 检索文本）同样仅限 DDL 内容；
-	// --add-extra-message 尚未完成 DDL 行为、sys 权限事实和秘密槽位绑定，继续失败关闭；
-	// --sequence-policy 仍为 VALIDATION_GATED，携带即失败关闭。
-	if ddl.SequencePolicy != "" {
-		return normalizedExportDraft{}, errors.New("v6 ddl behavior is not enabled")
-	}
-	if ddl.AddExtraMessage != nil && *ddl.AddExtraMessage {
-		return normalizedExportDraft{}, errors.New("v6 add extra message requires current sys permission precheck")
-	}
+	// 附加定义信息与序列策略的对象资格由领域规则复验；sys 槽位只能从数据源事实派生。
+	normalized.SequencePolicy = ddl.SequencePolicy
+	normalized.AddExtraMessage = ddl.AddExtraMessage != nil && *ddl.AddExtraMessage
 	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) || (ddl.CompactSchema != nil && *ddl.CompactSchema) {
 		if normalized.ContentKind == "DATA_ONLY" {
 			return normalizedExportDraft{}, errors.New("v6 ddl behavior requires ddl content")
@@ -1653,29 +1672,9 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		}
 	}
 	normalized.FilePath, normalized.LogPath, normalized.SkipCheckDir = output.FilePath, output.LogPath, output.SkipCheckDir
-	// EX-I7 时间格式第二批仅开放已观察到 MySQL 输出效果的 DATE/DATETIME；
-	// 其余字段缺少对应类型列或 Oracle 场景证据，继续作为显式门禁字段拒绝。
-	timestampFormats := config.DataFormat.TimestampFormats
-	if timestampFormats.TimeValueFormat != "" || timestampFormats.TimestampValueFormat != "" ||
-		timestampFormats.TimestampTzValueFormat != "" || timestampFormats.TimestampLtzValueFormat != "" ||
-		timestampFormats.NlsDateFormat != "" || timestampFormats.NlsTimestampFormat != "" || timestampFormats.NlsTimestampTzFormat != "" {
-		return normalizedExportDraft{}, errors.New("v6 timestamp format is validation gated")
-	}
-	for _, value := range []string{
-		timestampFormats.DateValueFormat, timestampFormats.DateTimeValueFormat,
-	} {
-		if value == "" {
-			continue
-		}
-		if len(value) > 256 || strings.TrimSpace(value) != value || !timestampFormatPattern.MatchString(value) {
-			return normalizedExportDraft{}, errors.New("v6 timestamp value format is invalid")
-		}
-	}
-	if timestampFormats != (store.TimestampFormatConfig{}) {
-		if normalized.ContentKind == "DDL_ONLY" || (normalized.Format != "CSV" && normalized.Format != "CUT") {
-			return normalizedExportDraft{}, errors.New("v6 timestamp formats require csv or cut data content")
-		}
-		normalized.TimestampFormats = timestampFormats
+	normalized.TimestampFormats = config.DataFormat.TimestampFormats
+	if err := exportdomain.ValidateExpertParameters(normalized); err != nil {
+		return normalizedExportDraft{}, err
 	}
 	return normalized, nil
 }
@@ -1766,6 +1765,10 @@ func validateCsvOptions(options store.CsvOptions) error {
 	}
 	if options.ColumnQuoteMode != "" && !containsString(csvQuoteModeValues, options.ColumnQuoteMode) {
 		return errors.New("v6 column quote mode is unsupported")
+	}
+	// 官方 CSV NONE 模式没有包围符保护，必须显式指定转义字符才能构造有效序列化器。
+	if options.ColumnQuoteMode == "none" && options.EscapeCharacter == "" {
+		return errors.New("v6 csv none quote mode requires an escape character")
 	}
 	if (options.ColumnSeparator != "" && utf8.RuneCountInString(options.ColumnSeparator) != 1) || (options.ColumnQuote != "" && utf8.RuneCountInString(options.ColumnQuote) != 1) {
 		return errors.New("v6 csv column separator and quote must be a single character")
@@ -2340,7 +2343,15 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusUnprocessableEntity, "EXPORT_DRAFT_REJECTED", "导出草稿不符合首条切片要求", false)
 		return
 	}
-	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, draft.MetadataVersion)
+	metadataVersion := draft.MetadataVersion
+	if normalized.NeedsExpertMetadata() {
+		metadataVersion = exportMetadataExpertParameters
+	} else if normalized.TimestampFormats != (store.TimestampFormatConfig{}) {
+		if source, sourceErr := s.dataSource.GetDataSourceSummary(r.Context(), normalized.DataSourceID); sourceErr == nil && source.CompatibilityMode == "ORACLE" {
+			metadataVersion = exportMetadataExpertParameters
+		}
+	}
+	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, metadataVersion)
 	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
 		return
@@ -2357,6 +2368,7 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 	newRevision, err := s.drafts.UpdateDraft(r.Context(), store.DraftUpdate{
 		DraftID: draftID, ExpectedRevision: expected, ConfigJSON: configJSON, ConfigFingerprint: preview.ConfigFingerprint, InvalidationJSON: `{}`, UpdatedAt: time.Now().UTC(),
 		ConfigVersion:   configVersion,
+		MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion,
 		ObjectScopeJSON: structured.ObjectScopeJSON, ContentSelectionJSON: structured.ContentSelectionJSON,
 		DataFormatJSON: structured.DataFormatJSON, OutputConfigJSON: structured.OutputConfigJSON,
 		PerformanceConfigJSON: structured.PerformanceConfigJSON, FilterConfigJSON: structured.FilterConfigJSON,
@@ -2371,6 +2383,7 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 		return
 	}
 	draft.Revision, draft.ConfigJSON, draft.ConfigFingerprint, draft.ConfigVersion = newRevision, configJSON, preview.ConfigFingerprint, configVersion
+	draft.MetadataVersion, draft.CapabilityVersion = preview.MetadataVersion, preview.CapabilityVersion
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": draftResponse(draft)})
 }
 
@@ -2515,6 +2528,7 @@ func (s *Server) createExportPrecheck(w http.ResponseWriter, r *http.Request, pr
 		DataSourceID: draft.DataSourceID, CredentialID: credentialReference.CredentialID, CredentialRevision: credentialReference.Revision,
 		NodeID: draft.NodeID, CreatedAt: now, ValidUntil: now.Add(s.precheckTTL),
 		StorageCredentialID: storageCredentialID, StorageCredentialRevision: storageCredentialRevision,
+		SysCredentialID: commandSysReference(preview).CredentialID, SysCredentialRevision: commandSysReference(preview).Revision,
 	}, CreatorSubjectID: principal.ID, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: precheckDigest(draft, preview.ConfigFingerprint)})
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
@@ -2562,7 +2576,7 @@ func (s *Server) getExportPrecheck(w http.ResponseWriter, r *http.Request, princ
 	}})
 }
 
-// browserPrecheckResults 为尚未完成的预检查提供固定六项未知投影。
+// browserPrecheckResults 为尚未完成的本地预检查提供固定七项未知投影。
 // 浏览器据此只能展示“尚未得到 Agent 结论”，不能把空数组误判为检查通过。
 func browserPrecheckResults(results []store.PrecheckCheckResult) []store.PrecheckCheckResult {
 	if len(results) > 0 {
@@ -2572,6 +2586,7 @@ func browserPrecheckResults(results []store.PrecheckCheckResult) []store.Prechec
 		agentpreflight.CheckDatabaseConnectivity: "DATABASE_CONNECTION_UNAVAILABLE",
 		agentpreflight.CheckObjectAccess:         "OBJECT_ACCESS_UNAVAILABLE",
 		agentpreflight.CheckToolEnvironment:      "TOOL_RUNTIME_UNAVAILABLE",
+		agentpreflight.CheckNodeResource:         "NODE_RESOURCE_UNAVAILABLE",
 		agentpreflight.CheckOutputPath:           "OUTPUT_PATH_UNAVAILABLE",
 		agentpreflight.CheckOutputEmpty:          "OUTPUT_PATH_UNAVAILABLE",
 		agentpreflight.CheckAvailableSpace:       "OUTPUT_SPACE_UNAVAILABLE",
@@ -2623,12 +2638,13 @@ func decodeBrowserJSON(w http.ResponseWriter, r *http.Request, target any) bool 
 }
 
 const (
-	exportMetadataV5              = "obdumper-4.3.5-slice-v5"
-	exportMetadataV6              = "obdumper-4.3.5-slice-v6"
-	exportMetadataV7              = "obdumper-4.3.5-slice-v7"
-	exportMetadataObjectSelection = "obdumper-4.3.5-slice-v8-object-selection"
-	exportMetadataCombinedObjects = "obdumper-4.3.5-slice-v9-combined-object-selection"
-	exportMetadataDDLTextFormats  = "obdumper-4.3.5-slice-v10-ddl-text-formats"
+	exportMetadataV5               = "obdumper-4.3.5-slice-v5"
+	exportMetadataV6               = "obdumper-4.3.5-slice-v6"
+	exportMetadataV7               = "obdumper-4.3.5-slice-v7"
+	exportMetadataObjectSelection  = "obdumper-4.3.5-slice-v8-object-selection"
+	exportMetadataCombinedObjects  = "obdumper-4.3.5-slice-v9-combined-object-selection"
+	exportMetadataDDLTextFormats   = "obdumper-4.3.5-slice-v10-ddl-text-formats"
+	exportMetadataExpertParameters = "obdumper-4.3.5-slice-v11-expert-parameters"
 )
 
 // errGeneralizedGeneratorUnavailable 表示泛化能力请求缺少对应的生成器依赖，必须失败关闭。
@@ -2664,8 +2680,8 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if input.FetchSize != nil && source.CompatibilityMode != "ORACLE" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("fetch size requires oracle compatibility mode")
 	}
-	if input.TimestampFormats != (store.TimestampFormatConfig{}) && source.CompatibilityMode != "MYSQL" {
-		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("enabled timestamp formats require mysql compatibility mode")
+	if err := exportdomain.ValidateExpertCompatibility(input, source.CompatibilityMode, source.SysCredentialID != "" && source.SysCredentialRevision > 0 && source.SysUser != ""); err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
 	node, err := s.nodes.GetExecutionNodeFact(ctx, input.NodeID)
 	if err != nil {
@@ -2689,6 +2705,12 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	}
 	connectionFields := []commandgen.FieldInput{
 		{Name: "--host", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.Host}}, {Name: "--port", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueInteger, Integer: int64(source.Port)}}, {Name: "--user", Source: commandgen.SourceDataSource, Value: commandgen.Value{Kind: commandgen.ValueString, String: commandUsername}}, {Name: "--password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: credentialReference.CredentialID, Revision: credentialReference.Revision}}}, {Name: "--database", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueString, String: input.Database}},
+	}
+	if input.AddExtraMessage {
+		connectionFields = append(connectionFields,
+			commandgen.FieldInput{Name: "--sys-user", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueString, String: source.SysUser}},
+			commandgen.FieldInput{Name: "--sys-password", Source: commandgen.SourceSecurity, Value: commandgen.Value{Kind: commandgen.ValueSecretReference, Secret: &commandgen.CredentialReference{CredentialID: source.SysCredentialID, Revision: source.SysCredentialRevision}}},
+		)
 	}
 	requestBase := commandgen.Request{Tool: "OBDUMPER", ToolVersion: "4.3.5-RELEASE", ConnectionKind: commandgen.ConnectionKind(source.ConnectionKind), DataSourceFactVersion: fmt.Sprintf("ds-rev-%d", source.Revision), NodeFactVersion: node.FactsVersion, TargetPlatform: node.Platform, OutputKind: input.OutputKind}
 	// 冻结单表 CSV 形状继续使用 v5 元数据与已验证能力，保证指纹与 argv 逐字节不变。
@@ -2725,6 +2747,11 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 		} else if input.ObjectsByType != nil || (input.ScopeKind == "SPECIFIED" && input.ObjectType != "TABLE" && input.ObjectType != "VIEW") {
 			requestBase.MetadataVersion = exportMetadataCombinedObjects
 		}
+		if input.NeedsExpertMetadata() || (source.CompatibilityMode == "ORACLE" && input.TimestampFormats != (store.TimestampFormatConfig{})) {
+			requestBase.MetadataVersion = exportMetadataExpertParameters
+		}
+	case exportMetadataExpertParameters:
+		requestBase.MetadataVersion = exportMetadataExpertParameters
 	case exportMetadataV7:
 		requestBase.MetadataVersion = exportMetadataV7
 	case exportMetadataObjectSelection:
@@ -2745,13 +2772,24 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 }
 
 func draftResponse(draft store.ExportDraft) map[string]any {
-	return map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "configVersion": draft.ConfigVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
+	response := map[string]any{"id": draft.DraftID, "dataSourceId": draft.DataSourceID, "nodeId": draft.NodeID, "revision": draft.Revision, "toolVersion": draft.ToolVersion, "metadataVersion": draft.MetadataVersion, "capabilityVersion": draft.CapabilityVersion, "configVersion": draft.ConfigVersion, "config": json.RawMessage(draft.ConfigJSON), "configFingerprint": draft.ConfigFingerprint, "invalidation": json.RawMessage(draft.InvalidationJSON)}
+	if draft.SourceTaskID != "" {
+		response["sourceTaskId"] = draft.SourceTaskID
+		response["sourceDerivation"] = draft.SourceDerivation
+	}
+	return response
 }
 
 // browserPreviewArgv 返回命令预览对应的独立参数副本。
 // 密码不属于 argv；其余参数可按当前产品规则展示，但该副本仍不能作为 Agent 执行输入。
 func browserPreviewArgv(argv []string) []string {
-	return append([]string(nil), argv...)
+	preview := append([]string(nil), argv...)
+	for index, token := range preview {
+		if token == "--sys-user" && index+1 < len(preview) {
+			preview[index+1] = "******"
+		}
+	}
+	return preview
 }
 
 // exportDraftDigest 基于持久化 config_json 计算幂等摘要。
@@ -3206,7 +3244,7 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		StorageCredentialID: storageCredentialID, StorageCredentialRevision: storageCredentialRevision,
 		ParentTaskID: parentTaskID, DerivationKind: derivationKind,
 		ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion,
-		CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: draftSnapshotVersion(draft.ConfigVersion), SnapshotJSON: draft.ConfigJSON, PlannedArgvJSON: string(argv),
+		CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: draftSnapshotVersion(draft.ConfigVersion), SnapshotJSON: taskSysSnapshot(draft.ConfigJSON, preview), PlannedArgvJSON: string(argv),
 		PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now,
 	}, key, taskSubmitDigest(draft, run.PrecheckID, preview.ConfigFingerprint))
 	if errors.Is(err, store.ErrIdempotencyConflict) {
@@ -3268,6 +3306,7 @@ func parseTaskReadPath(path string) (string, string, bool) {
 		"/command-evidence": "command-evidence",
 		"/execution":        "execution",
 		"/logs/stream":      "logs-stream",
+		"/operations":       "operations",
 		"/logs":             "logs",
 	} {
 		if strings.HasSuffix(value, suffix) {
@@ -3281,14 +3320,18 @@ func parseTaskReadPath(path string) (string, string, bool) {
 // taskOverviewResponse 是任务详情页头所需的最小不可变标识，不混入配置、命令或执行状态。
 // EX-I8：派生关系只下发来源任务标识与派生方式，不展开来源任务的其他事实。
 type taskOverviewResponse struct {
-	ID             string `json:"id"`
-	Type           string `json:"type"`
-	DataSourceID   string `json:"dataSourceId"`
-	NodeID         string `json:"nodeId"`
-	PrecheckID     string `json:"precheckId"`
-	SubmittedAt    string `json:"submittedAt"`
-	ParentTaskID   string `json:"parentTaskId,omitempty"`
-	DerivationKind string `json:"derivationKind,omitempty"`
+	DerivedTasks     []taskRelationResponse `json:"derivedTasks,omitempty"`
+	DerivedTaskCount int                    `json:"derivedTaskCount,omitempty"`
+	// Presentation 复用列表的安全展示投影与服务端操作资格，不返回配置或凭据。
+	Presentation   *taskListResponse `json:"presentation,omitempty"`
+	ID             string            `json:"id"`
+	Type           string            `json:"type"`
+	DataSourceID   string            `json:"dataSourceId"`
+	NodeID         string            `json:"nodeId"`
+	PrecheckID     string            `json:"precheckId"`
+	SubmittedAt    string            `json:"submittedAt"`
+	ParentTaskID   string            `json:"parentTaskId,omitempty"`
+	DerivationKind string            `json:"derivationKind,omitempty"`
 }
 
 // validTaskPathID 只接受任务路径标识的受限形态。
@@ -3297,23 +3340,24 @@ func validTaskPathID(value string) bool {
 }
 
 // taskSnapshotResponse 只返回已实现导出格式可安全解释的冻结配置事实。
-// 输出和日志路径、凭据引用、完整原始快照均不下发，后续字段必须先完成专项脱敏规则。
-// 派生关系字段在本切片始终为空，待 EX-I8 实现后才会输出。
+// 五步字段走白名单，路径仅创建者可见；凭据只标记脱敏，完整原始快照及引用不下发。
+// 历史快照的字段来源未记录，保持 UNKNOWN，不按当前配置补造。
 type taskSnapshotResponse struct {
-	Type              string `json:"type"`
-	SnapshotVersion   string `json:"snapshotVersion"`
-	DataSourceID      string `json:"dataSourceId"`
-	NodeID            string `json:"nodeId"`
-	PrecheckID        string `json:"precheckId"`
-	ObjectSummary     string `json:"objectSummary,omitempty"`
-	Format            string `json:"format"`
-	ConfigFingerprint string `json:"configFingerprint"`
-	ToolVersion       string `json:"toolVersion"`
-	MetadataVersion   string `json:"metadataVersion"`
-	CapabilityVersion string `json:"capabilityVersion"`
-	ParentTaskID      string `json:"parentTaskId,omitempty"`
-	DerivedFromTaskID string `json:"derivedFromTaskId,omitempty"`
-	TemplateID        string `json:"templateId,omitempty"`
+	Groups            []store.TaskSnapshotGroup `json:"groups,omitempty"`
+	Type              string                    `json:"type"`
+	SnapshotVersion   string                    `json:"snapshotVersion"`
+	DataSourceID      string                    `json:"dataSourceId"`
+	NodeID            string                    `json:"nodeId"`
+	PrecheckID        string                    `json:"precheckId"`
+	ObjectSummary     string                    `json:"objectSummary,omitempty"`
+	Format            string                    `json:"format"`
+	ConfigFingerprint string                    `json:"configFingerprint"`
+	ToolVersion       string                    `json:"toolVersion"`
+	MetadataVersion   string                    `json:"metadataVersion"`
+	CapabilityVersion string                    `json:"capabilityVersion"`
+	ParentTaskID      string                    `json:"parentTaskId,omitempty"`
+	DerivedFromTaskID string                    `json:"derivedFromTaskId,omitempty"`
+	TemplateID        string                    `json:"templateId,omitempty"`
 }
 
 // taskCommandEvidenceResponse 只允许浏览器读取提交时冻结的脱敏计划命令。
@@ -3439,7 +3483,7 @@ func (s *Server) loadAuthorizedTaskSummary(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置任务查询依赖", false)
 		return store.TaskSummary{}, false
 	}
-	summary, err := s.tasks.GetAuthorizedTaskSummary(r.Context(), taskID, principal.ID)
+	summary, err := s.readTaskSummary(r.Context(), principal, taskID)
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
 		return store.TaskSummary{}, false
@@ -3457,11 +3501,52 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request, principal ident
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskOverviewResponse{
+	response := taskOverviewResponse{
 		ID: summary.TaskID, Type: "OBDUMPER_EXPORT", DataSourceID: summary.DataSourceID, NodeID: summary.NodeID,
 		PrecheckID: summary.PrecheckID, SubmittedAt: summary.SubmittedAt.Format(time.RFC3339Nano),
 		ParentTaskID: summary.ParentTaskID, DerivationKind: summary.DerivationKind,
-	}})
+	}
+	if reader, supported := s.tasks.(interface {
+		ListTaskSummaries(context.Context, store.TaskListQuery) ([]store.TaskListItem, error)
+	}); supported {
+		items, err := reader.ListTaskSummaries(r.Context(), store.TaskListQuery{TaskID: taskID, SubjectID: principal.ID, GlobalRead: s.hasGlobalTaskRead(r.Context(), principal), Limit: 1})
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务概览暂时不可读取", true)
+			return
+		}
+		if len(items) != 1 {
+			notFound(w, r)
+			return
+		}
+		presentation := s.taskListProjection(items[0], principal.ID)
+		response.Presentation = &presentation
+	}
+	if reader, supported := s.tasks.(interface {
+		CountFilteredTaskSummaries(context.Context, store.TaskListQuery) (int, error)
+		ListTaskSummaries(context.Context, store.TaskListQuery) ([]store.TaskListItem, error)
+	}); supported {
+		query := store.TaskListQuery{ParentTaskID: taskID, SubjectID: principal.ID, GlobalRead: s.hasGlobalTaskRead(r.Context(), principal), Limit: 100}
+		count, err := reader.CountFilteredTaskSummaries(r.Context(), query)
+		if err != nil {
+			writeError(w, 503, "TASK_RELATIONS_UNAVAILABLE", "派生关系暂时不可读取", true)
+			return
+		}
+		if count > 0 {
+			items, err := reader.ListTaskSummaries(r.Context(), query)
+			if err != nil {
+				writeError(w, 503, "TASK_RELATIONS_UNAVAILABLE", "派生关系暂时不可读取", true)
+				return
+			}
+			if len(items) > 100 {
+				items = items[:100]
+			}
+			for _, item := range items {
+				response.DerivedTasks = append(response.DerivedTasks, taskRelationResponse{ID: item.TaskID, DisplayName: taskDisplayName(item.Database, item.Table, item.ScopeKind), State: item.State})
+			}
+			response.DerivedTaskCount = count
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": response})
 }
 
 // getTaskSnapshot 返回已提交配置的最小安全快照，不把 SQLite 中的完整 JSON 透传给浏览器。
@@ -3470,8 +3555,20 @@ func (s *Server) getTaskSnapshot(w http.ResponseWriter, r *http.Request, princip
 	if !ok {
 		return
 	}
+	var groups []store.TaskSnapshotGroup
+	if reader, supported := s.tasks.(interface {
+		GetAuthorizedTaskSnapshotGroups(context.Context, string, string, bool) ([]store.TaskSnapshotGroup, error)
+	}); supported {
+		var err error
+		groups, err = reader.GetAuthorizedTaskSnapshotGroups(r.Context(), taskID, principal.ID, s.hasGlobalTaskRead(r.Context(), principal))
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "TASK_SNAPSHOT_UNAVAILABLE", "冻结配置暂时不可读取", true)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskSnapshotResponse{
-		Type: "OBDUMPER_EXPORT", SnapshotVersion: summary.SnapshotVersion, DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
+		Groups: groups,
+		Type:   "OBDUMPER_EXPORT", SnapshotVersion: summary.SnapshotVersion, DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
 		ObjectSummary: taskObjectSummary(summary.Database, summary.Table), Format: summary.Format,
 		ConfigFingerprint: summary.ConfigFingerprint, ToolVersion: summary.ToolVersion, MetadataVersion: summary.MetadataVersion,
 		CapabilityVersion: summary.CapabilityVersion,
@@ -3609,7 +3706,7 @@ type taskDerivationRequest struct {
 	Derivation string `json:"derivation"`
 }
 
-// rebuildTaskDraft 从失败任务的冻结快照重建可编辑 v6 草稿（EX-I8 基于原配置新建/从头重新执行）。
+// rebuildTaskDraft 从已确认终态的冻结快照重建 v6 草稿，按领域规则区分可编辑新建与从头执行。
 // 不复制凭据明文、预检查结果、风险确认、日志或执行事实；提交时仍按当前工具版本与参数元数据重新校验，
 // 并生成新的预检查与风险确认。
 func (s *Server) rebuildTaskDraft(w http.ResponseWriter, r *http.Request, principal identity.Principal, taskID string) {
@@ -3643,8 +3740,8 @@ func (s *Server) rebuildTaskDraft(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
 		return
 	}
-	if source.State != "FAILED" {
-		writeError(w, http.StatusUnprocessableEntity, "TASK_NOT_FAILED", "只有失败任务可以派生新草稿", false)
+	if !exportdomain.CanDeriveTaskDraft(source.State, source.ReconciliationRequired, request.Derivation) {
+		writeError(w, http.StatusUnprocessableEntity, "TASK_DERIVATION_UNAVAILABLE", "当前任务状态不允许此派生操作", false)
 		return
 	}
 	if source.SnapshotVersion != "v2" {
@@ -3806,6 +3903,16 @@ type taskListResponse struct {
 	StartedAt              string `json:"startedAt,omitempty"`
 	FinishedAt             string `json:"finishedAt,omitempty"`
 	UpdatedAt              string `json:"updatedAt"`
+	// 以下为任务中心展示事实（DEC-050）：名称来自提交时冻结的展示事实，空值表示历史名称不可用。
+	DisplayName       string   `json:"displayName"`
+	DataSourceName    string   `json:"dataSourceName,omitempty"`
+	DataSourceDeleted bool     `json:"dataSourceDeleted"`
+	Environment       string   `json:"environment,omitempty"`
+	NodeName          string   `json:"nodeName,omitempty"`
+	NodeDeleted       bool     `json:"nodeDeleted"`
+	CreatorName       string   `json:"creatorName,omitempty"`
+	CancelRequested   bool     `json:"cancelRequested"`
+	AvailableActions  []string `json:"availableActions"`
 }
 
 // listTasks 只返回当前主体拥有或按数据源明确授权的任务。
@@ -3820,9 +3927,27 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request, principal ide
 		writeError(w, http.StatusBadRequest, "TASK_PAGE_SIZE_INVALID", "任务列表每页条数无效", false)
 		return
 	}
-	query := store.TaskListQuery{SubjectID: principal.ID, Limit: pageSize}
+	query := store.TaskListQuery{SubjectID: principal.ID, Limit: pageSize, NodeID: r.URL.Query().Get("nodeId"), OwnedOnly: r.URL.Query().Get("scope") == "MINE"}
+	query.GlobalRead = !query.OwnedOnly && s.hasGlobalTaskRead(r.Context(), principal)
+	if r.URL.Query().Get("scope") == "ALL" && !query.GlobalRead {
+		writeError(w, http.StatusForbidden, "TASK_SCOPE_DENIED", "当前身份无权读取全部任务", false)
+		return
+	}
+	if len(r.URL.Query()["nodeId"]) > 1 || len(r.URL.Query()["scope"]) > 1 || len(query.NodeID) > 256 || strings.ContainsAny(query.NodeID, "/\\\r\n") || (r.URL.Query().Get("scope") != "" && r.URL.Query().Get("scope") != "ALL" && !query.OwnedOnly) {
+		writeError(w, http.StatusBadRequest, "TASK_FILTER_INVALID", "任务查询范围无效", false)
+		return
+	}
+	if err := parseTaskListFilters(r.URL.Query(), &query); err != nil {
+		writeError(w, http.StatusBadRequest, "TASK_FILTER_INVALID", "任务筛选条件无效", false)
+		return
+	}
+	if err := authorizeTaskCreatorFilter(&query); err != nil {
+		writeError(w, http.StatusForbidden, "TASK_SCOPE_DENIED", "当前身份无权按其他创建人筛选", false)
+		return
+	}
+	cursorSubject := taskListFilterDigestSubject(query)
 	if cursorValue := strings.TrimSpace(r.URL.Query().Get("cursor")); cursorValue != "" {
-		cursor, ok := decodeTaskListCursor(cursorValue, principal.ID)
+		cursor, ok := decodeTaskListCursor(cursorValue, cursorSubject)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "任务列表游标无效", false)
 			return
@@ -3830,7 +3955,15 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request, principal ide
 		query.BeforeSubmitted = cursor.BeforeSubmitted
 		query.BeforeTaskID = cursor.BeforeTaskID
 	}
-	totalTasks, err := s.tasks.CountAuthorizedTaskSummaries(r.Context(), principal.ID)
+	// 计数与列表共用同一授权及筛选谓词；缺少筛选计数能力的依赖失败关闭，不回退为未筛选总数。
+	filtered, available := s.tasks.(interface {
+		CountFilteredTaskSummaries(context.Context, store.TaskListQuery) (int, error)
+	})
+	if !available {
+		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务筛选暂时不可用", true)
+		return
+	}
+	totalTasks, err := filtered.CountFilteredTaskSummaries(r.Context(), query)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务列表暂时不可用", true)
 		return
@@ -3843,20 +3976,12 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request, principal ide
 	nextCursor := ""
 	if len(items) > pageSize {
 		last := items[pageSize-1]
-		nextCursor = encodeTaskListCursor(principal.ID, last.SubmittedAt, last.TaskID)
+		nextCursor = encodeTaskListCursor(cursorSubject, last.SubmittedAt, last.TaskID)
 		items = items[:pageSize]
 	}
 	responses := make([]taskListResponse, 0, len(items))
 	for _, item := range items {
-		responses = append(responses, taskListResponse{
-			ID: item.TaskID, Type: item.TaskType, DataSourceID: item.DataSourceID,
-			ObjectSummary: taskObjectSummary(item.Database, item.Table), State: item.State,
-			StageEvidence: "UNAVAILABLE", ProgressEvidence: "UNAVAILABLE",
-			ReconciliationRequired: item.ReconciliationRequired, NodeID: item.NodeID,
-			OwnedByCurrentUser: item.CreatorSubjectID == principal.ID,
-			SubmittedAt:        item.SubmittedAt.Format(time.RFC3339Nano), StartedAt: optionalTaskTime(item.StartedAt),
-			FinishedAt: optionalTaskTime(item.FinishedAt), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano),
-		})
+		responses = append(responses, s.taskListProjection(item, principal.ID))
 	}
 	var nextCursorResponse any
 	if nextCursor != "" {
@@ -4044,18 +4169,25 @@ type agentHeartbeatRequest struct {
 }
 
 // agentHeartbeatPayload 是本轮允许持久化的最小环境事实。
-// 工具、Java、目录、路径、数据库和对象结果都不在此信封中，仍需后续固定环境检查与预检查。
+// 安装版本和无秘密诊断仅作只读事实；路径、命令、数据库及对象结果仍不在心跳中。
 type agentHeartbeatPayload struct {
-	OperatingSystem            string                      `json:"operatingSystem"`
-	Architecture               string                      `json:"architecture"`
-	AgentVersion               string                      `json:"agentVersion"`
-	ObservedAt                 string                      `json:"observedAt"`
-	CapacityTotal              int                         `json:"capacityTotal"`
-	CapacityUsed               int                         `json:"capacityUsed"`
-	CPUUsagePercent            *int                        `json:"cpuUsagePercent,omitempty"`
-	MemoryUsagePercent         *int                        `json:"memoryUsagePercent,omitempty"`
-	RuntimeConfigurationDigest string                      `json:"runtimeConfigurationDigest,omitempty"`
-	DataRootUsages             []agentDataRootUsagePayload `json:"dataRootUsages,omitempty"`
+	Host                       *nodefacts.HostInventory        `json:"host,omitempty"`
+	StartedAt                  *time.Time                      `json:"startedAt,omitempty"`
+	RuntimeVersions            *nodefacts.RuntimeVersions      `json:"runtimeVersions,omitempty"`
+	ExecutionObservation       *nodefacts.ExecutionObservation `json:"executionObservation,omitempty"`
+	LogQueue                   *nodefacts.LogQueue             `json:"logQueue,omitempty"`
+	MemoryTotalBytes           uint64                          `json:"memoryTotalBytes,omitempty"`
+	MemoryAvailableBytes       uint64                          `json:"memoryAvailableBytes,omitempty"`
+	OperatingSystem            string                          `json:"operatingSystem"`
+	Architecture               string                          `json:"architecture"`
+	AgentVersion               string                          `json:"agentVersion"`
+	ObservedAt                 string                          `json:"observedAt"`
+	CapacityTotal              int                             `json:"capacityTotal"`
+	CapacityUsed               int                             `json:"capacityUsed"`
+	CPUUsagePercent            *int                            `json:"cpuUsagePercent,omitempty"`
+	MemoryUsagePercent         *int                            `json:"memoryUsagePercent,omitempty"`
+	RuntimeConfigurationDigest string                          `json:"runtimeConfigurationDigest,omitempty"`
+	DataRootUsages             []agentDataRootUsagePayload     `json:"dataRootUsages,omitempty"`
 }
 
 type agentDataRootUsagePayload struct {
@@ -4072,9 +4204,10 @@ type agentExecutionNodeEnvironmentCheckCompletionRequest struct {
 }
 
 type agentExecutionNodeEnvironmentCheckCompletionPayload struct {
-	FactsRevision int64  `json:"factsRevision"`
-	Status        string `json:"status"`
-	Code          string `json:"code"`
+	Inspection    *nodefacts.RuntimeInspection `json:"inspection,omitempty"`
+	FactsRevision int64                        `json:"factsRevision"`
+	Status        string                       `json:"status"`
+	Code          string                       `json:"code"`
 }
 
 // exchangeAgentEnrollment 原子消费一次性关联材料，并只返回不含机器凭据的绑定结果。
@@ -4161,8 +4294,12 @@ func (s *Server) recordAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AgentID: request.AgentID, NodeID: request.NodeID, ProtocolVersion: request.ProtocolVersion, BootID: request.BootID,
 		RequestID: request.RequestID, ObservedAt: observedAt.UTC(), ReceivedAt: now, CapacityTotal: request.Payload.CapacityTotal,
 		CapacityUsed: request.Payload.CapacityUsed, Facts: store.AgentEnvironmentFacts{
+			Host:      request.Payload.Host,
+			StartedAt: request.Payload.StartedAt, RuntimeVersions: request.Payload.RuntimeVersions,
+			ExecutionObservation: request.Payload.ExecutionObservation, LogQueue: request.Payload.LogQueue,
 			OperatingSystem: request.Payload.OperatingSystem, Architecture: request.Payload.Architecture, AgentVersion: request.Payload.AgentVersion,
 			ObservedAt: observedAt.UTC(), CPUUsagePercent: request.Payload.CPUUsagePercent, MemoryUsagePercent: request.Payload.MemoryUsagePercent,
+			MemoryTotalBytes: request.Payload.MemoryTotalBytes, MemoryAvailableBytes: request.Payload.MemoryAvailableBytes,
 			RuntimeConfigurationDigest: request.Payload.RuntimeConfigurationDigest, DataRootUsages: agentDataRootUsages(request.Payload.DataRootUsages),
 		},
 	})
@@ -4179,6 +4316,7 @@ func (s *Server) recordAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environmentCheckID := ""
+	versionProbeAllowed := false
 	if s.agentEnvironmentChecks != nil {
 		if refresher, ok := s.agentEnvironmentChecks.(AgentExecutionNodeEnvironmentCheckRefresher); ok {
 			checkID := newOpaqueID()
@@ -4201,11 +4339,16 @@ func (s *Server) recordAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 		if found {
 			environmentCheckID = pending.CheckID
+			versionProbeAllowed = pending.VersionProbeAllowed
 		}
+	}
+	payload := map[string]any{"factsRevision": factsRevision, "environmentStatus": "NOT_CHECKED", "environmentCheckId": environmentCheckID, "realExecutionEnabled": false}
+	if versionProbeAllowed {
+		payload["environmentVersionProbeAllowed"] = true
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"requestId": requestID(w), "serverTime": now.Format(time.RFC3339Nano), "status": "ACCEPTED",
-		"payload": map[string]any{"factsRevision": factsRevision, "environmentStatus": "NOT_CHECKED", "environmentCheckId": environmentCheckID, "realExecutionEnabled": false},
+		"payload": payload,
 	})
 }
 
@@ -4441,7 +4584,7 @@ func (s *Server) authenticatedExecutionNodeEnvironmentCheckAgent(w http.Response
 }
 
 // completeAuthenticatedExecutionNodeEnvironmentCheck 持久化当前 Agent 对唯一固定运行时检查的结果。
-// 检查项和证据码均为协议常量，任何路径、命令、异常文本或自由结果字段都会被拒绝。
+// 检查项和证据码均为协议常量；只接收固化路径事实，拒绝命令、异常文本或自由结果字段。
 func (s *Server) completeAuthenticatedExecutionNodeEnvironmentCheck(w http.ResponseWriter, r *http.Request, checkID string) {
 	machine, ok := s.authenticatedExecutionNodeEnvironmentCheckAgent(w, r)
 	if !ok {
@@ -4453,12 +4596,13 @@ func (s *Server) completeAuthenticatedExecutionNodeEnvironmentCheck(w http.Respo
 	}
 	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXECUTION_NODE_ENVIRONMENT_CHECK_COMPLETE") ||
 		!validAgentPrecheckPathID(checkID) || request.Payload.FactsRevision < 1 ||
-		!validExecutionNodeEnvironmentCheckResult(request.Payload.Status, request.Payload.Code) {
+		!validExecutionNodeEnvironmentCheckResult(request.Payload.Status, request.Payload.Code) || nodefacts.ValidateInspection(request.Payload.Inspection) != nil {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
 	err := s.agentEnvironmentChecks.CompleteExecutionNodeEnvironmentCheck(r.Context(), store.AgentExecutionNodeEnvironmentCheckCompletion{
-		NodeID: machine.NodeID, AgentID: machine.AgentID, CheckID: checkID, FactsRevision: request.Payload.FactsRevision,
+		Inspection: request.Payload.Inspection,
+		NodeID:     machine.NodeID, AgentID: machine.AgentID, CheckID: checkID, FactsRevision: request.Payload.FactsRevision,
 		Status: request.Payload.Status, Code: request.Payload.Code, RequestID: request.RequestID, CompletedAt: time.Now().UTC(),
 	})
 	if errors.Is(err, store.ErrExecutionNodeEnvironmentCheckRequired) {
@@ -4664,6 +4808,26 @@ func precheckExecutionContextPayload(context store.PrecheckExecutionContext) map
 		"outputPath":  context.OutputPath, "targetPlatform": context.TargetPlatform,
 		"logPath": context.LogPath, "skipCheckDir": context.SkipCheckDir,
 		"allowedRoots": context.AllowedRoots, "outputKind": context.OutputKind,
+		"resourceRequirement": context.ResourceRequirement,
+	}
+	if len(context.IncludeColumnNames) > 0 {
+		payload["includeColumnNames"] = context.IncludeColumnNames
+	}
+	if len(context.ExcludeColumnNames) > 0 {
+		payload["excludeColumnNames"] = context.ExcludeColumnNames
+	}
+	if len(context.Partitions) > 0 {
+		payload["partitions"] = context.Partitions
+	}
+	// 未启用时省略新字段，保持历史预检查租约的协议形状。
+	if context.WeakRead {
+		payload["weakRead"] = true
+	}
+	if context.EnableHiddenPk {
+		payload["enableHiddenPk"] = true
+	}
+	if context.AddExtraMessage {
+		payload["addExtraMessage"] = true
 	}
 	if context.StorageTarget != nil {
 		payload["storageTarget"] = map[string]any{
@@ -4780,20 +4944,25 @@ func (s *Server) resolveAuthenticatedPrecheckSecret(w http.ResponseWriter, r *ht
 		return
 	}
 	defer credential.Zero(plaintext)
+	sysPlaintext, sysErr := s.decryptExportSysCredential(encrypted.SysCredential, encrypted.DataSourceID)
+	if sysErr != nil {
+		_ = finish(false)
+		writeError(w, http.StatusServiceUnavailable, "PRECHECK_SECRET_RESOLUTION_UNAVAILABLE", "预检查秘密槽位暂时不可用", true)
+		return
+	}
+	defer credential.Zero(sysPlaintext)
 	if err := finish(true); err != nil {
 		writeAgentPrecheckStoreError(w, err)
 		return
 	}
 	writeAgentPrecheckResponse(w, "PRECHECK_SECRET_SLOTS_RESOLVED", map[string]any{
-		"agentRequestId": request.RequestID,
-		"precheckId":     precheckID,
-		"leaseId":        request.Payload.LeaseID,
-		"leaseEpoch":     request.Payload.LeaseEpoch,
-		"bindingDigest":  request.Payload.BindingDigest,
-		"slot":           "DATABASE_CONNECTION",
-		"connection": map[string]any{
-			"host": encrypted.Host, "port": encrypted.Port, "username": encrypted.Username, "password": plaintext,
-		},
+		"agentRequestId":       request.RequestID,
+		"precheckId":           precheckID,
+		"leaseId":              request.Payload.LeaseID,
+		"leaseEpoch":           request.Payload.LeaseEpoch,
+		"bindingDigest":        request.Payload.BindingDigest,
+		"slot":                 "DATABASE_CONNECTION",
+		"connection":           exportConnectionPayload(encrypted.Host, encrypted.Port, encrypted.Username, plaintext, encrypted.SysCredential, sysPlaintext),
 		"realExecutionEnabled": false,
 	})
 }
@@ -4903,7 +5072,7 @@ func (s *Server) completeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Re
 	}
 	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_COMPLETE") || !validAgentPrecheckPathID(precheckID) ||
 		!validAgentPrecheckOpaque(request.Payload.LeaseID) || request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) ||
-		len(request.Payload.Results) != len(agentpreflight.FixedChecks()) {
+		(len(request.Payload.Results) != len(precheckcontract.FixedChecks()) && len(request.Payload.Results) != len(precheckcontract.StorageOutputChecks())) {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
@@ -5645,7 +5814,7 @@ func (s *Server) listSyntheticLogs(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置日志查询依赖", false)
 		return
 	}
-	_, err := s.tasks.GetAuthorizedTaskSummary(r.Context(), taskID, principal.ID)
+	_, err := s.readTaskSummary(r.Context(), principal, taskID)
 	if errors.Is(err, store.ErrDataSourceNotFound) {
 		notFound(w, r)
 		return
@@ -5681,6 +5850,10 @@ func (s *Server) listSyntheticLogs(w http.ResponseWriter, r *http.Request, princ
 				}
 			}
 			records, next, last, err = persistent.ReadPage(r.Context(), taskID, cursor)
+		}
+		if errors.Is(err, logstream.ErrRetentionExpired) {
+			writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": []any{}, "integrity": "EXPIRED"})
+			return
 		}
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "LOG_QUERY_UNAVAILABLE", "日志暂时不可读取", true)
@@ -5769,7 +5942,7 @@ func (s *Server) streamTaskLogs(w http.ResponseWriter, r *http.Request, principa
 
 func (s *Server) writeTaskLogStreamPage(ctx context.Context, w http.ResponseWriter, principal identity.Principal, taskID string, after *logstream.PageCursor) (*logstream.PageCursor, error) {
 	// 长连接不能复用建立时的授权结论；权限撤销后直接关闭流，避免继续发送任何新记录。
-	if _, err := s.tasks.GetAuthorizedTaskSummary(ctx, taskID, principal.ID); err != nil {
+	if _, err := s.readTaskSummary(ctx, principal, taskID); err != nil {
 		return after, err
 	}
 	persistent := s.logs.persistentStore()
@@ -6054,11 +6227,42 @@ func (s *Server) listExecutionNodes(w http.ResponseWriter, r *http.Request, prin
 		return
 	}
 	items := make([]executionNodeListResponse, 0, len(nodes))
+	var usages map[string]store.NodeBudgetUsage
+	if budgetStore, ok := s.nodeManagement.(nodeBudgetReader); ok {
+		usages, err = budgetStore.ListNodeBudgetUsages(r.Context())
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行额度暂时不可用", true)
+			return
+		}
+	}
+	var summaries map[string]store.NodeTaskSummary
+	globalTaskRead := s.hasGlobalTaskRead(r.Context(), principal)
+	if taskStore, available := s.tasks.(interface {
+		ListNodeTaskSummaries(context.Context, string, bool) (map[string]store.NodeTaskSummary, error)
+	}); available {
+		summaries, err = taskStore.ListNodeTaskSummaries(r.Context(), principal.ID, globalTaskRead)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点任务统计暂时不可用", true)
+			return
+		}
+	}
 	for _, node := range nodes {
 		if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeManage, node.NodeID) != nil {
 			continue
 		}
-		items = append(items, s.newExecutionNodeListResponse(node))
+		item := s.newExecutionNodeListResponse(node)
+		if usages != nil {
+			attachNodeBudget(&item, node, usages[node.NodeID])
+		}
+		if summaries != nil {
+			summary := summaries[node.NodeID]
+			summary.Scope = "MINE"
+			if globalTaskRead {
+				summary.Scope = "ALL"
+			}
+			item.TaskSummary = &summary
+		}
+		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
 }
@@ -6100,7 +6304,7 @@ func (s *Server) createExecutionNode(w http.ResponseWriter, r *http.Request, pri
 	result, err := s.nodeManagement.CreateExecutionNode(r.Context(), store.ExecutionNodeCreate{
 		NodeID: nodeID, CreatorSubjectID: principal.ID, DisplayName: request.DisplayName,
 		NormalizedName: normalizeName(request.DisplayName), Platform: request.Platform, AllowedRoots: request.AllowedRoots,
-		ToolHome: request.ToolHome, JavaPath: request.JavaPath,
+		ToolHome: request.ToolHome, JavaPath: request.JavaPath, BudgetPolicy: request.BudgetPolicy,
 		RequestID: requestID(w), IdempotencyKey: idempotencyKey, RequestDigest: executionNodeCreateDigest(request), CreatedAt: now,
 	})
 	if errors.Is(err, store.ErrExecutionNodeNameUnavailable) {
@@ -6188,7 +6392,7 @@ func (s *Server) getExecutionNode(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_QUERY_UNAVAILABLE", "执行节点暂时不可用", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newExecutionNodeDetailResponse(node)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newAuthorizedExecutionNodeDetailResponse(r.Context(), principal, node)})
 }
 
 // updateExecutionNode 只修改浏览器可管理的声明配置，并要求强版本前置条件。
@@ -6222,7 +6426,7 @@ func (s *Server) updateExecutionNode(w http.ResponseWriter, r *http.Request, pri
 	revision, err := s.nodeManagement.UpdateExecutionNode(r.Context(), store.ExecutionNodeUpdate{
 		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
 		DisplayName: request.DisplayName, NormalizedName: normalizeName(request.DisplayName), Platform: request.Platform,
-		AllowedRoots: request.AllowedRoots, ToolHome: request.ToolHome, JavaPath: request.JavaPath,
+		AllowedRoots: request.AllowedRoots, ToolHome: request.ToolHome, JavaPath: request.JavaPath, BudgetPolicy: request.BudgetPolicy,
 		RequestID: requestID(w), UpdatedAt: time.Now().UTC(),
 	})
 	if errors.Is(err, store.ErrExecutionNodeNotFound) {
@@ -6254,7 +6458,7 @@ func (s *Server) updateExecutionNode(w http.ResponseWriter, r *http.Request, pri
 		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_UPDATE_UNAVAILABLE", "执行节点更新结果无法核对", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newExecutionNodeDetailResponse(node)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newAuthorizedExecutionNodeDetailResponse(r.Context(), principal, node)})
 }
 
 // requestExecutionNodeEnvironmentCheck 仅由节点管理员请求当前 Agent 执行固定本机运行时核验。
@@ -6288,7 +6492,8 @@ func (s *Server) requestExecutionNodeEnvironmentCheck(w http.ResponseWriter, r *
 	}
 	now := time.Now().UTC()
 	result, err := s.nodeEnvironment.RequestExecutionNodeEnvironmentCheck(r.Context(), store.ExecutionNodeEnvironmentCheckRequest{
-		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision, CheckID: checkID, RequestID: requestID(w), RequestedAt: now,
+		VersionProbeAllowed: true,
+		NodeID:              nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision, CheckID: checkID, RequestID: requestID(w), RequestedAt: now,
 	})
 	if errors.Is(err, store.ErrExecutionNodeNotFound) {
 		notFound(w, r)
@@ -6311,11 +6516,11 @@ func (s *Server) requestExecutionNodeEnvironmentCheck(w http.ResponseWriter, r *
 		writeError(w, http.StatusServiceUnavailable, "ENVIRONMENT_CHECK_REQUEST_UNAVAILABLE", "节点环境检查结果暂时无法核对", true)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(w), "checkId": result.CheckID, "item": s.newExecutionNodeDetailResponse(node)})
+	writeJSON(w, http.StatusAccepted, map[string]any{"requestId": requestID(w), "checkId": result.CheckID, "item": s.newAuthorizedExecutionNodeDetailResponse(r.Context(), principal, node)})
 }
 
-// deleteExecutionNode 先完成 CSRF、对象范围和版本校验，再由仓储按历史引用选择删除或归档。
-// 归档只在没有运行中任务时撤销当前机器身份；响应不披露引用的类型、数量或 Agent 身份。
+// deleteExecutionNode 先完成 CSRF、对象范围和版本校验，再原子删除配置并保留历史证据。
+// 运行和待核对执行阻断删除；响应不披露引用的类型、数量或 Agent 身份。
 func (s *Server) deleteExecutionNode(w http.ResponseWriter, r *http.Request, principal identity.Principal, nodeID string) {
 	if s.nodeDeleter == nil || s.authorizer == nil || s.csrf == nil {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置执行节点删除依赖", false)
@@ -6334,7 +6539,12 @@ func (s *Server) deleteExecutionNode(w http.ResponseWriter, r *http.Request, pri
 		notFound(w, r)
 		return
 	}
-	result, err := s.nodeDeleter.DeleteOrArchiveExecutionNode(r.Context(), store.ExecutionNodeDeletion{
+	// 独立删除动作只接收空请求体，未知长度也失败关闭；兼容 DELETE 保持既有行为。
+	if r.Method == http.MethodPost && r.ContentLength != 0 {
+		writeError(w, http.StatusBadRequest, "REQUEST_INVALID", "永久删除请求不能包含参数", false)
+		return
+	}
+	result, err := s.nodeDeleter.DeleteExecutionNode(r.Context(), store.ExecutionNodeDeletion{
 		NodeID: nodeID, ActorSubjectID: principal.ID, ExpectedRevision: expectedRevision,
 		RequestID: requestID(w), DeletedAt: time.Now().UTC(),
 	})
@@ -6347,11 +6557,15 @@ func (s *Server) deleteExecutionNode(w http.ResponseWriter, r *http.Request, pri
 		return
 	}
 	if errors.Is(err, store.ErrExecutionNodeHasRunningTask) {
-		writeError(w, http.StatusConflict, "EXECUTION_NODE_RUNNING_TASK", "节点仍有运行任务，暂不能删除或归档", false)
+		writeError(w, http.StatusConflict, "EXECUTION_NODE_RUNNING_TASK", "节点仍有运行或待核对执行，暂不能永久删除", false)
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_DELETE_UNAVAILABLE", "执行节点删除暂时不可用", true)
+		return
+	}
+	if result.Outcome != "DELETED" || result.Revision != 0 {
+		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_DELETE_UNAVAILABLE", "执行节点永久删除结果无效", false)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -6429,7 +6643,7 @@ func (s *Server) enableExecutionNode(w http.ResponseWriter, r *http.Request, pri
 		writeError(w, http.StatusServiceUnavailable, "EXECUTION_NODE_ENABLE_UNAVAILABLE", "执行节点启用结果暂时无法核对", true)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newExecutionNodeDetailResponse(node)})
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": s.newAuthorizedExecutionNodeDetailResponse(r.Context(), principal, node)})
 }
 
 // decodeExecutionNodeWriteRequest 对节点管理写入施加浏览器 JSON 大小和未知字段限制。
@@ -6453,6 +6667,9 @@ func decodeExecutionNodeWriteRequest(w http.ResponseWriter, r *http.Request) (ex
 // validateExecutionNodeWrite 将可修正的表单错误绑定到对应字段，同时复用仓储的绝对路径与平台规则。
 func validateExecutionNodeWrite(request executionNodeWriteRequest) []fieldErrorResponse {
 	fieldErrors := make([]fieldErrorResponse, 0, 4)
+	if request.BudgetPolicy != nil && (request.BudgetPolicy.SystemReservedBytes > 1<<53-1 || request.BudgetPolicy.TaskOverheadBytes > 1<<53-1) {
+		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "budgetPolicy", Code: "EXECUTION_NODE_BUDGET_INVALID", Message: "内存预算必须使用有效字节数"})
+	}
 	if request.DisplayName == "" || len(request.DisplayName) > 200 {
 		fieldErrors = append(fieldErrors, fieldErrorResponse{Field: "displayName", Code: "EXECUTION_NODE_NAME_INVALID", Message: "请输入不超过 200 个字符的节点名称"})
 	}
@@ -6483,12 +6700,13 @@ func validateExecutionNodeWrite(request executionNodeWriteRequest) []fieldErrorR
 
 func executionNodeCreateDigest(request executionNodeWriteRequest) string {
 	payload, _ := json.Marshal(struct {
-		DisplayName  string   `json:"displayName"`
-		Platform     string   `json:"platform"`
-		AllowedRoots []string `json:"allowedRoots"`
-		ToolHome     string   `json:"toolHome"`
-		JavaPath     string   `json:"javaPath"`
-	}{DisplayName: request.DisplayName, Platform: request.Platform, AllowedRoots: request.AllowedRoots, ToolHome: request.ToolHome, JavaPath: request.JavaPath})
+		BudgetPolicy *executionbudget.Policy `json:"budgetPolicy,omitempty"`
+		DisplayName  string                  `json:"displayName"`
+		Platform     string                  `json:"platform"`
+		AllowedRoots []string                `json:"allowedRoots"`
+		ToolHome     string                  `json:"toolHome"`
+		JavaPath     string                  `json:"javaPath"`
+	}{DisplayName: request.DisplayName, Platform: request.Platform, AllowedRoots: request.AllowedRoots, ToolHome: request.ToolHome, JavaPath: request.JavaPath, BudgetPolicy: request.BudgetPolicy})
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])
 }
@@ -6649,6 +6867,10 @@ type executionNodeCandidateResponse struct {
 // executionNodeListResponse 保持列表紧凑，只返回管理定位和失败关闭状态。
 // 完整允许根目录仅在单节点详情中返回，避免列表泄露不必要的机器路径。
 type executionNodeListResponse struct {
+	ExecutionQuota         *nodeExecutionQuotaResponse      `json:"executionQuota,omitempty"`
+	BudgetPolicy           executionbudget.Policy           `json:"budgetPolicy"`
+	DefaultJvmMemory       string                           `json:"defaultJvmMemory"`
+	TaskSummary            *store.NodeTaskSummary           `json:"taskSummary,omitempty"`
 	ID                     string                           `json:"id"`
 	DisplayName            string                           `json:"displayName"`
 	Platform               string                           `json:"platform"`
@@ -6677,6 +6899,9 @@ type executionNodeAgentFactsResponse struct {
 	CapacityUsed       int    `json:"capacityUsed"`
 	CPUUsagePercent    *int   `json:"cpuUsagePercent,omitempty"`
 	MemoryUsagePercent *int   `json:"memoryUsagePercent,omitempty"`
+	// 内存容量成对投影；指针保留可用量为零的真实采样，旧 Agent 缺总量时整对省略。
+	MemoryTotalBytes     *uint64 `json:"memoryTotalBytes,omitempty"`
+	MemoryAvailableBytes *uint64 `json:"memoryAvailableBytes,omitempty"`
 }
 
 // executionNodeDataRootUsageResponse 只在 Agent 上报配置摘要与当前节点声明一致时显示目录空间。
@@ -6688,18 +6913,24 @@ type executionNodeDataRootUsageResponse struct {
 }
 
 // executionNodeDetailResponse 在节点管理员对象范围内补充注册时声明的工具与数据目录。
-// 它仍不包含 Agent 凭据、日志、资源采样或伪造的环境检查结果。
+// 诊断只包含安全机器摘要与已有检查记录，不包含凭据、日志正文或伪造检查结论。
 type executionNodeDetailResponse struct {
 	executionNodeListResponse
-	AllowedRoots   []string                             `json:"allowedRoots"`
-	ToolHome       string                               `json:"toolHome"`
-	JavaPath       string                               `json:"javaPath"`
-	DataRootUsages []executionNodeDataRootUsageResponse `json:"dataRootUsages,omitempty"`
-	CreatedAt      string                               `json:"createdAt"`
+	RecentTasks      *nodeRecentTasksResponse             `json:"recentTasks,omitempty"`
+	Activity         *store.NodeActivitySummary           `json:"activity,omitempty"`
+	EnvironmentCheck nodeEnvironmentCheckResponse         `json:"environmentCheck"`
+	AgentDiagnostics *nodeAgentDiagnosticsResponse        `json:"agentDiagnostics,omitempty"`
+	ActiveExecutions *nodeActiveExecutionsResponse        `json:"activeExecutions,omitempty"`
+	AllowedRoots     []string                             `json:"allowedRoots"`
+	ToolHome         string                               `json:"toolHome"`
+	JavaPath         string                               `json:"javaPath"`
+	DataRootUsages   []executionNodeDataRootUsageResponse `json:"dataRootUsages,omitempty"`
+	CreatedAt        string                               `json:"createdAt"`
 }
 
 func (s *Server) newExecutionNodeListResponse(node store.ExecutionNode) executionNodeListResponse {
 	response := executionNodeListResponse{
+		BudgetPolicy: node.BudgetPolicy, DefaultJvmMemory: executionbudget.DefaultHeap,
 		ID: node.NodeID, DisplayName: node.DisplayName, Platform: node.Platform, ManagementState: node.ManagementState,
 		AgentAssociationStatus: "PENDING", HeartbeatStatus: "NEVER_CONNECTED", LastHeartbeatAt: nil,
 		EnvironmentStatus: "NOT_CHECKED", CapacityStatus: "UNKNOWN", AcceptsNewTasks: false,
@@ -6746,6 +6977,12 @@ func (s *Server) newExecutionNodeListResponse(node store.ExecutionNode) executio
 			BootID: agent.BootID, ObservedAt: agent.EnvironmentFacts.ObservedAt.UTC().Format(time.RFC3339Nano),
 			CapacityTotal: agent.CapacityTotal, CapacityUsed: agent.CapacityUsed,
 			CPUUsagePercent: agent.EnvironmentFacts.CPUUsagePercent, MemoryUsagePercent: agent.EnvironmentFacts.MemoryUsagePercent,
+		}
+		total, available := agent.EnvironmentFacts.MemoryTotalBytes, agent.EnvironmentFacts.MemoryAvailableBytes
+		// 只返回浏览器可无损表示的完整容量事实，不用利用率或执行预算补造物理内存。
+		if total > 0 && total <= 9007199254740991 && available <= total {
+			response.AgentFacts.MemoryTotalBytes = &total
+			response.AgentFacts.MemoryAvailableBytes = &available
 		}
 	}
 	if !executionNodePlatformMatchesAgentFacts(node.Platform, agent.EnvironmentFacts) {
@@ -6800,8 +7037,14 @@ func executionNodePlatformMatchesAgentFacts(platform string, facts store.AgentEn
 }
 
 func (s *Server) newExecutionNodeDetailResponse(node store.ExecutionNode) executionNodeDetailResponse {
+	status := node.EnvironmentCheck.Status
+	if status == "" {
+		status = "NOT_CHECKED"
+	}
 	return executionNodeDetailResponse{
 		executionNodeListResponse: s.newExecutionNodeListResponse(node),
+		EnvironmentCheck:          nodeEnvironmentCheckResponse{CheckID: node.EnvironmentCheck.CheckID, Status: status, Code: node.EnvironmentCheck.Code, FactsRevision: node.EnvironmentCheck.FactsRevision, RequestedAt: node.EnvironmentCheck.RequestedAt, CompletedAt: node.EnvironmentCheck.CompletedAt},
+		AgentDiagnostics:          nodeAgentDiagnostics(node),
 		AllowedRoots:              append([]string(nil), node.AllowedRoots...),
 		ToolHome:                  node.ToolHome,
 		JavaPath:                  node.JavaPath,
@@ -7107,7 +7350,7 @@ func (s *Server) saveTaskTemplate(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusServiceUnavailable, "TASK_QUERY_UNAVAILABLE", "任务暂时不可用", true)
 		return
 	}
-	if source.State != "SUCCEEDED" {
+	if source.State != "SUCCEEDED" || source.ReconciliationRequired {
 		writeError(w, http.StatusUnprocessableEntity, "TASK_NOT_SUCCEEDED", "只有成功任务可以保存为模板", false)
 		return
 	}

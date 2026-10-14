@@ -54,13 +54,20 @@ type Draft struct {
 	DropObject    bool
 	RetainSchema  bool
 	CompactSchema bool
+	// AddExtraMessage 依赖当前数据源的 sys 凭据及固定权限预检查。
+	AddExtraMessage bool
+	// SequencePolicy 仅包含序列 DDL 时活动；命令值使用官方小写枚举。
+	SequencePolicy string
 	// 条件筛选与一致性快照。
 	Where    string
 	Snapshot bool
+	// WeakRead 与 EnableHiddenPk 必须通过固定对象及参数预检查，不能以连接成功替代。
+	WeakRead       bool
+	EnableHiddenPk bool
 	// 分区筛选与数据类型排除。
 	Partition        string
 	ExcludeDataTypes []string
-	// 仅 MySQL CSV/CUT 数据导出的 DATE/DATETIME 值格式已启用。
+	// TimestampFormats 按格式与兼容模式校验值格式和 Oracle 会话格式。
 	TimestampFormats store.TimestampFormatConfig
 	// 对象存储输出的凭据引用；本地输出保持为空。
 	StorageCredential *store.StorageCredentialBinding
@@ -79,6 +86,6 @@ func (n Draft) HasZeroOptions() bool {
 		n.QuerySql == "" && n.QueryResultLimit == nil && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
 		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
-		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.Where == "" && !n.Snapshot &&
+		!n.DropObject && !n.RetainSchema && !n.CompactSchema && !n.AddExtraMessage && n.SequencePolicy == "" && n.Where == "" && !n.Snapshot && !n.WeakRead && !n.EnableHiddenPk &&
 		n.Partition == "" && len(n.ExcludeDataTypes) == 0 && n.TimestampFormats == (store.TimestampFormatConfig{})
 }

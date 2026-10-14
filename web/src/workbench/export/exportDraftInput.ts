@@ -9,6 +9,7 @@ export interface ExportDraftFormValues {
   readonly platform: string
   // compatibilityMode 来自已选数据源；未知值按不支持处理，防止未验证模式绕过时间格式门禁。
   readonly compatibilityMode: string
+  readonly sysCredentialState?: string
   readonly database: string
   readonly scopeKind: ExportScopeKind
   readonly objectType: ExportObjectType
@@ -67,6 +68,7 @@ export interface ExportDraftFormValues {
   readonly flashbackTimestamp: string
   // 一致性快照不能与任一闪回参数共同使用。
   readonly snapshot: boolean
+  readonly weakRead: boolean
   readonly thread: string
   readonly pageSize: string
   readonly parallelMacro: string
@@ -78,13 +80,14 @@ export interface ExportDraftFormValues {
   readonly dropObject: boolean
   readonly retainSchema: boolean
   readonly compactSchema: boolean
-  // --add-extra-message 仍需 sys 权限预检查，浏览器保持关闭并拒绝提交。
+  // 附加对象信息依赖 sys 材料与固定权限预检查。
   readonly addExtraMessage: boolean
+  readonly sequencePolicy: 'PRESERVE' | 'RESTART' | ''
   // 分区筛选仅指定表数据，类型排除仅数据内容；隐藏主键仍需对象、版本与权限预检查。
   readonly partition: string
   readonly excludeDataTypes: string
   readonly enableHiddenPk: boolean
-  // 时间格式当前只允许 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME；其余字段保留用于契约解码。
+  // 值格式按类型与租户活动，NLS 字段只表达 Oracle 会话格式。
   readonly dateValueFormat: string
   readonly timeValueFormat: string
   readonly datetimeValueFormat: string
@@ -94,6 +97,7 @@ export interface ExportDraftFormValues {
   readonly nlsDateFormat: string
   readonly nlsTimestampFormat: string
   readonly nlsTimestampTzFormat: string
+  readonly preserveZeroDatetime: boolean
 }
 
 export type ExportDraftInputValidation =
@@ -139,9 +143,9 @@ function supportsPartition(values: ExportDraftFormValues): boolean {
   return values.contentKind !== 'DDL_ONLY' && supportsWhere(values)
 }
 
-// supportsTimestampFormats 仅允许 MySQL CSV/CUT 数据导出的 DATE 与 DATETIME 格式；未知与 Oracle 均失败关闭。
+// supportsTimestampFormats 只允许已确认租户模式的 CSV/CUT 数据值格式。
 function supportsTimestampFormats(values: ExportDraftFormValues): boolean {
-  return values.compatibilityMode === 'MYSQL' && values.contentKind !== 'DDL_ONLY' && (values.formatKind === 'CSV' || values.formatKind === 'CUT')
+  return ['MYSQL', 'ORACLE'].includes(values.compatibilityMode) && values.contentKind !== 'DDL_ONLY' && (values.formatKind === 'CSV' || values.formatKind === 'CUT')
 }
 
 // supportsCompactSchema 只允许会包含表 DDL 的组合，纯视图导出不得携带紧凑 Schema。
@@ -217,6 +221,7 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     }
   }
   if (logPath && !isAbsolutePathForPlatform(logPath, values.platform)) return { valid: false, message: '日志路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
+  if (values.outputKind !== 'LOCAL' && !values.tmpPath.trim()) return { valid: false, message: '对象存储预检查需要填写本地临时分块目录，以检查可写性与可用空间。' }
   if (values.tmpPath.trim() && !isAbsolutePathForPlatform(values.tmpPath.trim(), values.platform)) return { valid: false, message: '临时分块目录必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
   // EX-I4 POS 定版：仅包含数据时 POS 格式必须提供控制文件目录（--ctl-path）且为节点绝对路径；
   // 仅 DDL 内容不校验也不发送 controlFilePath（页面切换到仅 DDL 时清除数据格式专属残留）。
@@ -230,8 +235,13 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   if (partition && !supportsPartition(values)) return { valid: false, message: '分区筛选仅可用于指定表的数据导出，全部对象、视图或仅 DDL 导出不得携带该参数。' }
   const excludeDataTypes = splitNameList(values.excludeDataTypes)
   if (excludeDataTypes !== undefined && values.contentKind === 'DDL_ONLY') return { valid: false, message: '排除数据类型仅在导出数据内容时生效。' }
-  if (values.addExtraMessage) return { valid: false, message: '附加对象信息仍需 sys 权限预检查，当前浏览器不支持提交。' }
-  if (values.enableHiddenPk) return { valid: false, message: '隐藏主键仍需对象、版本和权限预检查，当前浏览器不支持提交。' }
+  const selections = values.objectSelections ?? values.objectNames.map((name) => ({ objectType: values.objectType, name }))
+  const hasObjectType = (type: ExportObjectType) => values.scopeKind === 'ALL' || selections.some((item) => item.objectType === type && item.name.trim())
+  if (values.addExtraMessage && (values.contentKind === 'DATA_ONLY' || !hasObjectType('TABLE'))) return { valid: false, message: '附加表定义信息仅适用于包含表结构的导出。' }
+  if (values.addExtraMessage && values.sysCredentialState !== 'AVAILABLE') return { valid: false, message: '附加表定义信息需要先在数据源配置 sys 凭据，并通过权限预检查。' }
+  if ((values.weakRead || values.enableHiddenPk) && (values.contentKind === 'DDL_ONLY' || values.scopeKind === 'QUERY_RESULT' || values.querySql.trim())) return { valid: false, message: '备副本读取和隐藏主键加速仅适用于对象数据导出。' }
+  if (values.enableHiddenPk && values.scopeKind !== 'ALL' && !isTableOnlySelection(values)) return { valid: false, message: '隐藏主键加速仅适用于整库或指定纯表数据导出。' }
+  if (values.sequencePolicy && (!['PRESERVE', 'RESTART'].includes(values.sequencePolicy) || values.contentKind === 'DATA_ONLY' || !hasObjectType('SEQUENCE'))) return { valid: false, message: '序列策略仅适用于包含序列定义的导出，请选择保留当前值或使用初始值。' }
   const timestampFormats = [
     ['DATE 值格式', values.dateValueFormat],
     ['TIME 值格式', values.timeValueFormat],
@@ -243,20 +253,16 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     ['NLS TIMESTAMP', values.nlsTimestampFormat],
     ['NLS TIMESTAMP TZ', values.nlsTimestampTzFormat],
   ] as const
-  if (timestampFormats.some(([, value]) => value !== '') && !supportsTimestampFormats(values)) {
-    return { valid: false, message: '时间戳值格式当前仅支持 MySQL 兼容模式的 CSV/CUT 数据导出。' }
+  if ((timestampFormats.slice(0, 6).some(([, value]) => value !== '') || values.preserveZeroDatetime) && !supportsTimestampFormats(values)) {
+    return { valid: false, message: '日期时间值格式仅支持 MySQL/Oracle 兼容模式的 CSV/CUT 数据导出。' }
   }
-  const unverifiedTimestampFormats = [
-    values.timeValueFormat, values.timestampValueFormat, values.timestampTzValueFormat, values.timestampLtzValueFormat,
-    values.nlsDateFormat, values.nlsTimestampFormat, values.nlsTimestampTzFormat,
-  ]
-  if (unverifiedTimestampFormats.some((value) => value !== '')) {
-    return { valid: false, message: '当前只支持 MySQL 的 DATE 与 DATETIME 值格式，其余时间格式仍待兼容性验证。' }
-  }
+  if (values.compatibilityMode !== 'MYSQL' && (values.timeValueFormat || values.datetimeValueFormat || values.preserveZeroDatetime)) return { valid: false, message: 'TIME、DATETIME 和零日期保留仅适用于 MySQL 兼容模式。' }
+  if ((values.timestampTzValueFormat || values.timestampLtzValueFormat || values.nlsDateFormat || values.nlsTimestampFormat || values.nlsTimestampTzFormat) && (values.compatibilityMode !== 'ORACLE' || values.contentKind === 'DDL_ONLY')) return { valid: false, message: 'TZ、LTZ 和 NLS 会话格式仅适用于 Oracle 数据导出。' }
   if (values.contentKind !== 'DDL_ONLY') {
     // EX-I4：格式适用性决定各面板校验范围；序列化选项按格式区分，
     // 文件布局、筛选与性能选项官方不限定格式，CSV/CUT/SQL 均参与校验。
     if (values.formatKind === 'CSV' && values.columnQuoteMode !== '' && !CSV_QUOTE_MODES.includes(values.columnQuoteMode)) return { valid: false, message: 'CSV 包围模式不是受支持的枚举值。' }
+    if (values.formatKind === 'CSV' && values.columnQuoteMode === 'none' && !values.escapeCharacter) return { valid: false, message: '不使用包围符时，请填写转义字符。' }
     if (values.formatKind === 'CSV' && (Array.from(values.columnSeparator).length > 1 || Array.from(values.columnQuote).length > 1)) return { valid: false, message: 'CSV 字段分隔符和文本识别符在 OBDUMPER 4.3.5 中仅支持单字符。' }
     if ((values.formatKind === 'CSV' || values.formatKind === 'CUT') && !isValidEscapeCharacter(values.escapeCharacter)) return { valid: false, message: '转义字符当前仅支持单个 ASCII 字符，且不能使用换行或 NUL。' }
     // 前置 DROP 与保留 Schema 仅在 DDL 内容时生效；紧凑 Schema 已在上方按表 DDL 范围单独失败关闭。
@@ -284,6 +290,7 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     // EX-F072 分区筛选：与自定义查询互斥；分区名只接受字母数字下划线逗号分隔（范围门禁已在块外）。
     if (partition && values.querySql.trim()) return { valid: false, message: '自定义查询与分区筛选互斥，只能选择其一。' }
     if (partition && !/^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$/.test(partition)) return { valid: false, message: '分区名只能使用字母、数字与下划线，多个分区用逗号分隔。' }
+    if (partition && new Set(partition.split(',')).size !== partition.split(',').length) return { valid: false, message: '分区名不能重复，请删除重复的分区。' }
     // EX-F075 类型排除：类型名只接受字母数字下划线（仅数据内容门禁已在块外）。
     if (excludeDataTypes !== undefined && excludeDataTypes.some((name) => !/^[A-Za-z0-9_]+$/.test(name))) return { valid: false, message: '数据类型名只能使用字母、数字与下划线，多个类型用逗号分隔。' }
     // 时间格式只允许已核验字符和 ASCII 空格，拒绝制表符、换行、分号等会改变参数边界的字符。
@@ -293,7 +300,9 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     }
     if (values.includeColumnNames.trim() && values.excludeColumnNames.trim()) return { valid: false, message: '包含列与排除列互斥，只能选择其一。' }
     for (const list of [values.includeColumnNames, values.excludeColumnNames]) {
-      for (const name of list.split(',').map((item) => item.trim()).filter((item) => item.length > 0)) {
+      const names = list.split(',').map((item) => item.trim()).filter((item) => item.length > 0)
+      if (new Set(names).size !== names.length) return { valid: false, message: '列名不能重复，请删除重复的包含列或排除列。' }
+      for (const name of names) {
         if (name.includes('*') || name.includes(',') || name.length > 256) return { valid: false, message: '列名不能使用通配符或逗号，且不超过 256 个字符。' }
       }
     }
@@ -364,7 +373,7 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
     },
     filterConfig: filterOptions,
     performanceConfig: performanceOptions,
-    // DDL 行为仅在包含 DDL 的内容时发送；附加对象信息仍由前置校验关闭。
+    // DDL 行为只随对应对象结构发送，sys 权限仍由服务端和预检查复验。
     ddlBehavior: buildDDLBehavior(values),
   }
   return { configVersion: 'v6', dataSourceId, nodeId, config }
@@ -374,20 +383,30 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
 function buildDDLBehavior(values: ExportDraftFormValues): DDLBehaviorOptions | undefined {
   if (values.contentKind === 'DATA_ONLY') return undefined
   const compactSchema = supportsCompactSchema(values) && values.compactSchema
-  if (!values.dropObject && !values.retainSchema && !compactSchema) return undefined
+  if (!values.dropObject && !values.retainSchema && !compactSchema && !values.addExtraMessage && !values.sequencePolicy) return undefined
   return {
     dropObject: values.dropObject || undefined,
     retainSchema: values.retainSchema || undefined,
     compactSchema: compactSchema || undefined,
+    addExtraMessage: values.addExtraMessage || undefined,
+    sequencePolicy: values.sequencePolicy || undefined,
   }
 }
 
-// buildTimestampFormats 只构造已完成兼容性验证的 MySQL DATE 与 DATETIME 格式。
+// buildTimestampFormats 只构造当前格式与租户活动的值格式和 Oracle 会话格式。
 function buildTimestampFormats(values: ExportDraftFormValues): TimestampFormatsOptions | undefined {
-  if (!supportsTimestampFormats(values)) return undefined
+  if (!supportsTimestampFormats(values) && !(values.compatibilityMode === 'ORACLE' && values.contentKind !== 'DDL_ONLY')) return undefined
   const formats: TimestampFormatsOptions = {
     dateValueFormat: values.dateValueFormat.trim() || undefined,
     datetimeValueFormat: values.datetimeValueFormat.trim() || undefined,
+    timeValueFormat: values.timeValueFormat.trim() || undefined,
+    timestampValueFormat: values.timestampValueFormat.trim() || undefined,
+    timestampTzValueFormat: values.timestampTzValueFormat.trim() || undefined,
+    timestampLtzValueFormat: values.timestampLtzValueFormat.trim() || undefined,
+    nlsDateFormat: values.nlsDateFormat.trim() || undefined,
+    nlsTimestampFormat: values.nlsTimestampFormat.trim() || undefined,
+    nlsTimestampTzFormat: values.nlsTimestampTzFormat.trim() || undefined,
+    preserveZeroDatetime: values.preserveZeroDatetime || undefined,
   }
   return Object.values(formats).some((value) => value !== undefined) ? formats : undefined
 }
@@ -465,7 +484,7 @@ function buildFilterOptions(values: ExportDraftFormValues): FilterOptions | unde
   // 分区筛选只发送给指定表数据组合，类型排除只随数据内容发送。
   const partition = supportsPartition(values) ? values.partition.trim() || undefined : undefined
   const excludeDataTypes = splitNameList(values.excludeDataTypes)
-  if (!querySql && !where && includeColumnNames === undefined && excludeColumnNames === undefined && !values.excludeVirtualColumns && flashbackScn === undefined && flashbackTimestamp === undefined && snapshot === undefined && partition === undefined && excludeDataTypes === undefined) {
+  if (!querySql && !where && includeColumnNames === undefined && excludeColumnNames === undefined && !values.excludeVirtualColumns && flashbackScn === undefined && flashbackTimestamp === undefined && snapshot === undefined && partition === undefined && excludeDataTypes === undefined && !values.weakRead && !values.enableHiddenPk) {
     return undefined
   }
   return {
@@ -481,6 +500,8 @@ function buildFilterOptions(values: ExportDraftFormValues): FilterOptions | unde
     snapshot,
     partition,
     excludeDataTypes,
+    ...(values.weakRead ? { weakRead: true } : {}),
+    ...(values.enableHiddenPk ? { enableHiddenPk: true } : {}),
   }
 }
 

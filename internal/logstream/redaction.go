@@ -2,8 +2,12 @@ package logstream
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 )
+
+// sys 身份只供内部连接使用；第二层同时保护 sys 参数和组合身份，保留普通租户身份。
+var sysIdentityPattern = regexp.MustCompile(`(?i)(--sys-user(?:=|\s+)|\bsys[_-]user\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)|[A-Za-z0-9_.$-]+@sys(?:#[A-Za-z0-9_.$-]+)?\b`)
 
 // Policy 定义一个执行期间短时有效的脱敏上下文。
 // BytesSecrets/BytesIdentifiers 用于真实执行路径，避免把已解析秘密长期保存在字符串字段中；
@@ -88,6 +92,12 @@ func (p Policy) RedactBytes(message []byte) ([]byte, error) {
 	for _, key := range [][]byte{[]byte("password"), []byte("secret"), []byte("token"), []byte("access_key")} {
 		redacted = redactKeyValueBytes(redacted, key)
 	}
+	protected := sysIdentityPattern.ReplaceAllFunc(redacted, func(value []byte) []byte {
+		parts := sysIdentityPattern.FindSubmatch(value)
+		return append(append([]byte(nil), parts[1]...), []byte(Mask)...)
+	})
+	zero(redacted)
+	redacted = protected
 	return redacted, nil
 }
 

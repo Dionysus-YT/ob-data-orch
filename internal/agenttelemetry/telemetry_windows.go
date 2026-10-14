@@ -74,13 +74,22 @@ func windowsSystemTimes() (uint64, uint64, uint64, bool) {
 }
 
 func windowsMemoryUsage() *int {
+	total, available := physicalMemory()
+	if total == 0 {
+		return nil
+	}
+	value := int(((total - available) * 100) / total)
+	return &value
+}
+
+// physicalMemory 从 Windows 内核取得真实物理内存；采样失败保留未知。
+func physicalMemory() (uint64, uint64) {
 	status := memoryStatusEx{Length: uint32(unsafe.Sizeof(memoryStatusEx{}))}
 	result, _, _ := globalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&status)))
 	if result == 0 || status.TotalPhys == 0 || status.AvailPhys > status.TotalPhys {
-		return nil
+		return 0, 0
 	}
-	value := int(((status.TotalPhys - status.AvailPhys) * 100) / status.TotalPhys)
-	return &value
+	return status.TotalPhys, status.AvailPhys
 }
 
 func dataRootUsage(root string) (uint64, uint64, error) {

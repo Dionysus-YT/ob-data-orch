@@ -1,5 +1,5 @@
 // Package agentjdbc 将固定 JDBC 连接探针适配为 Agent 的数据库与对象预检查。
-// 它只处理短时秘密槽位和受控子进程边界；唯一允许的 SQL 是探针内部生成的固定零行读取，不实现自由对象权限诊断或任何 OBDUMPER 执行。
+// 它只处理短时秘密槽位和受控子进程边界；探针仅生成固定元数据、零行结构和弱读常量检查，不执行外部 SQL 或 OBDUMPER。
 package agentjdbc
 
 import (
@@ -34,6 +34,9 @@ type Connection struct {
 	Port     int
 	Username []byte
 	Password []byte
+	// SysUsername/SysPassword 只用于固定 sys 视图权限检查，返回前清零。
+	SysUsername []byte
+	SysPassword []byte
 }
 
 // SecretResolver 只解析与当前冻结预检查绑定匹配的数据库连接槽位。
@@ -52,13 +55,15 @@ type ConnectionRunner func(context.Context, credential.Workspace, jdbcprobe.Runt
 
 // PrecheckProbe 实现固定 DATABASE_CONNECTIVITY 与 OBJECT_ACCESS 检查。
 // 同一实例只能为一个冻结请求解析一次槽位；SPECIFIED 范围在单个进程和连接中核对全部对象，
-// ALL 范围只运行数据库级连接探测，对象结论由可达性投影，逐对象枚举由工具运行时完成。
+// 普通 ALL 范围仅验证连接；启用读取参数时固定探针枚举冻结数据库中的表并复核前置条件。
 type PrecheckProbe struct {
 	WorkspaceRoot string
 	Runtime       jdbcprobe.Runtime
 	Resolver      SecretResolver
 	RunBatch      BatchPreflightRunner
 	RunConnection ConnectionRunner
+	// RunParameters 仅固定专家参数探针可替换，普通连接检查不能代替它。
+	RunParameters func(context.Context, credential.Workspace, jdbcprobe.Runtime, jdbcprobe.ParameterPreflightRequest) (jdbcprobe.PreflightResult, error)
 
 	mu    sync.Mutex
 	state jdbcState
@@ -78,9 +83,15 @@ type jdbcRequestIdentity struct {
 	compatibilityMode jdbcprobe.CompatibilityMode
 	database          string
 	// 对象清单使用字节长度前缀，避免含逗号的名称与多对象清单碰撞。
-	objects     string
-	objectTypes string
-	contentKind string
+	objects         string
+	objectTypes     string
+	contentKind     string
+	weakRead        bool
+	enableHiddenPk  bool
+	addExtraMessage bool
+	includeColumns  string
+	excludeColumns  string
+	partitions      string
 }
 
 func newJdbcRequestIdentity(request agentpreflight.Request) jdbcRequestIdentity {
@@ -92,6 +103,8 @@ func newJdbcRequestIdentity(request agentpreflight.Request) jdbcRequestIdentity 
 		objects:           encodeRequestList(request.Objects),
 		objectTypes:       encodeRequestList(request.ObjectTypes),
 		contentKind:       request.ContentKind,
+		weakRead:          request.WeakRead, enableHiddenPk: request.EnableHiddenPk, addExtraMessage: request.AddExtraMessage,
+		includeColumns: encodeRequestList(request.IncludeColumnNames), excludeColumns: encodeRequestList(request.ExcludeColumnNames), partitions: encodeRequestList(request.Partitions),
 	}
 }
 
@@ -182,6 +195,8 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 	connection, resolveErr := p.Resolver.ResolveDatabaseConnection(ctx, request.Binding)
 	defer credential.Zero(connection.Username)
 	defer credential.Zero(connection.Password)
+	defer credential.Zero(connection.SysUsername)
+	defer credential.Zero(connection.SysPassword)
 	if resolveErr != nil {
 		slog.Warn("导出预检查数据库探针未完成", "stage", "secret_resolution")
 		return unavailableDatabaseResult(), unavailableObjectResult()
@@ -200,6 +215,9 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 	runtime := p.Runtime
 	runtime.ProbePath = probePath
 	runtime.ProbeSHA256 = probeDigest
+	if request.WeakRead || request.EnableHiddenPk || request.AddExtraMessage {
+		return p.runParameterPreflight(ctx, workspace, runtime, request, connection)
+	}
 	// ALL 范围：只用冻结连接探针完成数据库级可达性检查；对象结论由可达性投影，
 	// 逐对象枚举由工具运行时完成，预检查不代替运行时事实。
 	if len(request.Objects) == 0 {
@@ -235,6 +253,7 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 	result, runErr := run(ctx, workspace, runtime, jdbcprobe.BatchPreflightRequest{
 		Connection: jdbcConnection, CompatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode),
 		Database: request.Database, Objects: objects,
+		IncludeColumnNames: append([]string(nil), request.IncludeColumnNames...), ExcludeColumnNames: append([]string(nil), request.ExcludeColumnNames...), Partitions: append([]string(nil), request.Partitions...),
 	})
 	if runErr != nil {
 		if errors.Is(runErr, jdbcprobe.ErrConnectionFailed) {
@@ -245,8 +264,14 @@ func (p *PrecheckProbe) runPreflight(ctx context.Context, request agentpreflight
 	}
 	switch result.ObjectAccess {
 	case jdbcprobe.ObjectAccessible:
+		if len(request.IncludeColumnNames) > 0 || len(request.ExcludeColumnNames) > 0 || len(request.Partitions) > 0 {
+			return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: "OBJECT_SELECTION_VERIFIED"}
+		}
 		return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusPassed, EvidenceCode: EvidenceObjectAccessible}
 	case jdbcprobe.ObjectNotAccessible:
+		if len(request.IncludeColumnNames) > 0 || len(request.ExcludeColumnNames) > 0 || len(request.Partitions) > 0 {
+			return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: "OBJECT_SELECTION_REJECTED"}
+		}
 		return connectedDatabaseResult(), agentpreflight.Result{Check: agentpreflight.CheckObjectAccess, Status: agentpreflight.StatusFailed, EvidenceCode: EvidenceObjectNotAccessible}
 	default:
 		return connectedDatabaseResult(), unavailableObjectResult()

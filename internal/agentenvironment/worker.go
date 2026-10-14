@@ -1,5 +1,5 @@
 // Package agentenvironment 运行节点启用前唯一允许的固定本机环境核验。
-// 它不启动 OBDUMPER、不连接数据库，也不接受路径、命令、SQL 或其他远程操作参数。
+// 它只执行固定布局检查和当前检查获明确授权的版本查询，不连接数据库或执行数据任务。
 package agentenvironment
 
 import (
@@ -12,6 +12,7 @@ import (
 
 	"ob-data-orch/internal/agentlocalpreflight"
 	"ob-data-orch/internal/agentwire"
+	"ob-data-orch/internal/nodefacts"
 )
 
 var (
@@ -33,10 +34,11 @@ type Protocol interface {
 // Worker 在心跳返回明确检查标识后运行固定工具运行时核验。
 // Agent 只使用本机管理员配置的 Java、Connector/J 和 OBDUMPER 布局，控制面不会下发路径。
 type Worker struct {
-	Protocol Protocol
-	Runtime  agentlocalpreflight.RuntimeValidator
-	Clock    func() time.Time
-	BootID   string
+	Inspector Inspector
+	Protocol  Protocol
+	Runtime   agentlocalpreflight.RuntimeValidator
+	Clock     func() time.Time
+	BootID    string
 
 	mu      sync.Mutex
 	running bool
@@ -45,6 +47,11 @@ type Worker struct {
 // Run 将控制面心跳返回的单个检查标识绑定到当前 Agent 身份和事实版本。
 // 空标识表示当前没有待处理工作；运行时异常会转换为稳定失败码，不向控制面泄露本机细节。
 func (w *Worker) Run(ctx context.Context, checkID string, factsRevision int64) (bool, error) {
+	return w.RunWithInspection(ctx, checkID, factsRevision, false)
+}
+
+// RunWithInspection 将版本查询范围绑定当前检查授权，自动检查不能继承旧的用户许可。
+func (w *Worker) RunWithInspection(ctx context.Context, checkID string, factsRevision int64, probeAllowed bool) (bool, error) {
 	if strings.TrimSpace(checkID) == "" {
 		return false, nil
 	}
@@ -52,6 +59,9 @@ func (w *Worker) Run(ctx context.Context, checkID string, factsRevision int64) (
 		return false, ErrWorkerBusy
 	}
 	defer w.leave()
+	if probeAllowed && w.Inspector == nil {
+		return false, ErrInvalidConfiguration
+	}
 	if w.Protocol == nil || w.Runtime == nil || w.Clock == nil || !validOpaque(w.BootID, 256) || !validOpaque(checkID, 256) || strings.ContainsAny(checkID, "/\\?#:") || factsRevision < 1 {
 		return false, ErrInvalidConfiguration
 	}
@@ -60,6 +70,35 @@ func (w *Worker) Run(ctx context.Context, checkID string, factsRevision int64) (
 		return false, ErrInvalidConfiguration
 	}
 	status, code := runtimeResult(ctx, w.Runtime)
+	if w.Inspector != nil {
+		report, err := w.Inspector.Inspect(ctx, probeAllowed)
+		if err == nil && report != nil {
+			report.CheckID = checkID
+			// 逐项采集不能覆盖原有平台布局失败，尤其是 Windows Hadoop 本地库校验。
+			for index := range report.Items {
+				if report.Items[index].Kind == "RUNTIME_LAYOUT" && status != "PASSED" {
+					report.Items[index].Status, report.Items[index].Code = "FAILED", "CONFIG_INVALID"
+					if code == "TOOL_RUNTIME_UNAVAILABLE" {
+						report.Items[index].Status, report.Items[index].Code = "UNKNOWN", "SAMPLING_UNAVAILABLE"
+					}
+				}
+			}
+			if nodefacts.ValidateInspection(report) != nil {
+				return true, ErrInvalidConfiguration
+			}
+			status, code = nodefacts.InspectionResult(report)
+			if detailed, ok := w.Protocol.(interface {
+				CompleteExecutionNodeEnvironmentInspection(context.Context, string, string, int64, string, string, time.Time, *nodefacts.RuntimeInspection) error
+			}); ok {
+				if err := detailed.CompleteExecutionNodeEnvironmentInspection(ctx, w.BootID, checkID, factsRevision, status, code, w.Clock().UTC(), report); err != nil {
+					return true, ErrCompletionRejected
+				}
+				return true, nil
+			}
+			return true, ErrInvalidConfiguration
+		}
+		status, code = "FAILED", "TOOL_RUNTIME_UNAVAILABLE"
+	}
 	if err := w.Protocol.CompleteExecutionNodeEnvironmentCheck(ctx, w.BootID, checkID, factsRevision, status, code, w.Clock().UTC()); err != nil {
 		// 下层错误只允许是稳定机器协议类别或 HTTP 状态，不应包含本机路径、命令或运行时原始错误。
 		return true, fmt.Errorf("%w: %v", ErrCompletionRejected, err)

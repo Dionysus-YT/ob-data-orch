@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
+import { Alert as AAlert, Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileAddOutlined, EditOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import OrchOperationalTable from '@/components/OrchOperationalTable.vue'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import { useOperationMessage } from '@/composables/useOperationMessage'
 import { useTemplateCatalog } from '@/workbench/templates/useTemplateCatalog'
 import { useTemplateActions } from '@/workbench/templates/useTemplateActions'
 import { useTemplateDraft } from '@/workbench/templates/useTemplateDraft'
+import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 
 const columns = [{ key: 'c0', title: '模板名称' }, { key: 'c1', title: '能力版本' }, { key: 'c2', title: '来源任务' }, { key: 'c3', title: '更新时间' }, { key: 'c4', title: '操作', width: '26%' }]
 const router = useRouter()
 const catalog = useTemplateCatalog()
 const { templates, loading, loadFailure, notice, actionBusy, refresh } = catalog
+const { MessageContext } = useOperationMessage(notice)
 const { pendingDelete, renameID, renameValue, startRename, confirmRename, requestDelete, confirmDelete, cancelRename, cancelDelete } = useTemplateActions(catalog)
-const { draftSourceID, draftNodeID, sourcesLoading, createDraftFailure, eligibleSources, nodes, loadChoices, createDraft } = useTemplateDraft(catalog,
+const { draftSourceID, draftNodeID, sourcesLoading, createDraftFailure, eligibleSources, nodes, loadChoices, onNodeDropdownVisibleChange, createDraft } = useTemplateDraft(catalog,
   id => router.push({ path: '/exports/new', query: { draft: id, step: '1' } }),
 )
 onMounted(() => { void refresh() })
@@ -26,10 +29,10 @@ function dateTime(value: string) {
 </script>
 
 <template>
+  <MessageContext />
   <section class="page-heading task-heading"><div><h1>模板中心</h1><p>模板只复用三类任务的显式、非敏感配置；由模板创建的草稿必须重新选择数据源与执行节点、重新绑定存储凭据并重新完成预检查与风险确认。</p></div></section>
   <section class="filter-bar"><AButton :disabled="loading" @click="refresh"><template #icon><ReloadOutlined class="product-icon" :spin="loading" aria-hidden="true" /></template>{{ loading ? '刷新中…' : '刷新' }}</AButton></section>
-  <p v-if="loadFailure" class="feedback feedback-error" role="alert">{{ loadFailure }}</p>
-  <p v-else-if="notice" class="feedback feedback-notice" role="status">{{ notice }}</p>
+  <AAlert v-if="loadFailure" class="orch-feedback" type="error" message="操作未完成" :description="loadFailure" show-icon />
   <section class="content-card table-card">
     <OrchOperationalTable :rows="templates" :columns="columns" row-key="id" label="模板列表" :loading="loading">
       <template #bodyCell="{ record: template, column }">
@@ -42,7 +45,7 @@ function dateTime(value: string) {
       <template #empty><div v-if="loading">正在加载模板…</div><div v-else-if="templates.length === 0"><EmptyState title="尚无可展示模板" description="模板只从成功任务保存；列表不会显示凭据、节点、预检查、命令、日志或结果。" /></div></template>
     </OrchOperationalTable>
   </section>
-  <section v-if="templates.length > 0" class="content-card template-draft-choices"><h2>由模板创建草稿</h2><p class="section-hint">选择数据源与执行节点后点击“用模板新建草稿”；模板不复制凭据、节点、预检查或风险确认。</p><p v-if="createDraftFailure" class="feedback feedback-error" role="alert">{{ createDraftFailure }}</p><div class="template-choice-row"><label>数据源<ASelect v-model:value="draftSourceID" aria-label="数据源" :disabled="sourcesLoading"><ASelectOption value="" disabled>请选择数据源</ASelectOption><ASelectOption v-for="source in eligibleSources" :key="source.id" :value="source.id">{{ source.displayName }}</ASelectOption></ASelect></label><label>执行节点<ASelect v-model:value="draftNodeID" aria-label="执行节点" :disabled="sourcesLoading"><ASelectOption value="" disabled>请选择执行节点</ASelectOption><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ node.platform }}</ASelectOption></ASelect></label></div></section>
+  <section v-if="templates.length > 0" class="content-card template-draft-choices"><h2>由模板创建草稿</h2><p class="section-hint">选择数据源与执行节点后点击“用模板新建草稿”；模板不复制凭据、节点、预检查或风险确认。</p><AAlert v-if="createDraftFailure" class="orch-feedback" type="error" message="无法创建草稿" :description="createDraftFailure" show-icon /><div class="template-choice-row"><label>数据源<ASelect v-model:value="draftSourceID" aria-label="数据源" :disabled="sourcesLoading"><ASelectOption value="" disabled>请选择数据源</ASelectOption><ASelectOption v-for="source in eligibleSources" :key="source.id" :value="source.id">{{ source.displayName }}</ASelectOption></ASelect></label><label>执行节点<ASelect v-model:value="draftNodeID" aria-label="执行节点" :loading="sourcesLoading" :disabled="sourcesLoading && !nodes.length" @dropdown-visible-change="onNodeDropdownVisibleChange"><ASelectOption value="" disabled>请选择执行节点</ASelectOption><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ nodePlatformLabel(node.platform) }}</ASelectOption></ASelect></label></div></section>
   <p class="section-hint">使用模板一定创建新的可编辑草稿，并重新选择/确认数据源、节点、路径、权限与预检查。手工新建模板暂未提供，模板只从成功任务保存。</p>
   <OrchDangerConfirm :open="Boolean(pendingDelete)" :title="`删除模板：${pendingDelete?.displayName ?? ''}`" confirm-label="删除" destructive :busy="Boolean(actionBusy)" @confirm="confirmDelete" @cancel="cancelDelete"><p>删除后不可恢复；已创建的任务不受影响。</p></OrchDangerConfirm>
 </template>

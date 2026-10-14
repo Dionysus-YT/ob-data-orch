@@ -5,6 +5,7 @@ import type { ExportOutputStepModel } from '../exportStepModels'
 import { Alert as AAlert, Form as AForm, FormItem as AFormItem, Button as AButton, Skeleton as ASkeleton, RadioGroup as ARadioGroup, Radio as ARadio, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Checkbox as ACheckbox } from 'ant-design-vue'
 import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue'
 import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvancedSettings.vue'
+import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 
 const props = defineProps<{ model: ExportOutputStepModel }>()
 const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCandidates, loadingNodes, selectedNode, derivedDraftBindingLocked, moveToStep, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion, fieldPrefix, storageCredentialLoadFailure, loadStorageCredentials, loadingStorageCredentials, storageCredentialID, matchingStorageCredentials, filePath, outputPathPlaceholder, logPath, skipCheckDir, executionAdvancedCount, dataOptionsActive, maxFileSize, thread, pageSize, parallelMacro, selectedSource, fetchSize, jvmMemory, tmpPath, draftFailure } = toRefs(props.model)
@@ -25,7 +26,7 @@ const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCan
               <HddOutlined class="export-output-node-icon" aria-hidden="true" />
               <div class="export-output-node-identity">
                 <strong class="export-output-node-name">{{ selectedNode?.displayName ?? '尚未选择执行节点' }}</strong>
-                <span v-if="selectedNode" class="export-output-node-platform">平台 · {{ selectedNode.platform }}</span>
+                <span v-if="selectedNode" class="export-output-node-platform">平台 · {{ nodePlatformLabel(selectedNode.platform) }}</span>
               </div>
             </div>
             <AButton v-if="!derivedDraftBindingLocked" type="link" class="export-output-node-action" @click="moveToStep(2)">
@@ -53,6 +54,9 @@ const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCan
               <template #label>Region</template><AInput v-model:value.trim="storageRegion" aria-label="Region" autocomplete="off" />
             </AFormItem>
           </div>
+          <AFormItem required :validate-status="attemptedStep === 4 && !tmpPath.trim() ? 'error' : undefined" :help="attemptedStep === 4 && !tmpPath.trim() ? '请填写节点本地临时分块目录。' : '预检查会验证此目录的可写性与可用空间。'">
+            <template #label><span class="export-field-label">本地临时分块目录<ExportOptionHint label="本地临时分块目录" parameter="--tmp-path" description="对象存储 Multipart 上传使用的执行节点本地目录；预检查需要明确路径以检查可写性与可用空间。" /></span></template><AInput v-model:value.trim="tmpPath" aria-label="本地临时分块目录" aria-required="true" :placeholder="outputPathPlaceholder" autocomplete="off" />
+          </AFormItem>
           <AFormItem :html-for="fieldPrefix + '-storage-credential'" extra="只保存凭据标识与修订，不在页面读取密钥。">
             <template #label>存储凭据（可选）</template>
             <AAlert v-if="storageCredentialLoadFailure" type="error" show-icon :message="storageCredentialLoadFailure"><template #action><AButton type="link" @click="loadStorageCredentials">重试</AButton></template></AAlert>
@@ -71,16 +75,13 @@ const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCan
           <AFormItem extra="留空时继承 OBDUMPER 默认日志目录。">
             <template #label><span class="export-field-label">日志路径（可选）<ExportOptionHint label="日志路径" parameter="--log-path" description="指定工具日志目录；可选，留空继承工具默认目录，填写后检查可写性。" /></span></template><AInput v-model:value.trim="logPath" aria-label="日志路径" :placeholder="outputPathPlaceholder" autocomplete="off" />
           </AFormItem>
+          <template v-if="outputKind === 'LOCAL'">
+            <div class="export-option-control"><ACheckbox v-model:checked="skipCheckDir">跳过导出目录空性检查</ACheckbox><ExportOptionHint label="跳过导出目录空性检查" parameter="--skip-check-dir" description="允许向已有文件的导出目录写入，可能覆盖同名文件；仍检查路径可写性与可用空间。" /></div>
+            <AAlert v-if="skipCheckDir" class="export-other-options-warning" type="warning" show-icon message="可能覆盖同名文件；路径可写性与可用空间仍会检查。" />
+          </template>
         </div>
       </AForm>
     </div>
-    <section v-if="outputKind === 'LOCAL'" class="export-field-group" aria-label="其他选项">
-      <h3>其他选项</h3>
-      <div class="export-format-panel">
-        <div class="export-option-control"><ACheckbox v-model:checked="skipCheckDir">跳过导出目录空性检查</ACheckbox><ExportOptionHint label="跳过导出目录空性检查" parameter="--skip-check-dir" description="允许向已有文件的导出目录写入，可能覆盖同名文件；仍检查路径可写性与可用空间。" /></div>
-        <AAlert v-if="skipCheckDir" class="export-other-options-warning" type="warning" show-icon message="可能覆盖同名文件；路径可写性与可用空间仍会检查。" />
-      </div>
-    </section>
     <ExportAdvancedSettings class="export-advanced" title="执行限制与资源" :configured-count="executionAdvancedCount">
       <AForm layout="vertical" class="export-advanced-form">
         <h3>执行限制</h3>
@@ -106,9 +107,6 @@ const { draftNotice, attemptedStep, selectedNodeID, nodeLoadFailure, loadNodeCan
             <template #label><span class="export-field-label">JVM 内存<ExportOptionHint label="JVM 内存" parameter="--mem" description="设置运行工具的 JVM 内存，使用数字及 K/M/G/T 单位，例如 4G；留空继承默认。" /></span></template><AInput v-model:value.trim="jvmMemory" aria-label="JVM 内存" placeholder="例如 4G" />
           </AFormItem>
         </div>
-        <AFormItem v-if="outputKind !== 'LOCAL'" extra="Multipart 上传的本地分块目录；留空则继承官方默认。">
-          <template #label><span class="export-field-label">本地临时分块目录（可选）<ExportOptionHint label="本地临时分块目录" parameter="--tmp-path" description="对象存储 Multipart 上传使用的执行节点本地临时目录；留空继承工具默认。" /></span></template><AInput v-model:value.trim="tmpPath" aria-label="本地临时分块目录" :placeholder="outputPathPlaceholder" autocomplete="off" />
-        </AFormItem>
       </AForm>
     </ExportAdvancedSettings>
     <AAlert v-if="draftFailure" type="error" show-icon :message="draftFailure" />

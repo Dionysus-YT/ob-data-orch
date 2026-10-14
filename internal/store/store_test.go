@@ -749,7 +749,7 @@ func TestAgentHeartbeatIsIdempotentAndProtectsCurrentFacts(t *testing.T) {
 	}
 	invalidCapacity := next
 	invalidCapacity.RequestID = "heartbeat-invalid-capacity"
-	invalidCapacity.CapacityTotal = 2
+	invalidCapacity.CapacityTotal = 1025
 	if _, err := store.RecordAgentHeartbeat(ctx, invalidCapacity); err == nil {
 		t.Fatal("RecordAgentHeartbeat() accepted invalid capacity")
 	}
@@ -2657,7 +2657,7 @@ func TestCompleteAgentPrecheckEnforcesStorageShape(t *testing.T) {
 		t.Fatalf("CompleteAgentPrecheck(storage) = %#v, %v", completed, err)
 	}
 	stored, err := store.GetPrecheckRun(ctx, run.PrecheckID)
-	if err != nil || len(stored.Results) != len(storagePrecheckCheckList()) || stored.Results[4].Check != "STORAGE_CONNECTIVITY" || stored.Results[5].Check != "STORAGE_AUTH" {
+	if err != nil || len(stored.Results) != len(storagePrecheckCheckList()) || stored.Results[6].Check != "STORAGE_CONNECTIVITY" || stored.Results[7].Check != "STORAGE_AUTH" || stored.Results[8].Check != "STORAGE_WRITE" {
 		t.Fatalf("存储预检查结果 = %#v, %v", stored.Results, err)
 	}
 }
@@ -3246,6 +3246,23 @@ func seedBaseFixture(t *testing.T, store *Store) {
 		if _, err := store.db.ExecContext(ctx, statement.query, statement.args...); err != nil {
 			t.Fatalf("seed statement %d: %v", index+1, err)
 		}
+	}
+	// 成功预检查夹具必须持有可信内存事实和当前完整报告，不能依赖空结果绕过提交门禁。
+	factsJSON, err := encodeAgentEnvironmentFacts(AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "synthetic", ObservedAt: testTime, MemoryTotalBytes: 16 << 30, MemoryAvailableBytes: 12 << 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET facts_json=? WHERE agent_id='agent-1'`, factsJSON); err != nil {
+		t.Fatal(err)
+	}
+	resultJSON, err := json.Marshal(struct {
+		Checks []PrecheckCheckResult `json:"checks"`
+	}{Checks: passedPrecheckResults()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE precheck_runs SET result_json=? WHERE precheck_id='precheck-1'`, string(resultJSON)); err != nil {
+		t.Fatal(err)
 	}
 }
 

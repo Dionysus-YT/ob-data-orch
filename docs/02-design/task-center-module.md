@@ -8,7 +8,8 @@
 > 产品决策依据：[DEC-020](../01-product/decisions.md#dec-020-任务中心与任务详情专项产品规则)\
 > 字段决策依据：[DEC-021](../01-product/decisions.md#dec-021-任务中心与任务详情字段及条件规则)\
 > 场景语义参考：[任务中心与任务详情场景矩阵](#business-scenarios)；视觉与页面架构以 [P0 MASTER](../../design-system/MASTER.md) 为准。
-> 低保真决策依据：[DEC-038](../01-product/decisions.md#dec-038-任务中心与任务详情全状态低保真基线)
+> 低保真决策依据：[DEC-038](../01-product/decisions.md#dec-038-任务中心与任务详情全状态低保真基线)\
+> 2026-10-13 重构收窄：[DEC-050](../01-product/decisions.md#dec-050-任务中心重构范围与收窄规则) 推迟标签筛选、日志下载与敏感命令查看；页面规则见 [任务中心 P1](../../design-system/pages/task-center.md) 与 [任务详情 P1](../../design-system/pages/task-detail.md)。
 
 阅读导航：[模块方案](#module-design) · [字段与条件](#field-rules) · [业务场景](#business-scenarios)。本页定义业务规则；视觉以 [P0 MASTER](../../design-system/MASTER.md) 与对应 P1 为准。
 

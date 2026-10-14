@@ -12,14 +12,15 @@ import (
 
 func (b *Browser) agentPackage(w http.ResponseWriter, r *http.Request, packages, data string) {
 	name := strings.TrimPrefix(r.URL.Path, "/ob-data-orch-agent-")
-	targets := map[string]string{"windows-amd64.zip": "windows-amd64", "linux-amd64.zip": "linux-amd64", "linux-arm64.zip": "linux-arm64"}
+	// 下载名称和分发目录采用操作系统与 lscpu 架构名，Go 的 GOARCH 值仅用于构建。
+	targets := map[string]string{"windows-x86_64.zip": "windows-x86_64", "linux-x86_64.zip": "linux-x86_64", "linux-aarch64.zip": "linux-aarch64"}
 	target, ok := targets[name]
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	executable := "agent"
-	if target == "windows-amd64" {
+	if target == "windows-x86_64" {
 		executable += ".exe"
 	}
 	path := filepath.Join(packages, target, executable)
@@ -34,14 +35,14 @@ func (b *Browser) agentPackage(w http.ResponseWriter, r *http.Request, packages,
 		http.Error(w, "服务信任配置不可用", 503)
 		return
 	}
-	config, _ := json.Marshal(map[string]any{"formatVersion": "agent-bundle-config-v1", "controlPlaneUrl": b.settings.PublicURL, "controlPlaneCaFile": "control-plane-ca.pem", "stateDirectory": "data/agent-security", "realExecutionEnabled": b.settings.RealExecutionEnabled && target == "windows-amd64"})
+	config, _ := json.Marshal(map[string]any{"formatVersion": "agent-bundle-config-v1", "controlPlaneUrl": b.settings.PublicURL, "controlPlaneCaFile": "control-plane-ca.pem", "stateDirectory": "data/agent-security", "realExecutionEnabled": b.settings.RealExecutionEnabled && target == "windows-x86_64"})
 	launcher := "启动.cmd"
-	if target != "windows-amd64" {
+	if target != "windows-x86_64" {
 		launcher = "start.sh"
 	}
 	files := map[string][]byte{"control-plane-ca.pem": ca, "agent-config.json": config}
 	for _, file := range []string{launcher, "manage.ps1"} {
-		if target != "windows-amd64" && file == "manage.ps1" {
+		if target != "windows-x86_64" && file == "manage.ps1" {
 			continue
 		}
 		content, err := os.ReadFile(filepath.Join(packages, target, file))

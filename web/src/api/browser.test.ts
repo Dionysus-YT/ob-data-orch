@@ -15,6 +15,26 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
+  it('节点预算和任务统计保留真实数值，拒绝越界预算及越权范围', async () => {
+    const node = { id: 'node-1', displayName: '合成节点', platform: 'WINDOWS_AMD64', managementState: 'DISABLED', agentAssociationStatus: 'PENDING', heartbeatStatus: 'NEVER_CONNECTED', environmentStatus: 'NOT_CHECKED', capacityStatus: 'UNKNOWN', acceptsNewTasks: false, unavailableReasons: ['AGENT_ASSOCIATION_REQUIRED'], revision: 1, updatedAt: '2026-01-01T00:00:00Z' }
+    const valid = { ...node, executionQuota: { totalGiB: 20, usedGiB: 10, reservedGiB: 5 }, taskSummary: { scope: 'ALL', running: 3, waiting: 23, reconciling: 1 }, budgetPolicy: { systemReservedBytes: 2147483648, taskOverheadBytes: 1073741824 }, defaultJvmMemory: '4G' }
+    await expect(apiWith(Response.json({ items: [valid] })).api.listExecutionNodes()).resolves.toMatchObject([{ executionQuota: valid.executionQuota, taskSummary: valid.taskSummary, budgetPolicy: valid.budgetPolicy }])
+    for (const input of [
+      { ...valid, executionQuota: { totalGiB: 1, usedGiB: 1, reservedGiB: 1 } },
+      { ...valid, executionQuota: { totalGiB: 0, usedGiB: 0, reservedGiB: 0 } },
+      { ...valid, taskSummary: { scope: 'ALL', running: -1, waiting: 0, reconciling: 0 } },
+      { ...valid, taskSummary: { scope: 'UNTRUSTED', running: 0, waiting: 0, reconciling: 0 } },
+      { ...valid, budgetPolicy: { systemReservedBytes: 9007199254740992 } },
+    ]) await expect(apiWith(Response.json({ items: [input] })).api.listExecutionNodes()).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
+
+  it('任务列表携带节点和账号范围以及取消信号', async () => {
+    const { api, calls } = apiWith(Response.json({ items: [], totalPages: 0 }))
+    const controller = new AbortController()
+    await api.listTasks(undefined, 10, { nodeId: 'node/1', scope: 'MINE' }, controller.signal)
+    expect(calls[0]?.path).toBe('/api/v1/tasks?limit=10&nodeId=node%2F1&scope=MINE')
+    expect(calls[0]?.init.signal).toBe(controller.signal)
+  })
   it('完整解析单类一万项和五类五万项，拒绝截断及越界数据库目录', async () => {
     const objects = Array.from({ length: 10000 }, (_, index) => `synthetic_${index}`)
     const item = { id: 'catalog-large', status: 'SUCCEEDED', dataSourceId: 'source', nodeId: 'node', database: 'synthetic_db', objectType: 'TABLE', keyword: '', objects, groups: [] as unknown[], truncated: false, validUntil: '2099-01-01T00:00:00Z' }
@@ -213,6 +233,28 @@ describe('浏览器 API 客户端', () => {
         capacityUsed: 0,
       },
     }])
+  })
+
+  it('内存容量必须成对且无损，保留真实零可用量，旧服务整对缺失保持未知', async () => {
+    const facts = { os: 'windows', arch: 'amd64', agentVersion: 'synthetic', bootId: 'synthetic-boot', observedAt: '2026-10-10T00:00:00Z', capacityTotal: 1, capacityUsed: 0 }
+    const node = { id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64', managementState: 'DISABLED', agentAssociationStatus: 'ASSOCIATED', heartbeatStatus: 'ONLINE', environmentStatus: 'NOT_CHECKED', capacityStatus: 'AVAILABLE', acceptsNewTasks: false, unavailableReasons: ['NODE_DISABLED'], revision: 1, updatedAt: facts.observedAt, agentFacts: facts }
+    const total = 16 * 2 ** 30
+    for (const available of [0, total]) {
+      const memory = { memoryTotalBytes: total, memoryAvailableBytes: available }
+      await expect(apiWith(Response.json({ items: [{ ...node, agentFacts: { ...facts, ...memory } }] })).api.listExecutionNodes()).resolves.toMatchObject([{ agentFacts: memory }])
+    }
+    const legacy = await apiWith(Response.json({ items: [node] })).api.listExecutionNodes()
+    expect(legacy[0]?.agentFacts?.memoryTotalBytes).toBeUndefined()
+    expect(legacy[0]?.agentFacts?.memoryAvailableBytes).toBeUndefined()
+    for (const memory of [
+      { memoryTotalBytes: total }, { memoryAvailableBytes: 0 },
+      { memoryTotalBytes: 0, memoryAvailableBytes: 0 },
+      { memoryTotalBytes: total, memoryAvailableBytes: -1 },
+      { memoryTotalBytes: total, memoryAvailableBytes: total + 1 },
+      { memoryTotalBytes: total, memoryAvailableBytes: 0.5 },
+      { memoryTotalBytes: Number.MAX_SAFE_INTEGER + 1, memoryAvailableBytes: 0 },
+      { memoryTotalBytes: '16', memoryAvailableBytes: 0 },
+    ]) await expect(apiWith(Response.json({ items: [{ ...node, agentFacts: { ...facts, ...memory } }] })).api.listExecutionNodes()).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
   it('拒绝将未检查环境投影为可接收新任务', async () => {
@@ -452,7 +494,17 @@ describe('浏览器 API 客户端', () => {
     })
   })
 
-  it('读取预检查时只接受完整固定六项安全结果', async () => {
+  it('七项等待投影必须有完整证据码，缺失时拒绝读取', async () => {
+    const checks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE']
+    const item = { id: 'precheck-1', draftId: 'draft-1', draftRevision: 1, configFingerprint: 'synthetic-fingerprint', nodeId: 'node-1', status: 'PENDING', integrityStatus: 'UNKNOWN', validUntil: '2099-01-01T00:00:00Z', results: checks.map(check => ({ check, status: 'UNKNOWN', evidenceCode: `${check}_UNAVAILABLE` })) }
+    const { api } = apiWith(Response.json({ item }))
+    expect((await api.getPrecheck('precheck-1')).results).toHaveLength(7)
+    const results = item.results.map(result => result.check === 'NODE_RESOURCE' ? { ...result, evidenceCode: '' } : result)
+    const { api: invalid } = apiWith(Response.json({ item: { ...item, results } }))
+    await expect(invalid.getPrecheck('precheck-1')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
+
+  it('历史预检查六项结果保持可读', async () => {
     const { api, calls } = apiWith(Response.json({
       item: {
         id: 'precheck-1',
@@ -482,6 +534,17 @@ describe('浏览器 API 客户端', () => {
     expect(precheck.results[0]).toMatchObject({ check: 'DATABASE_CONNECTIVITY', status: 'UNKNOWN' })
 
     expect(calls[0]?.path).toBe('/api/v1/prechecks/precheck-1')
+  })
+
+  it.each([
+    ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'],
+    ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'OUTPUT_PATH', 'AVAILABLE_SPACE', 'STORAGE_CONNECTIVITY', 'STORAGE_AUTH', 'STORAGE_WRITE'],
+  ])('当前完整清单可读并拒绝混合形态：%j', async (...checks) => {
+    const item = { id: 'precheck-1', draftId: 'draft-1', draftRevision: 1, configFingerprint: 'synthetic-fingerprint', nodeId: 'node-1', status: 'SUCCEEDED', integrityStatus: 'COMPLETE', validUntil: '2099-01-01T00:00:00Z', results: checks.map(check => ({ check, status: 'PASSED', evidenceCode: 'SYNTHETIC_OK' })) }
+    const { api } = apiWith(Response.json({ item }))
+    expect((await api.getPrecheck('precheck-1')).results).toHaveLength(checks.length)
+    const { api: invalidApi } = apiWith(Response.json({ item: { ...item, results: [...item.results, { check: 'STORAGE_WRITE', status: 'PASSED', evidenceCode: 'SYNTHETIC_OK' }] } }))
+    await expect(invalidApi.getPrecheck('precheck-1')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
   it('读取任务日志时只接受浏览器契约的 lowerCamelCase 脱敏投影', async () => {
@@ -561,6 +624,8 @@ describe('浏览器 API 客户端', () => {
         id: 'task-1', type: 'OBDUMPER_EXPORT', dataSourceId: 'source-1', objectSummary: 'synthetic_db.synthetic_table',
         state: 'RUNNING', stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', reconciliationRequired: true,
         nodeId: 'node-1', ownedByCurrentUser: true, submittedAt: '2026-07-31T03:00:00Z', updatedAt: '2026-07-31T03:01:00Z',
+        displayName: 'synthetic_db.synthetic_table', dataSourceName: '合成数据源', dataSourceDeleted: false, environment: 'PRODUCTION',
+        nodeName: '合成节点', nodeDeleted: true, creatorName: '合成用户', cancelRequested: false, availableActions: ['VIEW_LOGS', 'UNKNOWN_ACTION', 'CANCEL'],
         plannedCommand: 'must-not-be-read', error: 'must-not-be-read',
       }],
       nextCursor: 'cursor/next',
@@ -572,11 +637,28 @@ describe('浏览器 API 客户端', () => {
         id: 'task-1', type: 'OBDUMPER_EXPORT', dataSourceId: 'source-1', objectSummary: 'synthetic_db.synthetic_table',
         state: 'RUNNING', stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', reconciliationRequired: true,
         nodeId: 'node-1', ownedByCurrentUser: true, submittedAt: '2026-07-31T03:00:00Z', updatedAt: '2026-07-31T03:01:00Z',
+        displayName: 'synthetic_db.synthetic_table', dataSourceName: '合成数据源', dataSourceDeleted: false, environment: 'PRODUCTION',
+        nodeName: '合成节点', nodeDeleted: true, creatorName: '合成用户', cancelRequested: false, availableActions: ['VIEW_LOGS', 'CANCEL'],
       }],
       nextCursor: 'cursor/next',
       totalPages: 2,
     })
     expect(calls[0]?.path).toBe('/api/v1/tasks?limit=20&cursor=cursor%2Fcurrent')
+  })
+
+  it('任务列表筛选按契约编码，候选与取消回执校验', async () => {
+    const list = apiWith(Response.json({ items: [], totalPages: 0 }))
+    await list.api.listTasks(undefined, 10, { keyword: 'a&b', states: ['FAILED', 'RUNNING'], types: ['OBDUMPER_EXPORT'], environment: 'TEST', createdFrom: '2026-10-01T00:00:00.000Z', creatorId: 'subject/1' })
+    expect(list.calls[0]?.path).toBe('/api/v1/tasks?limit=10&keyword=a%26b&type=OBDUMPER_EXPORT&state=FAILED%2CRUNNING&createdFrom=2026-10-01T00%3A00%3A00.000Z&environment=TEST&creatorId=subject%2F1')
+    const options = apiWith(Response.json({ dataSources: [{ id: 'source-1', label: '源' }], nodes: [{ id: 'node-1' }], creators: [], environments: ['TEST', 'LOCAL'], creatorFilterAvailable: false }))
+    await expect(options.api.listTaskFilterOptions()).resolves.toEqual({ dataSources: [{ id: 'source-1', label: '源' }], nodes: [{ id: 'node-1', label: '' }], creators: [], environments: ['TEST'], creatorFilterAvailable: false })
+    const cancel = apiWith(Response.json({ item: { taskId: 'task/1', state: 'CANCELLING', cancelRequested: true } }))
+    await expect(cancel.api.cancelTask('task/1')).resolves.toEqual({ taskId: 'task/1', state: 'CANCELLING', cancelRequested: true })
+    expect(cancel.calls[0]?.path).toBe('/api/v1/tasks/task%2F1:cancel')
+    const mismatched = apiWith(Response.json({ item: { taskId: 'other', state: 'CANCELLING', cancelRequested: true } }))
+    await expect(mismatched.api.cancelTask('task/1')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    const unknownEnvironment = apiWith(Response.json({ items: [{ id: 't', type: 'OBDUMPER_EXPORT', dataSourceId: 's', state: 'RUNNING', stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', reconciliationRequired: false, nodeId: 'n', ownedByCurrentUser: true, submittedAt: 'x', updatedAt: 'x', displayName: 't', dataSourceDeleted: false, nodeDeleted: false, cancelRequested: false, availableActions: [], environment: 'LOCAL' }], totalPages: 1 }))
+    await expect(unknownEnvironment.api.listTasks()).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
   it('任务列表默认请求每页 10 条', async () => {
@@ -1068,12 +1150,12 @@ describe('浏览器 API 客户端', () => {
   })
 
   it('执行节点删除使用版本条件且返回明确结果', async () => {
-    const { api, calls } = apiWith(Response.json({ outcome: 'ARCHIVED', revision: 3, agentAccessRevoked: true }))
+    const { api, calls } = apiWith(Response.json({ outcome: 'DELETED', revision: 0, agentAccessRevoked: true }))
 
-    await expect(api.deleteOrArchiveExecutionNode('node-1', 2)).resolves.toEqual({ outcome: 'ARCHIVED', revision: 3, agentAccessRevoked: true })
+    await expect(api.deleteExecutionNode('node-1', 2)).resolves.toEqual({ outcome: 'DELETED', revision: 0, agentAccessRevoked: true })
 
-    expect(calls[0]?.path).toBe('/api/v1/execution-nodes/node-1')
-    expect(calls[0]?.init).toMatchObject({ method: 'DELETE' })
+    expect(calls[0]?.path).toBe('/api/v1/execution-nodes/node-1:delete')
+    expect(calls[0]?.init).toMatchObject({ method: 'POST' })
     expect(calls[0]?.init.headers).toMatchObject({
       'X-CSRF-Token': 'synthetic-csrf-token',
       'If-Match': '"rev-2"',
@@ -1084,13 +1166,18 @@ describe('浏览器 API 客户端', () => {
   it('拒绝未知的执行节点删除结果', async () => {
     const { api } = apiWith(Response.json({ outcome: 'UNKNOWN', revision: 3 }))
 
-    await expect(api.deleteOrArchiveExecutionNode('node-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    await expect(api.deleteExecutionNode('node-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
-  it('拒绝缺少 Agent 撤销事实的执行节点归档结果', async () => {
-    const { api } = apiWith(Response.json({ outcome: 'ARCHIVED', revision: 3 }))
+  it('拒绝缺少 Agent 撤销事实的执行节点删除结果', async () => {
+    const { api } = apiWith(Response.json({ outcome: 'DELETED', revision: 0 }))
 
-    await expect(api.deleteOrArchiveExecutionNode('node-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    await expect(api.deleteExecutionNode('node-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
+
+  it.each([{ outcome: 'ARCHIVED', revision: 3 }, { outcome: 'DELETED', revision: 1 }])('永久删除拒绝归档或仍存版本的结果 %j', async result => {
+    const { api } = apiWith(Response.json({ ...result, agentAccessRevoked: true }))
+    await expect(api.deleteExecutionNode('node-1', 2)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
   it('拒绝未知的数据源删除结果', async () => {

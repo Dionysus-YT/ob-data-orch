@@ -40,7 +40,7 @@ export function useCredentialList(createApi: (signal: AbortSignal) => Credential
       if (!valid()) return
       // 授权失败后，仅成功的授权读取能重新开放输入；临时故障不能解除阻断。
       if ([401, 403].includes((error as Partial<ApiError>).status ?? 0)) accessDenied.value = true
-      if (accessDenied.value) credentials.value = []
+      if (accessDenied.value) { credentials.value = []; notice.value = '' }
       loadFailure.value = storageCredentialErrorMessage(error, '无法加载存储凭据，请稍后重试。')
     } finally {
       if (valid()) loading.value = false

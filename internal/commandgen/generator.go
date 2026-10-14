@@ -95,12 +95,21 @@ func NewGeneralized() (*Generator, error) {
 	if err != nil {
 		return nil, err
 	}
+	expertCatalog, err := parammeta.LoadExpertParameters()
+	if err != nil {
+		return nil, err
+	}
+	expertGenerator, err := newGenerator(expertCatalog)
+	if err != nil {
+		return nil, err
+	}
 	current.versions = map[string]*Generator{
 		current.metadataVersion:           current,
 		legacy.metadataVersion:            legacy,
 		objectGenerator.metadataVersion:   objectGenerator,
 		combinedGenerator.metadataVersion: combinedGenerator,
 		ddlTextGenerator.metadataVersion:  ddlTextGenerator,
+		expertGenerator.metadataVersion:   expertGenerator,
 	}
 	return current, nil
 }
@@ -240,6 +249,26 @@ func (g *Generator) Generate(request Request) (Result, error) {
 			Value:        value,
 		})
 	}
+	// 新目录的 sys 依赖必须由唯一生成器复核；历史目录的规范化与指纹保持原样。
+	if g.metadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters" {
+		activeFields := make(map[string]bool, len(normalized))
+		for _, field := range normalized {
+			activeFields[field.Name] = field.State == StateExplicit || field.State == StateDerived
+		}
+		for _, field := range normalized {
+			if !activeFields[field.Name] {
+				continue
+			}
+			for _, dependency := range g.byName[field.Name].DependsOn {
+				if !activeFields[dependency] {
+					issues = append(issues, Issue{Code: "PARAMETER_DEPENDENCY_MISSING", Field: field.Name})
+				}
+			}
+		}
+		if (activeFields["--sys-user"] || activeFields["--sys-password"]) && !activeFields["--add-extra-message"] {
+			issues = append(issues, Issue{Code: "PARAMETER_DEPENDENCY_MISSING", Field: "--sys-user"})
+		}
+	}
 	if len(issues) > 0 {
 		sortIssues(issues)
 		return Result{}, &ValidationError{Issues: issues}
@@ -261,8 +290,12 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		}
 		definition := subset[index]
 		if definition.EmissionTarget == "SECURITY_FILE" {
+			slotID := secretSlotID
+			if definition.LongName == "--sys-password" {
+				slotID = "sys-password"
+			}
 			secretSlots = append(secretSlots, SecretSlot{
-				SlotID:              secretSlotID,
+				SlotID:              slotID,
 				Target:              secretSlotTarget,
 				SecurityProperty:    definition.SecurityProperty,
 				CredentialReference: *field.Value.Secret,
@@ -275,7 +308,12 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		if definition.ValueType != "flag" {
 			value := normalizedValueString(field.Value)
 			argv = append(argv, renderExecutionParameter(definition, value)...)
-			display = append(display, renderExecutionParameter(definition, value)...)
+			if definition.LongName == "--sys-user" {
+				// sys 身份仅内部执行使用，浏览器命令与任务证据不披露账号。
+				display = append(display, definition.LongName, "******")
+			} else {
+				display = append(display, renderExecutionParameter(definition, value)...)
+			}
 		} else {
 			argv = append(argv, displayParameterName(definition))
 			display = append(display, displayParameterName(definition))

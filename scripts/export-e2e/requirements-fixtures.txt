@@ -1,0 +1,2 @@
+# 只安装在 artifacts/e2e-mysql-deps；MIT、纯 Python，不属于产品运行依赖。
+PyMySQL==1.2.3

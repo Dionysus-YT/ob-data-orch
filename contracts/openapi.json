@@ -31,14 +31,18 @@
       "get": { "operationId": "getSession", "tags": ["Session"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/execution-nodes": {
-      "get": { "operationId": "listExecutionNodes", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "OBDUMPER_EXPORT 只返回管理状态为 ENABLED 的任务候选。DATA_SOURCE_CONNECTION_TEST 是独立诊断筛选，可返回具备当前受认证 Agent 事实的 DISABLED 或 ENABLED 节点，但拒绝 MAINTENANCE/ARCHIVED；诊断候选不表示节点可接收导出任务。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/EligibleFor" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "get": { "operationId": "listExecutionNodes", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "管理列表在节点授权范围内返回资源预算与任务统计；全局管理员统计 ALL，其他账号统计 MINE。OBDUMPER_EXPORT 只返回管理状态为 ENABLED 的任务候选。DATA_SOURCE_CONNECTION_TEST 是独立诊断筛选，可返回具备当前受认证 Agent 事实的 DISABLED 或 ENABLED 节点，但拒绝 MAINTENANCE/ARCHIVED；诊断候选不表示节点可接收导出任务。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/EligibleFor" }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeCollection" }, "default": { "$ref": "#/components/responses/Error" } } },
       "post": { "operationId": "createExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "G2 创建节点的固定本机配置声明。服务端固定将新节点保存为 DISABLED；首次关联后的 Agent 必须在本机复核工具、Java 和数据目录，浏览器不能写入心跳、资源采样或管理状态。", "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/execution-nodes/{nodeId}": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
-      "get": { "operationId": "getExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "operationId": "updateExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "G2 替换节点名称、目标平台、工具目录、Java 路径和导出数据目录；配置变化会使节点禁用并要求 Agent 重新核验。管理状态、Agent、心跳和资源事实不可写。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "operationId": "deleteOrArchiveExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "存在 Agent、草稿、预检查、任务、执行记录或连接测试引用时仅归档；完全未引用的节点才物理删除。归档会原子撤销当前 Agent 身份和未使用注册码；有运行任务时拒绝处置，避免中断任务回报。控制面不披露具体引用事实。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDetail" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "operationId": "updateExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "G2 替换节点名称、目标平台、工具目录、Java 路径和导出数据目录；配置变化会使节点禁用并要求 Agent 重新核验。管理状态、Agent、心跳和资源事实不可写。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExecutionNodeWrite" }, "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDetail" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "deleteExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "永久删除节点配置；保留历史任务、快照、执行、预检查、事件、审计和日志证据的原标识。原子撤销机器身份和未使用注册码，运行或待核对执行阻断删除，不自动归档。新前端使用独立 :delete 动作，避免旧控制面自动归档。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/execution-nodes/{nodeId}:delete": {
+      "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
+      "post": { "operationId": "permanentlyDeleteExecutionNode", "tags": ["ExecutionNodes"], "security": [{ "BrowserSession": [] }], "description": "永久删除的独立动作入口，仅允许确定长度的空请求体；与 DELETE 相同的授权、CSRF、If-Match 和事务语义。旧版本对此路径返回 404，禁止退回旧自动归档端点。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDeletion" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/execution-nodes/{nodeId}:enrollments": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
@@ -46,11 +50,11 @@
     },
     "/api/v1/execution-nodes/{nodeId}:environment-check": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
-      "post": { "operationId": "requestExecutionNodeEnvironmentCheck", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "节点管理员请求当前受认证 Agent 执行唯一固定本机运行时检查。控制面只随心跳返回不透明检查标识；不下发路径、命令、SQL、凭据或工具输出。请求会使节点保持 DISABLED，直到检查通过后由专用启用动作完成状态转换。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "202": { "$ref": "#/components/responses/Accepted" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "requestExecutionNodeEnvironmentCheck", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "节点管理员请求当前受认证 Agent 执行唯一固定本机运行时检查。控制面只随心跳返回不透明检查标识；不下发路径、命令、SQL、凭据或工具输出。请求会使节点保持 DISABLED，直到检查通过后由专用启用动作完成状态转换。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "202": { "$ref": "#/components/responses/ExecutionNodeDetail" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/execution-nodes/{nodeId}:enable": {
       "parameters": [{ "$ref": "#/components/parameters/NodeId" }],
-      "post": { "operationId": "enableExecutionNode", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "仅当当前 Agent 在线、平台匹配、容量可用，且同一 factsRevision 的固定环境检查为 TOOL_RUNTIME_READY 时启用节点。该动作不连接数据库、不启动 OBDUMPER，任务仍须通过独立预检查。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "enableExecutionNode", "tags": ["ExecutionNodes", "AgentEnvironmentChecks"], "security": [{ "BrowserSession": [] }], "description": "仅当当前 Agent 在线、平台匹配、容量可用，且同一 factsRevision 的固定环境检查为 TOOL_RUNTIME_READY 时启用节点。该动作不连接数据库、不启动 OBDUMPER，任务仍须通过独立预检查。", "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "responses": { "200": { "$ref": "#/components/responses/ExecutionNodeDetail" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-config-templates": {
       "get": { "operationId": "listExportConfigTemplates", "tags": ["ExportConfigTemplates"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体拥有的导出配置模板安全投影（不含配置 JSON 原文；配置只在由模板创建草稿时由服务端读取）。", "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } },
@@ -108,10 +112,12 @@
       "post": { "operationId": "enableDataSource", "tags": ["DataSources"], "security": [{ "BrowserSession": [] }], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/EmptyAction" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-drafts": {
+      "get": { "operationId": "listExportDrafts", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "description": "只列当前主体自己的未提交且未删除草稿。关键字按名称/ID 字面匹配，数量与游标不扩大所有权范围，不返回配置、路径或凭据引用。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "name": "limit", "in": "query", "schema": { "type": "integer", "enum": [10, 20, 50, 100], "default": 10 } }, { "name": "keyword", "in": "query", "schema": { "type": "string", "maxLength": 128 } }], "responses": { "200": { "$ref": "#/components/responses/ExportDraftListRead" }, "default": { "$ref": "#/components/responses/Error" } } },
       "post": { "operationId": "createExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/ExportDraftWrite" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/export-drafts/{draftId}": {
       "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
+      "delete": { "operationId": "deleteExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-optimistic-lock": "REQUIRED", "description": "版本保护下删除自己的草稿。已提交或存在活动预检查租约时返回 409；删除标记、预检查失效、审计及幂等结果同一短事务提交。历史引用保留，删除对象不再提供读取、编辑、预检查入口。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
       "get": { "operationId": "getExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } },
       "patch": { "operationId": "updateExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-optimistic-lock": "REQUIRED", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportDraftWrite" }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
@@ -132,7 +138,10 @@
       "post": { "operationId": "submitExportDraft", "tags": ["ExportDrafts"], "security": [{ "BrowserSession": [] }], "x-idempotency": "REQUIRED", "x-real-execution": "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT", "description": "Windows 本机 MVP：仅当冻结草稿绑定的预检查仍完整成功时创建任务。目标契约只要求预检查标识；query-sql 使用普通任务授权，不要求敏感 capability、风险指纹或提交级二次确认。过渡期保留旧确认字段的 schema 解析兼容，但它不得成为新 query-sql 的提交条件。请求不接收命令、路径或密码；关联 Agent 领取后才会按固定 OBDUMPER_EXPORT 信封启动工具。", "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }, { "$ref": "#/components/parameters/IfMatch" }], "requestBody": { "$ref": "#/components/requestBodies/ExportTaskSubmit" }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks": {
-      "get": { "operationId": "listTasks", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "只返回当前主体创建或通过 TASK_OPERATE_BY_DATA_SOURCE 明确授权的已提交任务。limit 只允许 10、20 或 50，默认 10；totalPages 仅按同一授权范围和当前 limit 派生，不返回全局任务总数。首个 F3 增量没有可靠阶段或百分比证据，因此明确返回 UNAVAILABLE；不返回配置、命令、日志、错误原文、凭据引用或创建者标识。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskPageSize" }], "responses": { "200": { "$ref": "#/components/responses/TaskList" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "listTasks", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "普通账号只返回当前主体创建或通过 TASK_OPERATE_BY_DATA_SOURCE 明确授权的已提交任务；可信全局管理员可读取全部任务。limit 只允许 10、20 或 50，默认 10；totalPages 仅按同一授权范围和当前 limit 派生，普通账号不获得范围外计数。首个 F3 增量没有可靠阶段或百分比证据，因此明确返回 UNAVAILABLE；不返回配置、命令、日志、错误原文、凭据引用或创建者标识。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskPageSize" }, { "name": "nodeId", "in": "query", "schema": { "type": "string", "maxLength": 256 } }, { "name": "scope", "in": "query", "schema": { "type": "string", "enum": ["MINE", "ALL"] }, "description": "只裁剪范围；ALL 必须通过服务端可信全局读取授权。游标绑定节点、范围、全部筛选和当前授权。" }, { "name": "keyword", "in": "query", "schema": { "type": "string", "maxLength": 128 }, "description": "按字面匹配任务 ID 与快照库/表名，通配符被转义。" }, { "name": "type", "in": "query", "schema": { "type": "string", "maxLength": 128 }, "description": "逗号分隔、至多 8 个；当前只接受 OBDUMPER_EXPORT，未准入类型返回 400。" }, { "name": "state", "in": "query", "schema": { "type": "string", "maxLength": 256 }, "description": "逗号分隔、至多 8 个，取值为七种已提交任务状态。" }, { "name": "createdFrom", "in": "query", "schema": { "type": "string", "format": "date-time" } }, { "name": "createdTo", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "与 createdFrom 构成半开区间。" }, { "name": "startedFrom", "in": "query", "schema": { "type": "string", "format": "date-time" } }, { "name": "startedTo", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "未开始任务不命中开始时间筛选。" }, { "name": "dataSourceId", "in": "query", "schema": { "type": "string", "maxLength": 256 } }, { "name": "environment", "in": "query", "schema": { "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"] }, "description": "取提交时冻结的数据源环境。" }, { "name": "creatorId", "in": "query", "schema": { "type": "string", "maxLength": 256 }, "description": "非可信全局读取身份只能传本人标识，否则 403。" }], "responses": { "200": { "$ref": "#/components/responses/TaskList" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/filter-options": {
+      "get": { "operationId": "listTaskFilterOptions", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "返回当前授权任务中出现过的数据源、执行节点、环境候选，每类至多 100 个；名称来自提交时冻结的展示事实。只有可信全局读取身份获得创建人候选，其他身份 creators 为空且 creatorFilterAvailable=false。不接受查询参数。", "responses": { "200": { "description": "授权范围内的筛选候选", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskFilterOptionsEnvelope" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
@@ -140,7 +149,11 @@
     },
     "/api/v1/tasks/{taskId}/snapshot": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "已提交 OBDUMPER 导出任务的最小冻结配置事实；支持已实现格式与 DDL 组合的对象/范围摘要、格式、版本和指纹，不返回完整快照 JSON、凭据引用、输出路径或日志路径。", "responses": { "200": { "$ref": "#/components/responses/TaskSnapshotRead" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskSnapshot", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "冻结字段白名单按向导五步组织。路径仅创建者可见，其他读取者得到裁剪说明。凭据仅标记已脱敏，不返回凭据标识或原始 JSON。历史输入来源未记录时返回 UNKNOWN，不猜测用户或工具默认。", "responses": { "200": { "$ref": "#/components/responses/TaskSnapshotRead" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/v1/tasks/{taskId}/operations": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": { "operationId": "listTaskOperations", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "description": "当前任务读取范围内的安全操作事实，固定每页 50 条，游标绑定主体及任务。只投影操作人、动作、结果、时间，拒绝审计差异与事件原始载荷；被拒绝事件保留 DENIED 事实。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }], "responses": { "200": { "$ref": "#/components/responses/TaskOperationsRead" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/command-evidence": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
@@ -156,7 +169,7 @@
     },
     "/api/v1/tasks/{taskId}/logs": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
-      "get": { "operationId": "getTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "description": "只读取当前已授权任务的已持久化双层秘密脱敏日志。正文保留完整非秘密运行上下文，包括连接、对象、路径、非密码命令令牌和工具诊断；密码、令牌、密钥和安全材料继续遮蔽。cursor 继续固定快照；after 从最后可靠游标创建新快照增量读取；两者不能同时提供。响应不含总数、段路径、SQLite 行号或来源内部标识。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskLogAfter" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "get": { "operationId": "getTaskLogs", "tags": ["Tasks"], "security": [{ "BrowserSession": [] }], "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT", "description": "只读取当前已授权任务的已持久化双层秘密脱敏日志。正文保留完整非秘密运行上下文，包括连接、对象、路径、非密码命令令牌和工具诊断；密码、令牌、密钥和安全材料继续遮蔽。cursor 继续固定快照；after 从最后可靠游标创建新快照增量读取；两者不能同时提供。响应不含总数、段路径、SQLite 行号或来源内部标识。 已登记普通日志保留清理时返回 200、items 为空、integrity 为 EXPIRED；未授权对象不获得清理事实。缺失或损坏仍按完整性错误处理。", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/TaskLogAfter" }], "responses": { "200": { "$ref": "#/components/responses/Collection" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/v1/tasks/{taskId}/logs/stream": {
       "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
@@ -194,7 +207,7 @@
     },
     "/agent/v1/execution-node-environment-checks/{checkId}:complete": {
       "parameters": [{ "$ref": "#/components/parameters/ExecutionNodeEnvironmentCheckId" }],
-      "post": { "operationId": "completeExecutionNodeEnvironmentCheck", "tags": ["AgentEnvironmentChecks"], "security": [{ "AgentCredential": [] }], "description": "当前已关联 Agent 只能回传固定本机运行时检查的 PASSED/TOOL_RUNTIME_READY 或 FAILED 稳定码；请求不包含路径、命令、数据库信息、秘密或原始错误。", "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "completeExecutionNodeEnvironmentCheck", "tags": ["AgentEnvironmentChecks"], "security": [{ "AgentCredential": [] }], "description": "当前 Agent 回传固定完整检查清单与稳定结果；可包含本机固化路径事实和纯版本标识，不包含命令、原始输出、数据库输入、秘密或自由检查项。版本查询须绑定当前用户检查许可，完整结果与检查状态原子保存。", "requestBody": { "$ref": "#/components/requestBodies/AgentNodeEnvironmentInspectionCompletion" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/executions:claim": {
       "post": { "operationId": "claimExecution", "tags": ["AgentExecutions"], "security": [{ "AgentCredential": [] }], "requestBody": { "$ref": "#/components/requestBodies/AgentEnvelope" }, "responses": { "200": { "$ref": "#/components/responses/AgentOk" }, "204": { "$ref": "#/components/responses/NoWork" }, "default": { "$ref": "#/components/responses/Error" } } }
@@ -244,7 +257,7 @@
     },
     "/agent/v1/prechecks/{precheckId}/secret-slots:resolve": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
-      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "description": "仅受认证 Agent 可在已确认的固定 EXPORT_PREFLIGHT 租约中解析 DATABASE_CONNECTION，或仅在对象存储输出的 STORAGE_AUTH 阶段解析 STORAGE_CREDENTIAL。每个槽位使用独立请求标识与回执；响应只能短时进入 Agent 内存，不得进入状态文件、日志、审计、浏览器或任务快照；该协议不开放工具启动或真实执行。", "x-secret-response": "AGENT_MEMORY_ONLY_NO_STORE", "x-real-execution": "DISABLED_UNTIL_G3_VALIDATION", "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckSecretSlotResolve" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckSecretSlotResolved" }, "default": { "$ref": "#/components/responses/Error" } } }
+      "post": { "operationId": "resolvePrecheckSecretSlots", "tags": ["AgentPrechecks"], "security": [{ "AgentCredential": [] }], "description": "仅受认证 Agent 可在已确认的固定 EXPORT_PREFLIGHT 租约中解析 DATABASE_CONNECTION，或仅在对象存储输出的 STORAGE_AUTH / STORAGE_WRITE 受控阶段解析 STORAGE_CREDENTIAL。每个阶段各最多一次，并使用独立请求标识与回执；响应只能短时进入 Agent 内存，不得进入状态文件、日志、审计、浏览器或任务快照；该协议不开放工具启动或真实执行。", "x-secret-response": "AGENT_MEMORY_ONLY_NO_STORE", "x-real-execution": "DISABLED_UNTIL_G3_VALIDATION", "requestBody": { "$ref": "#/components/requestBodies/AgentPrecheckSecretSlotResolve" }, "responses": { "200": { "$ref": "#/components/responses/AgentPrecheckSecretSlotResolved" }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/agent/v1/prechecks/{precheckId}:complete": {
       "parameters": [{ "$ref": "#/components/parameters/PrecheckId" }],
@@ -312,21 +325,26 @@
       "AgentDataSourceConnectionTestSecretSlotResolve": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestSecretSlotResolve" } } } },
       "AgentDataSourceConnectionTestCompletion": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSourceConnectionTestCompletion" } } } },
       "AgentEnvelope": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentEnvelope" } } } },
+      "AgentNodeEnvironmentInspectionCompletion": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentNodeEnvironmentInspectionCompletion" } } } },
       "StorageCredentialWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageCredentialWrite" } } } },
       "TaskDerivationWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskDerivationRequest" } } } },
       "TemplateDraftWrite": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TemplateDraftRequest" } } } }
     },
     "responses": {
+      "ExecutionNodeDetail": {"type": "object", "additionalProperties": false, "required": ["id", "displayName", "platform", "managementState", "agentAssociationStatus", "heartbeatStatus", "lastHeartbeatAt", "environmentStatus", "capacityStatus", "acceptsNewTasks", "unavailableReasons", "revision", "updatedAt", "budgetPolicy", "defaultJvmMemory", "allowedRoots", "toolHome", "javaPath", "createdAt", "environmentCheck"], "properties": {"id": {"type": "string"}, "displayName": {"type": "string"}, "platform": {"type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"]}, "managementState": {"type": "string", "enum": ["ENABLED", "DISABLED", "MAINTENANCE"]}, "agentAssociationStatus": {"type": "string", "enum": ["PENDING", "ASSOCIATED"]}, "heartbeatStatus": {"type": "string", "enum": ["ONLINE", "OFFLINE", "NEVER_CONNECTED"]}, "lastHeartbeatAt": {"type": ["string", "null"]}, "environmentStatus": {"type": "string", "enum": ["NOT_CHECKED", "NORMAL", "ABNORMAL", "EXPIRED"]}, "capacityStatus": {"type": "string", "enum": ["AVAILABLE", "BUSY", "UNKNOWN"]}, "acceptsNewTasks": {"type": "boolean"}, "unavailableReasons": {"type": "array", "items": {"type": "string"}}, "revision": {"type": "integer", "minimum": 1}, "updatedAt": {"type": "string", "format": "date-time"}, "budgetPolicy": {"$ref": "#/components/schemas/ExecutionNodeBudgetPolicy"}, "defaultJvmMemory": {"const": "4G", "description": "当前官方 Windows 启动器默认；冻结任务 --mem 优先。"}, "executionQuota": {"$ref": "#/components/schemas/NodeExecutionQuota"}, "taskSummary": {"$ref": "#/components/schemas/NodeTaskSummary"}, "agentFacts": {"type": "object", "additionalProperties": false, "required": ["os", "arch", "agentVersion", "bootId", "observedAt", "capacityTotal", "capacityUsed"], "dependentRequired": {"memoryTotalBytes": ["memoryAvailableBytes"], "memoryAvailableBytes": ["memoryTotalBytes"]}, "properties": {"os": {"type": "string"}, "arch": {"type": "string"}, "agentVersion": {"type": "string"}, "bootId": {"type": "string"}, "observedAt": {"type": "string", "format": "date-time"}, "capacityTotal": {"type": "integer", "minimum": 0, "maximum": 1024}, "capacityUsed": {"type": "integer", "minimum": 0, "maximum": 1024}, "cpuUsagePercent": {"type": "integer", "minimum": 0, "maximum": 100}, "memoryUsagePercent": {"type": "integer", "minimum": 0, "maximum": 100}, "memoryTotalBytes": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "readOnly": true, "description": "物理内存总量；与可用量成对返回，缺失时保持未知。"}, "memoryAvailableBytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991, "readOnly": true, "description": "同一采样的可用物理内存，不得超过总量；零值表示真实耗尽。"}}}, "allowedRoots": {"type": "array", "maxItems": 32, "items": {"type": "string"}}, "toolHome": {"type": "string"}, "javaPath": {"type": "string"}, "createdAt": {"type": "string", "format": "date-time"}, "dataRootUsages": {"type": "array", "maxItems": 32, "items": {"type": "object", "additionalProperties": false, "required": ["root", "totalBytes", "availableBytes"], "properties": {"root": {"type": "string"}, "totalBytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "availableBytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}}}, "environmentCheck": {"$ref": "#/components/schemas/NodeEnvironmentCheck"}, "agentDiagnostics": {"$ref": "#/components/schemas/NodeAgentDiagnostics"}, "activeExecutions": {"$ref": "#/components/schemas/NodeActiveExecutions"}, "recentTasks": {"$ref": "#/components/schemas/NodeRecentTasks"}, "activity": {"$ref": "#/components/schemas/NodeActivitySummary"}}},
+      "ExecutionNodeCollection": { "description": "授权节点管理投影或任务候选；缺失资源预算不补造零值。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeCollection" } } } },
       "Ok": { "description": "Authorized, non-cacheable resource response.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceEnvelope" } } } },
       "DataSourceList": { "description": "授权数据源列表的安全投影，包含普通业务 username，不包含 sys 或组合身份。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceListEnvelope" } } } },
       "DataSourceDetail": { "description": "授权数据源详情；username 只有同一对象管理范围确认后才出现，且不包含 sys 或组合身份。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDetailEnvelope" } } } },
       "DataSourceDeletion": { "description": "Data source was permanently deleted.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceDeletionEnvelope" } } } },
       "DataSourceArchive": { "description": "Data source was explicitly archived to preserve existing history.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataSourceArchiveEnvelope" } } } },
-      "ExecutionNodeDeletion": { "description": "Execution node was physically deleted or archived to preserve history; archived nodes may report that current Agent access was revoked.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeDeletionEnvelope" } } } },
+      "ExecutionNodeDeletion": { "description": "执行节点配置已永久删除，历史证据保留；机器身份和未使用注册材料已原子撤销。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionNodeDeletionEnvelope" } } } },
       "Collection": { "description": "Authorized cursor page without a global count.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CollectionEnvelope" } } } },
       "TaskList": { "description": "Authorization-scoped task page with list-safe fields and authorization-scoped totalPages only.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskListEnvelope" } } } },
       "TaskOverviewRead": { "description": "Authorized task overview without snapshot, command or execution fields.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskOverviewReadEnvelope" } } } },
-      "TaskSnapshotRead": { "description": "Authorized minimum immutable task snapshot without raw JSON, paths or credential references.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskSnapshotReadEnvelope" } } } },
+      "TaskSnapshotRead": { "description": "冻结配置白名单，路径仅创建者可见，不返回原始 JSON 或凭据引用。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskSnapshotReadEnvelope" } } } },
+      "TaskOperationsRead": { "description": "当前任务范围安全操作记录。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskOperationsReadEnvelope" } } } },
+      "ExportDraftListRead": { "description": "当前主体未提交草稿列表。", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExportDraftListReadEnvelope" } } } },
       "TaskCommandEvidenceRead": { "description": "Authorized password-redacted planned command evidence without executable argv or secret slots.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommandEvidenceReadEnvelope" } } } },
       "TaskExecutionRead": { "description": "Authorized confirmed execution state without raw process or result evidence payloads.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskExecutionReadEnvelope" } } } },
       "TaskCancellation": { "description": "Authorized fixed cancellation request result; no command, path, secret or free-form reason is returned.", "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCancellationEnvelope" } } } },
@@ -377,9 +395,79 @@
           "platform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
           "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
           "toolHome": { "type": "string", "minLength": 1, "maxLength": 4096 },
-          "javaPath": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          "javaPath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "budgetPolicy": { "$ref": "#/components/schemas/ExecutionNodeBudgetPolicy" }
         },
         "description": "节点注册界面的一次性完整替换输入。工具目录、Java 路径和导出数据目录均为目标机器绝对路径声明；首次关联 Agent 会在本机复核并固化，不能从心跳或后续控制面请求动态覆盖。"
+      },
+      "ExecutionNodeBudgetPolicy": {
+        "type": "object", "additionalProperties": false,
+        "description": "控制面执行预算配置。零值采用保守默认；系统预留自动为 max(2 GiB, 物理内存的 20%)，堆外开销自动为 max(1 GiB, 实际 JVM 堆的 25%)。预算不是实测 RSS 上限；既有分配不随配置修改。",
+        "properties": {
+          "systemReservedBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "taskOverheadBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+        }
+      },
+      "ExecutionNodeSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "displayName", "platform", "managementState", "agentAssociationStatus", "heartbeatStatus", "lastHeartbeatAt", "environmentStatus", "capacityStatus", "acceptsNewTasks", "unavailableReasons", "revision", "updatedAt", "budgetPolicy", "defaultJvmMemory"],
+        "properties": {
+          "id": { "type": "string" }, "displayName": { "type": "string" },
+          "platform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
+          "managementState": { "type": "string", "enum": ["ENABLED", "DISABLED", "MAINTENANCE"] },
+          "agentAssociationStatus": { "type": "string", "enum": ["PENDING", "ASSOCIATED"] },
+          "heartbeatStatus": { "type": "string", "enum": ["ONLINE", "OFFLINE", "NEVER_CONNECTED"] },
+          "lastHeartbeatAt": { "type": ["string", "null"] },
+          "environmentStatus": { "type": "string", "enum": ["NOT_CHECKED", "NORMAL", "ABNORMAL", "EXPIRED"] },
+          "capacityStatus": { "type": "string", "enum": ["AVAILABLE", "BUSY", "UNKNOWN"] },
+          "acceptsNewTasks": { "type": "boolean" },
+          "unavailableReasons": { "type": "array", "items": { "type": "string" } },
+          "revision": { "type": "integer", "minimum": 1 }, "updatedAt": { "type": "string", "format": "date-time" },
+          "budgetPolicy": { "$ref": "#/components/schemas/ExecutionNodeBudgetPolicy" },
+          "defaultJvmMemory": { "const": "4G", "description": "当前官方 Windows 启动器默认；冻结任务 --mem 优先。" },
+          "executionQuota": { "$ref": "#/components/schemas/NodeExecutionQuota" },
+          "taskSummary": { "$ref": "#/components/schemas/NodeTaskSummary" },
+          "agentFacts": { "type": "object", "additionalProperties": false, "required": ["os", "arch", "agentVersion", "bootId", "observedAt", "capacityTotal", "capacityUsed"], "dependentRequired": { "memoryTotalBytes": ["memoryAvailableBytes"], "memoryAvailableBytes": ["memoryTotalBytes"] }, "properties": {
+            "os": { "type": "string" }, "arch": { "type": "string" }, "agentVersion": { "type": "string" }, "bootId": { "type": "string" }, "observedAt": { "type": "string", "format": "date-time" },
+            "capacityTotal": { "type": "integer", "minimum": 0, "maximum": 1024 }, "capacityUsed": { "type": "integer", "minimum": 0, "maximum": 1024 },
+            "cpuUsagePercent": { "type": "integer", "minimum": 0, "maximum": 100 }, "memoryUsagePercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "memoryTotalBytes": { "type": "integer", "minimum": 1, "maximum": 9007199254740991, "readOnly": true, "description": "物理内存总量；与可用量成对返回，缺失时保持未知。" },
+            "memoryAvailableBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991, "readOnly": true, "description": "同一采样的可用物理内存，不得超过总量；零值表示真实耗尽。" }
+          } }
+        }
+      },
+      "ExecutionNodeCollection": {
+        "type": "object", "required": ["requestId", "items"],
+        "properties": {
+          "requestId": { "type": "string" },
+          "items": {
+            "type": "array", "items": { "oneOf": [
+              { "$ref": "#/components/schemas/ExecutionNodeSummary" },
+              { "type": "object", "additionalProperties": false, "required": ["id", "displayName", "platform"], "properties": {
+                "id": { "type": "string" }, "displayName": { "type": "string" }, "platform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] }
+              } }
+            ] }
+          }
+        }
+      },
+      "NodeExecutionQuota": {
+        "type": "object", "additionalProperties": false, "required": ["totalGiB", "reservedGiB", "usedGiB"],
+        "description": "物理内存扣除系统预留后的执行预算；未取得可靠采样或存在未知分配时省略。预留包含尚未启动及待核对分配，已用包含已确认运行分配，确认进程退出才释放。",
+        "properties": {
+          "totalGiB": { "type": "number", "exclusiveMinimum": 0 },
+          "reservedGiB": { "type": "number", "minimum": 0 },
+          "usedGiB": { "type": "number", "minimum": 0 }
+        }
+      },
+      "NodeTaskSummary": {
+        "type": "object", "additionalProperties": false, "required": ["scope", "running", "waiting", "reconciling"],
+        "description": "服务端完整聚合。MINE 仅本人任务；ALL 必须由可信全局管理员角色及 TASK_READ_ALL 能力共同授权，节点管理角色不能推导。核对中独立计数。",
+        "properties": {
+          "scope": { "type": "string", "enum": ["MINE", "ALL"] },
+          "running": { "type": "integer", "minimum": 0 },
+          "waiting": { "type": "integer", "minimum": 0 },
+          "reconciling": { "type": "integer", "minimum": 0 }
+        }
       },
       "DataSourceWrite": {
         "type": "object",
@@ -690,6 +778,25 @@
           "payload": { "$ref": "#/components/schemas/AgentHeartbeatPayload" }
         }
       },
+      "InstalledRuntimeVersion": {"type": "object", "additionalProperties": false, "required": ["version", "source"], "properties": {"version": {"type": "string", "pattern": "^[0-9][0-9A-Za-z._+\\-]{0,63}$"}, "source": {"enum": ["JAVA_RELEASE", "JAR_MANIFEST", "JAR_POM"]}}},
+      "NodeRuntimeVersions": {"type": "object", "additionalProperties": false, "required": [], "properties": {"java": {"allOf": [{"$ref": "#/components/schemas/InstalledRuntimeVersion"}, {"properties": {"source": {"enum": ["JAVA_RELEASE"]}}}]}, "obloader": {"allOf": [{"$ref": "#/components/schemas/InstalledRuntimeVersion"}, {"properties": {"source": {"enum": ["JAR_MANIFEST", "JAR_POM"]}}}]}, "obdumper": {"allOf": [{"$ref": "#/components/schemas/InstalledRuntimeVersion"}, {"properties": {"source": {"enum": ["JAR_MANIFEST", "JAR_POM"]}}}]}}, "description": "只读本机安装元数据；固定 Java release 和含固定主类 JAR 的 Manifest/Maven 元数据。缺失、冲突及超限省略，禁止从名称或目标版本补造；不代表真实工具运行通过。"},
+      "AgentActiveExecution": {"type": "object", "additionalProperties": false, "required": ["executionId", "leaseId", "leaseEpoch", "lastEventSeq"], "properties": {"executionId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "leaseId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "leaseEpoch": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}, "lastEventSeq": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}, "description": "真实 Worker 当前执行位置；本地最后尝试序号不等同于控制面已接受，不改变任务、租约或预算。"},
+      "AgentExecutionObservation": {"type": "object", "additionalProperties": false, "required": ["active"], "properties": {"active": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/components/schemas/AgentActiveExecution"}}}},
+      "NodeLogQueue": {"type": "object", "additionalProperties": false, "required": ["pendingBatches", "pendingGaps", "pendingBytes", "lastUploadResult"], "properties": {"pendingBatches": {"type": "integer", "minimum": 0, "maximum": 1073741824}, "pendingGaps": {"type": "integer", "minimum": 0, "maximum": 1073741824}, "pendingBytes": {"type": "integer", "minimum": 0, "maximum": 1090519040}, "lastUploadResult": {"enum": ["UNKNOWN", "SUCCEEDED", "FAILED"]}, "lastUploadAt": {"type": "string", "format": "date-time"}}, "description": "已脱敏日志队列整体计数与同步文件容量，无正文、来源及任务标识。最后上传结果属于本次进程，重启后 UNKNOWN；缺对象保持未知。", "oneOf": [{"properties": {"lastUploadResult": {"const": "UNKNOWN"}}, "not": {"required": ["lastUploadAt"]}}, {"properties": {"lastUploadResult": {"enum": ["SUCCEEDED", "FAILED"]}}, "required": ["lastUploadAt"]}]},
+      "NodeEnvironmentCheck": {"type": "object", "additionalProperties": false, "required": ["status", "factsRevision"], "properties": {"checkId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "status": {"enum": ["NOT_CHECKED", "PENDING", "PASSED", "FAILED"]}, "code": {"enum": ["TOOL_RUNTIME_READY", "TOOL_RUNTIME_INVALID", "TOOL_RUNTIME_UNAVAILABLE"]}, "factsRevision": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "requestedAt": {"type": "string", "format": "date-time"}, "completedAt": {"type": "string", "format": "date-time"}, "inspection": {"$ref": "#/components/schemas/NodeRuntimeInspection"}, "source": {"enum": ["SUBJECT", "AGENT", "SYSTEM", "UNKNOWN"]}}, "description": "已保存固定检查记录，检查绑定版本与当前事实版本分开；旧通过结果不替代当前资格。"},
+      "NodeAgentDiagnostics": {"type": "object", "additionalProperties": false, "required": ["agentId", "protocolVersion", "factsRevision", "expectedRuntimeConfigurationDigest"], "properties": {"agentId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "protocolVersion": {"type": "string", "maxLength": 64}, "factsRevision": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "startedAt": {"type": "string", "format": "date-time"}, "runtimeConfigurationDigest": {"$ref": "#/components/schemas/SHA256Digest"}, "expectedRuntimeConfigurationDigest": {"$ref": "#/components/schemas/SHA256Digest"}, "runtimeVersions": {"$ref": "#/components/schemas/NodeRuntimeVersions"}, "logQueue": {"$ref": "#/components/schemas/NodeLogQueue"}, "host": {"$ref": "#/components/schemas/NodeHostInventory"}}, "description": "仅节点详情返回的无秘密诊断摘要；版本只在当前登记与 Agent 配置摘要匹配时展示。"},
+      "NodeActiveExecutions": {"type": "object", "additionalProperties": false, "required": ["scope", "items"], "properties": {"scope": {"enum": ["READABLE", "ALL"]}, "items": {"type": "array", "maxItems": 1024, "items": {"type": "object", "additionalProperties": false, "required": ["taskId", "executionId", "leaseId", "leaseEpoch", "lastEventSeq"], "properties": {"executionId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "leaseId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "leaseEpoch": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}, "lastEventSeq": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "taskId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}}}}}, "description": "自报执行与数据库当前 node/Agent/execution/leaseId/epoch 及任务读取权限交集。READABLE 为本人或明确任务范围；ALL 须可信全局角色和 TASK_READ_ALL。隐藏执行不返回标识或数量。"},
+      "ExecutionNodeDetail": {"type": "object", "additionalProperties": false, "required": ["id", "displayName", "platform", "managementState", "agentAssociationStatus", "heartbeatStatus", "lastHeartbeatAt", "environmentStatus", "capacityStatus", "acceptsNewTasks", "unavailableReasons", "revision", "updatedAt", "budgetPolicy", "defaultJvmMemory", "allowedRoots", "toolHome", "javaPath", "createdAt", "environmentCheck"], "properties": {"id": {"type": "string"}, "displayName": {"type": "string"}, "platform": {"type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"]}, "managementState": {"type": "string", "enum": ["ENABLED", "DISABLED", "MAINTENANCE"]}, "agentAssociationStatus": {"type": "string", "enum": ["PENDING", "ASSOCIATED"]}, "heartbeatStatus": {"type": "string", "enum": ["ONLINE", "OFFLINE", "NEVER_CONNECTED"]}, "lastHeartbeatAt": {"type": ["string", "null"]}, "environmentStatus": {"type": "string", "enum": ["NOT_CHECKED", "NORMAL", "ABNORMAL", "EXPIRED"]}, "capacityStatus": {"type": "string", "enum": ["AVAILABLE", "BUSY", "UNKNOWN"]}, "acceptsNewTasks": {"type": "boolean"}, "unavailableReasons": {"type": "array", "items": {"type": "string"}}, "revision": {"type": "integer", "minimum": 1}, "updatedAt": {"type": "string", "format": "date-time"}, "budgetPolicy": {"$ref": "#/components/schemas/ExecutionNodeBudgetPolicy"}, "defaultJvmMemory": {"const": "4G", "description": "当前官方 Windows 启动器默认；冻结任务 --mem 优先。"}, "executionQuota": {"$ref": "#/components/schemas/NodeExecutionQuota"}, "taskSummary": {"$ref": "#/components/schemas/NodeTaskSummary"}, "agentFacts": {"type": "object", "additionalProperties": false, "required": ["os", "arch", "agentVersion", "bootId", "observedAt", "capacityTotal", "capacityUsed"], "dependentRequired": {"memoryTotalBytes": ["memoryAvailableBytes"], "memoryAvailableBytes": ["memoryTotalBytes"]}, "properties": {"os": {"type": "string"}, "arch": {"type": "string"}, "agentVersion": {"type": "string"}, "bootId": {"type": "string"}, "observedAt": {"type": "string", "format": "date-time"}, "capacityTotal": {"type": "integer", "minimum": 0, "maximum": 1024}, "capacityUsed": {"type": "integer", "minimum": 0, "maximum": 1024}, "cpuUsagePercent": {"type": "integer", "minimum": 0, "maximum": 100}, "memoryUsagePercent": {"type": "integer", "minimum": 0, "maximum": 100}, "memoryTotalBytes": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "readOnly": true, "description": "物理内存总量；与可用量成对返回，缺失时保持未知。"}, "memoryAvailableBytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991, "readOnly": true, "description": "同一采样的可用物理内存，不得超过总量；零值表示真实耗尽。"}}}, "allowedRoots": {"type": "array", "maxItems": 32, "items": {"type": "string"}}, "toolHome": {"type": "string"}, "javaPath": {"type": "string"}, "createdAt": {"type": "string", "format": "date-time"}, "dataRootUsages": {"type": "array", "maxItems": 32, "items": {"type": "object", "additionalProperties": false, "required": ["root", "totalBytes", "availableBytes"], "properties": {"root": {"type": "string"}, "totalBytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "availableBytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}}}, "environmentCheck": {"$ref": "#/components/schemas/NodeEnvironmentCheck"}, "agentDiagnostics": {"$ref": "#/components/schemas/NodeAgentDiagnostics"}, "activeExecutions": {"$ref": "#/components/schemas/NodeActiveExecutions"}}},
+      "ExecutionNodeDetailEnvelope": {"type": "object", "additionalProperties": false, "required": ["requestId", "item"], "properties": {"requestId": {"type": "string"}, "checkId": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$"}, "item": {"$ref": "#/components/schemas/ExecutionNodeDetail"}}},
+      "AgentHostInventory": {"type": "object", "additionalProperties": false, "required": ["addresses", "logicalCpus"], "properties": {"hostname": {"type": "string", "maxLength": 253}, "addresses": {"type": "array", "maxItems": 32, "items": {"type": "string", "format": "ip"}}, "osName": {"type": "string", "maxLength": 128}, "osVersion": {"type": "string", "maxLength": 128}, "cpuModel": {"type": "string", "maxLength": 256}, "logicalCpus": {"type": "integer", "minimum": 1, "maximum": 65536}, "physicalCores": {"type": "integer", "minimum": 1, "maximum": 65536}}, "description": "固定本机系统元信息；只枚举本地接口，不进行 DNS 或网络连接。浏览器只返回地址网段摘要。"},
+      "NodeHostInventory": {"type": "object", "additionalProperties": false, "required": ["addressPrefixes", "logicalCpus"], "properties": {"hostname": {"type": "string", "maxLength": 253}, "osName": {"type": "string", "maxLength": 128}, "osVersion": {"type": "string", "maxLength": 128}, "cpuModel": {"type": "string", "maxLength": 256}, "logicalCpus": {"type": "integer", "minimum": 1, "maximum": 65536}, "physicalCores": {"type": "integer", "minimum": 1, "maximum": 65536}, "addressPrefixes": {"type": "array", "maxItems": 32, "items": {"type": "string", "description": "IPv4 /24 或 IPv6 /64 脱敏网段，隐藏地址主机位。"}}}},
+      "NodeInspectionItem": {"type": "object", "additionalProperties": false, "required": ["kind", "status", "code", "required"], "properties": {"kind": {"enum": ["JAVA_RUNTIME", "OBDUMPER_RUNTIME", "OBLOADER_RUNTIME", "CONNECTOR", "WORKSPACE", "LOG_QUEUE", "TOOL_LOG", "DIRECT_LOAD_CONFIG", "RESOURCES", "RUNTIME_LAYOUT"]}, "status": {"enum": ["PASSED", "FAILED", "UNKNOWN", "NOT_APPLICABLE"]}, "code": {"enum": ["READY", "MISSING", "NOT_READABLE", "NOT_WRITABLE", "NOT_EXECUTABLE", "VERSION_UNSUPPORTED", "VERSION_UNAVAILABLE", "VERSION_PROBE_NOT_REQUESTED", "VERSION_PROBE_TIMEOUT", "VERSION_OUTPUT_INVALID", "CONFIG_INVALID", "NOT_CONFIGURED", "SAMPLING_UNAVAILABLE"]}, "required": {"type": "boolean"}, "path": {"type": "string", "maxLength": 2048}, "version": {"type": "string", "pattern": "^[0-9][0-9A-Za-z._+-]{0,63}$"}, "exists": {"type": "boolean"}, "readable": {"type": "boolean"}, "writable": {"type": "boolean"}, "executable": {"type": "boolean"}}},
+      "NodeDirectLoadConfiguration": {"type": "object", "additionalProperties": false, "required": ["status", "hasUnrecognizedKeys"], "properties": {"status": {"enum": ["READ", "MISSING", "UNAVAILABLE", "INVALID"]}, "taskTimeoutMs": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "heartbeatTimeoutMs": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "heartbeatIntervalMs": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "hasUnrecognizedKeys": {"type": "boolean"}, "fingerprint": {"$ref": "#/components/schemas/SHA256Digest"}}, "description": "4.3.5 已确认三个毫秒数值键；未指定省略，真实零保留。只对安全数值投影生成指纹，不上传原文件、秘密或未知键，不开放旁路导入。"},
+      "NodeRuntimeInspection": {"type": "object", "additionalProperties": false, "required": ["checkId", "runtimeConfigurationDigest", "observedAt", "versionProbeAllowed", "items", "directLoad"], "properties": {"checkId": {"type": "string"}, "runtimeConfigurationDigest": {"$ref": "#/components/schemas/SHA256Digest"}, "observedAt": {"type": "string", "format": "date-time"}, "versionProbeAllowed": {"type": "boolean"}, "items": {"type": "array", "minItems": 10, "maxItems": 10, "items": {"$ref": "#/components/schemas/NodeInspectionItem"}}, "directLoad": {"$ref": "#/components/schemas/NodeDirectLoadConfiguration"}}, "description": "固定完整清单；版本进程只在当前检查的用户审计许可有效时执行，自动检查不得继承。缺项、重复、矛盾结果、配置/事实版本漂移和不同回执失败关闭。回执与检查状态原子保存到当前 Agent facts_json，稳定心跳保留，重启或稳定事实变更清除。"},
+      "NodeActivityItem": {"type": "object", "additionalProperties": false, "required": ["id", "action", "source", "result", "occurredAt"], "properties": {"id": {"type": "string"}, "action": {"enum": ["EXECUTION_NODE_CREATED", "EXECUTION_NODE_UPDATED", "EXECUTION_NODE_ENABLED", "EXECUTION_NODE_ARCHIVED", "EXECUTION_NODE_DELETED", "AGENT_ENROLLMENT_ISSUED", "AGENT_ENROLLED", "EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED", "EXECUTION_NODE_ENVIRONMENT_CHECK_REQUEUED", "EXECUTION_NODE_ENVIRONMENT_CHECK_COMPLETED"]}, "source": {"enum": ["SUBJECT", "AGENT", "SYSTEM"]}, "result": {"enum": ["SUCCEEDED", "FAILED", "DENIED"]}, "occurredAt": {"type": "string", "format": "date-time"}}},
+      "NodeActivitySummary": {"type": "object", "additionalProperties": false, "required": ["events", "operations", "checkSource"], "properties": {"events": {"type": "array", "maxItems": 5, "items": {"$ref": "#/components/schemas/NodeActivityItem"}}, "operations": {"type": "array", "maxItems": 5, "items": {"$ref": "#/components/schemas/NodeActivityItem"}}, "checkSource": {"enum": ["SUBJECT", "AGENT", "SYSTEM", "UNKNOWN"]}}},
+      "NodeRecentTask": {"type": "object", "additionalProperties": false, "required": ["id", "type", "state", "reconciliationRequired", "submittedAt"], "properties": {"id": {"type": "string"}, "type": {"const": "OBDUMPER_EXPORT"}, "state": {"enum": ["WAITING_SCHEDULE", "STARTING", "RUNNING", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"]}, "reconciliationRequired": {"type": "boolean"}, "submittedAt": {"type": "string", "format": "date-time"}, "startedAt": {"type": "string", "format": "date-time"}, "finishedAt": {"type": "string", "format": "date-time"}}},
+      "NodeRecentTasks": {"type": "object", "additionalProperties": false, "required": ["scope", "items"], "properties": {"scope": {"enum": ["READABLE", "ALL"]}, "items": {"type": "array", "maxItems": 5, "items": {"$ref": "#/components/schemas/NodeRecentTask"}}}, "description": "当前授权范围的最近五条任务；不返回数据库/表名、输出目录或命令。ALL 仍须可信全局角色和 TASK_READ_ALL。"},
       "AgentHeartbeatPayload": {
         "type": "object",
         "additionalProperties": false,
@@ -699,12 +806,19 @@
           "architecture": { "type": "string", "enum": ["AMD64", "ARM64"] },
           "agentVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
           "observedAt": { "type": "string", "format": "date-time" },
-          "capacityTotal": { "const": 1 },
-          "capacityUsed": { "type": "integer", "minimum": 0, "maximum": 1 },
+          "capacityTotal": { "type": "integer", "minimum": 0, "maximum": 1024 },
+          "capacityUsed": { "type": "integer", "minimum": 0, "maximum": 1024 },
+          "memoryTotalBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "memoryAvailableBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
           "cpuUsagePercent": { "type": "integer", "minimum": 0, "maximum": 100 },
           "memoryUsagePercent": { "type": "integer", "minimum": 0, "maximum": 100 },
           "runtimeConfigurationDigest": { "$ref": "#/components/schemas/SHA256Digest" },
-          "dataRootUsages": { "type": "array", "maxItems": 32, "items": { "$ref": "#/components/schemas/AgentDataRootUsage" } }
+          "dataRootUsages": { "type": "array", "maxItems": 32, "items": { "$ref": "#/components/schemas/AgentDataRootUsage" } },
+          "startedAt": {"type": "string", "format": "date-time"},
+          "runtimeVersions": {"$ref": "#/components/schemas/NodeRuntimeVersions"},
+          "executionObservation": {"$ref": "#/components/schemas/AgentExecutionObservation"},
+          "logQueue": {"$ref": "#/components/schemas/NodeLogQueue"},
+          "host": { "$ref": "#/components/schemas/AgentHostInventory" }
         }
       },
       "AgentDataRootUsage": {
@@ -962,17 +1076,26 @@
       "AgentPrecheckExecutionContext": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["compatibilityMode", "database", "table", "outputPath", "logPath", "skipCheckDir", "targetPlatform", "allowedRoots"],
+        "required": ["compatibilityMode", "database", "objects", "objectTypes", "contentKind", "outputPath", "logPath", "skipCheckDir", "targetPlatform", "allowedRoots"],
         "properties": {
           "compatibilityMode": { "type": "string", "enum": ["MYSQL", "ORACLE"], "description": "冻结数据源的 OceanBase 兼容模式；Agent 仅以此选择固定元数据定位与零行读取的标识符引用规则。" },
           "database": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "table": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "objects": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "description": "冻结对象清单；ALL 或 QUERY_RESULT 范围为空。" },
+          "objectTypes": { "type": ["array", "null"], "items": { "enum": ["TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"] }, "description": "与 objects 对应；历史纯表上下文允许空清单。" },
+          "contentKind": { "enum": ["DATA_ONLY", "DDL_ONLY", "DDL_AND_DATA"] },
           "outputPath": { "type": "string", "minLength": 1, "maxLength": 4096 },
           "logPath": { "type": "string", "maxLength": 4096 },
           "skipCheckDir": { "type": "boolean" },
+          "weakRead": { "type": "boolean", "description": "冻结草稿要求固定弱读副本访问检查。" },
+          "enableHiddenPk": { "type": "boolean", "description": "冻结草稿要求版本、无主键表结构及隐藏列访问检查。" },
+          "addExtraMessage": { "type": "boolean", "description": "冻结草稿要求 sys 视图权限检查；对应秘密仅在当前租约解析。" },
+          "includeColumnNames": { "$ref": "#/components/schemas/PrecheckSelectionIdentifiers" },
+          "excludeColumnNames": { "$ref": "#/components/schemas/PrecheckSelectionIdentifiers" },
+          "partitions": { "$ref": "#/components/schemas/PrecheckSelectionIdentifiers" },
+          "resourceRequirement": { "$ref": "#/components/schemas/PrecheckResourceRequirement" },
           "targetPlatform": { "type": "string", "enum": ["WINDOWS_AMD64", "LINUX_AMD64", "LINUX_ARM64"] },
           "allowedRoots": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
-          "outputKind": { "type": "string", "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "EX-I6 输出类型；LOCAL 或缺省保持冻结六项，对象存储输出必须携带 storageTarget 且检查清单切换为存储形态。" },
+          "outputKind": { "type": "string", "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "LOCAL 或缺省使用当前七项清单；对象存储必须携带 storageTarget 并使用九项清单，本地 logPath 可选且按节点平台校验。" },
           "storageTarget": {
             "type": "object",
             "additionalProperties": false,
@@ -988,16 +1111,17 @@
         }
       },
       "AgentPrecheckCheckSet": {
-        "description": "检查清单按输出类型二选一：本地输出为冻结六项；对象存储输出裁剪本地目录项并追加两项存储层检查（EX-I6）。",
+        "description": "当前检查清单：本地七项；对象存储九项。资源资格、辅助目录与写权限不得省略。",
         "oneOf": [
           {
             "type": "array",
-            "minItems": 6,
-            "maxItems": 6,
+            "minItems": 7,
+            "maxItems": 7,
             "prefixItems": [
               { "const": "DATABASE_CONNECTIVITY" },
               { "const": "OBJECT_ACCESS" },
               { "const": "TOOL_ENVIRONMENT" },
+              { "const": "NODE_RESOURCE" },
               { "const": "OUTPUT_PATH" },
               { "const": "OUTPUT_EMPTY" },
               { "const": "AVAILABLE_SPACE" }
@@ -1006,31 +1130,35 @@
           },
           {
             "type": "array",
-            "minItems": 6,
-            "maxItems": 6,
+            "minItems": 9,
+            "maxItems": 9,
             "prefixItems": [
               { "const": "DATABASE_CONNECTIVITY" },
               { "const": "OBJECT_ACCESS" },
               { "const": "TOOL_ENVIRONMENT" },
+              { "const": "NODE_RESOURCE" },
+              { "const": "OUTPUT_PATH" },
               { "const": "AVAILABLE_SPACE" },
               { "const": "STORAGE_CONNECTIVITY" },
-              { "const": "STORAGE_AUTH" }
+              { "const": "STORAGE_AUTH" },
+              { "const": "STORAGE_WRITE" }
             ],
             "items": false
           }
         ]
       },
       "AgentPrecheckResults": {
-        "description": "预检查结果按输出类型二选一：本地六项形态或对象存储六项形态（EX-I6 存储专用预检查）。",
+        "description": "新完成回执只接受本地七项或对象存储九项。历史六项报告仅可读取，不能为新提交提供证明。",
         "oneOf": [
           {
             "type": "array",
-            "minItems": 6,
-            "maxItems": 6,
+            "minItems": 7,
+            "maxItems": 7,
             "prefixItems": [
               { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectivityResult" },
               { "$ref": "#/components/schemas/AgentPrecheckObjectAccessResult" },
               { "$ref": "#/components/schemas/AgentPrecheckToolEnvironmentResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckNodeResourceResult" },
               { "$ref": "#/components/schemas/AgentPrecheckOutputPathResult" },
               { "$ref": "#/components/schemas/AgentPrecheckOutputEmptyResult" },
               { "$ref": "#/components/schemas/AgentPrecheckAvailableSpaceResult" }
@@ -1039,19 +1167,45 @@
           },
           {
             "type": "array",
-            "minItems": 6,
-            "maxItems": 6,
+            "minItems": 9,
+            "maxItems": 9,
             "prefixItems": [
               { "$ref": "#/components/schemas/AgentPrecheckDatabaseConnectivityResult" },
               { "$ref": "#/components/schemas/AgentPrecheckObjectAccessResult" },
               { "$ref": "#/components/schemas/AgentPrecheckToolEnvironmentResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckNodeResourceResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckOutputPathResult" },
               { "$ref": "#/components/schemas/AgentPrecheckAvailableSpaceResult" },
               { "$ref": "#/components/schemas/AgentPrecheckStorageConnectivityResult" },
-              { "$ref": "#/components/schemas/AgentPrecheckStorageAuthResult" }
+              { "$ref": "#/components/schemas/AgentPrecheckStorageAuthResult" },
+              { "$ref": "#/components/schemas/AgentPrecheckStorageWriteResult" }
             ],
             "items": false
           }
         ]
+      },
+      "PrecheckSelectionIdentifiers": {
+        "type": "array", "maxItems": 4096, "uniqueItems": true,
+        "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "description": "仅固定元数据检查使用的字面名称；拒绝控制字符、通配符、逗号和首尾空白，不携带 where 或查询 SQL。"
+      },
+      "PrecheckResourceRequirement": {
+        "type": "object", "additionalProperties": false,
+        "required": ["heapBytes", "requiredBytes", "totalBudgetBytes"],
+        "description": "控制面依据冻结 JVM 堆、节点事实和政策计算的静态资格；零值表示未知，不代表资源预留。",
+        "properties": {
+          "heapBytes": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+          "requiredBytes": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+          "totalBudgetBytes": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
+        }
+      },
+      "AgentPrecheckNodeResourceResult": {
+        "type": "object", "additionalProperties": false, "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "NODE_RESOURCE" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "NODE_RESOURCE_READY", "NODE_RESOURCE_INSUFFICIENT", "NODE_RESOURCE_UNAVAILABLE"] } }
+      },
+      "AgentPrecheckStorageWriteResult": {
+        "type": "object", "additionalProperties": false, "required": ["check", "status", "evidenceCode"],
+        "properties": { "check": { "const": "STORAGE_WRITE" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "STORAGE_WRITE_VERIFIED", "STORAGE_WRITE_REJECTED", "STORAGE_WRITE_UNAVAILABLE", "STORAGE_WRITE_CLEANUP_UNCONFIRMED", "PRECHECK_BLOCKED_BY_STORAGE_AUTH"] } }
       },
       "AgentPrecheckStorageConnectivityResult": {
         "type": "object",
@@ -1063,19 +1217,19 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["check", "status", "evidenceCode"],
-        "properties": { "check": { "const": "STORAGE_AUTH" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "STORAGE_CREDENTIAL_VERIFIED", "STORAGE_CREDENTIAL_REJECTED", "STORAGE_AUTH_UNAVAILABLE"] } }
+        "properties": { "check": { "const": "STORAGE_AUTH" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "STORAGE_CREDENTIAL_VERIFIED", "STORAGE_CREDENTIAL_REJECTED", "STORAGE_AUTH_UNAVAILABLE", "PRECHECK_BLOCKED_BY_STORAGE_CONNECTIVITY"] } }
       },
       "AgentPrecheckDatabaseConnectivityResult": {
         "type": "object",
         "additionalProperties": false,
         "required": ["check", "status", "evidenceCode"],
-        "properties": { "check": { "const": "DATABASE_CONNECTIVITY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE"] } }
+        "properties": { "check": { "const": "DATABASE_CONNECTIVITY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "DATABASE_CONNECTED", "DATABASE_CONNECTION_FAILED", "DATABASE_CONNECTION_UNAVAILABLE", "PRECHECK_BLOCKED_BY_TOOL"] } }
       },
       "AgentPrecheckObjectAccessResult": {
         "type": "object",
         "additionalProperties": false,
         "required": ["check", "status", "evidenceCode"],
-        "properties": { "check": { "const": "OBJECT_ACCESS" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OBJECT_ACCESSIBLE", "OBJECT_NOT_ACCESSIBLE", "OBJECT_ACCESS_UNAVAILABLE"] } }
+        "properties": { "check": { "const": "OBJECT_ACCESS" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OBJECT_ACCESSIBLE", "OBJECT_NOT_ACCESSIBLE", "OBJECT_SELECTION_VERIFIED", "OBJECT_SELECTION_REJECTED", "OBJECT_ACCESS_UNAVAILABLE", "PARAMETER_REQUIREMENTS_VERIFIED", "PARAMETER_REQUIREMENTS_REJECTED", "PRECHECK_BLOCKED_BY_TOOL", "PRECHECK_BLOCKED_BY_DATABASE"] } }
       },
       "AgentPrecheckToolEnvironmentResult": {
         "type": "object",
@@ -1093,13 +1247,13 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["check", "status", "evidenceCode"],
-        "properties": { "check": { "const": "OUTPUT_EMPTY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_PATH_EMPTY", "OUTPUT_EMPTY_CHECK_SKIPPED", "OUTPUT_PATH_NOT_EMPTY", "OUTPUT_PATH_UNAVAILABLE"] } }
+        "properties": { "check": { "const": "OUTPUT_EMPTY" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_PATH_EMPTY", "OUTPUT_EMPTY_CHECK_SKIPPED", "OUTPUT_PATH_NOT_EMPTY", "OUTPUT_PATH_UNAVAILABLE", "PRECHECK_BLOCKED_BY_OUTPUT_PATH"] } }
       },
       "AgentPrecheckAvailableSpaceResult": {
         "type": "object",
         "additionalProperties": false,
         "required": ["check", "status", "evidenceCode"],
-        "properties": { "check": { "const": "AVAILABLE_SPACE" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_SPACE_SUFFICIENT", "OUTPUT_SPACE_INSUFFICIENT", "OUTPUT_SPACE_UNAVAILABLE"] } }
+        "properties": { "check": { "const": "AVAILABLE_SPACE" }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "enum": ["SYNTHETIC_OK", "OUTPUT_SPACE_SUFFICIENT", "OUTPUT_SPACE_INSUFFICIENT", "OUTPUT_SPACE_UNAVAILABLE", "PRECHECK_BLOCKED_BY_OUTPUT_PATH"] } }
       },
       "AgentEnvelope": {
         "type": "object",
@@ -1114,6 +1268,32 @@
           "sentAt": { "type": "string", "format": "date-time" },
           "payloadType": { "type": "string", "minLength": 1, "maxLength": 100 },
           "payload": { "type": "object", "description": "Operation-specific strict payload schema must replace this structural placeholder before DEV-04 endpoint implementation." }
+        }
+      },
+      "AgentNodeEnvironmentInspectionCompletion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "agentId", "nodeId", "bootId", "requestId", "sentAt", "payloadType", "payload"],
+        "properties": {
+          "protocolVersion": { "const": "agent-v1" },
+          "agentId": { "$ref": "#/components/schemas/OpaqueId" },
+          "nodeId": { "$ref": "#/components/schemas/OpaqueId" },
+          "bootId": { "$ref": "#/components/schemas/OpaqueId" },
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "sentAt": { "type": "string", "format": "date-time" },
+          "payloadType": { "const": "EXECUTION_NODE_ENVIRONMENT_CHECK_COMPLETE" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["factsRevision", "status", "code"],
+            "properties": {
+              "factsRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "status": { "enum": ["PASSED", "FAILED"] },
+              "code": { "enum": ["TOOL_RUNTIME_READY", "TOOL_RUNTIME_INVALID", "TOOL_RUNTIME_UNAVAILABLE"] },
+              "inspection": { "$ref": "#/components/schemas/NodeRuntimeInspection" }
+            },
+            "description": "保留旧 Agent 稳定回执兼容；当前用户许可固定版本查询时，PASSED 必须同时提供当前检查绑定的完整 inspection。Agent 自报许可不授予执行权。"
+          }
         }
       },
       "ResourceEnvelope": {
@@ -1163,9 +1343,9 @@
         "properties": {
           "requestId": { "$ref": "#/components/schemas/OpaqueId" },
           "id": { "$ref": "#/components/schemas/OpaqueId" },
-          "outcome": { "type": "string", "enum": ["DELETED", "ARCHIVED"] },
-          "revision": { "type": "integer", "minimum": 0 },
-          "agentAccessRevoked": { "type": "boolean", "description": "Whether active Agent credentials or unused enrollment materials were revoked during archival." }
+          "outcome": { "type": "string", "enum": ["DELETED"] },
+          "revision": { "type": "integer", "const": 0 },
+          "agentAccessRevoked": { "type": "boolean", "description": "永久删除事务是否撤销了当前机器凭据或未使用注册材料。" }
         }
       },
       "CollectionEnvelope": {
@@ -1177,7 +1357,7 @@
       "TaskListItem": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "type", "dataSourceId", "state", "stageEvidence", "progressEvidence", "reconciliationRequired", "nodeId", "ownedByCurrentUser", "submittedAt", "updatedAt"],
+        "required": ["id", "type", "dataSourceId", "state", "stageEvidence", "progressEvidence", "reconciliationRequired", "nodeId", "ownedByCurrentUser", "submittedAt", "updatedAt", "displayName", "dataSourceDeleted", "nodeDeleted", "cancelRequested", "availableActions"],
         "properties": {
           "id": { "$ref": "#/components/schemas/OpaqueId" },
           "type": { "const": "OBDUMPER_EXPORT" },
@@ -1192,7 +1372,38 @@
           "submittedAt": { "type": "string", "format": "date-time" },
           "startedAt": { "type": "string", "format": "date-time" },
           "finishedAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "displayName": { "type": "string", "maxLength": 1100, "description": "由冻结快照派生的展示名（DEC-050），不是持久任务名称。" },
+          "dataSourceName": { "type": "string", "maxLength": 256, "description": "提交时冻结的数据源名称；缺省表示历史名称不可用。迁移前任务按迁移时的当前名称回填。" },
+          "dataSourceDeleted": { "type": "boolean", "description": "数据源当前配置已删除；历史名称仍可显示。" },
+          "environment": { "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"], "description": "提交时冻结的数据源环境。" },
+          "nodeName": { "type": "string", "maxLength": 256, "description": "提交时冻结的执行节点名称。" },
+          "nodeDeleted": { "type": "boolean" },
+          "creatorName": { "type": "string", "maxLength": 256, "description": "创建人显示名，不返回创建人标识。" },
+          "cancelRequested": { "type": "boolean" },
+          "availableActions": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "enum": ["COPY_COMMAND", "VIEW_LOGS", "CANCEL", "REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH", "CHECKPOINT_RESUME", "SAVE_TEMPLATE"] }, "description": "仅为展示资格；写操作由对应接口在事务内复验。全局只读身份不获得写操作。" }
+        }
+      },
+      "TaskFilterOption": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/OpaqueId" },
+          "label": { "type": "string", "maxLength": 256, "description": "空字符串表示历史名称不可用。" }
+        }
+      },
+      "TaskFilterOptionsEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "dataSources", "nodes", "creators", "environments", "creatorFilterAvailable"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/OpaqueId" },
+          "dataSources": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/TaskFilterOption" } },
+          "nodes": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/TaskFilterOption" } },
+          "creators": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/TaskFilterOption" } },
+          "environments": { "type": "array", "maxItems": 4, "items": { "enum": ["DEVELOPMENT", "TEST", "STAGING", "PRODUCTION"] } },
+          "creatorFilterAvailable": { "type": "boolean" }
         }
       },
       "TaskListEnvelope": {
@@ -1211,6 +1422,9 @@
         "additionalProperties": false,
         "required": ["id", "type", "dataSourceId", "nodeId", "precheckId", "submittedAt"],
         "properties": {
+          "presentation": { "$ref": "#/components/schemas/TaskListItem", "description": "与任务列表共用冻结展示事实及服务端操作资格。" },
+          "derivedTaskCount": { "type": "integer", "minimum": 0, "description": "当前授权范围内派生任务数量。" },
+          "derivedTasks": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["id", "displayName", "state"], "properties": { "id": { "$ref": "#/components/schemas/OpaqueId" }, "displayName": { "type": "string" }, "state": { "type": "string" } } } },
           "id": { "$ref": "#/components/schemas/OpaqueId" },
           "type": { "const": "OBDUMPER_EXPORT" },
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
@@ -1227,11 +1441,16 @@
         "required": ["requestId", "item"],
         "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "item": { "$ref": "#/components/schemas/TaskOverviewRead" } }
       },
+      "TaskOperationsReadEnvelope": { "type": "object", "additionalProperties": false, "required": ["requestId", "items", "nextCursor"], "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "nextCursor": { "type": "string" }, "items": { "type": "array", "maxItems": 50, "items": { "type": "object", "additionalProperties": false, "required": ["id", "actorType", "actorName", "action", "result", "occurredAt"], "properties": { "id": { "type": "string" }, "actorType": { "enum": ["SUBJECT", "AGENT", "SYSTEM"] }, "actorName": { "type": "string" }, "action": { "type": "string" }, "result": { "enum": ["SUCCEEDED", "FAILED", "DENIED", "RECORDED"] }, "occurredAt": { "type": "string", "format": "date-time" } } } } } },
+      "ExportDraftListReadEnvelope": { "type": "object", "additionalProperties": false, "required": ["requestId", "items", "nextCursor", "totalPages"], "properties": { "requestId": { "$ref": "#/components/schemas/OpaqueId" }, "nextCursor": { "type": "string" }, "totalPages": { "type": "integer", "minimum": 0 }, "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/ExportDraftListItem" } } } },
+      "ExportDraftListItem": { "type": "object", "additionalProperties": false, "required": ["id", "type", "displayName", "dataSourceId", "nodeId", "revision", "createdAt", "updatedAt", "availableActions"], "properties": { "id": { "$ref": "#/components/schemas/OpaqueId" }, "type": { "const": "OBDUMPER_EXPORT" }, "displayName": { "type": "string" }, "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" }, "nodeId": { "type": "string" }, "revision": { "type": "integer", "minimum": 1 }, "sourceTaskId": { "$ref": "#/components/schemas/OpaqueId" }, "sourceDerivation": { "enum": ["REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH"] }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "availableActions": { "type": "array", "uniqueItems": true, "items": { "enum": ["CONTINUE_EDIT", "SUBMIT", "DELETE"] } } } },
+      "TaskSnapshotGroup": { "type": "object", "additionalProperties": false, "required": ["key", "label", "fields"], "properties": { "key": { "enum": ["source", "objects", "format", "output", "review"] }, "label": { "type": "string" }, "fields": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["key", "label", "value", "source"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "value": { "type": "string" }, "source": { "const": "UNKNOWN", "description": "历史快照没有记录输入来源，不推断工具默认或未生效。" } } } } } },
       "TaskSnapshotRead": {
         "type": "object",
         "additionalProperties": false,
         "required": ["type", "dataSourceId", "nodeId", "precheckId", "format", "configFingerprint", "toolVersion", "metadataVersion", "capabilityVersion", "snapshotVersion"],
         "properties": {
+          "groups": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/components/schemas/TaskSnapshotGroup" } },
           "snapshotVersion": { "type": "string", "enum": ["v1", "v2"], "description": "v1 is the original flat snapshot; v2 includes generalized config and derived relations." },
           "type": { "const": "OBDUMPER_EXPORT" },
           "dataSourceId": { "$ref": "#/components/schemas/OpaqueId" },
@@ -1473,6 +1692,7 @@
             "properties": {
               "factsRevision": { "type": "integer", "minimum": 1 },
               "environmentStatus": { "const": "NOT_CHECKED" },
+              "environmentVersionProbeAllowed": { "type": "boolean", "description": "仅当前用户明确请求的检查可为 true；无标识、自动检查、失效账号或其他检查不授予固定版本查询。" },
               "environmentCheckId": { "type": "string", "maxLength": 256, "description": "仅在当前 Agent 有待处理固定环境检查时返回控制面生成的不透明标识；空字符串表示无待处理检查。" },
               "realExecutionEnabled": { "const": false }
             }
@@ -1569,11 +1789,14 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["host", "port", "username", "password"],
+        "dependentRequired": { "sysUsername": ["sysPassword"], "sysPassword": ["sysUsername"] },
         "properties": {
           "host": { "type": "string" },
           "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
           "username": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
-          "password": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前请求的短时内存中使用；不得持久化、回显、记录或用作后续 execution 凭据。" }
+          "password": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前请求的短时内存中使用；不得持久化、回显、记录或用作后续 execution 凭据。" },
+          "sysUsername": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
+          "sysPassword": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅附加表定义信息所需的冻结 sys 槽位；不得进入日志、argv、环境、审计或浏览器。" }
         }
       },
       "AgentPrecheckStorageCredentialSlot": {
@@ -1583,7 +1806,7 @@
         "properties": {
           "provider": { "enum": ["OSS", "S3", "COS", "OBS"] },
           "accessKey": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true },
-          "secretKey": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前 STORAGE_AUTH 请求的短时内存中使用；不得持久化、回显、记录或用于工具启动以外的用途。" }
+          "secretKey": { "type": "string", "contentEncoding": "base64", "x-agent-memory-only": true, "description": "仅允许已认证 Agent 在当前 STORAGE_AUTH 或 STORAGE_WRITE 受控阶段的短时内存中使用；不得持久化、回显、记录或用于其他请求。" }
         }
       },
       "AgentPrecheckCompletedResponseEnvelope": {
@@ -1712,7 +1935,7 @@
         "properties": {
           "objectScope": { "type": "object", "required": ["database", "scopeKind"], "properties": { "database": { "type": "string", "minLength": 1, "maxLength": 512, "description": "对象所在数据库（--database），全部、指定与结果集范围均必填；表达式 schema 前缀只允许缺省或与其一致。" }, "scopeKind": { "enum": ["ALL", "SPECIFIED", "QUERY_RESULT"], "description": "结果集范围不得携带对象类型、表达式或排除表；仅可用于 DATA_ONLY 的 CSV/CUT/SQL。" }, "objectTypes": { "type": "array", "maxItems": 5, "items": { "enum": ["TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"] } }, "expressions": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "schema": { "type": "string" }, "name": { "type": "string" }, "objectType": { "enum": ["TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"], "description": "混合分类时必填；单一分类的历史草稿可缺省。" }, "rawInput": { "type": "string", "description": "控制面生成规范值；浏览器提交的自由文本不会被持久化。" } } } }, "excludeTables": { "type": "array", "items": { "type": "string" } } } },
           "contentSelection": { "type": "object", "properties": { "contentKind": { "enum": ["DDL_ONLY", "DATA_ONLY", "DDL_AND_DATA"] } } },
-          "dataFormat": { "type": "object", "additionalProperties": false, "description": "数据格式单选。普通 V1 新建入口只允许 CSV/CUT/SQL；POS/PARQUET/ORC/AVRO 保留为历史任务解析和后续门控枚举，不得因页面收缩破坏旧快照。", "properties": { "formatKind": { "enum": ["CSV", "CUT", "POS", "SQL", "PARQUET", "ORC", "AVRO"], "description": "普通新建值：CSV、CUT、SQL；其余值仅用于历史或门控能力。" }, "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }, "cutOptions": { "$ref": "#/components/schemas/CutOptions" }, "timestampFormats": { "type": "object", "additionalProperties": false, "description": "时间格式字段为可解码契约。当前浏览器仅向 MySQL 兼容模式的 CSV/CUT 数据导出提交 dateValueFormat 与 datetimeValueFormat；Oracle 与其余七个字段在兼容性验证完成前保持门禁。所有格式串仅允许 ASCII 空格与受限格式字符。", "properties": { "dateValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "datetimeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampTzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampLtzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsDateFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampTzFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" } } } } },
+          "dataFormat": { "type": "object", "additionalProperties": false, "description": "数据格式单选。普通 V1 新建入口只允许 CSV/CUT/SQL；POS/PARQUET/ORC/AVRO 保留为历史任务解析和后续门控枚举，不得因页面收缩破坏旧快照。", "properties": { "formatKind": { "enum": ["CSV", "CUT", "POS", "SQL", "PARQUET", "ORC", "AVRO"], "description": "普通新建值：CSV、CUT、SQL；其余值仅用于历史或门控能力。" }, "csvOptions": { "$ref": "#/components/schemas/GatedCsvOptions" }, "cutOptions": { "$ref": "#/components/schemas/CutOptions" }, "timestampFormats": { "type": "object", "additionalProperties": false, "description": "时间格式字段为可解码契约。v11 接入值格式与 Oracle NLS 会话格式：值格式仅 CSV/CUT；TIME/DATETIME/零日期保留仅 MySQL，TZ/LTZ/NLS 仅 Oracle；NLS 不代表文件值格式。真实输出验证状态仍按任务地图。所有格式串仅允许 ASCII 空格与受限格式字符。", "properties": { "dateValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "datetimeValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampTzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "timestampLtzValueFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsDateFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "nlsTimestampTzFormat": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9 /:.'TZ-]+$" }, "preserveZeroDatetime": { "type": "boolean", "description": "仅 MySQL CSV/CUT 数据输出保留零日期时间。" } } } } },
           "outputConfig": { "type": "object", "properties": { "outputKind": { "enum": ["LOCAL", "OSS", "S3", "COS", "OBS"], "description": "输出目标类型；普通 V1 以 LOCAL 为主流程，受控对象存储在真实证据完成前保持高级门控。对象存储要求受控 URI（scheme/参数白名单，拒绝密钥参数，凭据走执行槽位）。" }, "filePath": { "type": "string" }, "logPath": { "type": "string" }, "skipCheckDir": { "type": "boolean" }, "noNestedDir": { "type": "boolean" }, "maxFileSize": { "type": "integer" }, "retainEmptyFiles": { "type": "boolean", "description": "--retain-empty-files。对 CSV/CUT/SQL 的 DATA_ONLY 或 DDL_AND_DATA 活动，对 DDL_ONLY 不活动；不要求先配置 where/partition。CSV 与 skipHeader 同时决定空文件是否包含表头。" }, "compress": { "type": "boolean", "description": "普通 V1 对 CSV/CUT/SQL 提供压缩；历史 POS 能力继续按其元数据版本解析。" }, "compressionAlgo": { "type": "string", "enum": ["zstd", "zlib", "gzip", "snappy"], "description": "压缩算法，默认 zstd。" }, "controlFilePath": { "type": "string", "description": "历史 POS 控制文件目录（--ctl-path）；普通 V1 新建入口不提交该字段。" }, "tmpPath": { "type": "string", "description": "对象存储 Multipart 本地临时分块目录（--tmp-path），必须是安全的节点本地路径形态。" } } },
           "performanceConfig": { "type": "object", "properties": { "thread": { "type": "integer" }, "pageSize": { "type": "integer" }, "parallelMacro": { "type": "integer" }, "fetchSize": { "type": "integer" }, "jvmMemory": { "type": "string" }, "retry": { "type": "boolean" } } },
           "filterConfig": { "type": "object", "properties": { "querySql": { "type": "string", "description": "OBDUMPER --query-sql 直接文本。普通高级参数，不属于敏感命令；拒绝 file://，并与 where、partition、flashbackScn、flashbackTimestamp 互斥。结果集范围进一步要求单条直接 SELECT。" }, "queryResultLimit": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "仅 QUERY_RESULT 使用；控制面按 MySQL/Oracle 兼容模式包裹 SELECT 限制最多返回行数，不是独立 OBDUMPER 参数。" }, "where": { "type": "string" }, "partition": { "type": "string" }, "includeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeColumnNames": { "type": "array", "items": { "type": "string" } }, "excludeDataTypes": { "type": "array", "items": { "type": "string" } }, "excludeVirtualColumns": { "type": "boolean" }, "enableHiddenPk": { "type": "boolean" }, "flashbackScn": { "type": "integer" }, "flashbackTimestamp": { "type": "string" }, "snapshot": { "type": "boolean" }, "weakRead": { "type": "boolean" } } },

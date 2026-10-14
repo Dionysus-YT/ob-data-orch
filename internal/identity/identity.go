@@ -44,6 +44,8 @@ const (
 	ScopeNodeUse         Scope = "NODE_USE"
 	ScopeNodeManage      Scope = "NODE_MANAGE"
 	ScopeTaskRead        Scope = "TASK_READ"
+	// ScopeTaskReadAll 只由可信身份投影授予全局任务读取，不接受浏览器自报。
+	ScopeTaskReadAll Scope = "TASK_READ_ALL"
 )
 
 // Authorizer has no implicit administrator or all-object wildcard. A provider
@@ -59,6 +61,8 @@ type Role string
 const (
 	RoleDataSourceAdmin Role = "ROLE_DATA_SOURCE_ADMIN"
 	RoleNodeAdmin       Role = "ROLE_NODE_ADMIN"
+	// RoleGlobalAdmin 对应用户确认的全局管理员；节点管理角色不能推导此角色。
+	RoleGlobalAdmin Role = "ROLE_GLOBAL_ADMIN"
 )
 
 // RoleAuthorizer verifies a fixed role without granting any object scope.

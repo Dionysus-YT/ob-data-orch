@@ -39,6 +39,9 @@ func Test采集器上报固定目录空间且不暴露路径(t *testing.T) {
 	if snapshot.RuntimeConfigurationDigest != configuration.Digest || len(snapshot.DataRootUsages) != 1 {
 		t.Fatalf("采集结果不完整: %#v", snapshot)
 	}
+	if snapshot.MemoryTotalBytes == 0 || snapshot.MemoryAvailableBytes > snapshot.MemoryTotalBytes || snapshot.MemoryUsagePercent == nil || *snapshot.MemoryUsagePercent != int((snapshot.MemoryTotalBytes-snapshot.MemoryAvailableBytes)*100/snapshot.MemoryTotalBytes) {
+		t.Fatal("物理内存与使用率不是同一可信快照")
+	}
 	usage := snapshot.DataRootUsages[0]
 	if usage.RootDigest != DataRootDigest(root) || usage.RootDigest == root || usage.TotalBytes == 0 || usage.AvailableBytes > usage.TotalBytes {
 		t.Fatalf("目录空间上报不安全或无效: %#v", usage)

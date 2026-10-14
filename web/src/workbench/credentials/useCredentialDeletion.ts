@@ -25,7 +25,7 @@ export function useCredentialDeletion(list: ReturnType<typeof useCredentialList>
       await list.api.deleteStorageCredential(target.id, target.revision)
       if (!valid()) return
       list.credentials.value = list.credentials.value.filter(item => item.id !== target.id)
-      list.notice.value = `凭据「${target.displayName}」已删除；已冻结任务的历史快照只保留引用标识。`
+      list.notice.value = `凭据「${target.displayName}」已删除。`
     } catch (error) {
       if (valid()) list.feedback.value = storageCredentialErrorMessage(error, '凭据删除失败。')
     } finally {

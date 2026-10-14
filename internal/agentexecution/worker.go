@@ -3,6 +3,7 @@
 package agentexecution
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,8 +20,10 @@ import (
 	"ob-data-orch/internal/agentlogqueue"
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/nodefacts"
 	"ob-data-orch/internal/outputpath"
 )
 
@@ -45,11 +48,13 @@ type Protocol interface {
 // Runtime 是已在 Agent 本机关联状态中固化并复核的启动配置。
 // 路径绝不从任务信封、浏览器或环境变量直接读取。
 type Runtime struct {
-	TargetPlatform   string
-	JavaPath         string
-	ToolHome         string
-	WorkspaceRoot    string
-	LogQueueRoot     string
+	TargetPlatform string
+	JavaPath       string
+	ToolHome       string
+	WorkspaceRoot  string
+	LogQueueRoot   string
+	// SharedLogQueue 由 Agent 装配层持有；并行 Worker 共用容量缓存与文件锁。
+	SharedLogQueue   *agentlogqueue.Queue
 	LogQueueObserver LogQueueObserver
 	Environment      []string
 	AllowedRoots     []string
@@ -83,7 +88,7 @@ type Outcome struct {
 	CheckpointPresent bool
 }
 
-// Worker 串行执行当前 Agent 最多一条 OBDUMPER_EXPORT。
+// Worker 每个实例最多执行一条 OBDUMPER_EXPORT；并行实例由装配层和控制面预算约束。
 // 执行前只接受固定参数集合；任一校验失败都上报 START_REJECTED，绝不尝试替代命令或路径。
 type Worker struct {
 	Protocol Protocol
@@ -93,6 +98,7 @@ type Worker struct {
 
 	mu      sync.Mutex
 	running bool
+	active  *nodefacts.ActiveExecution
 }
 
 // RunNext 领取、确认、解析唯一槽位、写入任务级安全材料、直接启动 Java，并上报事件与日志。
@@ -105,10 +111,12 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	if !w.validConfiguration() {
 		return Outcome{}, false, ErrInvalidConfiguration
 	}
-	var queue *agentlogqueue.Queue
+	queue := w.Runtime.SharedLogQueue
 	if w.Runtime.LogQueueRoot != "" {
 		var err error
-		queue, err = agentlogqueue.Open(w.Runtime.LogQueueRoot, agentlogqueue.DefaultMaxBytes)
+		if queue == nil {
+			queue, err = agentlogqueue.Open(w.Runtime.LogQueueRoot, agentlogqueue.DefaultMaxBytes)
+		}
 		if err != nil || flushQueuedLogs(ctx, queue, w.Protocol, w.BootID, "") != nil {
 			return Outcome{}, false, ErrExecutionRejected
 		}
@@ -123,6 +131,9 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	if !validGrant(grant) || !w.now().Before(grant.ExpiresAt) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
+	w.mu.Lock()
+	w.active = &nodefacts.ActiveExecution{ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch}
+	w.mu.Unlock()
 	actualArgvDigest, err := agentwire.ArgvDigest(grant.Argv)
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
@@ -169,7 +180,11 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	defer slot.Destroy()
-	material, err := credential.GenerateSecurityMaterial(slot.Password)
+	if !validExecutionSysSlot(grant.Argv, slot) {
+		_ = w.appendStartRejected(ctx, grant)
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+	}
+	material, err := credential.GenerateSecurityMaterialWithSys(slot.Password, slot.SysPassword)
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
@@ -202,7 +217,9 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
-	policy, err := executionLogPolicy(slot.Password, slot.StorageCredential)
+	sysUser := []byte(executionSysUserArgument(grant.Argv))
+	defer credential.Zero(sysUser)
+	policy, err := executionLogPolicy(slot.Password, slot.StorageCredential, slot.SysPassword, slot.SysUsername, sysUser)
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
@@ -216,7 +233,10 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		Output: agentexec.DirectJavaOutput{Policy: policy, Stdout: agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 1, ParserVersion: "direct-java-v1"}, Stderr: agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 2, ParserVersion: "direct-java-v1"}, Sink: logs.append},
 	})
 	if err != nil {
-		_ = w.appendStartRejected(ctx, grant)
+		// 已创建而监管未成立的进程不能被当作无进程；保留分配，等待租约核对。
+		if !errors.Is(err, agentexec.ErrDirectJavaProcessUncertain) {
+			_ = w.appendStartRejected(ctx, grant)
+		}
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	// 进程已经启动后，必须先等待其退出再清理任务级安全文件；即使事件网络上报失败也不能提前删除仍被 Java 使用的文件。
@@ -294,7 +314,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 	fileCount, totalBytes, files, outputOK := executionOutputFacts(executionPaths, localOutputPath)
 	result := "FAILED"
-	if outputOK && (executionPaths.StorageOutput || fileCount > 0 && totalBytes > 0) {
+	if outputOK && (executionPaths.StorageOutput || localOutputVerified(grant.Argv, fileCount, totalBytes, files)) {
 		result = "VERIFIED"
 	}
 	fileEvidence := make([]map[string]any, 0, len(files))
@@ -318,6 +338,39 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, Succeeded: result == "VERIFIED", FileCount: fileCount, TotalBytes: totalBytes, CheckpointPresent: checkpoint}, true, nil
 }
 
+// localOutputVerified 在受控进程退出 0、固定工具成功终态之后复核本地文件事实。
+// CSV/CUT/SQL 的纯数据空集合可以生成零字节文件；不能把字节数零等同于执行失败。
+// 无文件、DDL 或非文本格式的零字节输出仍失败关闭，不改变对象存储的独立证据规则。
+func localOutputVerified(argv []string, count, bytes uint64, files []outputFileFact) bool {
+	if count == 0 {
+		return false
+	}
+	if bytes > 0 {
+		return true
+	}
+	extension := ""
+	for _, value := range argv {
+		if value == "--ddl" {
+			return false
+		}
+		switch value {
+		case "--csv":
+			extension = ".csv"
+		case "--cut":
+			extension = ".dat"
+		case "--sql":
+			extension = ".sql"
+		}
+	}
+	// 清单或检查点本身不能证明已生成文本结果，零字节例外要求真实数据文件。
+	for _, file := range files {
+		if extension != "" && strings.HasSuffix(strings.ToLower(file.Path), extension) {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *Worker) appendStartRejected(ctx context.Context, grant agentwire.ExecutionGrant) error {
 	return w.appendEvent(ctx, grant, 3, "START_REJECTED", map[string]any{"noProcess": true, "errorCode": agentwire.ExecutionErrorStartRejected})
 }
@@ -327,6 +380,11 @@ func (w *Worker) appendEvent(ctx context.Context, grant agentwire.ExecutionGrant
 	if err != nil {
 		return ErrExecutionRejected
 	}
+	w.mu.Lock()
+	if w.active != nil && w.active.ExecutionID == grant.ExecutionID {
+		w.active.LastEventSeq = max(w.active.LastEventSeq, sequence)
+	}
+	w.mu.Unlock()
 	return w.Protocol.AppendExecutionEvent(ctx, agentwire.ExecutionEvent{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, EventID: eventID, EventSeq: sequence, EventType: eventType, Evidence: evidence, SentAt: w.now()})
 }
 
@@ -395,14 +453,65 @@ func (w *Worker) enter() bool {
 	w.running = true
 	return true
 }
-func (w *Worker) leave() { w.mu.Lock(); defer w.mu.Unlock(); w.running = false }
+func (w *Worker) leave() { w.mu.Lock(); defer w.mu.Unlock(); w.running = false; w.active = nil }
+
+// ActiveExecution 返回当前 Worker 的无秘密副本；完成、拒绝和异常返回都会清除观测。
+// 它不改变租约或状态机，也不能证明控制面已接受本地事件。
+func (w *Worker) ActiveExecution() (nodefacts.ActiveExecution, bool) {
+	if w == nil {
+		return nodefacts.ActiveExecution{}, false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.active == nil {
+		return nodefacts.ActiveExecution{}, false
+	}
+	return *w.active, true
+}
 
 func validGrant(grant agentwire.ExecutionGrant) bool {
-	if grant.TaskID == "" || grant.ExecutionID == "" || grant.LeaseID == "" || grant.LeaseEpoch < 1 || len(grant.EnvelopeDigest) != 64 || len(grant.Argv) == 0 || len(grant.Argv) > 32 {
+	// v11 有 79 个固定字段，按每个字段最多两个令牌保留受限容量。
+	if grant.TaskID == "" || grant.ExecutionID == "" || grant.LeaseID == "" || grant.LeaseEpoch < 1 || len(grant.EnvelopeDigest) != 64 || len(grant.Argv) == 0 || len(grant.Argv) > 160 {
 		return false
 	}
 	_, ok := executionPathArguments(grant.Argv)
 	return ok
+}
+
+// validExecutionSysSlot 复核冻结命令与短时 sys 槽位成对，防止额外材料或缺失材料进入进程。
+func validExecutionSysSlot(argv []string, slot agentwire.DatabaseConnectionSlot) bool {
+	required, userCount := false, 0
+	for _, token := range argv {
+		if token == "--add-extra-message" {
+			if required {
+				return false
+			}
+			required = true
+		}
+		if token == "--sys-user" {
+			userCount++
+		}
+	}
+	if !required {
+		return userCount == 0 && len(slot.SysUsername) == 0 && len(slot.SysPassword) == 0
+	}
+	if userCount != 1 || len(slot.SysUsername) == 0 || len(slot.SysPassword) == 0 {
+		return false
+	}
+	username := slot.SysUsername
+	if boundary := bytes.IndexByte(username, '@'); boundary >= 0 {
+		username = username[:boundary]
+	}
+	return bytes.Equal([]byte(executionSysUserArgument(argv)), username)
+}
+
+func executionSysUserArgument(argv []string) string {
+	for index, token := range argv {
+		if token == "--sys-user" && index+1 < len(argv) {
+			return argv[index+1]
+		}
+	}
+	return ""
 }
 
 // executionPaths 是从冻结参数令牌中识别出的受控文件系统路径。
@@ -421,7 +530,7 @@ func executionPathsFromArgv(platform string, argv []string) (executionPaths, boo
 	}
 	paths.StorageOutput = isControlledStorageOutputPath(paths.OutputPath)
 	if paths.StorageOutput {
-		if paths.LogPath != "" || (paths.TmpPath != "" && !outputpath.IsExportOutputPath(platform, paths.TmpPath)) {
+		if (paths.LogPath != "" && !outputpath.IsExportOutputPath(platform, paths.LogPath)) || (paths.TmpPath != "" && !outputpath.IsExportOutputPath(platform, paths.TmpPath)) {
 			return executionPaths{}, false
 		}
 		return paths, true
@@ -443,13 +552,13 @@ func outputPathArgument(argv []string) (string, bool) {
 }
 
 func executionPathArguments(argv []string) (executionPaths, bool) {
+	if !executionargv.Valid(argv) {
+		return executionPaths{}, false
+	}
 	paths := executionPaths{}
 	seen := map[string]bool{}
 	for index := 0; index < len(argv); index++ {
 		value := argv[index]
-		if strings.ContainsRune(value, 0) || strings.ContainsAny(value, "\r\n") || value == "--password" || strings.HasPrefix(value, "--password=") || strings.HasPrefix(value, "-p") {
-			return executionPaths{}, false
-		}
 		if value != "--file-path" && value != "--log-path" && value != "--tmp-path" {
 			continue
 		}
@@ -502,9 +611,14 @@ func isControlledStorageOutputPath(value string) bool {
 }
 
 // executionLogPolicy 保存当前 execution 的全部秘密值用于 Agent 第一层日志脱敏。
-// 用户名是命令身份的一部分，应保留在工具日志中以便人工诊断连接对象。
-func executionLogPolicy(password []byte, storageCredential *agentwire.StorageCredentialSlot) (logstream.Policy, error) {
+// 业务用户名沿用连接诊断语义；额外 sys 身份与密码都必须脱敏。
+func executionLogPolicy(password []byte, storageCredential *agentwire.StorageCredentialSlot, additionalSecrets ...[]byte) (logstream.Policy, error) {
 	secrets := [][]byte{password}
+	for _, secret := range additionalSecrets {
+		if len(secret) != 0 {
+			secrets = append(secrets, secret)
+		}
+	}
 	if storageCredential != nil {
 		secrets = append(secrets, storageCredential.AccessKey, storageCredential.SecretKey)
 	}
@@ -709,7 +823,12 @@ func queuePosition(entry agentlogqueue.Entry) LogQueuePosition {
 	}
 }
 
+// 多个隔离 Worker 共享私有可靠队列，重放与确认必须串行，防止双重删除或回执错位。
+var queuedLogReplayMu sync.Mutex
+
 func flushQueuedLogs(ctx context.Context, queue *agentlogqueue.Queue, protocol Protocol, bootID, newlyEnqueuedDigest string) error {
+	queuedLogReplayMu.Lock()
+	defer queuedLogReplayMu.Unlock()
 	items, err := queue.PendingItems()
 	if err != nil {
 		return err

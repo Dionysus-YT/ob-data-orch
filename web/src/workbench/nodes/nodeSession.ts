@@ -1,7 +1,7 @@
 import { onScopeDispose, watch, type Ref } from 'vue'
 import { browserApi } from '@/api/browser'
 
-export type NodeApi = Pick<ReturnType<typeof browserApi>, 'listExecutionNodes' | 'getExecutionNode' | 'createExecutionNode' | 'updateExecutionNode' | 'enableExecutionNode' | 'requestExecutionNodeEnvironmentCheck' | 'deleteOrArchiveExecutionNode' | 'issueExecutionNodeEnrollment'>
+export type NodeApi = Pick<ReturnType<typeof browserApi>, 'listExecutionNodes' | 'getExecutionNode' | 'createExecutionNode' | 'updateExecutionNode' | 'enableExecutionNode' | 'requestExecutionNodeEnvironmentCheck' | 'deleteExecutionNode' | 'issueExecutionNodeEnrollment'>
 export type NodeApiFactory = (signal: AbortSignal) => NodeApi
 
 // 节点页会话绑定路由身份（表单同时绑定模式）；回到同一 ID 也不能复活旧操作。

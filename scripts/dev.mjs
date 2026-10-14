@@ -4,6 +4,7 @@ import { once } from 'node:events'
 import { mkdir, readFile, writeFile, copyFile, readdir, stat, rm, rename } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { developmentSettings, shouldReload } from './dev-settings.mjs'
+import { buildDevelopmentAgentPackages } from './dev-agent-packages.mjs'
 import https from 'node:https'
 import net from 'node:net'
 import path from 'node:path'
@@ -55,6 +56,11 @@ async function build() {
   // 固定开发目录中的旧程序已停止；删除后重建，不覆盖运行中的二进制。
   await rm(executable, { force: true })
   await command('go', ['build', '-trimpath', '-o', executable, `./cmd/${mode}`])
+  if (mode === 'control-plane') {
+    // 下载处理器读取控制面目录中的素材；启动和重建均生成三平台 Agent，不依赖历史交付目录。
+    await buildDevelopmentAgentPackages(repository, controlBase, (output, goOS, goArch) =>
+      command('go', ['build', '-trimpath', '-o', output, './cmd/agent'], { env: { ...environment, GOOS: goOS, GOARCH: goArch } }))
+  }
 }
 async function snapshot() {
   const hash = createHash('sha256')
@@ -62,10 +68,13 @@ async function snapshot() {
     for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
       const file = path.join(directory, entry.name)
       if (entry.isDirectory()) await visit(file)
-      else if (/\.(go|sql|json)$/.test(entry.name)) { hash.update(file); hash.update(await readFile(file)) }
+      else if (/\.(go|sql|json|cmd|ps1|sh)$/.test(entry.name)) { hash.update(file); hash.update(await readFile(file)) }
     }
   }
-  for (const directory of [`cmd/${mode}`, 'internal', 'contracts', 'migrations']) await visit(path.join(repository, directory))
+  const directories = [`cmd/${mode}`, 'internal', 'contracts', 'migrations']
+  // 控制面下载的 Agent 与自身源码同步，分发入口修改也沿用既有重建授权策略。
+  if (mode === 'control-plane') directories.push('cmd/agent', 'scripts/distribution')
+  for (const directory of directories) await visit(path.join(repository, directory))
   for (const file of ['go.mod', 'go.sum']) hash.update(await readFile(path.join(repository, file)))
   return hash.digest('hex')
 }
@@ -147,7 +156,8 @@ try {
   await build()
   await initialize()
   if (mode === 'control-plane') {
-    vite = launch(process.execPath, [path.join(repository, 'web/node_modules/vite/bin/vite.js')], { cwd: path.join(repository, 'web') })
+    // Vite 不能与启动器争抢终端输入；r 只触发控制面的正常停止、重建和恢复。
+    vite = launch(process.execPath, [path.join(repository, 'web/node_modules/vite/bin/vite.js')], { cwd: path.join(repository, 'web'), stdio: ['ignore', 'inherit', 'inherit'] })
     await delay(1000)
     if (vite.exitCode !== null) throw new Error('Vite 启动失败，请先执行 npm --prefix web ci')
   }

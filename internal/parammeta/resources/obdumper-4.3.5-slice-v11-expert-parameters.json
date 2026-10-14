@@ -1,0 +1,389 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v11-expert-parameters",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "inherits": "obdumper-4.3.5-slice-v10-ddl-text-formats.json",
+  "revisionReason": "接入用户指定的专家参数；保留历史版本、租户及权限边界。仅 G2 实现与合成验证，不声明真实输出已验证。",
+  "sourceDocuments": [
+    "docs/02-design/export-module.md",
+    "docs/03-technical/export-general-contract.md",
+    "https://en.oceanbase.com/docs/common-oceanbase-dumper-loader-10000000003281173",
+    "https://en.oceanbase.com/docs/common-oceanbase-dumper-loader-10000000003281152"
+  ],
+  "categoryOrder": [
+    "CONNECTION",
+    "DATABASE_CONNECTION",
+    "OBJECT_SCOPE",
+    "CONTENT_FORMAT",
+    "FORMAT_SERIALIZATION",
+    "OUTPUT_FILE",
+    "DATA_FILTER",
+    "PERFORMANCE",
+    "COMPRESSION"
+  ],
+  "overrides": [
+    {
+      "definitionId": "obdumper.object.all",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1", "export-odp-ddl-v1", "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1", "export-odp-sql-v1", "export-odp-ddl-cut-v1", "export-odp-ddl-sql-v1"
+      ],
+      "appendEvidence": ["v11 专家参数须支持已开放的整库 CSV/CUT/SQL 范围；真实输出仍待 EX-V1"]
+    },
+    {
+      "definitionId": "obdumper.format.date_value_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.time_value_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.datetime_value_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.timestamp_value_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.timestamp_tz_value_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.timestamp_ltz_value_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.nls_date_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-ddl-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.nls_timestamp_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-ddl-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.nls_timestamp_tz_format",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-ddl-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.filter.enable_hidden_pk",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-ddl-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.ddl.add_extra_message",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ],
+      "dependsOn": [
+        "--sys-user",
+        "--sys-password"
+      ]
+    },
+    {
+      "definitionId": "obdumper.filter.weak_read",
+      "supportState": "ENABLED",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-sql-v1",
+        "export-odp-ddl-sql-v1",
+        "export-odp-pos-v1",
+        "export-odp-parquet-v1",
+        "export-odp-orc-v1",
+        "export-odp-avro-v1"
+      ],
+      "appendEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    }
+  ],
+  "additions": [
+    {
+      "definitionId": "obdumper.ddl.sequence_policy",
+      "productFieldId": "EX-F069",
+      "longName": "--sequence-policy",
+      "category": "CONTENT_FORMAT",
+      "order": 85,
+      "valueType": "enum",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "MEDIUM",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "officialEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ],
+      "allowedValues": [
+        "preserve",
+        "restart"
+      ]
+    },
+    {
+      "definitionId": "obdumper.format.preserve_zero_datetime",
+      "productFieldId": "EX-F061",
+      "longName": "--preserve-zero-datetime",
+      "category": "FORMAT_SERIALIZATION",
+      "order": 124,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "MEDIUM",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-full-csv-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-cut-v1",
+        "export-odp-ddl-cut-v1"
+      ],
+      "officialEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.connection.sys_user",
+      "productFieldId": "EX-F006",
+      "longName": "--sys-user",
+      "category": "CONNECTION",
+      "order": 50,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "SECURITY",
+      "supportState": "ENABLED",
+      "sensitivity": "IDENTIFIER",
+      "riskLevel": "MEDIUM",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "officialEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ]
+    },
+    {
+      "definitionId": "obdumper.connection.sys_password",
+      "productFieldId": "EX-F006",
+      "longName": "--sys-password",
+      "category": "CONNECTION",
+      "order": 60,
+      "valueType": "secret-slot",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "SECURITY",
+      "supportState": "ENABLED",
+      "sensitivity": "SECRET",
+      "riskLevel": "MEDIUM",
+      "confirmationRule": "SECRET_REFERENCE_ONLY",
+      "emissionTarget": "SECURITY_FILE",
+      "capabilityVersions": [
+        "export-odp-ddl-v1",
+        "export-odp-ddl-csv-v1",
+        "export-odp-ddl-cut-v1",
+        "export-odp-ddl-sql-v1"
+      ],
+      "officialEvidence": [
+        "OBDUMPER V4.3.5 官方参数与安全配置文档（2026-10-13 复核）",
+        "G2 参数、租户、秘密槽位及固定预检查契约；真实输出仍待授权验证"
+      ],
+      "securityProperty": "oceanbase.jdbc.sys.password"
+    }
+  ]
+}

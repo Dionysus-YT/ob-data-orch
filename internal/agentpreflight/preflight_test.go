@@ -9,6 +9,7 @@ import (
 
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 func TestValidateRequestAcceptsMoreThanOneHundredObjects(t *testing.T) {
@@ -58,7 +59,7 @@ func Test固定预检查执行完整清单且不接收自定义操作(t *testing
 	}
 }
 
-func Test本机前置失败时不解析数据库槽位(t *testing.T) {
+func Test工具环境失败时不执行数据库检查(t *testing.T) {
 	probe := &syntheticProbe{results: map[CheckID]Status{CheckToolEnvironment: StatusFailed}}
 	report, err := Run(context.Background(), validRequest(), probe)
 	if err != nil {
@@ -70,10 +71,10 @@ func Test本机前置失败时不解析数据库槽位(t *testing.T) {
 	if !reflect.DeepEqual(probe.checks, localChecks) {
 		t.Fatalf("本机前置失败后的 Probe 调用 = %#v，期望 %#v", probe.checks, localChecks)
 	}
-	if database := report.Results[0]; database != unavailableDatabaseResult() {
+	if database := report.Results[0]; database != blockedResult(CheckDatabaseConnectivity, precheckcontract.EvidenceBlockedByTool) {
 		t.Fatalf("数据库结果 = %#v，期望未尝试的未知结果", database)
 	}
-	if object := report.Results[1]; object != unavailableObjectResult() {
+	if object := report.Results[1]; object != blockedResult(CheckObjectAccess, precheckcontract.EvidenceBlockedByTool) {
 		t.Fatalf("对象结果 = %#v，期望未尝试的未知结果", object)
 	}
 }
@@ -197,10 +198,8 @@ func validStorageRequest() Request {
 	return request
 }
 
-// Test存储预检查执行存储形态清单且前置失败时存储检查保持未知 验证：
-// 1) 对象存储输出使用六项存储形态清单（无 OUTPUT_PATH/OUTPUT_EMPTY，含两项存储检查）；
-// 2) 本机前置失败时数据库与存储检查都保持 UNKNOWN 且不调用 Probe。
-func Test存储预检查执行存储形态清单且前置失败时存储检查保持未知(t *testing.T) {
+// 存储输出保持固定报告顺序；工具失败只阻断数据库组，端点和认证独立收集事实。
+func Test存储预检查执行固定清单且不依赖数据库组(t *testing.T) {
 	probe := &syntheticProbe{}
 	report, err := Run(context.Background(), validStorageRequest(), probe)
 	if err != nil {
@@ -218,19 +217,73 @@ func Test存储预检查执行存储形态清单且前置失败时存储检查�
 	if err := ValidateReportFor(OutputKindOSS, report); err != nil {
 		t.Fatalf("ValidateReportFor(storage) 错误 = %v", err)
 	}
-	// 本机前置失败：TOOL_ENVIRONMENT 失败后数据库与存储检查全部 UNKNOWN 且不再调用 Probe。
+	// 端点探测不使用 Java；认证夹具遵守明确探测授权，工具失败不阻断这两项。
 	failed := &syntheticProbe{results: map[CheckID]Status{CheckToolEnvironment: StatusFailed}}
 	report, err = Run(context.Background(), validStorageRequest(), failed)
 	if err != nil {
 		t.Fatalf("Run() 错误 = %v", err)
 	}
-	if reflect.DeepEqual(failed.checks, storageCheckList) {
-		t.Fatalf("本机前置失败后仍执行了全部检查：%#v", failed.checks)
+	if want := []CheckID{CheckToolEnvironment, CheckNodeResource, CheckOutputPath, CheckAvailableSpace, CheckStorageConnectivity, CheckStorageAuth, CheckStorageWrite}; !reflect.DeepEqual(failed.checks, want) {
+		t.Fatalf("工具失败后的独立检查 = %#v，期望 %#v", failed.checks, want)
 	}
 	if report.Results[0].Status != StatusUnknown || report.Results[1].Status != StatusUnknown ||
-		report.Results[4].Status != StatusUnknown || report.Results[4].EvidenceCode != "STORAGE_CONNECTIVITY_UNAVAILABLE" ||
-		report.Results[5].Status != StatusUnknown || report.Results[5].EvidenceCode != "STORAGE_AUTH_UNAVAILABLE" {
+		report.Results[6].Status != StatusPassed || report.Results[7].Status != StatusPassed || report.Results[8].Status != StatusPassed || report.Succeeded {
 		t.Fatalf("前置失败后的存储形态报告 = %#v", report.Results)
+	}
+}
+
+func Test目录和空间失败仍执行独立数据库检查(t *testing.T) {
+	for _, check := range []CheckID{CheckNodeResource, CheckOutputPath, CheckOutputEmpty, CheckAvailableSpace} {
+		for _, status := range []Status{StatusFailed, StatusUnknown} {
+			t.Run(string(check)+"/"+string(status), func(t *testing.T) {
+				probe := &syntheticProbe{results: map[CheckID]Status{check: status}}
+				report, err := Run(context.Background(), validRequest(), probe)
+				if err != nil || report.Succeeded || !reflect.DeepEqual(probe.checks, executionCheckOrder()) {
+					t.Fatalf("独立检查未完成或错误放行：%#v，调用 %#v，错误 %v", report, probe.checks, err)
+				}
+				if report.Results[0].Status != StatusPassed || report.Results[1].Status != StatusPassed {
+					t.Fatal("目录失败不应改变独立数据库和对象检查的事实")
+				}
+			})
+		}
+	}
+}
+
+func Test连接失败或未知时对象检查明确阻断(t *testing.T) {
+	for _, status := range []Status{StatusFailed, StatusUnknown} {
+		probe := &syntheticProbe{results: map[CheckID]Status{CheckDatabaseConnectivity: status}}
+		report, err := Run(context.Background(), validRequest(), probe)
+		if err != nil || report.Succeeded || report.Results[1] != blockedResult(CheckObjectAccess, precheckcontract.EvidenceBlockedByDatabase) {
+			t.Fatalf("对象依赖未按连接事实阻断：%#v，错误 %v", report, err)
+		}
+		for _, check := range probe.checks {
+			if check == CheckObjectAccess {
+				t.Fatal("连接未通过时仍调用了对象检查")
+			}
+		}
+	}
+}
+
+func Test存储端点失败或未知时认证不执行(t *testing.T) {
+	for _, status := range []Status{StatusFailed, StatusUnknown} {
+		probe := &syntheticProbe{results: map[CheckID]Status{CheckStorageConnectivity: status}}
+		report, err := Run(context.Background(), validStorageRequest(), probe)
+		if err != nil || report.Succeeded || report.Results[7] != blockedResult(CheckStorageAuth, precheckcontract.EvidenceBlockedByStorageConnectivity) || report.Results[8] != blockedResult(CheckStorageWrite, precheckcontract.EvidenceBlockedByStorageAuth) {
+			t.Fatalf("存储认证依赖未阻断：%#v，错误 %v", report, err)
+		}
+		for _, check := range probe.checks {
+			if check == CheckStorageAuth || check == CheckStorageWrite {
+				t.Fatal("端点未通过时仍调用了凭据认证")
+			}
+		}
+	}
+}
+
+func Test存储空间和数据库失败不阻断存储组(t *testing.T) {
+	probe := &syntheticProbe{results: map[CheckID]Status{CheckAvailableSpace: StatusFailed, CheckDatabaseConnectivity: StatusFailed}}
+	report, err := Run(context.Background(), validStorageRequest(), probe)
+	if err != nil || report.Succeeded || report.Results[6].Status != StatusPassed || report.Results[7].Status != StatusPassed || report.Results[8].Status != StatusPassed {
+		t.Fatalf("存储独立组未收集事实：%#v，错误 %v", report, err)
 	}
 }
 
@@ -246,7 +299,7 @@ func Test存储预检查拒绝不安全存储目标(t *testing.T) {
 		{name: "URI 含换行", mutate: func(request *Request) { request.OutputPath = "oss://bucket/path\n" }},
 		{name: "URI 与控制目标不一致", mutate: func(request *Request) { request.StorageTarget.URI = "s3://bucket/path" }},
 		{name: "tmp-path 不是平台绝对路径", mutate: func(request *Request) { request.StorageTarget.TmpPath = "relative/tmp" }},
-		{name: "存储输出携带本地日志路径", mutate: func(request *Request) { request.LogPath = "/E:/synthetic/logs" }},
+		{name: "存储日志不是节点绝对路径", mutate: func(request *Request) { request.LogPath = "relative/logs" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

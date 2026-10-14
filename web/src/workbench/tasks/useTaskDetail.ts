@@ -1,7 +1,8 @@
 import { onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { browserApi, taskDetailErrorMessage, type TaskCommandEvidence, type TaskExecution, type TaskOverview, type TaskSnapshot } from '@/api/browser'
-import type { TaskDetailApi, TaskDetailSession } from './taskDetailSession'
+import { isTaskAuthorizationError, type TaskDetailApi, type TaskDetailSession } from './taskDetailSession'
 import { useTaskLogs } from './useTaskLogs'
+import { isActiveTaskState } from './taskStatePresentation'
 
 // 详情读取是概览、冻结证据和执行事实的唯一所有者；每个会话最多一个刷新链和计时器。
 export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal: AbortSignal) => TaskDetailApi = browserApi) {
@@ -15,11 +16,11 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
   const executionFailure = ref('')
   const snapshotFailure = ref('')
   const commandFailure = ref('')
-  const taskLogs = useTaskLogs(session, execution)
+  const taskLogs = useTaskLogs(session, execution, restrict)
   let release = () => {}
-  let cycle: { binding: TaskDetailSession; pending: Map<string, Promise<void>>; refreshing?: Promise<void>; timer?: ReturnType<typeof setTimeout> } | undefined
+  let cycle: { binding: TaskDetailSession; pending: Map<string, Promise<void>>; mutations: number; refreshing?: Promise<void>; timer?: ReturnType<typeof setTimeout> } | undefined
 
-  watch(taskID, (id) => {
+  function openSession(id: string) {
     release()
     overview.value = null
     execution.value = null
@@ -36,7 +37,7 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     const controller = new AbortController()
     let active = true
     const binding: TaskDetailSession = { id, api: createApi(controller.signal), active: () => active }
-    const current = { binding, pending: new Map<string, Promise<void>>() } as NonNullable<typeof cycle>
+    const current = { binding, pending: new Map<string, Promise<void>>(), mutations: 0 } as NonNullable<typeof cycle>
     release = () => {
       active = false
       clearTimeout(current.timer)
@@ -44,9 +45,17 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     }
     cycle = current
     session.value = binding
-    void refresh()
-  }, { immediate: true, flush: 'sync' })
-  onScopeDispose(() => { release() })
+  }
+  watch(taskID, id => { openSession(id); void refresh() }, { immediate: true, flush: 'sync' })
+  const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  const needsRefresh = () => !cycle?.mutations && visible() && Boolean(execution.value && (isActiveTaskState(execution.value.state) || execution.value.reconciliationRequired))
+  function onVisibility() {
+    if (cycle?.timer) { clearTimeout(cycle.timer); cycle.timer = undefined }
+    if (visible() && needsRefresh()) void refresh()
+    if (!visible()) taskLogs.stopLogStream()
+  }
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+  onScopeDispose(() => { release(); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility) })
 
   function read<T>(key: string, request: (api: TaskDetailApi, id: string) => Promise<T>, accept: (item: T) => void, errorState: Ref<string>, fallback: string): Promise<void> {
     const current = cycle
@@ -61,7 +70,10 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
         accept(item)
         errorState.value = ''
       } catch (error) {
-        if (binding.active()) errorState.value = taskDetailErrorMessage(error, fallback)
+        if (binding.active()) {
+          if (isTaskAuthorizationError(error)) restrict()
+          else errorState.value = taskDetailErrorMessage(error, fallback)
+        }
       } finally {
         current.pending.delete(key)
       }
@@ -83,6 +95,7 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
   }
 
   function refresh(): Promise<void> {
+    if (taskID.value && !cycle?.binding.active()) openSession(taskID.value)
     const current = cycle
     if (!current?.binding.active()) return Promise.resolve()
     if (current.refreshing) return current.refreshing
@@ -92,9 +105,7 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     failure.value = ''
     const pending = (async () => {
       try {
-        if (!overview.value) {
-          await read('overview', (api, id) => api.getTaskOverview(id), item => { overview.value = item }, failure, '无法读取任务概览。')
-        }
+        await read('overview', (api, id) => api.getTaskOverview(id), item => { overview.value = item }, failure, '无法读取任务概览。')
         if (!current.binding.active() || !overview.value) return
         await Promise.all([loadSnapshot(), loadCommandEvidence(), loadExecution(), taskLogs.loadLogs()])
         if (current.binding.active()) taskLogs.ensureLogStream()
@@ -103,7 +114,7 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
           loading.value = false
           current.refreshing = undefined
           // 失败概览保留手动重试；已载入的任务继续按原两秒周期核对事实。
-          if (overview.value) current.timer = setTimeout(() => { void refresh() }, 2000)
+          if (overview.value && !failure.value && needsRefresh()) current.timer = setTimeout(() => { void refresh() }, 2000)
         }
       }
     })()
@@ -111,5 +122,22 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     return pending
   }
 
-  return { session, overview, execution, snapshot, commandEvidence, loading, failure, executionFailure, snapshotFailure, commandFailure, refresh, loadExecution, loadSnapshot, loadCommandEvidence, ...taskLogs }
+  function beginMutation() {
+    const current = cycle
+    if (!current?.binding.active()) return () => {}
+    current.mutations++; clearTimeout(current.timer); current.timer = undefined
+    return (reload: boolean) => {
+      if (cycle !== current || !current.binding.active()) return
+      endMutation(reload)
+    }
+  }
+  function endMutation(reload: boolean) { const current = cycle; if (!current?.binding.active()) return; current.mutations = Math.max(0, current.mutations - 1); if (reload && !current.mutations) void refresh() }
+  function restrict() {
+    release()
+    session.value = null
+    overview.value = null; execution.value = null; snapshot.value = null; commandEvidence.value = null
+    loading.value = false
+    failure.value = '任务不存在或当前身份无权查看。'
+  }
+  return { session, overview, execution, snapshot, commandEvidence, loading, failure, executionFailure, snapshotFailure, commandFailure, refresh, loadExecution, loadSnapshot, loadCommandEvidence, beginMutation, endMutation, restrict, ...taskLogs }
 }

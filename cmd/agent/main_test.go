@@ -119,7 +119,11 @@ func createLocalTLSExecutionNode(t *testing.T, ctx context.Context, server *http
 		t.Fatalf("创建节点请求失败: %v", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Idempotency-Key", "local-tls-node-create")
+	requestID, err := newBootID()
+	if err != nil {
+		t.Fatal("生成合成节点创建请求标识失败")
+	}
+	request.Header.Set("Idempotency-Key", requestID)
 	request.Header.Set("X-CSRF-Token", localmvp.CSRFToken)
 	response, err := server.Client().Do(request)
 	if err != nil {

@@ -12,10 +12,10 @@ export function populateFormFromDraft(deps: ExportForm & Pick<ExportCatalog, 'ca
     controlFilePath, tmpPath, outputKind, storageBucket, storagePath, storageEndpoint, storageRegion,
     storageCredentialID, skipHeader, columnSeparator, columnQuote, columnQuoteMode, escapeCharacter,
     lineSeparator, nullString, fileEncoding, withTrim, columnSplitter, trailDelimiter, removeNewline,
-    dateValueFormat, datetimeValueFormat, querySql, queryResultLimit, where, includeColumnNames,
+    dateValueFormat, timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat, timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat, preserveZeroDatetime, querySql, queryResultLimit, where, includeColumnNames,
     excludeColumnNames, excludeVirtualColumns, flashbackScn, flashbackTimestamp, snapshot, partition,
     excludeDataTypes, thread, pageSize, parallelMacro, fetchSize, jvmMemory, blockSize, dropObject,
-    retainSchema, compactSchema,
+    retainSchema, compactSchema, addExtraMessage, sequencePolicy, weakRead, enableHiddenPk,
   } = deps
   // populateFormFromDraft 把服务端冻结配置回填到向导表单（纯展示映射，不改变语义）。
 
@@ -76,11 +76,19 @@ export function populateFormFromDraft(deps: ExportForm & Pick<ExportCatalog, 'ca
     removeNewline.value = cut.removeNewline ?? false
   }
   const formats = config.dataFormat?.timestampFormats
-  if (formats) {
-    dateValueFormat.value = formats.dateValueFormat ?? ''
-    datetimeValueFormat.value = formats.datetimeValueFormat ?? ''
-  }
+  dateValueFormat.value = formats?.dateValueFormat ?? ''
+  timeValueFormat.value = formats?.timeValueFormat ?? ''
+  datetimeValueFormat.value = formats?.datetimeValueFormat ?? ''
+  timestampValueFormat.value = formats?.timestampValueFormat ?? ''
+  timestampTzValueFormat.value = formats?.timestampTzValueFormat ?? ''
+  timestampLtzValueFormat.value = formats?.timestampLtzValueFormat ?? ''
+  nlsDateFormat.value = formats?.nlsDateFormat ?? ''
+  nlsTimestampFormat.value = formats?.nlsTimestampFormat ?? ''
+  nlsTimestampTzFormat.value = formats?.nlsTimestampTzFormat ?? ''
+  preserveZeroDatetime.value = formats?.preserveZeroDatetime ?? false
   const filter = config.filterConfig
+  weakRead.value = filter?.weakRead ?? false
+  enableHiddenPk.value = filter?.enableHiddenPk ?? false
   querySql.value = ''
   queryResultLimit.value = ''
   if (filter) {
@@ -106,6 +114,8 @@ export function populateFormFromDraft(deps: ExportForm & Pick<ExportCatalog, 'ca
     blockSize.value = performance.blockSize ?? ''
   }
   const ddl = config.ddlBehavior
+  addExtraMessage.value = ddl?.addExtraMessage ?? false
+  sequencePolicy.value = ddl?.sequencePolicy ?? ''
   if (ddl) {
     dropObject.value = ddl.dropObject ?? false
     retainSchema.value = ddl.retainSchema ?? false

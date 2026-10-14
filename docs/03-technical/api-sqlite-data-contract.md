@@ -1,12 +1,30 @@
 # 首条切片 API 与 SQLite 数据模型最小契约
 
+> 2026-10-14 任务中心阶段 2–3 补充：概览复用列表的冻结展示与服务端动作资格；授权派生数量及链接最多展开 100 条。快照提供五步字段白名单，路径仅创建者可见，凭据只标记脱敏；历史字段来源为 `UNKNOWN`，不透传原始 JSON。`GET /tasks/{id}/operations` 在当前任务范围合并任务审计白名单与执行事件，固定每页 50 条，游标绑定主体/任务，被拒绝事件标记 `DENIED`。`GET /export-drafts` 仅当前主体未提交且未删除草稿，关键字/计数/游标同一所有权范围；`DELETE /export-drafts/{id}` 要求 CSRF、If-Match、幂等键，原子复验提交与活动预检查租约后标记删除、失效预检查、登记审计及回执。0028 日志清理账本与 0029 草稿删除标记只经隔离 SQLite 验证；实施与限制见[收尾证据](evidence/task-center-phases2-3-2026-10-14.md)，不代表服务安装或现役数据升级已完成。
+
+> 2026-10-14 草稿读取修复：v6 GET 的浏览器严格解码须保留已定义的读取开关、完整 timestampFormats、compressionLevel 和 ddlBehavior（含 sequencePolicy），避免读取后 PATCH 静默丢失活动参数。类型与序列枚举仍失败关闭，未知私有字段不传入编辑表单；业务回填继续归 exportFormMapping。MySQL 页面刷新已真实复验，其余读取形态与非法输入有合成反例；不改变 int64 SCN 的浏览器安全整数限制。见[真实 E2E 记录](evidence/export-mysql-e2e-2026-10-14.md)。
+
 > 文档状态：首条纵向切片专项契约已确认，AD-R01～AD-R20 已确认
 > 适用范围：私有 ODP 单表 CSV 导出首条切片
 > 关联基线：TD-001～TD-008、TS-R01～TS-R14、PC-R01～PC-R15、AS-R01～AS-R16、CS-R01～CS-R18、TL-R01～TL-R18、LG-R01～LG-R20
 > 实现状态：`0001` 的 20 表基线与当前迁移链仍只作为本机 SQLite 事实边界；F3.1 已在不新增表的前提下接入授权任务游标列表，F3.3 增加当前任务已持久化日志的分段索引、固定快照/增量游标和 SSE 断线续读代码及合成测试。该本机代码证据不等于 G3 完成；真实 Agent、真实工具、跨进程故障恢复和各项目标环境验证继续受 G3/G4 门禁约束
 > 更新日期：2026-08-12
 
+> 2026-10-12 节点详情诊断：`GET/PATCH /execution-nodes/{nodeId}`、固定环境检查和启用动作返回 `ExecutionNodeDetailEnvelope`。详情增加已保存 `environmentCheck` 的标识、请求/完成时间和绑定事实版本，以及只读 `agentDiagnostics` 的安全 Agent/协议标识、当前事实版本、两侧配置摘要、启动时间、安装版本及日志队列统计。活动执行从严格心跳观察与当前数据库租约、任务读取授权取交集后返回。列表不增加诊断明细，未知统计省略，空授权列表不暴露隐藏数量。
+> 新采集项写入现有 `agents.facts_json` 当前快照，沿用心跳请求摘要/幂等、事务和重启恢复；没有迁移、新表或无限遥测历史。版本来源只允许固定元数据枚举，所有序号/容量限制在浏览器安全整数与固定队列上限内；结构错误、未知字段和矛盾值失败关闭。
+
+> 同日完整采集增量：可选 host、完整固定 inspection、近期授权任务和节点活动进入严格详情模型。`AgentNodeEnvironmentInspectionCompletion` 替代此端点自由 payload 占位；完整清单仅接受十项固定类型、稳定结果码、固化绝对路径和纯版本标识。Direct Load 只允许三个已核对的非负毫秒值及安全投影指纹，真实零保留。
+> 用户请求审计 safe_diff_json 增加 checkId/versionProbeAllowed 的类型化绑定，自动请求明确记录 false；完成时复验当前配置/事实版本、许可及 ACTIVE 主体，与检查状态原子写入 facts_json。下一次心跳幂等摘要仍只绑定请求本身，保留的 inspection 不进入请求摘要。无新迁移或表，历史数据不改写。
+> 人工环境检查原子写入当前 ACTIVE Agent 的 facts_revision 至 environment_check_facts_revision，避免下一次同版本心跳因空绑定而替换成无版本查询许可的自动检查。完成回执同时匹配请求绑定与当前机器事实；真实漂移仍重新排队，自动请求保持 false。不回填历史请求，不更改迁移或权限模型。
+> 近期任务复用 TaskListQuery 的 NodeID/SubjectID/可信 GlobalRead，最多五项，只返回状态、类型和时间。节点事件/操作各取已保存白名单审计的最近五项，不返回账号、safe_diff_json 或关联材料；检查来源独立按当前 checkId 读取，不能被近期窗口挤掉。读取失败省略，不把未知投影为零。
+
 ## 1. 目标与范围
+
+> 2026-10-10 永久删除节点补充：新增 `0025_decouple_execution_node_history.sql` 将历史 FK 改向仅含 `node_id` 的不可变 `execution_node_references`；`execution_nodes` 只保存现存配置。历史任务/快照/执行/已完成预检查/事件/审计/日志不改写或级联删除；永久删除保留创建幂等回执并禁止重用同一 node_id，撤销机器身份与未使用注册码。未完成预检查、连接测试与目录请求失效，已有成功数据源连接事实不随节点配置删除而重写。两张预算证据表在新迁移中补齐 STRICT，记录与不可变约束保持。新前端固定调用 `:delete`；旧服务拒绝新路径而不会自动归档。当前只验证隔离 SQLite，不表示用户库已升级。
+
+> 2026-10-10 执行节点接入补充：新增不可改写历史迁移 `0024_execution_resource_budget.sql`。节点 `execution_budget_policy_json` 保存可配置预留策略；Agent 新列 `execution_worker_limit/execution_workers_active` 保存并行事实，旧单任务 CHECK 列保留兼容，不重建被外键引用表。`execution_resource_allocations` 冻结每份执行的 heap/budget；`execution_claim_receipts` 保存原子领取幂等回执，两个表都禁止 UPDATE/DELETE。释放由可信事件派生，不按超时删除。预算策略修改不重写旧成本。
+>
+> 浏览器节点列表新增可选 `executionQuota`、`taskSummary` 及 `budgetPolicy/defaultJvmMemory`，不包含其他账号任务标识或任何秘密。任务列表新增可选 `nodeId/scope=MINE|ALL`：计数、列表、游标使用同一范围；ALL 须可信全局角色与读取能力共同授权，客户端参数不授予权限。普通账号默认沿用已授权任务范围，节点页本人链接额外裁剪到 MINE；全局管理员默认全局读取。详情和 SSE 重验身份与当前权限。API 结构详见 `contracts/openapi.json`，账号安全边界见[凭据与访问契约](credential-access-security-contract.md)。资源与 Worker 动态采样不失效环境绑定；旧 Agent 缺总内存或未知旧分配阻断新领取。未执行正式库迁移或安装服务，本地临时 SQLite 迁移验证不代表生产升级。
 
 本契约把已经确认的领域和协议语义落到两层实现边界：
 
@@ -99,7 +117,8 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 | `GET /api/v1/execution-nodes/{nodeId}` | 读取最小配置与失败关闭状态投影 | 返回声明配置和管理状态；未有 Agent 事实时只返回 `PENDING`、`NEVER_CONNECTED`、`NOT_CHECKED`、`UNKNOWN` 与 `acceptsNewTasks=false`，不返回机器凭据 |
 | `PATCH /api/v1/execution-nodes/{nodeId}` | 完整替换节点最小声明配置 | 需要 If-Match；请求仍只允许 `displayName`、`platform`、`allowedRoots`，保留既有管理状态，拒绝浏览器写入 Agent、心跳、环境、容量或管理状态 |
 | `POST /api/v1/execution-nodes/{nodeId}:enrollments` | 签发一次性 Agent 关联材料 | 节点管理范围、CSRF、空请求体和 `no-store`；材料仅在 `201` 响应中显示一次，SQLite/审计/节点投影不保存原值；签发新材料会撤销该节点旧 `ACTIVE` Agent |
-| `DELETE /api/v1/execution-nodes/{nodeId}` | 删除或归档节点 | `If-Match`、CSRF 和节点管理范围必填；无引用且无运行任务时物理删除；有历史引用且无运行任务时归档并原子撤销当前 Agent/未使用关联材料；`STARTING`、`RUNNING`、`CANCELLING` 任务存在时返回冲突；不级联删除任务、事件、审计或日志 |
+| `POST /api/v1/execution-nodes/{nodeId}:delete` | 永久删除节点 | `If-Match`、CSRF 和节点管理范围必填；运行、待核对或未释放预算阻断；撤销机器凭据/未使用注册码并物理删除配置，历史证据保留；旧服务 404 时不得回退到旧自动归档 DELETE |
+| `DELETE /api/v1/execution-nodes/{nodeId}` | 永久删除兼容入口 | 新服务与 `:delete` 相同；固定 `outcome=DELETED`、`revision=0`、`agentAccessRevoked`，绝不自动归档 |
 
 这一组接口只形成 G2 的节点声明配置闭环，不形成固定环境检查、节点启停/维护或真实任务可执行性闭环。`GET /api/v1/execution-nodes?eligibleFor=OBDUMPER_EXPORT` 仍只读取既有 `ENABLED` 节点；本轮新建节点固定为 `DISABLED`，不能通过浏览器伪造成导出候选。基础连接诊断是独立例外：已关联且具有当前机器事实的 `DISABLED` 节点可以被选择执行诊断，以解除“必须先启用才能诊断、但启用又依赖验证”的循环；该例外不改变节点管理状态、`acceptsNewTasks` 或导出候选规则。
 
@@ -144,7 +163,8 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 
 | 方法与路径 | 用途 | 关键规则 |
 |---|---|---|
-| `GET /api/v1/tasks` | 授权任务列表 | 本人或 `TASK_OPERATE_BY_DATA_SOURCE` 数据源范围；`limit` 只允许 10、20、50，默认 10 的不透明游标分页；`totalPages` 只按同一授权范围与当前页大小计算，不返回全局任务总数、创建者标识、配置、命令、错误或日志；阶段/进度无可靠证据时明确返回 `UNAVAILABLE` |
+| `GET /api/v1/tasks` | 授权任务列表 | 本人或 `TASK_OPERATE_BY_DATA_SOURCE` 数据源范围；`limit` 只允许 10、20、50，默认 10 的不透明游标分页；`totalPages` 只按同一授权范围与当前页大小计算，不返回全局任务总数、创建者标识、配置、命令、错误或日志；阶段/进度无可靠证据时明确返回 `UNAVAILABLE`。2026-10-14 按 DEC-050 增加 keyword、type、state、createdFrom/To、startedFrom/To、dataSourceId、environment、creatorId 筛选：只收窄授权范围，计数与列表共用同一谓词，游标绑定主体与全部条件；未知枚举、重复单值、倒置区间返回 400，非可信全局身份按他人 creatorId 返回 403。新增 displayName、冻结的 dataSourceName/environment/nodeName、dataSourceDeleted/nodeDeleted、creatorName、cancelRequested 与 availableActions；后者只是展示资格，全局只读身份不获得写操作，写接口仍各自复验 |
+| `GET /api/v1/tasks/filter-options` | 任务筛选候选 | 只取当前授权任务中出现过的数据源、节点、环境，每类至多 100 个；只有可信全局读取身份获得创建人候选；不接受查询参数 |
 | `GET /api/v1/tasks/{taskId}` | 任务概要 | 当前状态是执行事实投影，不覆盖提交快照 |
 | `GET /api/v1/tasks/{taskId}/snapshot` | 不可变配置快照 | 仅必要非敏感数据和 credential revision 引用摘要 |
 | `GET /api/v1/tasks/{taskId}/command-evidence` | 计划/实际命令证据 | 始终隐藏密码；不调用秘密解析 |
@@ -189,14 +209,14 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 
 `0007` 的 `agent_precheck_receipts` 为每个 Agent 的 claim、acknowledge、complete 保存请求摘要、租约和安全状态投影。相同 `agentId + requestId + 请求摘要` 在控制面重启后必须返回原确认；同一 `agentId + requestId` 而摘要不同必须失败关闭，不能覆盖或新建租约。`precheck_runs` 持有当前租约、冻结 binding、bindingDigest、节点事实版本，以及 `0019` 增加的可选 `storage_credential_id/revision`；后者只冻结引用，不保存密钥明文，且仅对象存储输出草稿绑定凭据时存在。`agent_precheck_secret_resolution_receipts` 对数据库和存储槽位分别记录 requestId/摘要/授权结果，不能把两个槽位合并为一次秘密响应。acknowledge 只增加回执确认，不能把 `LEASED` 改写为成功。租约到期一律使用控制面时钟：迟到的 acknowledge 或 complete 不能改变通过状态，迟到 complete 只能得到/记录 `EXPIRED` 的安全结论，并与该 Agent 请求的 `EXPORT_PRECHECK_COMPLETION_EXPIRED` 审计事实同事务持久化。
 
-六项结果的 `evidenceCode` 不是自由文本或正则格式字段：所有检查在 G2 合成验证中只允许 `SYNTHETIC_OK`；`DATABASE_CONNECTIVITY` 另只允许 `DATABASE_CONNECTED`、`DATABASE_CONNECTION_FAILED`、`DATABASE_CONNECTION_UNAVAILABLE` 且必须与状态匹配。`OBJECT_ACCESS` 的通过语义固定为“对冻结单表完成 JDBC 元数据定位与零行读取”，不持久化对象名称、查询文本、结果行或数据库错误。新增固定检查或证据码必须同步修改共享契约、OpenAPI 和负例测试；任何路径、SQL、命令、日志、错误原文或其编码形式均拒绝持久化。
+六项结果的 `evidenceCode` 不是自由文本或正则字段，合法检查、状态与证据码的组合以共享 `internal/precheckcontract/contract.go` 和 OpenAPI 为准。2026-10-13 新增 `PRECHECK_BLOCKED_BY_TOOL`、`PRECHECK_BLOCKED_BY_DATABASE`、`PRECHECK_BLOCKED_BY_STORAGE_CONNECTIVITY`、`PRECHECK_BLOCKED_BY_OUTPUT_PATH`：只允许对应依赖项的 UNKNOWN，说明未执行；既有不可用码说明无法取得可验证结论。两类 UNKNOWN 均阻断提交，不新增业务状态或迁移。OBJECT_ACCESS 的冻结对象及数据库级投影语义见 Agent 契约，不持久化对象名称、查询文本、结果行或数据库错误。新增固定检查或证据码必须同步共享契约、OpenAPI 与负例测试；路径、SQL、命令、日志、错误原文或其编码形式均拒绝持久化。
 
 ### 6.3 关联与心跳的 G2 边界
 
 - Agent 本地状态只能通过 HTTPS、证书链与主机名验证访问控制面；可选 CA 文件必须是本机绝对路径，禁止 HTTP、代理、重定向和跳过 TLS 校验；
 - 关联材料和机器凭据只在 HTTP 边界的短时字节缓冲中存在。控制面只持久化 SHA-256 摘要，Agent 本机只以 AES-GCM 加密状态保存；
 - 关联交换的响应丢失允许同一 `requestId` 重试。心跳保存最后一份请求标识和稳定摘要：同一请求重放返回原 `factsRevision`，同一标识但内容不同返回 `409 AGENT_HEARTBEAT_CONFLICT`；
-- 环境摘要仅含平台、Agent 版本、观测时间、固定容量和 CPU/内存百分比。它不含工具或 Java 路径、磁盘路径、数据库连接、密码、命令、日志或任意文件内容；
+- 环境摘要包含平台、Agent 版本、观测时间、Worker 容量、CPU/内存百分比及物理内存总量/可用量。浏览器授权节点摘要可选成对返回 `memoryTotalBytes/memoryAvailableBytes`：总量为正、可用量为非负安全整数且不超过总量，真实零可用量保留；旧 Agent 缺总量或非法采样整对省略，客户端拒绝部分缺失或精度溢出。已用量只由同一采样相减，不从百分比或执行预算反推。它不含工具或 Java 路径、磁盘路径、数据库连接、密码、命令、日志或任意文件内容；
 - 关联、心跳、平台匹配或容量可用都不等于 `EXPORT_PREFLIGHT` 成功。节点的 `environmentStatus` 在固定检查完成前始终为 `NOT_CHECKED`，任务接收保持关闭。
 
 ## 7. 统一错误契约
@@ -463,3 +483,15 @@ V1.0 不建设用户名密码库、组织、用户组、自定义角色或 IAM �
 | AD-R20 | 平台门禁 | Windows 和三个麒麟目标分别验证初始化、迁移、并发、事件、备份恢复和安全 | 已确认 |
 
 对象目录完成回执仍执行机器身份、冻结绑定、租约、幂等与未知字段校验，仅该连接测试完成接口的 JSON 字节预算扩大到 17 MiB（16 MiB 目录 + 1 MiB 信封）。其他 Agent 请求及浏览器写入预算不变。超限不保存部分结果，不放宽对象名称和查询范围校验。
+
+### 2026-10-13 导出参数与 sys 预检查绑定
+
+草稿 v6 在既有 filterConfig、ddlBehavior 和 timestampFormats 内接入专家字段，路径和浏览器身份边界不变。迁移 `0026_export_sys_precheck_binding.sql` 只在 precheck_runs 增加 nullable sys 引用/修订；两侧必须同时为空或同时有效，参与绑定摘要。没有 sys 的历史摘要保持原值。
+
+任务内部 snapshot_json 的 `_sysCredential` 只存引用与修订，提交时须与预检查精确一致，浏览器仍使用白名单快照而非返回 SQLite 原文。sys 材料只在有效机器租约的连接响应中以成对内存字节返回；解密后重验当前修订。Agent 上下文增加可选的三个固定参数检查标志，未启用时省略，OBJECT_ACCESS 使用两个新增稳定参数证据码。无需新秘密请求入口或通用诊断 API；本轮仅临时 SQLite 的迁移/回滚验证。
+
+## 2026-10-13 当前预检查证明与历史读取
+
+OpenAPI 的机器 checkSet/results 更新为七项与九项两个固定形态；增加静态资源、选择元数据和存储写权限的证据白名单。完成时对照当前冻结上下文及控制面资源政策；需要列/分区检查的指定对象不能以普通对象通过码代替。读接口保留历史六项的精确顺序与有限证据码，损坏结果仍失败关闭。
+
+新任务提交在原 SQLite 事务内要求当前完整清单、全部 PASSED 和当前静态资格。历史六项与旧布尔合成回执不能满足该证明；已有任务与历史报告读取不重写。资源政策变化仍会再次复核，不新增迁移、不静默改历史快照。真实领取依旧执行原实时额度分配。

@@ -23,6 +23,8 @@ const (
 // PersistentStore 将已双层脱敏的 JSONL 段与 SQLite 元数据索引按固定顺序组合。
 // 它不认证调用方；浏览器和 Agent 的身份、租约及对象范围仍必须在控制面边界完成校验。
 type PersistentStore struct {
+	// readMu 保护段读取与删除/封段的互斥，锁顺序始终为 readMu → mu。
+	readMu        sync.RWMutex
 	mu            sync.Mutex
 	root          string
 	index         BatchIndex
@@ -206,6 +208,11 @@ func (store *PersistentStore) readPageLimit(ctx context.Context, taskID string, 
 	if store == nil || strings.TrimSpace(taskID) == "" || limit < 1 || limit > persistedLogPageSize {
 		return nil, nil, nil, ErrInvalidInput
 	}
+	store.readMu.RLock()
+	defer store.readMu.RUnlock()
+	if err := store.retentionError(ctx, taskID); err != nil {
+		return nil, nil, nil, err
+	}
 	if err := store.ensureRecovered(ctx); err != nil {
 		return nil, nil, nil, err
 	}
@@ -291,6 +298,9 @@ func (store *PersistentStore) ReadSince(ctx context.Context, taskID string, afte
 	if store == nil || strings.TrimSpace(taskID) == "" {
 		return nil, nil, ErrInvalidInput
 	}
+	if err := store.retentionError(ctx, taskID); err != nil {
+		return nil, nil, err
+	}
 	if err := store.ensureRecovered(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -300,6 +310,9 @@ func (store *PersistentStore) ReadSince(ctx context.Context, taskID string, afte
 	}
 	snapshot, found, err := store.index.LatestTaskLogPosition(ctx, taskID)
 	if err != nil || !found {
+		if err == nil {
+			err = store.retentionError(ctx, taskID)
+		}
 		return []Record{}, nil, err
 	}
 	if comparePosition(snapshot, after.Position) <= 0 {
@@ -314,6 +327,9 @@ func (store *PersistentStore) ReadSince(ctx context.Context, taskID string, afte
 func (store *PersistentStore) ReadNextSince(ctx context.Context, taskID string, after *PageCursor) (Record, *PageCursor, bool, error) {
 	if store == nil || strings.TrimSpace(taskID) == "" {
 		return Record{}, after, false, ErrInvalidInput
+	}
+	if err := store.retentionError(ctx, taskID); err != nil {
+		return Record{}, after, false, err
 	}
 	if err := store.ensureRecovered(ctx); err != nil {
 		return Record{}, after, false, err
@@ -390,6 +406,8 @@ func (store *PersistentStore) Recover(ctx context.Context) error {
 	if store == nil {
 		return ErrInvalidInput
 	}
+	store.readMu.Lock()
+	defer store.readMu.Unlock()
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.recoverLocked(ctx)
@@ -401,6 +419,8 @@ func (store *PersistentStore) Shutdown(ctx context.Context) error {
 	if store == nil {
 		return ErrInvalidInput
 	}
+	store.readMu.Lock()
+	defer store.readMu.Unlock()
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.needsRecovery {
@@ -432,6 +452,9 @@ func (store *PersistentStore) recoverLocked(ctx context.Context) error {
 			return fmt.Errorf("close active segment before recovery: %w", err)
 		}
 		delete(store.writers, segmentID)
+	}
+	if err := store.resumeCleanupLocked(ctx); err != nil {
+		return err
 	}
 	segments, err := store.index.ListOpenLogSegments(ctx)
 	if err != nil {

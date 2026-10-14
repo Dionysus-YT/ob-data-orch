@@ -83,9 +83,19 @@ func linuxCPUTimes() (uint64, uint64, bool) {
 }
 
 func linuxMemoryUsage() *int {
+	total, available := physicalMemory()
+	if total == 0 {
+		return nil
+	}
+	value := int(((total - available) * 100) / total)
+	return &value
+}
+
+// physicalMemory 读取 Linux procfs 的物理内存与可用估计；缺少 MemAvailable 时保持未知。
+func physicalMemory() (uint64, uint64) {
 	file, err := os.Open("/proc/meminfo")
 	if err != nil {
-		return nil
+		return 0, 0
 	}
 	defer file.Close()
 	values := make(map[string]uint64)
@@ -101,11 +111,11 @@ func linuxMemoryUsage() *int {
 		}
 	}
 	total, available := values["MemTotal"], values["MemAvailable"]
-	if total == 0 || available > total {
-		return nil
+	_, hasAvailable := values["MemAvailable"]
+	if scanner.Err() != nil || !hasAvailable || total == 0 || total > (1<<63-1)/1024 || available > total {
+		return 0, 0
 	}
-	value := int(((total - available) * 100) / total)
-	return &value
+	return total * 1024, available * 1024
 }
 
 func dataRootUsage(root string) (uint64, uint64, error) {

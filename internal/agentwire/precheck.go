@@ -11,6 +11,7 @@ import (
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/precheckcontract"
 )
@@ -48,10 +49,19 @@ type PrecheckExecutionContext struct {
 	OutputPath        string
 	LogPath           string
 	SkipCheckDir      bool
-	TargetPlatform    commandgen.Platform
-	AllowedRoots      []string
-	OutputKind        agentpreflight.OutputKind
-	StorageTarget     *PrecheckStorageTarget
+	// 固定参数检查随冻结草稿下发，缺失字段保持历史零值。
+	WeakRead        bool
+	EnableHiddenPk  bool
+	AddExtraMessage bool
+	// 选择条件只允许冻结标识符；资源额度由控制面计算，不接受本机覆盖。
+	IncludeColumnNames  []string
+	ExcludeColumnNames  []string
+	Partitions          []string
+	ResourceRequirement *executionbudget.PreflightRequirement
+	TargetPlatform      commandgen.Platform
+	AllowedRoots        []string
+	OutputKind          agentpreflight.OutputKind
+	StorageTarget       *PrecheckStorageTarget
 }
 
 // PrecheckStorageTarget 是预检查协议中的对象存储目标段；
@@ -101,10 +111,13 @@ type PrecheckSecretSlotRequest struct {
 // Username 和 Password 必须由调用方在 JDBC 探针返回后立即清零，不能放入状态文件、日志或环境变量。
 // StorageCredential 是 EX-I6 对象存储任务的短时凭据槽位（本地输出任务为空）。
 type DatabaseConnectionSlot struct {
-	Host              string
-	Port              int
-	Username          []byte
-	Password          []byte
+	Host     string
+	Port     int
+	Username []byte
+	Password []byte
+	// SysUsername/SysPassword 仅依赖 sys 权限的固定预检查或执行使用，不能持久化。
+	SysUsername       []byte
+	SysPassword       []byte
 	StorageCredential *StorageCredentialSlot
 }
 
@@ -135,6 +148,9 @@ func (s *DatabaseConnectionSlot) Destroy() {
 	}
 	credential.Zero(s.Username)
 	credential.Zero(s.Password)
+	credential.Zero(s.SysUsername)
+	credential.Zero(s.SysPassword)
+	s.SysUsername, s.SysPassword = nil, nil
 	s.Username = nil
 	s.Password = nil
 	if s.StorageCredential != nil {
@@ -238,16 +254,23 @@ type precheckBindingPayload struct {
 }
 
 type precheckExecutionContextPayload struct {
-	CompatibilityMode string   `json:"compatibilityMode"`
-	Database          string   `json:"database"`
-	Objects           []string `json:"objects"`
-	ObjectTypes       []string `json:"objectTypes"`
-	ContentKind       string   `json:"contentKind"`
-	OutputPath        string   `json:"outputPath"`
-	LogPath           string   `json:"logPath"`
-	SkipCheckDir      bool     `json:"skipCheckDir"`
-	TargetPlatform    string   `json:"targetPlatform"`
-	AllowedRoots      []string `json:"allowedRoots"`
+	CompatibilityMode   string                                `json:"compatibilityMode"`
+	Database            string                                `json:"database"`
+	Objects             []string                              `json:"objects"`
+	ObjectTypes         []string                              `json:"objectTypes"`
+	ContentKind         string                                `json:"contentKind"`
+	OutputPath          string                                `json:"outputPath"`
+	LogPath             string                                `json:"logPath"`
+	SkipCheckDir        bool                                  `json:"skipCheckDir"`
+	WeakRead            bool                                  `json:"weakRead,omitempty"`
+	EnableHiddenPk      bool                                  `json:"enableHiddenPk,omitempty"`
+	AddExtraMessage     bool                                  `json:"addExtraMessage,omitempty"`
+	IncludeColumnNames  []string                              `json:"includeColumnNames,omitempty"`
+	ExcludeColumnNames  []string                              `json:"excludeColumnNames,omitempty"`
+	Partitions          []string                              `json:"partitions,omitempty"`
+	ResourceRequirement *executionbudget.PreflightRequirement `json:"resourceRequirement,omitempty"`
+	TargetPlatform      string                                `json:"targetPlatform"`
+	AllowedRoots        []string                              `json:"allowedRoots"`
 	// EX-I6：对象存储输出附带的受控存储目标段；本地输出缺省。
 	OutputKind    string                        `json:"outputKind"`
 	StorageTarget *precheckStorageTargetPayload `json:"storageTarget"`
@@ -277,10 +300,12 @@ type precheckLeaseAcknowledgementResponsePayload struct {
 }
 
 type precheckDatabaseConnectionPayload struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username []byte `json:"username"`
-	Password []byte `json:"password"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    []byte `json:"username"`
+	Password    []byte `json:"password"`
+	SysUsername []byte `json:"sysUsername,omitempty"`
+	SysPassword []byte `json:"sysPassword,omitempty"`
 }
 
 type precheckStorageCredentialPayload struct {
@@ -390,7 +415,7 @@ func (s *StateStore) ResolvePrecheckDatabaseConnection(ctx context.Context, inpu
 	return client.resolvePrecheckDatabaseConnection(ctx, &state, requestID, input)
 }
 
-// ResolvePrecheckStorageCredential 只在已确认预检查租约的 STORAGE_AUTH 阶段取得对象存储凭据槽位。
+// ResolvePrecheckStorageCredential 在已确认租约的受控认证或写权限阶段取得短时槽位。
 // StateStore 不缓存或持久化响应中的 access-key/secret-key；调用方必须在探测后立即清零。
 func (s *StateStore) ResolvePrecheckStorageCredential(ctx context.Context, input PrecheckSecretSlotRequest) (StorageCredentialSlot, error) {
 	state, found, err := s.loadState()
@@ -547,13 +572,16 @@ func (c *httpsClient) resolvePrecheckDatabaseConnection(ctx context.Context, sta
 		return DatabaseConnectionSlot{}, ErrProtocolRejected
 	}
 	connection := DatabaseConnectionSlot{
-		Host:     payload.Connection.Host,
-		Port:     payload.Connection.Port,
-		Username: payload.Connection.Username,
-		Password: payload.Connection.Password,
+		Host:        payload.Connection.Host,
+		Port:        payload.Connection.Port,
+		Username:    payload.Connection.Username,
+		Password:    payload.Connection.Password,
+		SysUsername: payload.Connection.SysUsername,
+		SysPassword: payload.Connection.SysPassword,
 	}
 	payload.Connection.Username = nil
 	payload.Connection.Password = nil
+	payload.Connection.SysUsername, payload.Connection.SysPassword = nil, nil
 	if !validDatabaseConnectionSlot(connection) {
 		connection.Destroy()
 		return DatabaseConnectionSlot{}, ErrProtocolRejected
@@ -721,9 +749,11 @@ func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
 		OutputPath:        p.OutputPath,
 		LogPath:           p.LogPath,
 		SkipCheckDir:      p.SkipCheckDir,
-		TargetPlatform:    commandgen.Platform(p.TargetPlatform),
-		AllowedRoots:      append([]string(nil), p.AllowedRoots...),
-		OutputKind:        agentpreflight.OutputKind(p.OutputKind),
+		WeakRead:          p.WeakRead, EnableHiddenPk: p.EnableHiddenPk, AddExtraMessage: p.AddExtraMessage,
+		IncludeColumnNames: append([]string(nil), p.IncludeColumnNames...), ExcludeColumnNames: append([]string(nil), p.ExcludeColumnNames...), Partitions: append([]string(nil), p.Partitions...), ResourceRequirement: p.ResourceRequirement,
+		TargetPlatform: commandgen.Platform(p.TargetPlatform),
+		AllowedRoots:   append([]string(nil), p.AllowedRoots...),
+		OutputKind:     agentpreflight.OutputKind(p.OutputKind),
 	}
 	if p.StorageTarget != nil {
 		context.StorageTarget = &PrecheckStorageTarget{Provider: p.StorageTarget.Provider, URI: p.StorageTarget.URI, Endpoint: p.StorageTarget.Endpoint, TmpPath: p.StorageTarget.TmpPath}
@@ -738,6 +768,9 @@ func (p *precheckSecretSlotResponsePayload) destroy() {
 	if p.Connection != nil {
 		credential.Zero(p.Connection.Username)
 		credential.Zero(p.Connection.Password)
+		credential.Zero(p.Connection.SysUsername)
+		credential.Zero(p.Connection.SysPassword)
+		p.Connection.SysUsername, p.Connection.SysPassword = nil, nil
 		p.Connection.Username = nil
 		p.Connection.Password = nil
 		p.Connection = nil
@@ -777,14 +810,14 @@ func validPrecheckCompletion(input PrecheckCompletion) bool {
 		return false
 	}
 	// Agent 客户端无法得知控制面按输出类型选择的检查形态，
-	// 这里只做结构复核（六项、受控检查名/状态/证据码、无重复、成功结论一致）；
+	// 这里只复核七项/九项结构与受控结果；清单权威由冻结草稿决定。
 	// 顺序与形态的权威校验由控制面在完成端点上按冻结绑定执行。
 	return validLenientReport(input.Report)
 }
 
 // validLenientReport 复核报告的结构安全，不假设具体检查清单顺序。
 func validLenientReport(report agentpreflight.Report) bool {
-	if len(report.Results) != 6 {
+	if len(report.Results) != len(precheckcontract.FixedChecks()) && len(report.Results) != len(precheckcontract.StorageOutputChecks()) {
 		return false
 	}
 	seen := make(map[agentpreflight.CheckID]bool, len(report.Results))
@@ -801,12 +834,12 @@ func validLenientReport(report agentpreflight.Report) bool {
 	return report.Succeeded == succeeded
 }
 
-// validPrecheckCheckID 只接受固定六项与两项存储检查的受控检查名。
+// validPrecheckCheckID 只接受当前固定清单内的受控检查名。
 func validPrecheckCheckID(check agentpreflight.CheckID) bool {
 	switch check {
 	case agentpreflight.CheckDatabaseConnectivity, agentpreflight.CheckObjectAccess, agentpreflight.CheckToolEnvironment,
 		agentpreflight.CheckOutputPath, agentpreflight.CheckOutputEmpty, agentpreflight.CheckAvailableSpace,
-		agentpreflight.CheckStorageConnectivity, agentpreflight.CheckStorageAuth:
+		agentpreflight.CheckStorageConnectivity, agentpreflight.CheckStorageAuth, agentpreflight.CheckStorageWrite, agentpreflight.CheckNodeResource:
 		return true
 	default:
 		return false
@@ -826,7 +859,13 @@ func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
 }
 
 func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
+	if !precheckcontract.ValidSelectionIdentifiers(context.IncludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(context.ExcludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(context.Partitions) {
+		return false
+	}
 	if (context.CompatibilityMode != "MYSQL" && context.CompatibilityMode != "ORACLE") || !validOpaqueValue(context.Database, 256) || !validPrecheckContentKind(context.ContentKind) || len(context.AllowedRoots) == 0 || len(context.AllowedRoots) > 32 {
+		return false
+	}
+	if (context.WeakRead || context.EnableHiddenPk) && context.ContentKind == "DDL_ONLY" || context.AddExtraMessage && context.ContentKind == "DATA_ONLY" {
 		return false
 	}
 	// EX-I6：缺省输出类型保持本地语义；对象存储输出必须携带受控存储目标段，
@@ -836,7 +875,7 @@ func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
 	}
 	if context.OutputKind.IsStorageOutput() {
 		if context.StorageTarget == nil || context.StorageTarget.Provider != string(context.OutputKind) ||
-			!validStorageURI(context.StorageTarget.URI) || !validStorageURI(context.OutputPath) || context.LogPath != "" {
+			!validStorageURI(context.StorageTarget.URI) || !validStorageURI(context.OutputPath) || (context.LogPath != "" && !validExportOutputPath(context.TargetPlatform, context.LogPath)) {
 			return false
 		}
 		if context.StorageTarget.Endpoint != "" && !validStorageURI(context.StorageTarget.Endpoint) {
@@ -860,6 +899,9 @@ func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
 	}
 	for _, objectType := range context.ObjectTypes {
 		if objectType != "TABLE" && objectType != "VIEW" && objectType != "FUNCTION" && objectType != "PROCEDURE" && objectType != "SEQUENCE" {
+			return false
+		}
+		if context.EnableHiddenPk && objectType != "TABLE" {
 			return false
 		}
 	}
@@ -889,6 +931,9 @@ func validExportOutputPath(platform commandgen.Platform, value string) bool {
 }
 
 func validDatabaseConnectionSlot(connection DatabaseConnectionSlot) bool {
+	if (len(connection.SysUsername) == 0) != (len(connection.SysPassword) == 0) || len(connection.SysUsername) > 256 || len(connection.SysPassword) > 4096 || containsForbiddenSecretByte(connection.SysUsername) || containsForbiddenSecretByte(connection.SysPassword) {
+		return false
+	}
 	if connection.Port < 1 || connection.Port > 65535 || len(connection.Host) == 0 || len(connection.Host) > 253 ||
 		len(connection.Username) == 0 || len(connection.Username) > 256 || len(connection.Password) == 0 || len(connection.Password) > 4096 {
 		return false

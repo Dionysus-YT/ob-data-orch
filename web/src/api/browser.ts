@@ -1,3 +1,8 @@
+import { parseNodeHostInventory, parseNodeRuntimeInspection, parseNodeActivity, parseNodeRecentTasks, type NodeHostInventory, type NodeRuntimeInspection, type NodeActivity, type NodeRecentTasks } from './nodeRuntimeFacts'
+import { parseTaskExecutionFacts } from './taskExecutionFacts'
+
+export type { NodeHostInventory, NodeRuntimeInspection, NodeInspectionItem, NodeActivity, NodeActivityItem, NodeRecentTasks } from './nodeRuntimeFacts'
+
 export interface ApiError {
   readonly status: number
   readonly code: string
@@ -59,7 +64,7 @@ export function executionNodeErrorMessage(error: unknown, fallback: string): str
   const apiError = error as Partial<ApiError>
   if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE') return '当前页面未获得请求安全令牌，已拒绝写操作。请刷新页面后重试。'
   if (apiError.code === 'EXECUTION_NODE_NAME_UNAVAILABLE') return '执行节点名称不可用，请更换后重试。'
-  if (apiError.code === 'EXECUTION_NODE_RUNNING_TASK') return '节点仍有运行任务，暂不能删除或归档。'
+  if (apiError.code === 'EXECUTION_NODE_RUNNING_TASK') return '节点仍有运行或待核对的执行，暂不能永久删除。'
   if (apiError.status === 401) return '登录状态或请求安全校验已失效，请刷新页面后重试。'
   if (apiError.status === 404) return '执行节点不存在或当前身份无权访问。'
   if (apiError.status === 409 || apiError.status === 412 || apiError.conflict) return '执行节点已发生变化，请刷新后重新比较。'
@@ -221,7 +226,7 @@ export interface DataSourceDeletionResult {
 }
 
 export interface ExecutionNodeDeletionResult {
-  readonly outcome: 'DELETED' | 'ARCHIVED'
+  readonly outcome: 'DELETED'
   readonly revision: number
   readonly agentAccessRevoked: boolean
 }
@@ -252,6 +257,8 @@ export interface ExecutionNodeAgentFacts {
   readonly capacityUsed: number
   readonly cpuUsagePercent?: number
   readonly memoryUsagePercent?: number
+  readonly memoryTotalBytes?: number
+  readonly memoryAvailableBytes?: number
 }
 
 export interface ExecutionNodeDataRootUsage {
@@ -261,6 +268,7 @@ export interface ExecutionNodeDataRootUsage {
 }
 
 export interface ExecutionNodeWrite {
+  readonly budgetPolicy?: { readonly systemReservedBytes?: number; readonly taskOverheadBytes?: number }
   readonly displayName: string
   readonly platform: ExecutionNodePlatform
   readonly allowedRoots: readonly string[]
@@ -269,6 +277,10 @@ export interface ExecutionNodeWrite {
 }
 
 export interface ExecutionNodeSummary {
+  readonly executionQuota?: { readonly totalGiB: number; readonly reservedGiB: number; readonly usedGiB: number }
+  readonly budgetPolicy?: ExecutionNodeWrite['budgetPolicy']
+  readonly defaultJvmMemory?: string
+  readonly taskSummary?: { readonly scope: 'MINE' | 'ALL'; readonly running: number; readonly waiting: number; readonly reconciling: number }
   readonly id: string
   readonly displayName: string
   readonly platform: ExecutionNodePlatform
@@ -286,11 +298,49 @@ export interface ExecutionNodeSummary {
 }
 
 export interface ExecutionNodeDetail extends ExecutionNodeSummary {
+  readonly environmentCheck?: { readonly checkId?: string; readonly status: 'NOT_CHECKED' | 'PENDING' | 'PASSED' | 'FAILED'; readonly code?: string; readonly factsRevision: number; readonly requestedAt?: string; readonly completedAt?: string; readonly source?: 'SUBJECT' | 'AGENT' | 'SYSTEM' | 'UNKNOWN'; readonly inspection?: NodeRuntimeInspection }
+  readonly recentTasks?: NodeRecentTasks
+  readonly activity?: NodeActivity
+  readonly agentDiagnostics?: ExecutionNodeAgentDiagnostics
+  readonly activeExecutions?: { readonly scope: 'READABLE' | 'ALL'; readonly items: readonly ExecutionNodeActiveExecution[] }
   readonly allowedRoots: readonly string[]
   readonly toolHome: string
   readonly javaPath: string
   readonly dataRootUsages?: readonly ExecutionNodeDataRootUsage[]
   readonly createdAt: string
+}
+
+export interface InstalledRuntimeVersion {
+  readonly version: string
+  readonly source: 'JAVA_RELEASE' | 'JAR_MANIFEST' | 'JAR_POM'
+}
+
+export interface ExecutionNodeLogQueue {
+  readonly pendingBatches: number
+  readonly pendingGaps: number
+  readonly pendingBytes: number
+  readonly lastUploadResult: 'UNKNOWN' | 'SUCCEEDED' | 'FAILED'
+  readonly lastUploadAt?: string
+}
+
+export interface ExecutionNodeAgentDiagnostics {
+  readonly host?: NodeHostInventory
+  readonly agentId: string
+  readonly protocolVersion: string
+  readonly factsRevision: number
+  readonly startedAt?: string
+  readonly runtimeConfigurationDigest?: string
+  readonly expectedRuntimeConfigurationDigest: string
+  readonly runtimeVersions?: { readonly java?: InstalledRuntimeVersion; readonly obloader?: InstalledRuntimeVersion; readonly obdumper?: InstalledRuntimeVersion }
+  readonly logQueue?: ExecutionNodeLogQueue
+}
+
+export interface ExecutionNodeActiveExecution {
+  readonly taskId: string
+  readonly executionId: string
+  readonly leaseId: string
+  readonly leaseEpoch: number
+  readonly lastEventSeq: number
 }
 
 export interface ExecutionNodeEnrollment {
@@ -372,8 +422,7 @@ export interface FilterOptions {
   readonly weakRead?: boolean
 }
 
-// TimestampFormatsOptions 保留九个 OpenAPI 已解码字段；浏览器当前仅向 MySQL CSV/CUT 数据导出发送
-// dateValueFormat 与 datetimeValueFormat，其余字段在兼容性验证完成前必须保持关闭。
+// TimestampFormatsOptions 按租户与格式表达导出值格式和 Oracle NLS 会话格式。
 export interface TimestampFormatsOptions {
   readonly dateValueFormat?: string
   readonly timeValueFormat?: string
@@ -384,6 +433,7 @@ export interface TimestampFormatsOptions {
   readonly nlsDateFormat?: string
   readonly nlsTimestampFormat?: string
   readonly nlsTimestampTzFormat?: string
+  readonly preserveZeroDatetime?: boolean
 }
 
 export interface PerformanceOptions {
@@ -429,14 +479,13 @@ export interface StorageCredentialReference {
   readonly revision: number
 }
 
-// 前置 DROP 与保留 Schema 仅 DDL 内容时携带，紧凑 Schema 同样仅 DDL 内容；
-// addExtraMessage 保留用于既有草稿解码，需完成 sys 权限预检查前浏览器保持关闭。
+// DDLBehaviorOptions 只随适用的对象 DDL 携带；附加信息依赖 sys 凭据与权限预检查。
 export interface DDLBehaviorOptions {
   readonly dropObject?: boolean
   readonly retainSchema?: boolean
   readonly compactSchema?: boolean
-  // 附加对象信息的浏览器提交仍由 sys 权限预检查门禁，当前不构造该字段。
   readonly addExtraMessage?: boolean
+  readonly sequencePolicy?: 'PRESERVE' | 'RESTART'
 }
 
 export interface GeneralizedExportConfig {
@@ -482,6 +531,8 @@ export interface ExportDraftInput {
 }
 
 export interface ExportDraft {
+  readonly sourceTaskId?: string
+  readonly sourceDerivation?: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
   readonly id: string
   readonly dataSourceId: string
   readonly nodeId: string
@@ -490,6 +541,21 @@ export interface ExportDraft {
   readonly config: GeneralizedExportConfig
   readonly configFingerprint: string
 }
+
+export interface ExportDraftListItem {
+  readonly id: string
+  readonly type: 'OBDUMPER_EXPORT'
+  readonly displayName: string
+  readonly dataSourceId: string
+  readonly nodeId: string
+  readonly revision: number
+  readonly sourceTaskId?: string
+  readonly sourceDerivation?: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly availableActions: readonly ('CONTINUE_EDIT' | 'SUBMIT' | 'DELETE')[]
+}
+export interface ExportDraftListPage { readonly items: readonly ExportDraftListItem[]; readonly nextCursor?: string; readonly totalPages: number }
 
 export interface CommandPreview {
   readonly command: string
@@ -509,12 +575,15 @@ export interface Precheck {
 }
 
 export interface PrecheckResult {
-	readonly check: 'DATABASE_CONNECTIVITY' | 'OBJECT_ACCESS' | 'TOOL_ENVIRONMENT' | 'OUTPUT_PATH' | 'OUTPUT_EMPTY' | 'AVAILABLE_SPACE' | 'STORAGE_CONNECTIVITY' | 'STORAGE_AUTH'
+	readonly check: 'DATABASE_CONNECTIVITY' | 'OBJECT_ACCESS' | 'TOOL_ENVIRONMENT' | 'NODE_RESOURCE' | 'OUTPUT_PATH' | 'OUTPUT_EMPTY' | 'AVAILABLE_SPACE' | 'STORAGE_CONNECTIVITY' | 'STORAGE_AUTH' | 'STORAGE_WRITE'
 	readonly status: 'PASSED' | 'FAILED' | 'UNKNOWN'
 	readonly evidenceCode: string
 }
 
 export interface TaskOverview {
+  readonly derivedTaskCount?: number
+  readonly derivedTasks?: readonly { readonly id: string; readonly displayName: string; readonly state: string }[]
+  readonly presentation?: TaskListItem
   readonly id: string
   readonly type: 'OBDUMPER_EXPORT'
   readonly dataSourceId: string
@@ -554,6 +623,7 @@ export interface ExportConfigTemplateItem {
 }
 
 export interface TaskSnapshot {
+  readonly groups?: readonly TaskSnapshotGroup[]
   readonly type: 'OBDUMPER_EXPORT'
   readonly snapshotVersion: 'v1' | 'v2'
   readonly dataSourceId: string
@@ -567,13 +637,42 @@ export interface TaskSnapshot {
   readonly capabilityVersion: string
 }
 
+export interface TaskSnapshotGroup {
+  readonly key: 'source' | 'objects' | 'format' | 'output' | 'review'
+  readonly label: string
+  readonly fields: readonly { readonly key: string; readonly label: string; readonly value: string; readonly source: 'UNKNOWN' }[]
+}
+
 export interface TaskCommandEvidence {
   readonly kind: 'PLANNED'
   readonly command: string
   readonly redaction: 'PASSWORD_ONLY'
 }
 
+// TaskOperationPage 只承载当前任务范围的安全操作事实，不复制审计差异或原始事件载荷。
+export interface TaskOperationPage {
+  readonly items: readonly TaskOperation[]
+  readonly nextCursor?: string
+}
+export interface TaskOperation {
+  readonly id: string
+  readonly actorType: 'SUBJECT' | 'AGENT' | 'SYSTEM'
+  readonly actorName: string
+  readonly action: string
+  readonly result: 'SUCCEEDED' | 'FAILED' | 'DENIED' | 'RECORDED'
+  readonly occurredAt: string
+}
+
 export interface TaskExecution {
+  readonly cancelAvailable?: boolean
+  readonly cancelRequested?: boolean
+  readonly cancelDeadline?: string
+  readonly exitCode?: number
+  readonly elapsedMs?: number
+  readonly errorCode?: string
+  readonly errorSummary?: string
+  readonly plannedActualMatch?: 'MATCHED' | 'MISMATCHED' | 'UNAVAILABLE'
+  readonly outputLocation?: { readonly kind: 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS' | 'UNAVAILABLE'; readonly value?: string; readonly redaction: 'FULL' | 'KIND_ONLY' | 'UNAVAILABLE' }
   readonly state: string
   readonly executionId?: string
   readonly reconciliationRequired: boolean
@@ -610,6 +709,59 @@ export interface TaskListItem {
   readonly startedAt?: string
   readonly finishedAt?: string
   readonly updatedAt: string
+  // 任务中心展示事实（DEC-050）：名称来自提交时冻结的展示事实，空值表示历史名称不可用。
+  readonly displayName: string
+  readonly dataSourceName?: string
+  readonly dataSourceDeleted: boolean
+  readonly environment?: TaskEnvironment
+  readonly nodeName?: string
+  readonly nodeDeleted: boolean
+  readonly creatorName?: string
+  readonly cancelRequested: boolean
+  // 只是展示资格；写操作由对应接口复验。
+  readonly availableActions: readonly TaskListAction[]
+}
+
+export type TaskEnvironment = 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
+export const taskListActions = ['COPY_COMMAND', 'VIEW_LOGS', 'CANCEL', 'REBUILD_FROM_CONFIG', 'RERUN_FROM_SCRATCH', 'CHECKPOINT_RESUME', 'SAVE_TEMPLATE'] as const
+export type TaskListAction = (typeof taskListActions)[number]
+export const taskListStates = ['WAITING_SCHEDULE', 'STARTING', 'RUNNING', 'CANCELLING', 'SUCCEEDED', 'FAILED', 'CANCELLED'] as const
+export type TaskListState = (typeof taskListStates)[number]
+
+// TaskListFilter 只收窄服务端授权范围；未传字段表示不筛选。时间为 RFC 3339 半开区间。
+export interface TaskListFilter {
+  readonly nodeId?: string
+  readonly scope?: 'MINE' | 'ALL'
+  readonly keyword?: string
+  readonly types?: readonly 'OBDUMPER_EXPORT'[]
+  readonly states?: readonly TaskListState[]
+  readonly createdFrom?: string
+  readonly createdTo?: string
+  readonly startedFrom?: string
+  readonly startedTo?: string
+  readonly dataSourceId?: string
+  readonly environment?: TaskEnvironment
+  readonly creatorId?: string
+}
+
+export interface TaskFilterOption {
+  readonly id: string
+  readonly label: string
+}
+
+// TaskFilterOptions 只来自当前授权任务；非全局身份不获得创建人候选。
+export interface TaskFilterOptions {
+  readonly dataSources: readonly TaskFilterOption[]
+  readonly nodes: readonly TaskFilterOption[]
+  readonly creators: readonly TaskFilterOption[]
+  readonly environments: readonly TaskEnvironment[]
+  readonly creatorFilterAvailable: boolean
+}
+
+export interface TaskCancellation {
+  readonly taskId: string
+  readonly state: string
+  readonly cancelRequested: boolean
 }
 
 export interface TaskListPage {
@@ -652,7 +804,7 @@ export interface BrowserApi {
   issueExecutionNodeEnrollment(nodeId: string): Promise<ExecutionNodeEnrollment>
   requestExecutionNodeEnvironmentCheck(nodeId: string, revision: number): Promise<ExecutionNodeDetail>
   enableExecutionNode(nodeId: string, revision: number): Promise<ExecutionNodeDetail>
-  deleteOrArchiveExecutionNode(nodeId: string, revision: number): Promise<ExecutionNodeDeletionResult>
+  deleteExecutionNode(nodeId: string, revision: number): Promise<ExecutionNodeDeletionResult>
   getDataSource(dataSourceId: string): Promise<DataSourceDetail>
   createDataSource(input: DataSourceWrite): Promise<string>
   updateDataSource(dataSourceId: string, revision: number, input: DataSourceUpdate): Promise<DataSourceDetail>
@@ -664,6 +816,8 @@ export interface BrowserApi {
   searchExportObjects(dataSourceId: string, revision: number, input: { nodeId: string; database: string; objectType: 'DATABASE' | 'ALL' | ExportObjectType; keyword: string }): Promise<ExportObjectCatalogQuery>
   getExportObjectCatalogQuery(queryId: string): Promise<ExportObjectCatalogQuery>
   createExportDraft(input: ExportDraftInput): Promise<string>
+  listExportDrafts(limit: TaskListPageSize, keyword?: string, cursor?: string): Promise<ExportDraftListPage>
+  deleteExportDraft(draftId: string, revision: number): Promise<void>
   getExportDraft(draftId: string): Promise<ExportDraft>
   updateExportDraft(draft: ExportDraft): Promise<ExportDraft>
   previewExportCommand(draft: ExportDraft): Promise<CommandPreview>
@@ -674,8 +828,11 @@ export interface BrowserApi {
   createStorageCredential(input: StorageCredentialWrite): Promise<StorageCredentialListItem>
   rotateStorageCredential(storageCredentialId: string, revision: number, input: StorageCredentialWrite): Promise<StorageCredentialListItem>
   deleteStorageCredential(storageCredentialId: string, revision: number): Promise<void>
-  listTasks(cursor?: string, limit?: TaskListPageSize): Promise<TaskListPage>
+  listTasks(cursor?: string, limit?: TaskListPageSize, filter?: TaskListFilter, signal?: AbortSignal): Promise<TaskListPage>
+  listTaskFilterOptions(signal?: AbortSignal): Promise<TaskFilterOptions>
+  cancelTask(taskId: string): Promise<TaskCancellation>
   getTaskOverview(taskId: string): Promise<TaskOverview>
+  getTaskOperations(taskId: string, cursor?: string): Promise<TaskOperationPage>
   // EX-I8 派生操作：从失败任务重建可编辑草稿（基于原配置新建/从头重新执行），
   // 或从失败导出任务创建检查点继续任务（继承原快照并追加 --retry）。
   rebuildTaskDraft(taskId: string, derivation: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'): Promise<TaskDerivedDraft>
@@ -756,13 +913,15 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}:enable`, writeVersionedEmptyPost(options, revision))
       return parseExecutionNodeDetail(requiredObject(body, 'item'))
     },
-    async deleteOrArchiveExecutionNode(nodeId, revision) {
-      const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}`, writeRequest(options, {}, revision, 'DELETE', false))
+    async deleteExecutionNode(nodeId, revision) {
+      // 独立动作端点让旧控制面返回 404，避免 HMR 后仍把永久删除执行成归档。
+      const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}:delete`, writeVersionedEmptyPost(options, revision))
       const outcome = requiredString(body, 'outcome')
-      if (outcome !== 'DELETED' && outcome !== 'ARCHIVED') {
+      const revisionAfterDeletion = requiredNumber(body, 'revision')
+      if (outcome !== 'DELETED' || revisionAfterDeletion !== 0) {
         throw localError('RESPONSE_INVALID', '控制面返回了无效执行节点删除结果。')
       }
-      return { outcome, revision: requiredNumber(body, 'revision'), agentAccessRevoked: requiredBoolean(body, 'agentAccessRevoked') }
+      return { outcome, revision: revisionAfterDeletion, agentAccessRevoked: requiredBoolean(body, 'agentAccessRevoked') }
     },
     async getDataSource(dataSourceId) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, { method: 'GET' })
@@ -826,6 +985,17 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       const body = await request(options, '/api/v1/export-drafts', writeRequest(options, input))
       return requiredString(body, 'id')
     },
+    async listExportDrafts(limit, keyword, cursor) {
+      const query = new URLSearchParams({ limit: String(limit) })
+      if (keyword) query.set('keyword', keyword)
+      if (cursor) query.set('cursor', cursor)
+      const body = await request(options, `/api/v1/export-drafts?${query}`, { method: 'GET' })
+      return { items: listOf(body, 'items').map(parseExportDraftListItem), nextCursor: optionalString(body, 'nextCursor'), totalPages: requiredNonNegativeInteger(body, 'totalPages') }
+    },
+    async deleteExportDraft(draftId, revision) {
+      const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draftId)}`, writeRequest(options, {}, revision, 'DELETE', true))
+      if (body['deleted'] !== true) throw localError('RESPONSE_INVALID', '草稿删除结果无效。')
+    },
     async getExportDraft(draftId) {
       const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draftId)}`, { method: 'GET' })
       return parseExportDraft(requiredObject(body, 'item'))
@@ -872,19 +1042,56 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async deleteStorageCredential(storageCredentialId, revision) {
       await request(options, `/api/v1/storage-credentials/${encodeURIComponent(storageCredentialId)}`, writeRequest(options, {}, revision, 'DELETE', false))
     },
-    async listTasks(cursor, limit = 10) {
+    async listTasks(cursor, limit = 10, filter, signal) {
       const query = new URLSearchParams({ limit: String(limit) })
       if (cursor) query.set('cursor', cursor)
-      const body = await request(options, `/api/v1/tasks?${query.toString()}`, { method: 'GET' })
+      if (filter?.nodeId) query.set('nodeId', filter.nodeId)
+      if (filter?.scope) query.set('scope', filter.scope)
+      if (filter?.keyword) query.set('keyword', filter.keyword)
+      if (filter?.types?.length) query.set('type', filter.types.join(','))
+      if (filter?.states?.length) query.set('state', filter.states.join(','))
+      for (const key of ['createdFrom', 'createdTo', 'startedFrom', 'startedTo', 'dataSourceId', 'environment', 'creatorId'] as const) {
+        const value = filter?.[key]
+        if (value) query.set(key, value)
+      }
+      const body = await request(options, `/api/v1/tasks?${query.toString()}`, { method: 'GET', signal })
       const totalPages = requiredNumber(body, 'totalPages')
       if (!Number.isSafeInteger(totalPages) || totalPages < 0) {
         throw localError('RESPONSE_INVALID', '控制面返回了无效任务总页数。')
       }
       return { items: listOf(body, 'items').map(parseTaskListItem), nextCursor: optionalString(body, 'nextCursor'), totalPages }
     },
+    async listTaskFilterOptions(signal) {
+      const body = await request(options, '/api/v1/tasks/filter-options', { method: 'GET', signal })
+      const optionList = (name: string) => listOf(body, name).map(value => {
+        const item = asRecord(value)
+        return { id: requiredString(item, 'id'), label: typeof item.label === 'string' ? item.label : '' }
+      })
+      const environments = listOf(body, 'environments').filter((value): value is TaskEnvironment => typeof value === 'string' && taskEnvironments.includes(value as TaskEnvironment))
+      return { dataSources: optionList('dataSources'), nodes: optionList('nodes'), creators: optionList('creators'), environments, creatorFilterAvailable: requiredBoolean(body, 'creatorFilterAvailable') }
+    },
+    async cancelTask(taskId) {
+      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:cancel`, writeRequest(options, {}))
+      const item = requiredObject(body, 'item')
+      if (requiredString(item, 'taskId') !== taskId) {
+        throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的取消回执。')
+      }
+      return { taskId, state: requiredString(item, 'state'), cancelRequested: requiredBoolean(item, 'cancelRequested') }
+    },
     async getTaskOverview(taskId) {
       const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' })
       return parseTaskOverview(requiredObject(body, 'item'))
+    },
+    async getTaskOperations(taskId, cursor) {
+      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}/operations${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { method: 'GET' })
+      const items = listOf(body, 'items').map(value => {
+        const item = requiredObject({ item: value }, 'item')
+        const actorType = requiredString(item, 'actorType')
+        const result = requiredString(item, 'result')
+        if (!['SUBJECT', 'AGENT', 'SYSTEM'].includes(actorType) || !['SUCCEEDED', 'FAILED', 'DENIED', 'RECORDED'].includes(result)) throw localError('RESPONSE_INVALID', '操作记录不符合安全契约。')
+        return { id: requiredString(item, 'id'), actorType: actorType as TaskOperation['actorType'], actorName: requiredString(item, 'actorName'), action: requiredString(item, 'action'), result: result as TaskOperation['result'], occurredAt: requiredString(item, 'occurredAt') }
+      })
+      return { items, nextCursor: optionalString(body, 'nextCursor') }
     },
     async rebuildTaskDraft(taskId, derivation) {
       const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:rebuild-draft`, writeRequest(options, { derivation }))
@@ -1260,9 +1467,35 @@ function parseExecutionNodeSummary(value: unknown): ExecutionNodeSummary {
     acceptsNewTasks,
     unavailableReasons,
     ...(agentFacts ? { agentFacts } : {}),
+    ...(node.taskSummary !== undefined ? { taskSummary: parseNodeTaskSummary(node.taskSummary) } : {}),
+    ...(node.executionQuota !== undefined ? { executionQuota: parseNodeExecutionQuota(node.executionQuota) } : {}),
+    ...(node.budgetPolicy !== undefined ? { budgetPolicy: parseNodeBudgetPolicy(node.budgetPolicy) } : {}),
+    ...(node.defaultJvmMemory !== undefined ? { defaultJvmMemory: requiredString(node, 'defaultJvmMemory') } : {}),
     revision: requiredNumber(node, 'revision'),
     updatedAt: requiredString(node, 'updatedAt'),
   }
+}
+
+function parseNodeTaskSummary(value: unknown) {
+  const summary = asRecord(value)
+  const result = { running: requiredNumber(summary, 'running'), waiting: requiredNumber(summary, 'waiting'), reconciling: requiredNumber(summary, 'reconciling') }
+  if (Object.values(result).some(count => !Number.isSafeInteger(count) || count < 0)) throw localError('RESPONSE_INVALID', '控制面返回了无效节点任务统计。')
+  if (summary.scope !== undefined && summary.scope !== 'MINE' && summary.scope !== 'ALL') throw localError('RESPONSE_INVALID', '控制面返回了无效任务统计范围。')
+  return { ...result, scope: summary.scope === 'ALL' ? 'ALL' as const : 'MINE' as const }
+}
+
+function parseNodeExecutionQuota(value: unknown) {
+  const quota = asRecord(value)
+  const result = { totalGiB: requiredNumber(quota, 'totalGiB'), reservedGiB: requiredNumber(quota, 'reservedGiB'), usedGiB: requiredNumber(quota, 'usedGiB') }
+  if (![result.totalGiB, result.reservedGiB, result.usedGiB].every(Number.isFinite) || result.totalGiB <= 0 || result.reservedGiB < 0 || result.usedGiB < 0 || result.reservedGiB + result.usedGiB > result.totalGiB) throw localError('RESPONSE_INVALID', '控制面返回了无效执行预算。')
+  return result
+}
+
+function parseNodeBudgetPolicy(value: unknown) {
+  const policy = asRecord(value)
+  const result = { systemReservedBytes: policy.systemReservedBytes === undefined ? 0 : requiredNonNegativeInteger(policy, 'systemReservedBytes'), taskOverheadBytes: policy.taskOverheadBytes === undefined ? 0 : requiredNonNegativeInteger(policy, 'taskOverheadBytes') }
+  if (!Object.values(result).every(Number.isSafeInteger)) throw localError('RESPONSE_INVALID', '控制面返回了无效节点预算配置。')
+  return result
 }
 
 function parseExecutionNodeAgentAssociationStatus(value: Record<string, unknown>): ExecutionNodeAgentAssociationStatus {
@@ -1305,6 +1538,15 @@ function parseExecutionNodeAgentFacts(value: unknown): ExecutionNodeAgentFacts |
   if (capacityUsed > capacityTotal) {
     throw localError('RESPONSE_INVALID', '控制面返回了无效节点容量快照。')
   }
+  const memoryTotalBytes = facts.memoryTotalBytes === undefined ? undefined : requiredNumber(facts, 'memoryTotalBytes')
+  const memoryAvailableBytes = facts.memoryAvailableBytes === undefined ? undefined : requiredNumber(facts, 'memoryAvailableBytes')
+  // 旧服务可省略整对采样；部分缺失、越界或精度不可靠时拒绝投影，不能推算容量。
+  if ((memoryTotalBytes !== undefined || memoryAvailableBytes !== undefined) &&
+    (typeof memoryTotalBytes !== 'number' || typeof memoryAvailableBytes !== 'number' ||
+      !Number.isSafeInteger(memoryTotalBytes) || !Number.isSafeInteger(memoryAvailableBytes) ||
+      memoryTotalBytes <= 0 || memoryAvailableBytes < 0 || memoryAvailableBytes > memoryTotalBytes)) {
+    throw localError('RESPONSE_INVALID', '控制面返回了无效节点内存采样。')
+  }
   return {
     os: requiredString(facts, 'os'),
     arch: requiredString(facts, 'arch'),
@@ -1315,6 +1557,8 @@ function parseExecutionNodeAgentFacts(value: unknown): ExecutionNodeAgentFacts |
     capacityUsed,
     cpuUsagePercent: optionalPercentage(facts, 'cpuUsagePercent'),
     memoryUsagePercent: optionalPercentage(facts, 'memoryUsagePercent'),
+    memoryTotalBytes,
+    memoryAvailableBytes,
   }
 }
 
@@ -1322,12 +1566,110 @@ function parseExecutionNodeDetail(value: Record<string, unknown>): ExecutionNode
   const summary = parseExecutionNodeSummary(value)
   return {
     ...summary,
+    environmentCheck: parseNodeEnvironmentCheck(value.environmentCheck),
+    recentTasks: parseNodeRecentTasks(value.recentTasks),
+    activity: parseNodeActivity(value.activity),
+    agentDiagnostics: parseNodeAgentDiagnostics(value.agentDiagnostics, summary.agentFacts?.observedAt),
+    activeExecutions: parseNodeActiveExecutions(value.activeExecutions),
     allowedRoots: requiredStringList(value, 'allowedRoots'),
     toolHome: requiredString(value, 'toolHome'),
     javaPath: requiredString(value, 'javaPath'),
     dataRootUsages: optionalExecutionNodeDataRootUsages(value, 'dataRootUsages'),
     createdAt: requiredString(value, 'createdAt'),
   }
+}
+
+function nodeDiagnosticInteger(value: Record<string, unknown>, field: string, maximum = Number.MAX_SAFE_INTEGER): number {
+  const number = requiredNonNegativeInteger(value, field)
+  if (!Number.isSafeInteger(number) || number > maximum) throw localError('RESPONSE_INVALID', '控制面返回了无效节点诊断数值。')
+  return number
+}
+
+function nodeDiagnosticTime(value: Record<string, unknown>, field: string): string | undefined {
+  if (value[field] === undefined) return undefined
+  const time = requiredString(value, field)
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(time) || !Number.isFinite(Date.parse(time))) throw localError('RESPONSE_INVALID', '控制面返回了无效节点诊断时间。')
+  return time
+}
+
+function nodeDiagnosticID(value: Record<string, unknown>, field: string): string {
+  const id = requiredString(value, field)
+  if (!/^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$/.test(id)) throw localError('RESPONSE_INVALID', '控制面返回了无效节点诊断标识。')
+  return id
+}
+
+function parseNodeEnvironmentCheck(value: unknown): ExecutionNodeDetail['environmentCheck'] {
+  if (value === undefined) return undefined
+  const check = asRecord(value)
+  const status = requiredString(check, 'status')
+  if (status !== 'NOT_CHECKED' && status !== 'PENDING' && status !== 'PASSED' && status !== 'FAILED') throw localError('RESPONSE_INVALID', '控制面返回了无效环境检查记录。')
+  const code = check.code === undefined ? undefined : requiredString(check, 'code')
+  if (code !== undefined && !['TOOL_RUNTIME_READY', 'TOOL_RUNTIME_INVALID', 'TOOL_RUNTIME_UNAVAILABLE'].includes(code)) throw localError('RESPONSE_INVALID', '控制面返回了无效环境检查结果码。')
+  const factsRevision = nodeDiagnosticInteger(check, 'factsRevision')
+  const requestedAt = nodeDiagnosticTime(check, 'requestedAt')
+  const completedAt = nodeDiagnosticTime(check, 'completedAt')
+  if ((completedAt && requestedAt && Date.parse(completedAt) < Date.parse(requestedAt)) || (status === 'PASSED' && (code !== 'TOOL_RUNTIME_READY' || factsRevision < 1 || !completedAt))) throw localError('RESPONSE_INVALID', '控制面返回了不完整环境检查记录。')
+  const source = check.source === undefined ? undefined : requiredString(check, 'source') as 'SUBJECT' | 'AGENT' | 'SYSTEM' | 'UNKNOWN'
+  if (source !== undefined && !['SUBJECT', 'AGENT', 'SYSTEM', 'UNKNOWN'].includes(source)) throw localError('RESPONSE_INVALID', '控制面返回了无效检查来源。')
+  return { checkId: check.checkId === undefined ? undefined : nodeDiagnosticID(check, 'checkId'), status, code, factsRevision, requestedAt, completedAt, source, inspection: parseNodeRuntimeInspection(check.inspection) }
+}
+
+function parseInstalledRuntimeVersion(value: unknown, java: boolean): InstalledRuntimeVersion | undefined {
+  if (value === undefined) return undefined
+  const item = asRecord(value)
+  const version = requiredString(item, 'version')
+  const source = requiredString(item, 'source')
+  if (!/^[0-9][0-9A-Za-z._+-]{0,63}$/.test(version) || (java ? source !== 'JAVA_RELEASE' : source !== 'JAR_MANIFEST' && source !== 'JAR_POM')) throw localError('RESPONSE_INVALID', '控制面返回了无效安装版本事实。')
+  return { version, source: source as InstalledRuntimeVersion['source'] }
+}
+
+function parseNodeAgentDiagnostics(value: unknown, observedAt: string | undefined): ExecutionNodeAgentDiagnostics | undefined {
+  if (value === undefined) return undefined
+  const item = asRecord(value)
+  const digest = (field: string, optional = false) => {
+    if (optional && item[field] === undefined) return undefined
+    const value = requiredString(item, field)
+    if (!/^[a-f0-9]{64}$/.test(value)) throw localError('RESPONSE_INVALID', '控制面返回了无效运行配置摘要。')
+    return value
+  }
+  const versions = item.runtimeVersions === undefined ? undefined : asRecord(item.runtimeVersions)
+  const startedAt = nodeDiagnosticTime(item, 'startedAt')
+  if (startedAt && observedAt && Date.parse(startedAt) > Date.parse(observedAt)) throw localError('RESPONSE_INVALID', '控制面返回了矛盾的 Agent 启动时间。')
+  const protocolVersion = requiredString(item, 'protocolVersion')
+  if (!/^[0-9A-Za-z._-]{1,64}$/.test(protocolVersion)) throw localError('RESPONSE_INVALID', '控制面返回了无效 Agent 协议版本。')
+  return {
+    agentId: nodeDiagnosticID(item, 'agentId'), protocolVersion, factsRevision: nodeDiagnosticInteger(item, 'factsRevision'), startedAt,
+    host: parseNodeHostInventory(item.host),
+    runtimeConfigurationDigest: digest('runtimeConfigurationDigest', true), expectedRuntimeConfigurationDigest: digest('expectedRuntimeConfigurationDigest')!,
+    runtimeVersions: versions ? { java: parseInstalledRuntimeVersion(versions.java, true), obloader: parseInstalledRuntimeVersion(versions.obloader, false), obdumper: parseInstalledRuntimeVersion(versions.obdumper, false) } : undefined,
+    logQueue: parseNodeLogQueue(item.logQueue, observedAt, startedAt),
+  }
+}
+
+function parseNodeLogQueue(value: unknown, observedAt: string | undefined, startedAt: string | undefined): ExecutionNodeLogQueue | undefined {
+  if (value === undefined) return undefined
+  const item = asRecord(value)
+  const lastUploadResult = requiredString(item, 'lastUploadResult')
+  const lastUploadAt = nodeDiagnosticTime(item, 'lastUploadAt')
+  if ((lastUploadResult !== 'UNKNOWN' && lastUploadResult !== 'SUCCEEDED' && lastUploadResult !== 'FAILED') || (lastUploadResult === 'UNKNOWN' ? lastUploadAt !== undefined : lastUploadAt === undefined) || (lastUploadAt && observedAt && Date.parse(lastUploadAt) > Date.parse(observedAt)) || (lastUploadAt && startedAt && Date.parse(lastUploadAt) < Date.parse(startedAt))) throw localError('RESPONSE_INVALID', '控制面返回了无效日志队列上传事实。')
+  return { pendingBatches: nodeDiagnosticInteger(item, 'pendingBatches', 2 ** 30), pendingGaps: nodeDiagnosticInteger(item, 'pendingGaps', 2 ** 30), pendingBytes: nodeDiagnosticInteger(item, 'pendingBytes', 2 ** 30 + 16 * 2 ** 20), lastUploadResult, lastUploadAt }
+}
+
+function parseNodeActiveExecutions(value: unknown): ExecutionNodeDetail['activeExecutions'] {
+  if (value === undefined) return undefined
+  const item = asRecord(value)
+  const scope = requiredString(item, 'scope')
+  if ((scope !== 'READABLE' && scope !== 'ALL') || !Array.isArray(item.items) || item.items.length > 1024) throw localError('RESPONSE_INVALID', '控制面返回了无效活动执行事实。')
+  const seen = new Set<string>()
+  const items = item.items.map(value => {
+    const item = asRecord(value)
+    const executionId = nodeDiagnosticID(item, 'executionId')
+    const leaseEpoch = nodeDiagnosticInteger(item, 'leaseEpoch')
+    if (seen.has(executionId) || leaseEpoch < 1) throw localError('RESPONSE_INVALID', '控制面返回了冲突的活动执行事实。')
+    seen.add(executionId)
+    return { taskId: nodeDiagnosticID(item, 'taskId'), executionId, leaseId: nodeDiagnosticID(item, 'leaseId'), leaseEpoch, lastEventSeq: nodeDiagnosticInteger(item, 'lastEventSeq') }
+  })
+  return { scope, items }
 }
 
 function optionalExecutionNodeDataRootUsages(value: Record<string, unknown>, field: string): readonly ExecutionNodeDataRootUsage[] | undefined {
@@ -1367,12 +1709,31 @@ function parseExecutionNodePlatform(value: Record<string, unknown>): ExecutionNo
   return platform
 }
 
+function parseExportDraftListItem(raw: unknown): ExportDraftListItem {
+  const value = asRecord(raw)
+  if (value['type'] !== 'OBDUMPER_EXPORT') throw localError('RESPONSE_INVALID', '草稿类型尚未支持。')
+  const availableActions = listOf(value, 'availableActions').map(action => {
+    if (action !== 'CONTINUE_EDIT' && action !== 'SUBMIT' && action !== 'DELETE') throw localError('RESPONSE_INVALID', '草稿操作资格无效。')
+    return action
+  })
+  const revision = requiredNumber(value, 'revision')
+  if (!Number.isSafeInteger(revision) || revision < 1) throw localError('RESPONSE_INVALID', '草稿版本无效。')
+  const sourceDerivation = optionalString(value, 'sourceDerivation')
+  if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH') throw localError('RESPONSE_INVALID', '草稿来源无效。')
+  return { id: requiredString(value, 'id'), type: 'OBDUMPER_EXPORT', displayName: requiredString(value, 'displayName'), dataSourceId: requiredString(value, 'dataSourceId'), nodeId: requiredString(value, 'nodeId'), revision, sourceTaskId: optionalString(value, 'sourceTaskId'), sourceDerivation, createdAt: requiredString(value, 'createdAt'), updatedAt: requiredString(value, 'updatedAt'), availableActions }
+}
+
 function parseExportDraft(value: Record<string, unknown>): ExportDraft {
   const configVersion = requiredString(value, 'configVersion')
   if (configVersion !== 'v5' && configVersion !== 'v6') {
     throw localError('RESPONSE_INVALID', '控制面返回了未知的草稿配置版本。')
   }
+  const sourceTaskId = optionalString(value, 'sourceTaskId')
+  const sourceDerivation = optionalString(value, 'sourceDerivation')
+  if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH') throw localError('RESPONSE_INVALID', '草稿来源无效。')
+  if ((sourceTaskId === undefined) !== (sourceDerivation === undefined)) throw localError('RESPONSE_INVALID', '草稿来源不一致。')
   return {
+    ...(sourceTaskId && sourceDerivation ? { sourceTaskId, sourceDerivation } : {}),
     id: requiredString(value, 'id'),
     dataSourceId: requiredString(value, 'dataSourceId'),
     nodeId: requiredString(value, 'nodeId'),
@@ -1431,7 +1792,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
   if (contentKind !== 'DATA_ONLY' && contentKind !== 'DDL_ONLY' && contentKind !== 'DDL_AND_DATA') {
     throw localError('RESPONSE_INVALID', '控制面返回了未知的导出内容。')
   }
-  let dataFormat: { readonly formatKind: ExportDataFormatKind; readonly csvOptions?: CsvOptions; readonly cutOptions?: CutOptions } | undefined
+  let dataFormat: GeneralizedExportConfig['dataFormat']
   const dataFormatRaw = nested['dataFormat']
   if (dataFormatRaw !== undefined && dataFormatRaw !== null) {
     const dataFormatObject = requiredObject(nested, 'dataFormat')
@@ -1439,7 +1800,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
     // 仅 DDL 场景服务端会把 formatKind 序列化为空字符串，等价于未选择数据格式。
     if (formatKind !== undefined && formatKind !== null && formatKind !== '') {
       if (formatKind !== 'CSV' && formatKind !== 'CUT' && formatKind !== 'POS' && formatKind !== 'SQL' && formatKind !== 'PARQUET' && formatKind !== 'ORC' && formatKind !== 'AVRO') throw localError('UNSUPPORTED_DRAFT_FORMAT', '当前页面不支持该数据格式。')
-      dataFormat = { formatKind, csvOptions: parseCsvOptions(dataFormatObject), cutOptions: parseCutOptions(dataFormatObject) }
+      dataFormat = { formatKind, csvOptions: parseCsvOptions(dataFormatObject), cutOptions: parseCutOptions(dataFormatObject), timestampFormats: parseTimestampFormats(dataFormatObject) }
     }
   }
   const outputConfig = requiredObject(nested, 'outputConfig')
@@ -1468,6 +1829,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
       retainEmptyFiles: optionalBoolean(outputConfig, 'retainEmptyFiles'),
       compress: optionalBoolean(outputConfig, 'compress'),
       compressionAlgo: parseCompressionAlgo(outputConfig),
+      compressionLevel: optionalNumber(outputConfig, 'compressionLevel'),
       // EX-I4 POS 定版：控制文件目录（--ctl-path），仅 POS 格式携带。
       controlFilePath: optionalDraftString(outputConfig, 'controlFilePath'),
       // EX-I6 对象存储：Multipart 本地临时分块目录（--tmp-path）。
@@ -1477,7 +1839,39 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
     },
     filterConfig: parseFilterConfig(nested),
     performanceConfig: parsePerformanceConfig(nested),
+    ddlBehavior: parseDDLBehavior(nested),
   }
+}
+
+// parseTimestampFormats 按固定字段读取值格式与 NLS 配置，禁止草稿恢复静默丢失已保存选项。
+function parseTimestampFormats(dataFormat: Record<string, unknown>): TimestampFormatsOptions | undefined {
+  const raw = dataFormat['timestampFormats']
+  if (raw === undefined || raw === null) return undefined
+  const options = asRecord(raw)
+  const formats: TimestampFormatsOptions = {
+    dateValueFormat: optionalOptionText(options, 'dateValueFormat'),
+    timeValueFormat: optionalOptionText(options, 'timeValueFormat'),
+    datetimeValueFormat: optionalOptionText(options, 'datetimeValueFormat'),
+    timestampValueFormat: optionalOptionText(options, 'timestampValueFormat'),
+    timestampTzValueFormat: optionalOptionText(options, 'timestampTzValueFormat'),
+    timestampLtzValueFormat: optionalOptionText(options, 'timestampLtzValueFormat'),
+    nlsDateFormat: optionalOptionText(options, 'nlsDateFormat'),
+    nlsTimestampFormat: optionalOptionText(options, 'nlsTimestampFormat'),
+    nlsTimestampTzFormat: optionalOptionText(options, 'nlsTimestampTzFormat'),
+    preserveZeroDatetime: optionalBoolean(options, 'preserveZeroDatetime'),
+  }
+  return Object.values(formats).every(value => value === undefined) ? undefined : formats
+}
+
+// parseDDLBehavior 仅保留公开 DDL 参数；未知序列策略失败关闭，不读取内部 sys 槽位。
+function parseDDLBehavior(nested: Record<string, unknown>): DDLBehaviorOptions | undefined {
+  const raw = nested['ddlBehavior']
+  if (raw === undefined || raw === null) return undefined
+  const options = asRecord(raw)
+  const policy = optionalOptionText(options, 'sequencePolicy')
+  if (policy !== undefined && policy !== 'PRESERVE' && policy !== 'RESTART') throw localError('RESPONSE_INVALID', '控制面返回了无效的序列策略。')
+  const ddl: DDLBehaviorOptions = { dropObject: optionalBoolean(options, 'dropObject'), retainSchema: optionalBoolean(options, 'retainSchema'), compactSchema: optionalBoolean(options, 'compactSchema'), addExtraMessage: optionalBoolean(options, 'addExtraMessage'), sequencePolicy: policy }
+  return Object.values(ddl).every(value => value === undefined) ? undefined : ddl
 }
 
 // parseCsvOptions 解析 CSV 序列化选项；缺省、null 或空值视为未设置。
@@ -1542,7 +1936,7 @@ function parseStorageCredentialReference(outputConfig: Record<string, unknown>):
   return { storageCredentialId, revision }
 }
 
-// parseFilterConfig 解析 EX-I3 筛选选项；缺省或 null 视为未设置。
+// parseFilterConfig 按固定字段解析筛选及读取选项；缺省或 null 视为未设置。
 function parseFilterConfig(nested: Record<string, unknown>): FilterOptions | undefined {
   const raw = nested['filterConfig']
   if (raw === undefined || raw === null) return undefined
@@ -1551,10 +1945,7 @@ function parseFilterConfig(nested: Record<string, unknown>): FilterOptions | und
   const queryResultLimit = optionalNumber(options, 'queryResultLimit')
   const includeColumnNames = optionalStringList(options, 'includeColumnNames')
   const excludeColumnNames = optionalStringList(options, 'excludeColumnNames')
-  if (querySql === undefined && queryResultLimit === undefined && includeColumnNames === undefined && excludeColumnNames === undefined && options['excludeVirtualColumns'] === undefined && options['flashbackScn'] === undefined && options['flashbackTimestamp'] === undefined) {
-    return undefined
-  }
-  return {
+  const filter: FilterOptions = {
     querySql,
     queryResultLimit,
     includeColumnNames,
@@ -1562,7 +1953,14 @@ function parseFilterConfig(nested: Record<string, unknown>): FilterOptions | und
     excludeVirtualColumns: optionalBoolean(options, 'excludeVirtualColumns'),
     flashbackScn: optionalNumber(options, 'flashbackScn'),
     flashbackTimestamp: optionalOptionText(options, 'flashbackTimestamp'),
+    where: optionalOptionText(options, 'where'),
+    partition: optionalOptionText(options, 'partition'),
+    excludeDataTypes: optionalStringList(options, 'excludeDataTypes'),
+    snapshot: optionalBoolean(options, 'snapshot'),
+    weakRead: optionalBoolean(options, 'weakRead'),
+    enableHiddenPk: optionalBoolean(options, 'enableHiddenPk'),
   }
+  return Object.values(filter).every(value => value === undefined) ? undefined : filter
 }
 
 // parsePerformanceConfig 解析 EX-I3 资源选项；缺省或 null 视为未设置。
@@ -1642,11 +2040,13 @@ function parsePrecheck(value: Record<string, unknown>): Precheck {
 
 function requiredPrecheckResults(value: Record<string, unknown>, field: string): readonly PrecheckResult[] {
   const raw = value[field]
-  // EX-I6：预检查清单按输出类型二选一——本地冻结六项或对象存储六项（含两项存储检查）。
-  const localChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'] as const
-  const storageChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'AVAILABLE_SPACE', 'STORAGE_CONNECTIVITY', 'STORAGE_AUTH'] as const
+  // 当前报告严格使用七项或九项，历史六项只保留读取；提交资格由业务清单与服务端再次复核。
+  const localChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'] as const
+  const storageChecks = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'OUTPUT_PATH', 'AVAILABLE_SPACE', 'STORAGE_CONNECTIVITY', 'STORAGE_AUTH', 'STORAGE_WRITE'] as const
+  const legacyLocal = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'] as const
+  const legacyStorage = ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'AVAILABLE_SPACE', 'STORAGE_CONNECTIVITY', 'STORAGE_AUTH'] as const
   const knownChecks = [...localChecks, ...storageChecks] as const
-  if (!Array.isArray(raw) || raw.length !== localChecks.length) throw localError('RESPONSE_INVALID', '控制面返回了无效预检查结果。')
+  if (!Array.isArray(raw) || ![6, 7, 9].includes(raw.length)) throw localError('RESPONSE_INVALID', '控制面返回了无效预检查结果。')
   const results = raw.map((item) => {
     const result = asRecord(item)
     const check = requiredString(result, 'check')
@@ -1663,7 +2063,7 @@ function requiredPrecheckResults(value: Record<string, unknown>, field: string):
     throw localError('RESPONSE_INVALID', '控制面返回了重复的预检查项。')
   }
   const orderedChecks = results.map((result) => result.check).join(',')
-  if (orderedChecks !== localChecks.join(',') && orderedChecks !== storageChecks.join(',')) {
+  if (![localChecks, storageChecks, legacyLocal, legacyStorage].some(checks => orderedChecks === checks.join(','))) {
     throw localError('RESPONSE_INVALID', '控制面返回了未知顺序的预检查项。')
   }
   return results as readonly PrecheckResult[]
@@ -1695,7 +2095,14 @@ function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
   if ((parentTaskId === undefined) !== (derivationKind === undefined)) {
     throw localError('RESPONSE_INVALID', '控制面返回了不一致的派生关系。')
   }
+  const presentation = value['presentation'] !== undefined ? parseTaskListItem(value['presentation']) : undefined
+  const derivedTasks = value['derivedTasks'] === undefined ? undefined : listOf(value, 'derivedTasks').map(raw => { const item = asRecord(raw); return { id: requiredString(item, 'id'), displayName: requiredString(item, 'displayName'), state: requiredString(item, 'state') } })
+  const derivedTaskCount = value['derivedTaskCount'] === undefined ? undefined : requiredNonNegativeInteger(value, 'derivedTaskCount')
+  if (derivedTasks && (derivedTaskCount === undefined || derivedTaskCount < derivedTasks.length || derivedTasks.length > 100)) throw localError('RESPONSE_INVALID', '派生任务关系无效。')
+  if (presentation && presentation.id !== requiredString(value, 'id')) throw localError('RESPONSE_INVALID', '任务展示事实与当前任务不一致。')
   return {
+    ...(derivedTasks ? { derivedTasks, derivedTaskCount } : {}),
+    ...(presentation ? { presentation } : {}),
     id: requiredString(value, 'id'),
     type,
     dataSourceId: requiredString(value, 'dataSourceId'),
@@ -1713,7 +2120,20 @@ function parseTaskSnapshot(value: Record<string, unknown>): TaskSnapshot {
   if (type !== 'OBDUMPER_EXPORT' || (snapshotVersion !== 'v1' && snapshotVersion !== 'v2') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV' && format !== 'DDL_CUT' && format !== 'DDL_SQL')) {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务快照。')
   }
+  const groups = value['groups'] === undefined ? undefined : listOf(value, 'groups').map(raw => {
+    const group = asRecord(raw)
+    const key = requiredString(group, 'key')
+    if (!['source', 'objects', 'format', 'output', 'review'].includes(key)) throw localError('RESPONSE_INVALID', '冻结配置分组无效。')
+    const fields = listOf(group, 'fields').map(rawField => {
+      const field = asRecord(rawField)
+      if (field['source'] !== 'UNKNOWN') throw localError('RESPONSE_INVALID', '冻结配置来源尚未支持。')
+      return { key: requiredString(field, 'key'), label: requiredString(field, 'label'), value: requiredString(field, 'value'), source: 'UNKNOWN' as const }
+    })
+    return { key: key as TaskSnapshotGroup['key'], label: requiredString(group, 'label'), fields }
+  })
+  if (groups && (groups.length !== 5 || new Set(groups.map(group => group.key)).size !== 5)) throw localError('RESPONSE_INVALID', '冻结配置分组不完整。')
   return {
+    ...(groups ? { groups } : {}),
     type,
     snapshotVersion,
     dataSourceId: requiredString(value, 'dataSourceId'),
@@ -1748,6 +2168,7 @@ function parseTaskExecution(value: Record<string, unknown>): TaskExecution {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的执行证据。')
   }
   return {
+    ...parseTaskExecutionFacts(value),
     state: requiredString(value, 'state'),
     executionId: optionalString(value, 'executionId'),
     reconciliationRequired: requiredBoolean(value, 'reconciliationRequired'),
@@ -1825,7 +2246,26 @@ function parseTaskListItem(value: unknown): TaskListItem {
     startedAt: optionalString(item, 'startedAt'),
     finishedAt: optionalString(item, 'finishedAt'),
     updatedAt: requiredString(item, 'updatedAt'),
+    displayName: requiredString(item, 'displayName'),
+    dataSourceName: optionalString(item, 'dataSourceName'),
+    dataSourceDeleted: requiredBoolean(item, 'dataSourceDeleted'),
+    environment: optionalTaskEnvironment(item),
+    nodeName: optionalString(item, 'nodeName'),
+    nodeDeleted: requiredBoolean(item, 'nodeDeleted'),
+    creatorName: optionalString(item, 'creatorName'),
+    cancelRequested: requiredBoolean(item, 'cancelRequested'),
+    // 未知操作丢弃而不是推断，前端只渲染已识别的服务端资格。
+    availableActions: listOf(item, 'availableActions').filter((value): value is TaskListAction => typeof value === 'string' && (taskListActions as readonly string[]).includes(value)),
   }
+}
+
+const taskEnvironments: readonly TaskEnvironment[] = ['DEVELOPMENT', 'TEST', 'STAGING', 'PRODUCTION']
+
+function optionalTaskEnvironment(item: Record<string, unknown>): TaskEnvironment | undefined {
+  const value = optionalString(item, 'environment')
+  if (value === undefined) return undefined
+  if (!taskEnvironments.includes(value as TaskEnvironment)) throw localError('RESPONSE_INVALID', '控制面返回了未知任务环境。')
+  return value as TaskEnvironment
 }
 
 function parseTaskLog(value: unknown): TaskLog {

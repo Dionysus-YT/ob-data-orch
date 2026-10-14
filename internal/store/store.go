@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,8 +20,10 @@ import (
 
 	"ob-data-orch/internal/agentpreflight"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/migrate"
+	"ob-data-orch/internal/nodefacts"
 	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/precheckcontract"
 
@@ -34,15 +37,13 @@ var windowsNativeAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:\\`)
 var fixedPrecheckChecks = precheckcontract.FixedChecks()
 
 // storagePrecheckCheckList 是对象存储输出任务的预检查清单（EX-I6 存储专用预检查）：
-// 本机检查裁剪掉不适用 URI 输出的 OUTPUT_PATH/OUTPUT_EMPTY，空间检查转向 --tmp-path 卷，
-// 最后追加两项存储层检查；顺序固定，任何一项非 PASSED 都使整体失败。
+// 辅助目录与空间在节点本地检查；最终追加三项存储事实，清单以共享契约为准。
 func storagePrecheckCheckList() []string {
-	checks := []string{"DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "AVAILABLE_SPACE"}
-	return append(checks, precheckcontract.StorageChecks()...)
+	return precheckcontract.StorageOutputChecks()
 }
 
 // f3LogIndexPlaceholderRetention 仅满足现有段索引的非空保留时间列。
-// F3 尚无系统设置和物理清理实现，不能把这个占位值当成已确认的产品保留策略或据此删除日志。
+// 实际清理依据任务结束时间和部署保留天数，此历史列不能作为删除依据。
 const f3LogIndexPlaceholderRetention = 30 * 24 * time.Hour
 
 // Store owns only database access. It has no network, credential resolution,
@@ -316,7 +317,7 @@ func (s *Store) ListExecutionNodes(ctx context.Context) ([]ExecutionNode, error)
 		       COALESCE(n.environment_check_facts_revision, 0), n.environment_check_requested_at, n.environment_check_completed_at,
 		       n.revision, n.created_at, n.updated_at,
 		       a.agent_id, a.protocol_version, a.boot_id, a.last_heartbeat_at,
-		       a.facts_revision, a.capacity_total, a.capacity_used, a.facts_json
+		       a.facts_revision, a.execution_worker_limit, MAX(a.execution_workers_active,a.capacity_used), a.facts_json, n.execution_budget_policy_json
 		FROM execution_nodes AS n
 		LEFT JOIN agents AS a ON a.node_id = n.node_id AND a.status = 'ACTIVE'
 		WHERE n.management_state != 'ARCHIVED'
@@ -352,7 +353,7 @@ func (s *Store) GetExecutionNode(ctx context.Context, nodeID string) (ExecutionN
 		       COALESCE(n.environment_check_facts_revision, 0), n.environment_check_requested_at, n.environment_check_completed_at,
 		       n.revision, n.created_at, n.updated_at,
 		       a.agent_id, a.protocol_version, a.boot_id, a.last_heartbeat_at,
-		       a.facts_revision, a.capacity_total, a.capacity_used, a.facts_json
+		       a.facts_revision, a.execution_worker_limit, MAX(a.execution_workers_active,a.capacity_used), a.facts_json, n.execution_budget_policy_json
 		FROM execution_nodes AS n
 		LEFT JOIN agents AS a ON a.node_id = n.node_id AND a.status = 'ACTIVE'
 		WHERE n.node_id = ? AND n.management_state != 'ARCHIVED'
@@ -377,6 +378,10 @@ func (s *Store) CreateExecutionNode(ctx context.Context, input ExecutionNodeCrea
 		return ExecutionNodeCreateResult{}, fmt.Errorf("encode execution node roots: %w", err)
 	}
 	result := ExecutionNodeCreateResult{NodeID: input.NodeID}
+	budgetPolicy, err := encodeBudgetPolicy(input.BudgetPolicy)
+	if err != nil {
+		return ExecutionNodeCreateResult{}, err
+	}
 	err = s.withWrite(ctx, func(tx *sql.Tx) error {
 		var existingDigest, existingID string
 		err := tx.QueryRowContext(ctx, `
@@ -397,10 +402,10 @@ func (s *Store) CreateExecutionNode(ctx context.Context, input ExecutionNodeCrea
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO execution_nodes(
                 node_id, display_name, normalized_name, platform, management_state,
-				allowed_roots_json, tool_home, java_path, tool_config_ref, revision, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'DISABLED', ?, ?, ?, NULL, 1, ?, ?, ?)
+				allowed_roots_json, tool_home, java_path, tool_config_ref, revision, created_by, created_at, updated_at, execution_budget_policy_json
+            ) VALUES (?, ?, ?, ?, 'DISABLED', ?, ?, ?, NULL, 1, ?, ?, ?, ?)
 		`, input.NodeID, input.DisplayName, input.NormalizedName, input.Platform, string(allowedRootsJSON), input.ToolHome, input.JavaPath,
-			input.CreatorSubjectID, utcText(input.CreatedAt), utcText(input.CreatedAt)); err != nil {
+			input.CreatorSubjectID, utcText(input.CreatedAt), utcText(input.CreatedAt), budgetPolicy); err != nil {
 			if isExecutionNodeNameConstraint(err) {
 				return ErrExecutionNodeNameUnavailable
 			}
@@ -434,16 +439,24 @@ func (s *Store) UpdateExecutionNode(ctx context.Context, input ExecutionNodeUpda
 		return 0, fmt.Errorf("encode execution node roots: %w", err)
 	}
 	var revision int64
+	var budgetPolicy any
+	if input.BudgetPolicy != nil {
+		encoded, err := encodeBudgetPolicy(input.BudgetPolicy)
+		if err != nil {
+			return 0, err
+		}
+		budgetPolicy = encoded
+	}
 	err = s.withWrite(ctx, func(tx *sql.Tx) error {
 		update, err := tx.ExecContext(ctx, `
             UPDATE execution_nodes
-			SET display_name = ?, normalized_name = ?, platform = ?, allowed_roots_json = ?, tool_home = ?, java_path = ?,
+			SET display_name = ?, normalized_name = ?, platform = ?, allowed_roots_json = ?, tool_home = ?, java_path = ?, execution_budget_policy_json = COALESCE(?, execution_budget_policy_json),
                 environment_check_id = NULL, environment_check_status = 'NOT_CHECKED',
                 environment_check_code = NULL, environment_check_facts_revision = NULL,
                 environment_check_requested_at = NULL, environment_check_completed_at = NULL,
                 revision = revision + 1, updated_at = ?
             WHERE node_id = ? AND management_state != 'ARCHIVED' AND revision = ?
-		`, input.DisplayName, input.NormalizedName, input.Platform, string(allowedRootsJSON), input.ToolHome, input.JavaPath,
+		`, input.DisplayName, input.NormalizedName, input.Platform, string(allowedRootsJSON), input.ToolHome, input.JavaPath, budgetPolicy,
 			utcText(input.UpdatedAt), input.NodeID, input.ExpectedRevision)
 		if err != nil {
 			if isExecutionNodeNameConstraint(err) {
@@ -475,6 +488,7 @@ func (s *Store) UpdateExecutionNode(ctx context.Context, input ExecutionNodeUpda
 
 // RequestExecutionNodeEnvironmentCheck 创建一条由当前 Agent 主动领取的固定本机运行时检查。
 // 它不会把路径、命令、工具配置或 Agent 身份从浏览器传入节点侧。
+// 人工请求原子绑定当前机器事实，避免同版本领取心跳将其替换为无版本查询授权的自动检查。
 func (s *Store) RequestExecutionNodeEnvironmentCheck(ctx context.Context, input ExecutionNodeEnvironmentCheckRequest) (ExecutionNodeEnvironmentCheckRequestResult, error) {
 	if err := validateExecutionNodeEnvironmentCheckRequest(input); err != nil {
 		return ExecutionNodeEnvironmentCheckRequestResult{}, err
@@ -484,7 +498,8 @@ func (s *Store) RequestExecutionNodeEnvironmentCheck(ctx context.Context, input 
 		update, err := tx.ExecContext(ctx, `
 			UPDATE execution_nodes
 			SET management_state = 'DISABLED', environment_check_id = ?, environment_check_status = 'PENDING',
-				environment_check_code = NULL, environment_check_facts_revision = NULL,
+				environment_check_code = NULL,
+				environment_check_facts_revision = (SELECT a.facts_revision FROM agents a WHERE a.node_id = execution_nodes.node_id AND a.status = 'ACTIVE'),
 				environment_check_requested_at = ?, environment_check_completed_at = NULL,
 				revision = revision + 1, updated_at = ?
 			WHERE node_id = ? AND management_state != 'ARCHIVED' AND revision = ?
@@ -505,7 +520,7 @@ func (s *Store) RequestExecutionNodeEnvironmentCheck(ctx context.Context, input 
 			}
 			return ErrRevisionConflict
 		}
-		if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED", "EXECUTION_NODE", input.NodeID, "SUCCEEDED", input.RequestID, input.RequestedAt); err != nil {
+		if err := insertNodeCheckRequestAudit(ctx, tx, input); err != nil {
 			return err
 		}
 		result.Revision = input.ExpectedRevision + 1
@@ -546,7 +561,7 @@ func (s *Store) EnsureCurrentExecutionNodeEnvironmentCheck(ctx context.Context, 
 		if affected == 0 {
 			return nil
 		}
-		if err := insertAudit(ctx, tx, "AGENT", input.AgentID, "EXECUTION_NODE_ENVIRONMENT_CHECK_REQUEUED", "EXECUTION_NODE", input.NodeID, "SUCCEEDED", input.RequestID, input.RequestedAt); err != nil {
+		if err := insertNodeCheckRefreshAudit(ctx, tx, input); err != nil {
 			return err
 		}
 		queued = true
@@ -562,25 +577,33 @@ func (s *Store) GetPendingExecutionNodeEnvironmentCheck(ctx context.Context, age
 		return PendingExecutionNodeEnvironmentCheck{}, false, errors.New("execution node environment check identity is invalid")
 	}
 	var checkID string
+	var versionProbeAllowed bool
 	err := s.db.QueryRowContext(ctx, `
-		SELECT n.environment_check_id
+		SELECT n.environment_check_id, EXISTS (
+			SELECT 1 FROM audit_events request JOIN auth_subjects subject ON subject.subject_id=request.actor_id AND subject.account_status='ACTIVE'
+			WHERE request.object_type='EXECUTION_NODE' AND request.object_id=n.node_id AND request.action='EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED'
+			AND request.actor_type='SUBJECT' AND json_extract(request.safe_diff_json,'$.checkId')=n.environment_check_id
+			AND json_extract(request.safe_diff_json,'$.versionProbeAllowed')=1)
 		FROM execution_nodes AS n
 		JOIN agents AS a ON a.node_id = n.node_id AND a.agent_id = ? AND a.status = 'ACTIVE'
 		WHERE n.node_id = ? AND n.management_state != 'ARCHIVED'
 		  AND n.environment_check_status = 'PENDING' AND n.environment_check_id IS NOT NULL
-	`, agentID, nodeID).Scan(&checkID)
+	`, agentID, nodeID).Scan(&checkID, &versionProbeAllowed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PendingExecutionNodeEnvironmentCheck{}, false, nil
 	}
 	if err != nil {
 		return PendingExecutionNodeEnvironmentCheck{}, false, fmt.Errorf("get pending execution node environment check: %w", err)
 	}
-	return PendingExecutionNodeEnvironmentCheck{CheckID: checkID}, true, nil
+	return PendingExecutionNodeEnvironmentCheck{CheckID: checkID, VersionProbeAllowed: versionProbeAllowed}, true, nil
 }
 
 // CompleteExecutionNodeEnvironmentCheck 只接受当前 Agent 对唯一固定运行时检查的稳定安全结论。
 // Agent 机器事实版本变化或节点检查被重新发起时，旧回执不会覆盖当前节点状态。
 func (s *Store) CompleteExecutionNodeEnvironmentCheck(ctx context.Context, input AgentExecutionNodeEnvironmentCheckCompletion) error {
+	if nodefacts.ValidateInspection(input.Inspection) != nil {
+		return errors.New("node inspection payload is invalid")
+	}
 	if err := validateAgentExecutionNodeEnvironmentCheckCompletion(input); err != nil {
 		return err
 	}
@@ -599,7 +622,42 @@ func (s *Store) CompleteExecutionNodeEnvironmentCheck(ctx context.Context, input
 		if readErr != nil {
 			return fmt.Errorf("read execution node environment check completion: %w", readErr)
 		}
+		// 已绑定检查不能在机器事实漂移后换用新版本回执；自动续接仍须新标识且不继承人工许可。
+		if currentRevision > 0 && currentRevision != input.FactsRevision {
+			return ErrExecutionNodeEnvironmentCheckRequired
+		}
+		var rawFacts sql.NullString
+		var probeAllowed bool
+		if err := tx.QueryRowContext(ctx, `SELECT facts_json, EXISTS(SELECT 1 FROM audit_events request JOIN auth_subjects subject ON subject.subject_id=request.actor_id AND subject.account_status='ACTIVE'
+			WHERE request.object_type='EXECUTION_NODE' AND request.object_id=? AND request.action='EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED' AND request.actor_type='SUBJECT'
+			AND json_extract(request.safe_diff_json,'$.checkId')=? AND json_extract(request.safe_diff_json,'$.versionProbeAllowed')=1)
+			FROM agents WHERE agent_id=? AND node_id=? AND status='ACTIVE' AND facts_revision=?`, input.NodeID, input.CheckID, input.AgentID, input.NodeID, input.FactsRevision).Scan(&rawFacts, &probeAllowed); err != nil {
+			return ErrExecutionNodeEnvironmentCheckRequired
+		}
+		var currentFacts AgentEnvironmentFacts
+		if rawFacts.Valid {
+			var err error
+			currentFacts, err = decodeAgentEnvironmentFacts(rawFacts.String)
+			if err != nil {
+				return err
+			}
+		}
+		if input.Inspection != nil {
+			status, code := nodefacts.InspectionResult(input.Inspection)
+			if input.Inspection.CheckID != input.CheckID || input.Inspection.RuntimeConfigurationDigest != currentFacts.RuntimeConfigurationDigest || input.Inspection.VersionProbeAllowed != probeAllowed || status != input.Status || code != input.Code {
+				return ErrExecutionNodeEnvironmentCheckRequired
+			}
+		} else if probeAllowed && input.Status == "PASSED" {
+			return ErrExecutionNodeEnvironmentCheckRequired
+		}
 		if currentStatus == input.Status && currentCode == input.Code && currentRevision == input.FactsRevision {
+			if input.Inspection != nil {
+				left, _ := json.Marshal(currentFacts.RuntimeInspection)
+				right, _ := json.Marshal(input.Inspection)
+				if !bytes.Equal(left, right) {
+					return ErrExecutionNodeEnvironmentCheckRequired
+				}
+			}
 			return nil
 		}
 		if currentStatus != "PENDING" {
@@ -624,6 +682,16 @@ func (s *Store) CompleteExecutionNodeEnvironmentCheck(ctx context.Context, input
 		}
 		if affected != 1 {
 			return ErrExecutionNodeEnvironmentCheckRequired
+		}
+		if input.Inspection != nil {
+			currentFacts.RuntimeInspection = input.Inspection
+			encoded, err := encodeAgentEnvironmentFacts(currentFacts)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE agents SET facts_json=? WHERE agent_id=? AND node_id=? AND facts_revision=?`, encoded, input.AgentID, input.NodeID, input.FactsRevision); err != nil {
+				return err
+			}
 		}
 		auditResult := "FAILED"
 		if input.Status == "PASSED" {
@@ -686,7 +754,7 @@ func (s *Store) EnableExecutionNode(ctx context.Context, input ExecutionNodeEnab
 	return revision, err
 }
 
-// DeleteOrArchiveExecutionNode 在一个短事务内执行节点的删除语义。
+// DeleteOrArchiveExecutionNode 保留遗留底层处置语义与归档回归，浏览器永久删除不调用此方法。
 // Agent 关联、草稿、预检查、任务、执行记录或连接测试任一存在时只能归档，以保留历史快照与外键；
 // 有运行中任务时拒绝任何处置，避免归档导致 Agent 失去继续上报所需的机器身份。
 // 无引用时才允许物理删除节点。审计事实与创建幂等记录始终保留，避免延迟重试重建已删除节点。
@@ -756,7 +824,7 @@ func (s *Store) DeleteOrArchiveExecutionNode(ctx context.Context, input Executio
 			if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "EXECUTION_NODE_ARCHIVED", "EXECUTION_NODE", input.NodeID, "SUCCEEDED", input.RequestID, input.DeletedAt); err != nil {
 				return err
 			}
-			revoked, err := revokeArchivedExecutionNodeAgentAccess(ctx, tx, input)
+			revoked, err := revokeExecutionNodeAgentAccess(ctx, tx, input)
 			if err != nil {
 				return err
 			}
@@ -784,24 +852,24 @@ func (s *Store) DeleteOrArchiveExecutionNode(ctx context.Context, input Executio
 	return result, err
 }
 
-// revokeArchivedExecutionNodeAgentAccess 仅在节点归档且没有运行中任务时撤销仍有效的机器身份和一次性材料。
-// 历史 Agent 行保留为可审计引用，后续认证因状态已撤销和节点已归档而失败关闭。
-func revokeArchivedExecutionNodeAgentAccess(ctx context.Context, tx *sql.Tx, input ExecutionNodeDeletion) (bool, error) {
+// revokeExecutionNodeAgentAccess 在节点安全退役事务中撤销机器身份与一次性材料。
+// 调用者先阻断仍需报送的执行；历史 Agent 行保留，后续认证因状态撤销而失败关闭。
+func revokeExecutionNodeAgentAccess(ctx context.Context, tx *sql.Tx, input ExecutionNodeDeletion) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT agent_id FROM agents WHERE node_id = ? AND status = 'ACTIVE'`, input.NodeID)
 	if err != nil {
-		return false, fmt.Errorf("list archived node active agents: %w", err)
+		return false, fmt.Errorf("list retired node active agents: %w", err)
 	}
 	defer rows.Close()
 	var agentIDs []string
 	for rows.Next() {
 		var agentID string
 		if err := rows.Scan(&agentID); err != nil {
-			return false, fmt.Errorf("scan archived node active agent: %w", err)
+			return false, fmt.Errorf("scan retired node active agent: %w", err)
 		}
 		agentIDs = append(agentIDs, agentID)
 	}
 	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate archived node active agents: %w", err)
+		return false, fmt.Errorf("iterate retired node active agents: %w", err)
 	}
 	if len(agentIDs) > 0 {
 		if _, err := tx.ExecContext(ctx, `
@@ -809,7 +877,7 @@ func revokeArchivedExecutionNodeAgentAccess(ctx context.Context, tx *sql.Tx, inp
 			SET status = 'REVOKED', revoked_at = ?
 			WHERE node_id = ? AND status = 'ACTIVE'
 		`, utcText(input.DeletedAt), input.NodeID); err != nil {
-			return false, fmt.Errorf("revoke archived node agents: %w", err)
+			return false, fmt.Errorf("revoke retired node agents: %w", err)
 		}
 		for _, agentID := range agentIDs {
 			if err := insertAudit(ctx, tx, "SUBJECT", input.ActorSubjectID, "AGENT_REVOKED", "AGENT", agentID, "SUCCEEDED", input.RequestID, input.DeletedAt); err != nil {
@@ -823,13 +891,13 @@ func revokeArchivedExecutionNodeAgentAccess(ctx context.Context, tx *sql.Tx, inp
 		WHERE node_id = ? AND status = 'ACTIVE'
 	`, input.NodeID)
 	if err != nil {
-		return false, fmt.Errorf("revoke archived node enrollments: %w", err)
+		return false, fmt.Errorf("revoke retired node enrollments: %w", err)
 	}
 	revokedEnrollments, err := activeEnrollments.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("read archived node enrollment revocation result: %w", err)
+		return false, fmt.Errorf("read retired node enrollment revocation result: %w", err)
 	}
-	// 节点归档审计已在同一事务中记录关联材料撤销；同一节点和请求不能重复写审计主键。
+	// 节点退役审计在同一事务中记录关联材料撤销；同一节点和请求不能重复写审计主键。
 	return len(agentIDs) > 0 || revokedEnrollments > 0, nil
 }
 
@@ -1136,22 +1204,32 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, input AgentHeartbeat) 
 		}
 		bootChanged := previousBootID.Valid && previousBootID.String != input.BootID
 		factsChanged := true
+		var retainedInspection *nodefacts.RuntimeInspection
 		if previousFactsJSON.Valid {
 			previousFacts, decodeErr := decodeAgentEnvironmentFacts(previousFactsJSON.String)
 			if decodeErr != nil {
 				return fmt.Errorf("decode prior agent environment facts: %w", decodeErr)
 			}
 			factsChanged = !sameAgentEnvironmentFacts(previousFacts, input.Facts)
+			if !bootChanged && !factsChanged {
+				retainedInspection = previousFacts.RuntimeInspection
+			}
 		}
 		factsRevisionIncrement := 0
 		if !previousBootID.Valid || previousBootID.String != input.BootID ||
-			previousCapacityTotal != input.CapacityTotal || previousCapacityUsed != input.CapacityUsed ||
 			factsChanged {
 			factsRevisionIncrement = 1
 		}
+		// 检查回执与心跳属于独立事务；仅保存同一稳定事实的上次回执，请求摘要仍来自原始心跳。
+		persistedFacts := input.Facts
+		persistedFacts.RuntimeInspection = retainedInspection
+		factsJSON, err := encodeAgentEnvironmentFacts(persistedFacts)
+		if err != nil {
+			return err
+		}
 		update, updateErr := tx.ExecContext(ctx, `
             UPDATE agents
-            SET boot_id = ?, last_heartbeat_at = ?, capacity_total = ?, capacity_used = ?,
+            SET boot_id = ?, last_heartbeat_at = ?, capacity_total = 1, capacity_used = ?, execution_worker_limit = ?, execution_workers_active = ?,
                 facts_json = ?, facts_revision = facts_revision + ?,
                 last_heartbeat_request_id = ?, last_heartbeat_request_digest = ?
             WHERE agent_id = ? AND node_id = ? AND status = 'ACTIVE' AND protocol_version = ?
@@ -1160,7 +1238,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, input AgentHeartbeat) 
                   WHERE execution_nodes.node_id = agents.node_id
                     AND execution_nodes.management_state != 'ARCHIVED'
               )
-		`, input.BootID, utcText(input.ReceivedAt), input.CapacityTotal, input.CapacityUsed,
+		`, input.BootID, utcText(input.ReceivedAt), min(1, input.CapacityUsed), input.CapacityTotal, input.CapacityUsed,
 			factsJSON, factsRevisionIncrement, input.RequestID, requestDigest, input.AgentID, input.NodeID, input.ProtocolVersion)
 		if updateErr != nil {
 			return fmt.Errorf("record agent heartbeat: %w", updateErr)
@@ -1190,12 +1268,28 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, input AgentHeartbeat) 
 }
 
 // sameAgentEnvironmentFacts 只比较会改变固定运行时与冻结绑定含义的机器事实。
-// CPU、内存和目录空间用于展示，采样值持续变化不能使已完成的环境检查或预检查失效。
+// 资源、活动执行和队列用于展示，其动态变化不能使已完成的环境检查或预检查失效。
 func sameAgentEnvironmentFacts(left, right AgentEnvironmentFacts) bool {
 	return left.OperatingSystem == right.OperatingSystem &&
 		left.Architecture == right.Architecture &&
 		left.AgentVersion == right.AgentVersion &&
+		sameAgentStartedAt(left.StartedAt, right.StartedAt) &&
+		sameRuntimeVersions(left.RuntimeVersions, right.RuntimeVersions) &&
 		left.RuntimeConfigurationDigest == right.RuntimeConfigurationDigest
+}
+
+func sameAgentStartedAt(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func sameRuntimeVersions(left, right *nodefacts.RuntimeVersions) bool {
+	// 安装版本属于稳定运行时事实；上传、执行序号与采样时间不参与检查失效判断。
+	leftJSON, _ := json.Marshal(left)
+	rightJSON, _ := json.Marshal(right)
+	return bytes.Equal(leftJSON, rightJSON)
 }
 
 // agentHeartbeatRequestDigest 只从 Agent 主动上报的稳定字段计算摘要。
@@ -1231,12 +1325,16 @@ func scanExecutionNode(row interface{ Scan(...any) error }) (ExecutionNode, erro
 	var environmentCheckRequestedAt, environmentCheckCompletedAt sql.NullString
 	var agentID, protocolVersion, bootID, lastHeartbeatAt, factsJSON sql.NullString
 	var factsRevision, capacityTotal, capacityUsed sql.NullInt64
+	var budgetPolicyJSON string
 	if err := row.Scan(&node.NodeID, &node.DisplayName, &node.Platform, &node.ManagementState, &allowedRootsJSON, &node.ToolHome, &node.JavaPath,
 		&node.EnvironmentCheck.CheckID, &node.EnvironmentCheck.Status, &node.EnvironmentCheck.Code,
 		&node.EnvironmentCheck.FactsRevision, &environmentCheckRequestedAt, &environmentCheckCompletedAt,
 		&node.Revision, &createdAt, &updatedAt,
 		&agentID, &protocolVersion, &bootID, &lastHeartbeatAt,
-		&factsRevision, &capacityTotal, &capacityUsed, &factsJSON); err != nil {
+		&factsRevision, &capacityTotal, &capacityUsed, &factsJSON, &budgetPolicyJSON); err != nil {
+		return ExecutionNode{}, err
+	}
+	if err := json.Unmarshal([]byte(budgetPolicyJSON), &node.BudgetPolicy); err != nil {
 		return ExecutionNode{}, err
 	}
 	if err := json.Unmarshal([]byte(allowedRootsJSON), &node.AllowedRoots); err != nil {
@@ -1296,18 +1394,30 @@ func scanExecutionNode(row interface{ Scan(...any) error }) (ExecutionNode, erro
 }
 
 type persistedAgentEnvironmentFacts struct {
-	OperatingSystem            string               `json:"operatingSystem"`
-	Architecture               string               `json:"architecture"`
-	AgentVersion               string               `json:"agentVersion"`
-	ObservedAt                 string               `json:"observedAt"`
-	CPUUsagePercent            *int                 `json:"cpuUsagePercent,omitempty"`
-	MemoryUsagePercent         *int                 `json:"memoryUsagePercent,omitempty"`
-	RuntimeConfigurationDigest string               `json:"runtimeConfigurationDigest,omitempty"`
-	DataRootUsages             []AgentDataRootUsage `json:"dataRootUsages,omitempty"`
+	Host                       *nodefacts.HostInventory        `json:"host,omitempty"`
+	RuntimeInspection          *nodefacts.RuntimeInspection    `json:"runtimeInspection,omitempty"`
+	StartedAt                  *time.Time                      `json:"startedAt,omitempty"`
+	RuntimeVersions            *nodefacts.RuntimeVersions      `json:"runtimeVersions,omitempty"`
+	ExecutionObservation       *nodefacts.ExecutionObservation `json:"executionObservation,omitempty"`
+	LogQueue                   *nodefacts.LogQueue             `json:"logQueue,omitempty"`
+	MemoryTotalBytes           uint64                          `json:"memoryTotalBytes,omitempty"`
+	MemoryAvailableBytes       uint64                          `json:"memoryAvailableBytes,omitempty"`
+	OperatingSystem            string                          `json:"operatingSystem"`
+	Architecture               string                          `json:"architecture"`
+	AgentVersion               string                          `json:"agentVersion"`
+	ObservedAt                 string                          `json:"observedAt"`
+	CPUUsagePercent            *int                            `json:"cpuUsagePercent,omitempty"`
+	MemoryUsagePercent         *int                            `json:"memoryUsagePercent,omitempty"`
+	RuntimeConfigurationDigest string                          `json:"runtimeConfigurationDigest,omitempty"`
+	DataRootUsages             []AgentDataRootUsage            `json:"dataRootUsages,omitempty"`
 }
 
 func encodeAgentEnvironmentFacts(facts AgentEnvironmentFacts) (string, error) {
 	payload, err := json.Marshal(persistedAgentEnvironmentFacts{
+		Host: facts.Host, RuntimeInspection: facts.RuntimeInspection,
+		StartedAt: facts.StartedAt, RuntimeVersions: facts.RuntimeVersions,
+		ExecutionObservation: facts.ExecutionObservation, LogQueue: facts.LogQueue,
+		MemoryTotalBytes: facts.MemoryTotalBytes, MemoryAvailableBytes: facts.MemoryAvailableBytes,
 		OperatingSystem: facts.OperatingSystem, Architecture: facts.Architecture, AgentVersion: facts.AgentVersion,
 		ObservedAt: facts.ObservedAt.UTC().Format(time.RFC3339Nano), CPUUsagePercent: facts.CPUUsagePercent,
 		MemoryUsagePercent: facts.MemoryUsagePercent, RuntimeConfigurationDigest: facts.RuntimeConfigurationDigest,
@@ -1329,6 +1439,10 @@ func decodeAgentEnvironmentFacts(raw string) (AgentEnvironmentFacts, error) {
 		return AgentEnvironmentFacts{}, fmt.Errorf("parse agent fact observation time: %w", err)
 	}
 	facts := AgentEnvironmentFacts{
+		Host: payload.Host, RuntimeInspection: payload.RuntimeInspection,
+		StartedAt: payload.StartedAt, RuntimeVersions: payload.RuntimeVersions,
+		ExecutionObservation: payload.ExecutionObservation, LogQueue: payload.LogQueue,
+		MemoryTotalBytes: payload.MemoryTotalBytes, MemoryAvailableBytes: payload.MemoryAvailableBytes,
 		OperatingSystem: payload.OperatingSystem, Architecture: payload.Architecture, AgentVersion: payload.AgentVersion,
 		ObservedAt: observedAt.UTC(), CPUUsagePercent: payload.CPUUsagePercent, MemoryUsagePercent: payload.MemoryUsagePercent,
 		RuntimeConfigurationDigest: payload.RuntimeConfigurationDigest, DataRootUsages: append([]AgentDataRootUsage(nil), payload.DataRootUsages...),
@@ -1929,6 +2043,11 @@ func (s *Store) CreateExportDraft(ctx context.Context, input ExportDraftCreate) 
 		if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "EXPORT_DRAFT_CREATED", "EXPORT_DRAFT", input.DraftID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
 			return err
 		}
+		if input.SourceTaskID != "" {
+			if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "TASK_DRAFT_DERIVED", "TASK", input.SourceTaskID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO request_idempotency(
                 subject_id, operation, idempotency_key, request_digest, result_status,
@@ -1958,7 +2077,7 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
                performance_config_json, filter_config_json, ddl_behavior_json,
                COALESCE(source_task_id, ''), COALESCE(source_derivation, ''),
                created_at, updated_at
-        FROM export_drafts WHERE draft_id = ?
+        FROM export_drafts WHERE draft_id = ? AND deleted_at IS NULL
     `, draftID).Scan(&draft.DraftID, &draft.OwnerSubjectID, &draft.DataSourceID, &draft.NodeID, &draft.Revision,
 		&draft.ToolVersion, &draft.MetadataVersion, &draft.CapabilityVersion, &draft.ConfigVersion, &draft.ConfigJSON,
 		&draft.ConfigFingerprint, &draft.InvalidationJSON,
@@ -2024,10 +2143,18 @@ func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (Prech
 			NodeID: input.NodeID, NodeFactsRevision: nodeFactsRevision, BindingAgentID: bindingAgentID, ValidUntil: input.ValidUntil,
 			// EX-V1：对象存储草稿在预检查创建时冻结存储凭据引用，供 STORAGE_AUTH 探测短时解析；本地输出为空。
 			StorageCredentialID: input.StorageCredentialID, StorageCredentialRevision: input.StorageCredentialRevision,
+			SysCredentialID: input.SysCredentialID, SysCredentialRevision: input.SysCredentialRevision,
 		}
 		bindingDigest, err := precheckBindingDigest(binding)
 		if err != nil {
 			return err
+		}
+		if binding.SysCredentialID != "" {
+			material, err := readFrozenSysCredential(ctx, tx, binding.DataSourceID, frozenSysCredential{CredentialID: binding.SysCredentialID, Revision: binding.SysCredentialRevision})
+			if err != nil {
+				return ErrPrecheckInvalid
+			}
+			material.Destroy()
 		}
 		if binding.StorageCredentialID != "" {
 			var provider string
@@ -2053,20 +2180,21 @@ func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (Prech
                 credential_id, credential_revision, node_id, agent_id, status, lease_id,
                 lease_epoch, lease_expires_at, result_json, integrity_status, valid_until,
 				created_at, completed_at, node_facts_revision, binding_digest, binding_agent_id,
-				storage_credential_id, storage_credential_revision
+				storage_credential_id, storage_credential_revision, sys_credential_id, sys_credential_revision
             )
             SELECT ?, d.draft_id, d.revision, d.config_fingerprint, d.data_source_id,
                    ds.credential_id, ds.current_credential_revision, d.node_id, NULL, 'PENDING', NULL,
 				   NULL, NULL, NULL, 'UNKNOWN', ?, ?, NULL, ?, ?, ?,
-				   ?, ?
+				   ?, ?, ?, ?
             FROM export_drafts d JOIN data_sources ds ON ds.data_source_id = d.data_source_id
-            WHERE d.draft_id = ? AND d.revision = ? AND d.config_fingerprint = ?
+            WHERE d.draft_id = ? AND d.deleted_at IS NULL AND d.revision = ? AND d.config_fingerprint = ?
               AND d.data_source_id = ? AND d.node_id = ?
               AND ds.credential_id = ? AND ds.current_credential_revision = ?
               AND ds.state = 'ENABLED' AND ds.last_test_status = 'SUCCEEDED'
               AND ds.last_test_source = 'AGENT_JDBC'
 		`, input.PrecheckID, utcText(input.ValidUntil), utcText(input.CreatedAt), nodeFactsRevision, bindingDigest, bindingAgentID,
 			nullableString(input.StorageCredentialID), nullableInt64(input.StorageCredentialRevision),
+			nullableString(input.SysCredentialID), nullableInt64(input.SysCredentialRevision),
 			input.DraftID, input.DraftRevision, input.ConfigFingerprint, input.DataSourceID, input.NodeID,
 			input.CredentialID, input.CredentialRevision)
 		if err != nil {
@@ -2789,7 +2917,7 @@ func (s *Store) CompleteAgentPrecheck(ctx context.Context, input AgentPrecheckCo
 			return ErrPrecheckLeaseRejected
 		}
 		// EX-I6：按冻结草稿的输出类型复核检查清单顺序与形态。
-		// 本地输出保持冻结六项；对象存储输出必须携带存储形态清单。伪造顺序或形态一律失败关闭。
+		// 新完成回执必须使用本地七项或存储九项；伪造顺序和形态失败关闭。
 		executionContext, err := readPrecheckExecutionContext(ctx, tx, run.Binding)
 		if err != nil {
 			return ErrPrecheckLeaseRejected
@@ -2806,6 +2934,29 @@ func (s *Store) CompleteAgentPrecheck(ctx context.Context, input AgentPrecheckCo
 		}
 		if err := agentpreflight.ValidateReportFor(kind, agentpreflight.Report{PrecheckID: input.PrecheckID, Succeeded: succeeded, Results: reportResults}); err != nil {
 			return ErrPrecheckLeaseRejected
+		}
+		// 资源政策由控制面拥有；Agent 不能以伪造通过覆盖缺失或不足的节点额度。
+		if !matchesPrecheckResource(executionContext.ResourceRequirement, input.Results) {
+			return ErrPrecheckLeaseRejected
+		}
+		if len(executionContext.Objects) > 0 && (len(executionContext.IncludeColumnNames) > 0 || len(executionContext.ExcludeColumnNames) > 0 || len(executionContext.Partitions) > 0) {
+			expectedEvidence := "OBJECT_SELECTION_VERIFIED"
+			if executionContext.WeakRead || executionContext.EnableHiddenPk || executionContext.AddExtraMessage {
+				expectedEvidence = "PARAMETER_REQUIREMENTS_VERIFIED"
+			}
+			for _, result := range input.Results {
+				if result.Check == "OBJECT_ACCESS" && result.Status == "PASSED" && result.EvidenceCode != expectedEvidence {
+					return ErrPrecheckLeaseRejected
+				}
+			}
+		}
+		if executionContext.WeakRead || executionContext.EnableHiddenPk || executionContext.AddExtraMessage {
+			for _, result := range input.Results {
+				// 普通对象可读或合成连接成功不能替代专家参数要求的固定检查证据。
+				if result.Check == "OBJECT_ACCESS" && result.Status == "PASSED" && result.EvidenceCode != "PARAMETER_REQUIREMENTS_VERIFIED" {
+					return ErrPrecheckLeaseRejected
+				}
+			}
 		}
 		updated, err := tx.ExecContext(ctx, `
             UPDATE precheck_runs
@@ -2916,11 +3067,13 @@ func readStoredPrecheck(ctx context.Context, queryer interface {
 	var validUntil, leaseExpiresAt, completedAt sql.NullString
 	var storageCredentialID sql.NullString
 	var storageCredentialRevision sql.NullInt64
+	var sysCredentialID sql.NullString
+	var sysCredentialRevision sql.NullInt64
 	err := queryer.QueryRowContext(ctx, `
         SELECT precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,
                credential_id, credential_revision, node_id, node_facts_revision,
                binding_digest, binding_agent_id, agent_id, status, lease_id, lease_epoch, lease_expires_at,
-               integrity_status, valid_until, completed_at, storage_credential_id, storage_credential_revision
+               integrity_status, valid_until, completed_at, storage_credential_id, storage_credential_revision, sys_credential_id, sys_credential_revision
         FROM precheck_runs
         WHERE precheck_id = ?
     `, precheckID).Scan(
@@ -2929,6 +3082,7 @@ func readStoredPrecheck(ctx context.Context, queryer interface {
 		&run.Binding.CredentialRevision, &run.Binding.NodeID, &run.Binding.NodeFactsRevision,
 		&bindingDigest, &bindingAgentID, &agentID, &run.Status, &leaseID, &leaseEpoch, &leaseExpiresAt,
 		&run.IntegrityStatus, &validUntil, &completedAt, &storageCredentialID, &storageCredentialRevision,
+		&sysCredentialID, &sysCredentialRevision,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedPrecheck{}, ErrPrecheckLeaseRejected
@@ -2940,6 +3094,7 @@ func readStoredPrecheck(ctx context.Context, queryer interface {
 	run.AgentID, run.LeaseID, run.LeaseEpoch = agentID.String, leaseID.String, leaseEpoch.Int64
 	// EX-V1：预检查冻结的对象存储凭据引用；空值表示本地输出或未绑定凭据的草稿。
 	run.Binding.StorageCredentialID, run.Binding.StorageCredentialRevision = storageCredentialID.String, storageCredentialRevision.Int64
+	run.Binding.SysCredentialID, run.Binding.SysCredentialRevision = sysCredentialID.String, sysCredentialRevision.Int64
 	var parseErr error
 	if validUntil.Valid {
 		run.Binding.ValidUntil, parseErr = time.Parse(time.RFC3339Nano, validUntil.String)
@@ -3115,6 +3270,11 @@ func readEncryptedPrecheckDatabaseConnection(ctx context.Context, tx *sql.Tx, bi
 		return EncryptedPrecheckDatabaseConnection{}, ErrPrecheckLeaseRejected
 	}
 	connection.DataSourceID, connection.CredentialID, connection.Revision = binding.DataSourceID, binding.CredentialID, binding.CredentialRevision
+	connection.SysCredential, err = readFrozenSysCredential(ctx, tx, binding.DataSourceID, frozenSysCredential{CredentialID: binding.SysCredentialID, Revision: binding.SysCredentialRevision})
+	if err != nil {
+		connection.Destroy()
+		return EncryptedPrecheckDatabaseConnection{}, ErrPrecheckLeaseRejected
+	}
 	if connection.Host == "" || connection.Port < 1 || connection.Port > 65535 || len(connection.Username) == 0 ||
 		strings.TrimSpace(connection.OwnerSubjectID) == "" || connection.NodeID != binding.NodeID ||
 		connection.KeyID == "" || len(connection.Nonce) == 0 || len(connection.Ciphertext) == 0 {
@@ -3204,6 +3364,12 @@ func replayPrecheckLeaseGrant(ctx context.Context, tx *sql.Tx, receipt agentPrec
 }
 
 func validateCurrentPrecheckBinding(ctx context.Context, tx *sql.Tx, agentID string, binding PrecheckBinding) error {
+	if binding.SysCredentialID != "" {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM data_sources AS ds JOIN sys_credential_revisions AS cr ON cr.credential_id = ds.sys_credential_id AND cr.revision = ds.sys_credential_revision WHERE ds.data_source_id = ? AND ds.sys_credential_id = ? AND ds.sys_credential_revision = ? AND cr.status = 'ACTIVE'`, binding.DataSourceID, binding.SysCredentialID, binding.SysCredentialRevision).Scan(&count); err != nil || count != 1 {
+			return ErrPrecheckLeaseRejected
+		}
+	}
 	if err := validatePrecheckBinding(binding); err != nil {
 		return ErrPrecheckLeaseRejected
 	}
@@ -3237,7 +3403,7 @@ func validateCurrentPrecheckBinding(ctx context.Context, tx *sql.Tx, agentID str
           ON cr.credential_id = ds.credential_id
          AND cr.revision = ds.current_credential_revision
         JOIN execution_nodes AS n ON n.node_id = d.node_id
-        WHERE d.draft_id = ?
+        WHERE d.draft_id = ? AND d.deleted_at IS NULL
     `, binding.DraftID).Scan(
 		&draftRevision, &configFingerprint, &dataSourceID, &draftNodeID,
 		&credentialID, &credentialRevision, &dataSourceState,
@@ -3288,7 +3454,10 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 		return PrecheckExecutionContext{}, fmt.Errorf("read precheck execution context: %w", err)
 	}
 	executionContext, ok := parsePrecheckExecutionContext(configVersion, configJSON)
-	if !ok || (compatibilityMode != "MYSQL" && compatibilityMode != "ORACLE") ||
+	if ok && executionContext.AddExtraMessage != (binding.SysCredentialID != "" && binding.SysCredentialRevision > 0) {
+		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
+	}
+	if !ok || !precheckcontract.ValidSelectionIdentifiers(executionContext.IncludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(executionContext.ExcludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(executionContext.Partitions) || (compatibilityMode != "MYSQL" && compatibilityMode != "ORACLE") ||
 		!validPrecheckObjectName(executionContext.Database) {
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
 	}
@@ -3300,7 +3469,7 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 		}
 	} else {
 		if executionContext.StorageTarget == nil || executionContext.StorageTarget.Provider != executionContext.OutputKind ||
-			!oneOf(executionContext.OutputKind, "OSS", "S3", "COS", "OBS") || executionContext.LogPath != "" ||
+			!oneOf(executionContext.OutputKind, "OSS", "S3", "COS", "OBS") || (executionContext.LogPath != "" && !validPrecheckOutputPath(platform, executionContext.LogPath)) ||
 			!validPrecheckStorageURI(executionContext.OutputPath) {
 			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
 		}
@@ -3328,6 +3497,10 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 	executionContext.CompatibilityMode = compatibilityMode
 	executionContext.TargetPlatform = platform
 	executionContext.AllowedRoots = append([]string(nil), allowedRoots...)
+	executionContext.ResourceRequirement, err = readPrecheckResourceRequirement(ctx, tx, binding, configJSON)
+	if err != nil {
+		return PrecheckExecutionContext{}, err
+	}
 	return executionContext, nil
 }
 
@@ -3369,6 +3542,8 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 					OutputKind string `json:"outputKind"`
 					TmpPath    string `json:"tmpPath"`
 				} `json:"outputConfig"`
+				FilterConfig FilterConfig `json:"filterConfig"`
+				DDLBehavior  DDLBehavior  `json:"ddlBehavior"`
 			} `json:"config"`
 		}
 		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
@@ -3396,7 +3571,17 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 		executionContext := PrecheckExecutionContext{
 			Database: config.Database, ContentKind: config.ContentKind,
 			OutputPath: config.FilePath, LogPath: config.LogPath, SkipCheckDir: config.SkipCheckDir,
-			OutputKind: config.Config.OutputConfig.OutputKind,
+			OutputKind:         config.Config.OutputConfig.OutputKind,
+			WeakRead:           config.Config.FilterConfig.WeakRead != nil && *config.Config.FilterConfig.WeakRead,
+			EnableHiddenPk:     config.Config.FilterConfig.EnableHiddenPk != nil && *config.Config.FilterConfig.EnableHiddenPk,
+			AddExtraMessage:    config.Config.DDLBehavior.AddExtraMessage != nil && *config.Config.DDLBehavior.AddExtraMessage,
+			IncludeColumnNames: append([]string(nil), config.Config.FilterConfig.IncludeColumnNames...),
+			ExcludeColumnNames: append([]string(nil), config.Config.FilterConfig.ExcludeColumnNames...),
+		}
+		if config.Config.FilterConfig.Partition != "" {
+			for _, name := range strings.Split(config.Config.FilterConfig.Partition, ",") {
+				executionContext.Partitions = append(executionContext.Partitions, strings.TrimSpace(name))
+			}
 		}
 		// EX-I6：对象存储输出从受控 URI 派生存储目标段（不含密钥参数）。
 		if executionContext.OutputKind != "" && executionContext.OutputKind != "LOCAL" {
@@ -3505,6 +3690,13 @@ func validPrecheckStorageURI(value string) bool {
 // ensurePrecheckAgentIdle 阻止单容量 Agent 在持有正式执行、预检查或连接测试租约时继续领取。
 // 三类工作都会短时占用同一受控容量，不能借由并行检查或连接测试绕过执行租约的排他边界。
 func ensurePrecheckAgentIdle(ctx context.Context, tx *sql.Tx, agentID string) error {
+	var unreconciled int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_executions e JOIN execution_resource_allocations a ON a.execution_id = e.execution_id WHERE e.agent_id = ? AND e.reconciliation_required = 1 AND `+budgetStillHeld, agentID).Scan(&unreconciled); err != nil {
+		return err
+	}
+	if unreconciled > 0 {
+		return ErrPrecheckLeaseRejected
+	}
 	var activeLeaseCount int
 	err := tx.QueryRowContext(ctx, `
         SELECT COUNT(*)
@@ -3714,6 +3906,8 @@ func precheckBindingDigest(binding PrecheckBinding) (string, error) {
 		// EX-V1：存储凭据引用进入绑定摘要，防止草稿绑定的存储凭据被替换后摘要不变。
 		StorageCredentialID       string `json:"storageCredentialId"`
 		StorageCredentialRevision int64  `json:"storageCredentialRevision"`
+		SysCredentialID           string `json:"sysCredentialId,omitempty"`
+		SysCredentialRevision     int64  `json:"sysCredentialRevision,omitempty"`
 	}{
 		BindingAgentID: binding.BindingAgentID, PrecheckID: binding.PrecheckID, DraftID: binding.DraftID,
 		DraftRevision: binding.DraftRevision, ConfigFingerprint: binding.ConfigFingerprint,
@@ -3721,6 +3915,7 @@ func precheckBindingDigest(binding PrecheckBinding) (string, error) {
 		CredentialRevision: binding.CredentialRevision, NodeID: binding.NodeID,
 		NodeFactsRevision: binding.NodeFactsRevision, ValidUntil: utcText(binding.ValidUntil),
 		StorageCredentialID: binding.StorageCredentialID, StorageCredentialRevision: binding.StorageCredentialRevision,
+		SysCredentialID: binding.SysCredentialID, SysCredentialRevision: binding.SysCredentialRevision,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode precheck binding digest: %w", err)
@@ -3749,15 +3944,15 @@ func encodeAgentPrecheckResults(results []PrecheckCheckResult) (string, bool, er
 
 // decodePrecheckResults 仅从已持久化的检查 JSON 还原安全结果投影。
 // 旧合成记录、损坏 JSON 或任意非固定检查都只返回空结果，不能把未校验内容暴露给浏览器。
-// EX-I6：接受本地六项与对象存储六项两种受控形态；顺序必须与对应清单完全一致。
+// 当前七项/九项与历史六项均须固定顺序；历史结果不能用于新的提交证明。
 func decodePrecheckResults(value string) []PrecheckCheckResult {
 	var payload struct {
 		Checks []PrecheckCheckResult `json:"checks"`
 	}
-	if value == "" || json.Unmarshal([]byte(value), &payload) != nil || len(payload.Checks) != len(fixedPrecheckChecks) {
+	if value == "" || json.Unmarshal([]byte(value), &payload) != nil {
 		return nil
 	}
-	if matchesPrecheckShape(payload.Checks, fixedPrecheckChecks) || matchesPrecheckShape(payload.Checks, storagePrecheckCheckList()) {
+	if matchesPrecheckShape(payload.Checks, fixedPrecheckChecks) || matchesPrecheckShape(payload.Checks, storagePrecheckCheckList()) || matchesPrecheckShape(payload.Checks, precheckcontract.LegacyChecks(false)) || matchesPrecheckShape(payload.Checks, precheckcontract.LegacyChecks(true)) {
 		return append([]PrecheckCheckResult(nil), payload.Checks...)
 	}
 	return nil
@@ -3765,6 +3960,9 @@ func decodePrecheckResults(value string) []PrecheckCheckResult {
 
 // matchesPrecheckShape 校验结果与受控清单顺序完全一致且证据码在契约内。
 func matchesPrecheckShape(results []PrecheckCheckResult, expected []string) bool {
+	if len(results) != len(expected) {
+		return false
+	}
 	for index, check := range expected {
 		result := results[index]
 		if result.Check != check || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
@@ -3814,6 +4012,8 @@ func (s *Store) UpdateDraft(ctx context.Context, input DraftUpdate) (int64, erro
                 config_fingerprint = ?,
                 invalidation_json = ?,
                 config_version = ?,
+                metadata_version = COALESCE(NULLIF(?, ''), metadata_version),
+                capability_version = COALESCE(NULLIF(?, ''), capability_version),
                 object_scope_json = COALESCE(NULLIF(?, ''), '{}'),
                 content_selection_json = COALESCE(NULLIF(?, ''), '{}'),
                 data_format_json = COALESCE(NULLIF(?, ''), '{}'),
@@ -3822,8 +4022,8 @@ func (s *Store) UpdateDraft(ctx context.Context, input DraftUpdate) (int64, erro
                 filter_config_json = COALESCE(NULLIF(?, ''), '{}'),
                 ddl_behavior_json = COALESCE(NULLIF(?, ''), '{}'),
                 updated_at = ?
-            WHERE draft_id = ? AND revision = ?
-        `, input.ConfigJSON, input.ConfigFingerprint, input.InvalidationJSON, input.ConfigVersion,
+            WHERE draft_id = ? AND revision = ? AND deleted_at IS NULL
+        `, input.ConfigJSON, input.ConfigFingerprint, input.InvalidationJSON, input.ConfigVersion, input.MetadataVersion, input.CapabilityVersion,
 			input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON,
 			input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON,
 			utcText(input.UpdatedAt), input.DraftID, input.ExpectedRevision)
@@ -3892,10 +4092,18 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 	if err != nil {
 		return err
 	}
+	sysReference, validSys := snapshotSysCredential(input.SnapshotJSON)
+	if !validSys || sysReference.CredentialID != precheck.Binding.SysCredentialID || sysReference.Revision != precheck.Binding.SysCredentialRevision {
+		return ErrPrecheckInvalid
+	}
 	if err := validateCurrentPrecheckBinding(ctx, tx, precheck.Binding.BindingAgentID, precheck.Binding); err != nil {
 		if errors.Is(err, ErrPrecheckLeaseRejected) {
 			return ErrPrecheckInvalid
 		}
+		return err
+	}
+	// 历史六项报告仍可读取，但新的提交必须取得当前清单及当前静态额度证据。
+	if err := validateSubmissionPrecheckProof(ctx, tx, precheck.Binding); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -3953,6 +4161,9 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 	}
 	if affected != 1 {
 		return ErrPrecheckInvalid
+	}
+	if err := insertTaskDisplayFacts(ctx, tx, input.TaskID, input.DataSourceID, input.NodeID, utcText(input.SubmittedAt)); err != nil {
+		return err
 	}
 	if err := insertAudit(ctx, tx, "SUBJECT", input.AuditActorID, "TASK_SUBMITTED", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.SubmittedAt); err != nil {
 		return err
@@ -4051,6 +4262,15 @@ func (s *Store) GetTaskSummary(ctx context.Context, taskID string) (TaskSummary,
 // GetAuthorizedTaskSummary 只在当前主体拥有任务或具备对应数据源任务范围时返回详情投影。
 // 无权对象与不存在对象使用同一错误，避免调用方泄露任务存在性。
 func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID string) (TaskSummary, error) {
+	return s.readTaskSummary(ctx, taskID, subjectID, false)
+}
+
+// GetGlobalTaskSummary 仅供已复验全局读取能力的控制面使用，不改变秘密解析或任务操作权限。
+func (s *Store) GetGlobalTaskSummary(ctx context.Context, taskID, subjectID string) (TaskSummary, error) {
+	return s.readTaskSummary(ctx, taskID, subjectID, true)
+}
+
+func (s *Store) readTaskSummary(ctx context.Context, taskID, subjectID string, globalRead bool) (TaskSummary, error) {
 	if s == nil || s.db == nil {
 		return TaskSummary{}, errors.New("SQLite store is nil")
 	}
@@ -4085,7 +4305,7 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
               WHERE subject.subject_id = ? AND subject.account_status = 'ACTIVE'
           )
           AND (
-              t.creator_subject_id = ?
+              ? = 1 OR t.creator_subject_id = ?
               OR EXISTS (
                   SELECT 1 FROM subject_object_scopes task_scope
                   WHERE task_scope.subject_id = ?
@@ -4093,7 +4313,7 @@ func (s *Store) GetAuthorizedTaskSummary(ctx context.Context, taskID, subjectID 
                     AND task_scope.object_id = t.data_source_id
               )
           )
-    `, taskID, subjectID, subjectID, subjectID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
+    `, taskID, subjectID, globalRead, subjectID, subjectID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
 		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
@@ -4350,7 +4570,7 @@ func (s *Store) GetAuthorizedTaskDerivationSource(ctx context.Context, taskID, s
         SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
                t.credential_id, t.credential_revision, t.config_fingerprint, t.tool_version,
                t.metadata_version, t.capability_version, t.snapshot_version, t.snapshot_json,
-               t.planned_argv_json, t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
+               t.planned_argv_json, t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'), CASE WHEN e.reconciliation_required = 1 OR json_extract(e.process_evidence_json, '$.plannedActualMatch') = 'MISMATCHED' THEN 1 ELSE 0 END,
                COALESCE(t.parent_task_id, ''), COALESCE(t.derivation_kind, ''), t.submitted_at,
                e.result_summary_json, t.storage_credential_id, t.storage_credential_revision
         FROM tasks t
@@ -4372,7 +4592,7 @@ func (s *Store) GetAuthorizedTaskDerivationSource(ctx context.Context, taskID, s
     `, taskID, subjectID, subjectID, subjectID).Scan(&source.TaskID, &source.CreatorSubjectID, &source.DataSourceID, &source.NodeID,
 		&source.PrecheckID, &source.CredentialID, &source.CredentialRevision, &source.ConfigFingerprint, &source.ToolVersion,
 		&source.MetadataVersion, &source.CapabilityVersion, &source.SnapshotVersion, &source.SnapshotJSON,
-		&source.PlannedArgvJSON, &source.PlannedCommandRedacted, &source.State,
+		&source.PlannedArgvJSON, &source.PlannedCommandRedacted, &source.State, &source.ReconciliationRequired,
 		&source.ParentTaskID, &source.DerivationKind, &submittedAt, &resultSummaryJSON,
 		&storageCredentialID, &storageCredentialRevision)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -4431,7 +4651,7 @@ func (s *Store) DeriveTaskFromCheckpoint(ctx context.Context, input CheckpointRe
 			return err
 		}
 		result.NodeID = source.NodeID
-		if source.State != "FAILED" || source.ResultSummary == nil || !source.ResultSummary.CheckpointPresent {
+		if source.ReconciliationRequired || source.State != "FAILED" || source.ResultSummary == nil || !source.ResultSummary.CheckpointPresent {
 			return ErrCheckpointResumeUnavailable
 		}
 		var precheckStatus, precheckIntegrity string
@@ -4486,6 +4706,9 @@ func (s *Store) DeriveTaskFromCheckpoint(ctx context.Context, input CheckpointRe
 		if affected != 1 {
 			return ErrCheckpointResumeUnavailable
 		}
+		if err := insertTaskDisplayFacts(ctx, tx, input.TaskID, source.DataSourceID, source.NodeID, utcText(input.Now)); err != nil {
+			return err
+		}
 		if err := insertAudit(ctx, tx, "SUBJECT", input.AuditActorID, "TASK_RESUMED_FROM_CHECKPOINT", "TASK", input.TaskID, "SUCCEEDED", input.RequestID, input.Now); err != nil {
 			return err
 		}
@@ -4517,7 +4740,7 @@ func readTaskDerivationSourceTx(ctx context.Context, tx *sql.Tx, taskID, subject
         SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
                t.credential_id, t.credential_revision, t.config_fingerprint, t.tool_version,
                t.metadata_version, t.capability_version, t.snapshot_version, t.snapshot_json,
-               t.planned_argv_json, t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
+               t.planned_argv_json, t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'), CASE WHEN e.reconciliation_required = 1 OR json_extract(e.process_evidence_json, '$.plannedActualMatch') = 'MISMATCHED' THEN 1 ELSE 0 END,
                COALESCE(t.parent_task_id, ''), COALESCE(t.derivation_kind, ''), t.submitted_at,
                e.result_summary_json, t.storage_credential_id, t.storage_credential_revision
         FROM tasks t
@@ -4539,7 +4762,7 @@ func readTaskDerivationSourceTx(ctx context.Context, tx *sql.Tx, taskID, subject
     `, taskID, subjectID, subjectID, subjectID).Scan(&source.TaskID, &source.CreatorSubjectID, &source.DataSourceID, &source.NodeID,
 		&source.PrecheckID, &source.CredentialID, &source.CredentialRevision, &source.ConfigFingerprint, &source.ToolVersion,
 		&source.MetadataVersion, &source.CapabilityVersion, &source.SnapshotVersion, &source.SnapshotJSON,
-		&source.PlannedArgvJSON, &source.PlannedCommandRedacted, &source.State,
+		&source.PlannedArgvJSON, &source.PlannedCommandRedacted, &source.State, &source.ReconciliationRequired,
 		&source.ParentTaskID, &source.DerivationKind, &submittedAt, &resultSummaryJSON,
 		&storageCredentialID, &storageCredentialRevision)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -4600,82 +4823,6 @@ func (s *Store) CountAuthorizedTaskSummaries(ctx context.Context, subjectID stri
 		return 0, fmt.Errorf("count authorized tasks: %w", err)
 	}
 	return total, nil
-}
-
-// ListTaskSummaries 在 SQLite 查询中裁剪授权范围，并按提交时间和任务 ID 倒序返回。
-// 返回值最多为 Limit+1 条，供 HTTP 层生成主体绑定的下一页游标。
-func (s *Store) ListTaskSummaries(ctx context.Context, input TaskListQuery) ([]TaskListItem, error) {
-	if s == nil || s.db == nil {
-		return nil, errors.New("SQLite store is nil")
-	}
-	if strings.TrimSpace(input.SubjectID) == "" || input.Limit < 1 || input.Limit > 100 ||
-		(input.BeforeSubmitted.IsZero() != (strings.TrimSpace(input.BeforeTaskID) == "")) {
-		return nil, errors.New("task list query is invalid")
-	}
-	before := ""
-	if !input.BeforeSubmitted.IsZero() {
-		before = utcText(input.BeforeSubmitted)
-	}
-	rows, err := s.db.QueryContext(ctx, `
-        SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id,
-               'OBDUMPER_EXPORT',
-               COALESCE(json_extract(t.snapshot_json, '$.database'), ''),
-               COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
-               COALESCE(e.state, 'WAITING_SCHEDULE'), COALESCE(e.reconciliation_required, 0),
-               t.submitted_at, COALESCE(e.started_at, ''), COALESCE(e.finished_at, ''),
-               COALESCE(e.updated_at, t.submitted_at)
-        FROM tasks t
-        LEFT JOIN task_executions e ON e.task_id = t.task_id
-        WHERE EXISTS (
-              SELECT 1 FROM auth_subjects subject
-              WHERE subject.subject_id = ? AND subject.account_status = 'ACTIVE'
-          )
-          AND (
-              t.creator_subject_id = ?
-              OR EXISTS (
-                  SELECT 1 FROM subject_object_scopes task_scope
-                  WHERE task_scope.subject_id = ?
-                    AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE'
-                    AND task_scope.object_id = t.data_source_id
-              )
-          )
-          AND (? = '' OR t.submitted_at < ? OR (t.submitted_at = ? AND t.task_id < ?))
-        ORDER BY t.submitted_at DESC, t.task_id DESC
-        LIMIT ?
-    `, input.SubjectID, input.SubjectID, input.SubjectID, before, before, before, input.BeforeTaskID, input.Limit+1)
-	if err != nil {
-		return nil, fmt.Errorf("list authorized tasks: %w", err)
-	}
-	defer rows.Close()
-	items := make([]TaskListItem, 0, input.Limit+1)
-	for rows.Next() {
-		var item TaskListItem
-		var reconciliation int
-		var submittedAt, startedAt, finishedAt, updatedAt string
-		if err := rows.Scan(&item.TaskID, &item.CreatorSubjectID, &item.DataSourceID, &item.NodeID,
-			&item.TaskType, &item.Database, &item.Table, &item.State, &reconciliation,
-			&submittedAt, &startedAt, &finishedAt, &updatedAt); err != nil {
-			return nil, fmt.Errorf("scan authorized task: %w", err)
-		}
-		item.ReconciliationRequired = reconciliation == 1
-		if item.SubmittedAt, err = parseTaskListTime(submittedAt, true); err != nil {
-			return nil, fmt.Errorf("parse task submitted time: %w", err)
-		}
-		if item.StartedAt, err = parseTaskListTime(startedAt, false); err != nil {
-			return nil, fmt.Errorf("parse task started time: %w", err)
-		}
-		if item.FinishedAt, err = parseTaskListTime(finishedAt, false); err != nil {
-			return nil, fmt.Errorf("parse task finished time: %w", err)
-		}
-		if item.UpdatedAt, err = parseTaskListTime(updatedAt, true); err != nil {
-			return nil, fmt.Errorf("parse task updated time: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate authorized tasks: %w", err)
-	}
-	return items, nil
 }
 
 func parseTaskListTime(value string, required bool) (time.Time, error) {
@@ -4751,10 +4898,26 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 	var grant ExecutionLeaseGrant
 	var found bool
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
+		var receiptDigest, receiptGrant string
+		receiptErr := tx.QueryRowContext(ctx, `SELECT r.request_digest, r.grant_json FROM execution_claim_receipts r
+			JOIN agents a ON a.agent_id = r.agent_id AND a.node_id = ? AND a.status = 'ACTIVE' WHERE r.agent_id = ? AND r.request_id = ?`, input.NodeID, input.AgentID, input.RequestID).Scan(&receiptDigest, &receiptGrant)
+		if receiptErr == nil {
+			if receiptDigest != input.RequestDigest {
+				return ErrIdempotencyConflict
+			}
+			if err := json.Unmarshal([]byte(receiptGrant), &grant); err != nil {
+				return err
+			}
+			found = true
+			return nil
+		}
+		if !errors.Is(receiptErr, sql.ErrNoRows) {
+			return receiptErr
+		}
 		if err := expireExecutionLeasesTx(ctx, tx, input.Now); err != nil {
 			return err
 		}
-		if err := ensurePrecheckAgentIdle(ctx, tx, input.AgentID); err != nil {
+		if err := ensureExecutionChecksIdle(ctx, tx, input.AgentID); err != nil {
 			if errors.Is(err, ErrPrecheckLeaseRejected) {
 				return nil
 			}
@@ -4778,7 +4941,7 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 			  AND n.environment_check_status = 'PASSED' AND n.environment_check_code = 'TOOL_RUNTIME_READY'
 			  AND n.environment_check_facts_revision = a.facts_revision
 			  AND a.last_heartbeat_at IS NOT NULL AND a.last_heartbeat_at >= ?
-              AND a.capacity_total = 1 AND a.capacity_used = 0
+              AND a.execution_worker_limit > 0 AND MAX(a.execution_workers_active,a.capacity_used) < a.execution_worker_limit
               AND p.status = 'SUCCEEDED' AND p.integrity_status = 'COMPLETE'
               AND (p.valid_until > ? OR t.derivation_kind = 'CHECKPOINT_RESUME')
               AND p.binding_agent_id = a.agent_id AND p.node_facts_revision = a.facts_revision
@@ -4798,6 +4961,13 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 		}
 		if err := json.Unmarshal([]byte(plannedArgvJSON), &grant.PlannedArgv); err != nil || !validExecutionArgv(grant.PlannedArgv) {
 			return ErrClaimIneligible
+		}
+		heap, cost, eligible, err := reserveExecutionBudgetTx(ctx, tx, input.NodeID, input.AgentID, grant.PlannedArgv)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return nil
 		}
 		digest, err := executionEnvelopeDigest(grant.TaskID, input.NodeID, grant.ConfigFingerprint, grant.ToolVersion, grant.MetadataVersion, grant.CapabilityVersion, grant.PlannedArgv)
 		if err != nil {
@@ -4820,6 +4990,9 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 			}
 			return fmt.Errorf("create next task execution: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO execution_resource_allocations(execution_id,heap_bytes,budget_bytes,allocated_at) VALUES (?,?,?,?)`, grant.ExecutionID, heap, cost, utcText(input.Now)); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO execution_leases(
                 lease_id, execution_id, lease_epoch, agent_id, status, issued_at,
@@ -4837,6 +5010,13 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 			return fmt.Errorf("append initial execution event: %w", err)
 		}
 		if err := insertAudit(ctx, tx, "AGENT", input.AgentID, "TASK_CLAIMED", "TASK_EXECUTION", grant.ExecutionID, "SUCCEEDED", input.RequestID, input.Now); err != nil {
+			return err
+		}
+		encodedGrant, err := json.Marshal(grant)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO execution_claim_receipts(agent_id,request_id,request_digest,grant_json) VALUES (?,?,?,?)`, input.AgentID, input.RequestID, input.RequestDigest, string(encodedGrant)); err != nil {
 			return err
 		}
 		found = true
@@ -4873,12 +5053,12 @@ func (s *Store) ResolveExecutionDatabaseConnection(ctx context.Context, input Ex
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read execution secret receipt: %w", err)
 		}
-		var username, tenantName, clusterName, argvJSON string
+		var username, tenantName, clusterName, argvJSON, snapshotJSON string
 		var leaseExpiresAt string
 		err = tx.QueryRowContext(ctx, `
             SELECT ds.host, ds.port, ds.username, ds.tenant_name, ds.cluster_name,
                    t.data_source_id, t.creator_subject_id, e.node_id, t.credential_id, t.credential_revision,
-                   cr.key_id, cr.nonce, cr.ciphertext, t.planned_argv_json, l.expires_at
+                   cr.key_id, cr.nonce, cr.ciphertext, t.planned_argv_json, l.expires_at, t.snapshot_json
             FROM task_executions AS e
             JOIN tasks AS t ON t.task_id = e.task_id
             JOIN execution_leases AS l
@@ -4895,7 +5075,7 @@ func (s *Store) ResolveExecutionDatabaseConnection(ctx context.Context, input Ex
         `, input.LeaseID, input.LeaseEpoch, input.ExecutionID, input.AgentID, input.AgentID, utcText(input.Now)).Scan(
 			&connection.Host, &connection.Port, &username, &tenantName, &clusterName,
 			&connection.DataSourceID, &connection.OwnerSubjectID, &connection.NodeID, &connection.CredentialID, &connection.Revision,
-			&connection.KeyID, &connection.Nonce, &connection.Ciphertext, &argvJSON, &leaseExpiresAt,
+			&connection.KeyID, &connection.Nonce, &connection.Ciphertext, &argvJSON, &leaseExpiresAt, &snapshotJSON,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEventRejected
@@ -4909,6 +5089,14 @@ func (s *Store) ResolveExecutionDatabaseConnection(ctx context.Context, input Ex
 		}
 		digest, err := executionEnvelopeDigestForStoredTask(ctx, tx, input.ExecutionID, argv)
 		if err != nil || subtle.ConstantTimeCompare([]byte(digest), []byte(input.EnvelopeDigest)) != 1 {
+			return ErrEventRejected
+		}
+		sysReference, valid := snapshotSysCredential(snapshotJSON)
+		if !valid {
+			return ErrEventRejected
+		}
+		connection.SysCredential, err = readFrozenSysCredential(ctx, tx, connection.DataSourceID, sysReference)
+		if err != nil {
 			return ErrEventRejected
 		}
 		if _, err := time.Parse(time.RFC3339Nano, leaseExpiresAt); err != nil {
@@ -5057,6 +5245,21 @@ func (s *Store) FinishExecutionSecretResolution(ctx context.Context, input Execu
 			if err != nil {
 				return ErrEventRejected
 			}
+			// 解密期间 sys 凭据可能轮换；响应写出前再次复核任务冻结的引用。
+			var snapshot, dataSourceID string
+			if err := tx.QueryRowContext(ctx, `SELECT t.snapshot_json, t.data_source_id FROM tasks AS t
+				JOIN task_executions AS e ON e.task_id = t.task_id WHERE e.execution_id = ?`, input.ExecutionID).Scan(&snapshot, &dataSourceID); err != nil {
+				return ErrEventRejected
+			}
+			reference, referenceValid := snapshotSysCredential(snapshot)
+			if !referenceValid {
+				return ErrEventRejected
+			}
+			sys, err := readFrozenSysCredential(ctx, tx, dataSourceID, reference)
+			if err != nil {
+				return ErrEventRejected
+			}
+			sys.Destroy()
 			result, auditResult, action = "RESOLVED", "SUCCEEDED", "EXECUTION_SECRET_RESOLVED"
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -5211,6 +5414,11 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 			if err := json.Unmarshal([]byte(input.PayloadJSON), &cancelled); err != nil {
 				return fmt.Errorf("decode process cancellation projection: %w", err)
 			}
+			// 无进程取消与已确认启动互斥，防止矛盾事实释放仍可能占用的共享预算。
+			started := executionHasEvent(ctx, tx, input.ExecutionID, "PROCESS_STARTED")
+			if cancelled.NoProcess == started {
+				return ErrEventRejected
+			}
 			if cancelled.NoProcess && cancelled.TreeObserved {
 				state = "CANCELLED"
 			} else if !cancelled.TreeObserved {
@@ -5321,6 +5529,13 @@ func (s *Store) PrepareLogAppend(ctx context.Context, input logstream.IndexedBat
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var expected int64
 		var sourceKind, sourceRef string
+		var cleaned int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM log_segment_cleanup c JOIN task_executions e ON e.task_id = c.task_id WHERE e.execution_id = ?`, input.ExecutionID).Scan(&cleaned); err != nil {
+			return err
+		}
+		if cleaned > 0 {
+			return logstream.ErrRetentionExpired
+		}
 		err := tx.QueryRowContext(ctx, `SELECT expected_sequence, source_kind, source_ref FROM log_streams WHERE stream_id = ?`, input.StreamID).Scan(&expected, &sourceKind, &sourceRef)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -6241,6 +6456,9 @@ func validateDraftUpdate(input DraftUpdate) error {
 	if input.DraftID == "" || input.ExpectedRevision < 1 || input.ConfigFingerprint == "" || input.UpdatedAt.IsZero() {
 		return errors.New("draft update identity is invalid")
 	}
+	if (input.MetadataVersion == "") != (input.CapabilityVersion == "") {
+		return errors.New("draft metadata update must include capability version")
+	}
 	if !oneOf(input.ConfigVersion, "v5", "v6") {
 		return errors.New("draft configuration version is invalid")
 	}
@@ -6310,7 +6528,7 @@ func validateAgentEnrollmentExchange(input AgentEnrollmentExchange) error {
 
 // validateAgentHeartbeat 限制 Agent 可写的当前事实，避免心跳退化为任意 JSON 写入通道。
 func validateAgentHeartbeat(input AgentHeartbeat) error {
-	if !validAgentOpaqueValue(input.AgentID, 256) || !validAgentOpaqueValue(input.NodeID, 256) || !validAgentOpaqueValue(input.BootID, 256) || !validAgentOpaqueValue(input.RequestID, 256) || !validAgentProtocolVersion(input.ProtocolVersion) || input.ObservedAt.IsZero() || input.ReceivedAt.IsZero() || input.CapacityTotal != 1 || input.CapacityUsed < 0 || input.CapacityUsed > input.CapacityTotal {
+	if !validAgentOpaqueValue(input.AgentID, 256) || !validAgentOpaqueValue(input.NodeID, 256) || !validAgentOpaqueValue(input.BootID, 256) || !validAgentOpaqueValue(input.RequestID, 256) || !validAgentProtocolVersion(input.ProtocolVersion) || input.ObservedAt.IsZero() || input.ReceivedAt.IsZero() || input.CapacityTotal < 0 || input.CapacityTotal > 1024 || input.CapacityUsed < 0 || input.CapacityUsed > input.CapacityTotal {
 		return errors.New("agent heartbeat is invalid")
 	}
 	if !input.Facts.ObservedAt.Equal(input.ObservedAt) {
@@ -6320,6 +6538,15 @@ func validateAgentHeartbeat(input AgentHeartbeat) error {
 }
 
 func validateAgentEnvironmentFacts(facts AgentEnvironmentFacts) error {
+	if nodefacts.ValidateHost(facts.Host) != nil || nodefacts.ValidateInspection(facts.RuntimeInspection) != nil {
+		return errors.New("agent node diagnostic facts are invalid")
+	}
+	if err := nodefacts.Validate(facts.StartedAt, facts.ObservedAt, facts.RuntimeVersions, facts.ExecutionObservation, facts.LogQueue); err != nil {
+		return err
+	}
+	if facts.MemoryTotalBytes > 1<<53-1 || facts.MemoryAvailableBytes > facts.MemoryTotalBytes {
+		return errors.New("agent physical memory facts are invalid")
+	}
 	if !oneOf(facts.OperatingSystem, "WINDOWS", "LINUX") || !oneOf(facts.Architecture, "AMD64", "ARM64") || !validAgentOpaqueValue(facts.AgentVersion, 128) || facts.ObservedAt.IsZero() {
 		return errors.New("agent environment facts are invalid")
 	}
@@ -6598,6 +6825,10 @@ func validatePrecheckCreate(input PrecheckCreate) error {
 		(input.StorageCredentialID != "" && (!validAgentOpaqueValue(input.StorageCredentialID, 256) || input.StorageCredentialRevision < 1)) {
 		return errors.New("precheck storage credential binding is invalid")
 	}
+	if (input.SysCredentialID == "") != (input.SysCredentialRevision == 0) ||
+		(input.SysCredentialID != "" && (!validAgentOpaqueValue(input.SysCredentialID, 256) || input.SysCredentialRevision < 1)) {
+		return errors.New("precheck sys credential binding is invalid")
+	}
 	if !isSHA256(input.ConfigFingerprint) || !isSHA256(input.RequestDigest) {
 		return errors.New("precheck create fingerprint is invalid")
 	}
@@ -6616,6 +6847,10 @@ func validatePrecheckBinding(binding PrecheckBinding) error {
 		(binding.StorageCredentialID == "") != (binding.StorageCredentialRevision == 0) ||
 		(binding.StorageCredentialID != "" && (!validAgentOpaqueValue(binding.StorageCredentialID, 256) || binding.StorageCredentialRevision < 1)) {
 		return errors.New("precheck binding is invalid")
+	}
+	if (binding.SysCredentialID == "") != (binding.SysCredentialRevision == 0) ||
+		(binding.SysCredentialID != "" && (!validAgentOpaqueValue(binding.SysCredentialID, 256) || binding.SysCredentialRevision < 1)) {
+		return errors.New("precheck sys binding is invalid")
 	}
 	return nil
 }
@@ -6693,18 +6928,18 @@ func validatePrecheckCompletion(input PrecheckCompletion) error {
 }
 
 // validateAgentPrecheckCompletion 拒绝不完整、可携带自由文本或缺少租约绑定的正式完成请求。
-// 结果结构只做宽松复核（六项、受控检查名/状态/证据码、无重复、成功结论一致）；
+// 结果结构先复核七项/九项、受控结果及成功结论，冻结草稿的权威校验另行执行；
 // 检查清单顺序与输出类型形态的权威校验在 CompleteAgentPrecheck 事务内按冻结草稿执行。
 func validateAgentPrecheckCompletion(input AgentPrecheckCompletion) error {
 	if !validAgentOpaqueValue(input.AgentID, 256) || !validAgentOpaqueValue(input.PrecheckID, 256) ||
 		!validAgentOpaqueValue(input.LeaseID, 256) || input.LeaseEpoch < 1 ||
 		!isSHA256(input.BindingDigest) || !validAgentOpaqueValue(input.RequestID, 256) ||
-		!isSHA256(input.RequestDigest) || input.Now.IsZero() || len(input.Results) != len(fixedPrecheckChecks) {
+		!isSHA256(input.RequestDigest) || input.Now.IsZero() || (len(input.Results) != len(fixedPrecheckChecks) && len(input.Results) != len(storagePrecheckCheckList())) {
 		return errors.New("agent precheck completion is invalid")
 	}
 	seen := make(map[string]bool, len(input.Results))
 	for _, result := range input.Results {
-		if !oneOf(result.Check, "DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH") ||
+		if !oneOf(result.Check, "DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "NODE_RESOURCE", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH", "STORAGE_WRITE") ||
 			seen[result.Check] || !oneOf(result.Status, "PASSED", "FAILED", "UNKNOWN") || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
 			return errors.New("agent precheck completion results are invalid")
 		}
@@ -6775,6 +7010,9 @@ func validateClaim(input Claim) error {
 }
 
 func validateExecutionClaimNext(input ExecutionClaimNext) error {
+	if !isSHA256(input.RequestDigest) {
+		return errors.New("execution claim digest is invalid")
+	}
 	if input.AgentID == "" || input.NodeID == "" || input.ExecutionID == "" || input.LeaseID == "" || input.ScheduledEventID == "" || input.RequestID == "" || input.LeaseTTL <= 0 || input.HeartbeatFreshAfter.IsZero() || input.Now.IsZero() {
 		return errors.New("execution claim-next identity is invalid")
 	}
@@ -6808,15 +7046,7 @@ func validateExecutionSecretResolutionOutcome(input ExecutionSecretResolutionOut
 }
 
 func validExecutionArgv(argv []string) bool {
-	if len(argv) == 0 || len(argv) > 32 {
-		return false
-	}
-	for _, value := range argv {
-		if value == "" || len(value) > 4096 || strings.ContainsRune(value, 0) || strings.ContainsAny(value, "\r\n") || value == "--password" || strings.HasPrefix(value, "--password=") || strings.HasPrefix(value, "-p") {
-			return false
-		}
-	}
-	return true
+	return executionargv.Valid(argv)
 }
 
 func executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion string, argv []string) (string, error) {
@@ -6895,7 +7125,7 @@ func validateArgvJSON(raw string) error {
 		return errors.New("must be a JSON string array")
 	}
 	for _, value := range values {
-		if value == "" || value == "--password" {
+		if value == "" || value == "--password" || value == "--sys-password" || strings.HasPrefix(value, "--sys-password=") {
 			return errors.New("contains a forbidden command token")
 		}
 	}
@@ -7296,6 +7526,11 @@ func (s *Store) CreateExportConfigTemplate(ctx context.Context, input ExportConf
 		}
 		if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "EXPORT_CONFIG_TEMPLATE_CREATED", "EXPORT_CONFIG_TEMPLATE", input.TemplateID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
 			return err
+		}
+		if input.SourceTaskID != "" {
+			if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "TASK_TEMPLATE_SAVED", "TASK", input.SourceTaskID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO request_idempotency(

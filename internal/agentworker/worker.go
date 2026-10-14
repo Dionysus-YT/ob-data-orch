@@ -15,6 +15,7 @@ import (
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/outputpath"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 var (
@@ -213,8 +214,14 @@ func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflig
 		OutputPath:        grant.Context.OutputPath,
 		LogPath:           grant.Context.LogPath,
 		SkipCheckDir:      grant.Context.SkipCheckDir,
-		AllowedRoots:      append([]string(nil), grant.Context.AllowedRoots...),
-		OutputKind:        agentpreflight.OutputKind(grant.Context.OutputKind),
+		WeakRead:          grant.Context.WeakRead, EnableHiddenPk: grant.Context.EnableHiddenPk, AddExtraMessage: grant.Context.AddExtraMessage,
+		IncludeColumnNames: append([]string(nil), grant.Context.IncludeColumnNames...), ExcludeColumnNames: append([]string(nil), grant.Context.ExcludeColumnNames...), Partitions: append([]string(nil), grant.Context.Partitions...),
+		AllowedRoots: append([]string(nil), grant.Context.AllowedRoots...),
+		OutputKind:   agentpreflight.OutputKind(grant.Context.OutputKind),
+	}
+	if grant.Context.ResourceRequirement != nil {
+		requirement := *grant.Context.ResourceRequirement
+		request.ResourceRequirement = &requirement
 	}
 	if grant.Context.StorageTarget != nil {
 		request.StorageTarget = &agentpreflight.StorageTarget{
@@ -246,7 +253,7 @@ func validBinding(binding agentstate.PrecheckBinding) bool {
 		validOpaque(binding.ConfigFingerprint, 256) && binding.CredentialRevision > 0 && binding.NodeFactsVersion > 0
 }
 
-// checkSetForKind 校验控制面下发的检查清单与输出类型形态一致（本地六项或存储六项）。
+// checkSetForKind 校验控制面清单与当前本地七项或存储九项形态一致。
 func checkSetForKind(kind agentpreflight.OutputKind, checkSet []agentpreflight.CheckID) bool {
 	expected := agentpreflight.ChecksForOutputKind(kind)
 	if len(checkSet) != len(expected) {
@@ -261,8 +268,19 @@ func checkSetForKind(kind agentpreflight.OutputKind, checkSet []agentpreflight.C
 }
 
 func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) bool {
+	if !precheckcontract.ValidSelectionIdentifiers(executionContext.IncludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(executionContext.ExcludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(executionContext.Partitions) {
+		return false
+	}
 	if (executionContext.CompatibilityMode != "MYSQL" && executionContext.CompatibilityMode != "ORACLE") || !validOpaque(executionContext.Database, 256) || (executionContext.ContentKind != "DATA_ONLY" && executionContext.ContentKind != "DDL_ONLY" && executionContext.ContentKind != "DDL_AND_DATA") || len(executionContext.AllowedRoots) == 0 || len(executionContext.AllowedRoots) > 32 {
 		return false
+	}
+	if (executionContext.WeakRead || executionContext.EnableHiddenPk) && executionContext.ContentKind == "DDL_ONLY" || executionContext.AddExtraMessage && executionContext.ContentKind == "DATA_ONLY" {
+		return false
+	}
+	for _, objectType := range executionContext.ObjectTypes {
+		if executionContext.EnableHiddenPk && objectType != "TABLE" {
+			return false
+		}
 	}
 	// EX-I6：缺省输出类型保持本地语义；对象存储输出必须携带受控存储目标段。
 	kind := executionContext.OutputKind
@@ -271,7 +289,7 @@ func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) 
 	}
 	if kind.IsStorageOutput() {
 		if executionContext.StorageTarget == nil || executionContext.StorageTarget.Provider != string(kind) ||
-			!validOpaque(executionContext.OutputPath, 4096) || executionContext.LogPath != "" {
+			!validOpaque(executionContext.OutputPath, 4096) || (executionContext.LogPath != "" && !validExportOutputPath(executionContext.TargetPlatform, executionContext.LogPath)) {
 			return false
 		}
 		if executionContext.StorageTarget.Endpoint != "" && !validOpaque(executionContext.StorageTarget.Endpoint, 253) {
@@ -324,6 +342,19 @@ func expectedState(report agentpreflight.Report, state agentwire.PrecheckState) 
 func cloneGrant(grant agentwire.PrecheckGrant) agentwire.PrecheckGrant {
 	grant.CheckSet = append([]agentpreflight.CheckID(nil), grant.CheckSet...)
 	grant.Context.AllowedRoots = append([]string(nil), grant.Context.AllowedRoots...)
+	grant.Context.Objects = append([]string(nil), grant.Context.Objects...)
+	grant.Context.ObjectTypes = append([]string(nil), grant.Context.ObjectTypes...)
+	grant.Context.IncludeColumnNames = append([]string(nil), grant.Context.IncludeColumnNames...)
+	grant.Context.ExcludeColumnNames = append([]string(nil), grant.Context.ExcludeColumnNames...)
+	grant.Context.Partitions = append([]string(nil), grant.Context.Partitions...)
+	if grant.Context.ResourceRequirement != nil {
+		value := *grant.Context.ResourceRequirement
+		grant.Context.ResourceRequirement = &value
+	}
+	if grant.Context.StorageTarget != nil {
+		value := *grant.Context.StorageTarget
+		grant.Context.StorageTarget = &value
+	}
 	return grant
 }
 
@@ -335,11 +366,12 @@ type leaseSecretResolver struct {
 	bootID   string
 	grant    agentwire.PrecheckGrant
 
-	mu           sync.Mutex
-	active       bool
-	permit       *secretResolvePermit
-	databaseUsed bool
-	storageUsed  bool
+	mu               sync.Mutex
+	active           bool
+	permit           *secretResolvePermit
+	databaseUsed     bool
+	storageUsed      bool
+	storageWriteUsed bool
 }
 
 // secretResolvePermit 只由 Worker 在固定秘密相关检查的同步调用范围内创建。
@@ -361,7 +393,7 @@ func (p secretGatedProbe) Probe(ctx context.Context, check agentpreflight.CheckI
 	if ctx == nil || p.delegate == nil || p.resolver == nil {
 		return agentpreflight.Result{}, agentpreflight.ErrInvalidRequest
 	}
-	if check == agentpreflight.CheckDatabaseConnectivity || check == agentpreflight.CheckStorageAuth {
+	if check == agentpreflight.CheckDatabaseConnectivity || check == agentpreflight.CheckStorageAuth || check == agentpreflight.CheckStorageWrite {
 		permit := &secretResolvePermit{check: check}
 		p.resolver.allow(permit)
 		defer p.resolver.disallow(permit)
@@ -406,24 +438,26 @@ func (r *leaseSecretResolver) ResolveDatabaseConnection(ctx context.Context, bin
 		BindingDigest: r.grant.BindingDigest,
 		SentAt:        r.clock().UTC(),
 	})
-	if err != nil || !validConnectionSlot(slot) {
+	if err != nil || !validConnectionSlot(slot) || r.grant.Context.AddExtraMessage != (len(slot.SysUsername) > 0 && len(slot.SysPassword) > 0) {
 		slot.Destroy()
 		return agentjdbc.Connection{}, ErrSecretResolution
 	}
 	connection := agentjdbc.Connection{
-		Host:     slot.Host,
-		Port:     slot.Port,
-		Username: slot.Username,
-		Password: slot.Password,
+		Host:        slot.Host,
+		Port:        slot.Port,
+		Username:    slot.Username,
+		Password:    slot.Password,
+		SysUsername: slot.SysUsername, SysPassword: slot.SysPassword,
 	}
 	// 所有权转移给 JDBC Probe；slot.Destroy 不能在这里清零同一底层字节切片。
 	slot.Username = nil
 	slot.Password = nil
+	slot.SysUsername, slot.SysPassword = nil, nil
 	return connection, nil
 }
 
-// ResolveStorageCredential 只在 STORAGE_AUTH 的同步调用范围内解析一次当前预检查冻结的存储凭据。
-// 存储连通性、数据库和对象检查均不能调用它；返回的字节所有权转移给认证探测器，并由其立即清零。
+// ResolveStorageCredential 只在 STORAGE_AUTH 或 STORAGE_WRITE 同步阶段各解析一次冻结凭据。
+// 旧阶段令牌立即失效，重复阶段也不能重置解析次数；字节所有权转移给对应探测器并立即清零。
 func (r *leaseSecretResolver) ResolveStorageCredential(ctx context.Context, binding agentstate.PrecheckBinding) (agentpreflight.StorageCredential, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -431,12 +465,16 @@ func (r *leaseSecretResolver) ResolveStorageCredential(ctx context.Context, bind
 		return agentpreflight.StorageCredential{}, ErrSecretResolution
 	}
 	permit, _ := ctx.Value(secretResolvePermitContextKey{}).(*secretResolvePermit)
-	if !r.active || permit == nil || r.permit != permit || permit.check != agentpreflight.CheckStorageAuth || r.storageUsed ||
+	if !r.active || permit == nil || r.permit != permit || (permit.check != agentpreflight.CheckStorageAuth && permit.check != agentpreflight.CheckStorageWrite) || (permit.check == agentpreflight.CheckStorageAuth && r.storageUsed) || (permit.check == agentpreflight.CheckStorageWrite && r.storageWriteUsed) ||
 		!r.grant.Context.OutputKind.IsStorageOutput() || r.grant.Context.StorageTarget == nil || !sameBinding(binding, r.grant.Binding) || !r.clock().UTC().Before(r.grant.ExpiresAt) {
 		return agentpreflight.StorageCredential{}, ErrSecretResolution
 	}
-	// 在发起网络请求前先占用唯一存储槽位，失败也不重复解析，避免扩大密钥暴露次数。
-	r.storageUsed = true
+	// 在发起请求前占用本阶段槽位，失败也不重复解析，避免扩大密钥暴露次数。
+	if permit.check == agentpreflight.CheckStorageAuth {
+		r.storageUsed = true
+	} else {
+		r.storageWriteUsed = true
+	}
 	slot, err := r.protocol.ResolvePrecheckStorageCredential(ctx, agentwire.PrecheckSecretSlotRequest{
 		BootID:        r.bootID,
 		PrecheckID:    r.grant.PrecheckID,
@@ -454,7 +492,7 @@ func (r *leaseSecretResolver) ResolveStorageCredential(ctx context.Context, bind
 		AccessKey: slot.AccessKey,
 		SecretKey: slot.SecretKey,
 	}
-	// 所有权转移给 STORAGE_AUTH 探测器；slot.Destroy 不能清零同一底层字节切片。
+	// 所有权转移给当前阶段探测器；slot.Destroy 不能清零同一底层字节切片。
 	slot.AccessKey = nil
 	slot.SecretKey = nil
 	return storageCredential, nil
@@ -526,6 +564,10 @@ func failureEvidenceCode(check agentpreflight.CheckID) string {
 		return "STORAGE_CONNECTIVITY_UNAVAILABLE"
 	case agentpreflight.CheckStorageAuth:
 		return "STORAGE_AUTH_UNAVAILABLE"
+	case agentpreflight.CheckStorageWrite:
+		return "STORAGE_WRITE_UNAVAILABLE"
+	case agentpreflight.CheckNodeResource:
+		return "NODE_RESOURCE_UNAVAILABLE"
 	default:
 		return "SYNTHETIC_OK"
 	}

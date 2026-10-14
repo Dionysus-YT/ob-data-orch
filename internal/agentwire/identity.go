@@ -18,6 +18,7 @@ import (
 
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identifier"
+	"ob-data-orch/internal/nodefacts"
 	"ob-data-orch/internal/outputpath"
 )
 
@@ -51,8 +52,15 @@ type EnrollmentConfig struct {
 }
 
 // EnvironmentFacts 是严格心跳允许上报的最小机器事实。
-// 它不承载工具路径、磁盘路径、数据库连接、任务内容或任意远程操作参数。
+// 它只携带版本、资源及有界诊断摘要，不承载路径、数据库连接、任务内容或远程操作参数。
 type EnvironmentFacts struct {
+	Host                       *nodefacts.HostInventory
+	StartedAt                  *time.Time
+	RuntimeVersions            *nodefacts.RuntimeVersions
+	ExecutionObservation       *nodefacts.ExecutionObservation
+	LogQueue                   *nodefacts.LogQueue
+	MemoryTotalBytes           uint64
+	MemoryAvailableBytes       uint64
 	OperatingSystem            string
 	Architecture               string
 	AgentVersion               string
@@ -83,8 +91,9 @@ type Heartbeat struct {
 // HeartbeatResult 是控制面确认的非敏感心跳结果。
 // FactsRevision 只用于后续事实绑定，不代表环境检查通过或节点可以执行任务。
 type HeartbeatResult struct {
-	FactsRevision      int64
-	EnvironmentCheckID string
+	EnvironmentVersionProbeAllowed bool
+	FactsRevision                  int64
+	EnvironmentCheckID             string
 }
 
 // AgentIdentity 是已关联 Agent 的非敏感稳定标识。
@@ -105,16 +114,18 @@ type StateStore struct {
 }
 
 type identityState struct {
-	FormatVersion        string               `json:"formatVersion"`
-	ControlPlaneURL      string               `json:"controlPlaneUrl"`
-	CAFile               string               `json:"caFile,omitempty"`
-	ProtocolVersion      string               `json:"protocolVersion"`
-	AgentID              string               `json:"agentId"`
-	NodeID               string               `json:"nodeId"`
-	MachineCredential    []byte               `json:"machineCredential"`
-	EnrollmentID         string               `json:"enrollmentId,omitempty"`
-	EnrollmentMaterial   []byte               `json:"enrollmentMaterial,omitempty"`
-	ExchangeRequestID    string               `json:"exchangeRequestId,omitempty"`
+	FormatVersion      string `json:"formatVersion"`
+	ControlPlaneURL    string `json:"controlPlaneUrl"`
+	CAFile             string `json:"caFile,omitempty"`
+	ProtocolVersion    string `json:"protocolVersion"`
+	AgentID            string `json:"agentId"`
+	NodeID             string `json:"nodeId"`
+	MachineCredential  []byte `json:"machineCredential"`
+	EnrollmentID       string `json:"enrollmentId,omitempty"`
+	EnrollmentMaterial []byte `json:"enrollmentMaterial,omitempty"`
+	ExchangeRequestID  string `json:"exchangeRequestId,omitempty"`
+	// LogQueueNamespace 将新身份的上传队列绑定到自身 UUID；旧状态缺省时继续使用原队列。
+	LogQueueNamespace    string               `json:"logQueueNamespace,omitempty"`
 	RuntimeConfiguration RuntimeConfiguration `json:"runtimeConfiguration,omitempty"`
 }
 
@@ -141,11 +152,20 @@ func OpenStateStore(directory string) (*StateStore, error) {
 	}, nil
 }
 
-// LogQueueDirectory 返回身份目录内供已脱敏日志队列使用的固定私有位置。
+// LogQueueDirectory 返回当前身份的私有日志队列，不复用已撤销身份的待上传批次。
+// 旧身份保留原固定目录；新身份使用加密状态绑定的子目录，历史证据不迁移、不删除。
 // 队列不能位于 execution 工作目录，否则正常清理会删除尚未获得控制面确认的批次。
 func (s *StateStore) LogQueueDirectory() (string, error) {
 	if s == nil || s.directory == "" {
 		return "", ErrIdentityUnavailable
+	}
+	state, found, err := s.loadState()
+	if err != nil {
+		return "", err
+	}
+	defer state.destroy()
+	if found && state.LogQueueNamespace != "" {
+		return filepath.Join(s.directory, "log-queues", state.LogQueueNamespace), nil
 	}
 	return filepath.Join(s.directory, "log-queue"), nil
 }
@@ -199,9 +219,18 @@ func (s *StateStore) PrepareEnrollment(input EnrollmentConfig) error {
 		EnrollmentID:       input.EnrollmentID,
 		EnrollmentMaterial: append([]byte(nil), input.EnrollmentMaterial...),
 		ExchangeRequestID:  requestID,
+		LogQueueNamespace:  agentID,
 	}
 	credential.Zero(machineCredential)
 	defer state.destroy()
+	// 注册时先建立私有队列，让环境检查不依赖首次领取；失败时尚未替换旧身份。
+	queueRoot := filepath.Join(s.directory, "log-queues")
+	if err := ensurePrivateDirectory(queueRoot); err != nil {
+		return ErrIdentityUnavailable
+	}
+	if err := ensurePrivateDirectory(filepath.Join(queueRoot, agentID)); err != nil {
+		return ErrIdentityUnavailable
+	}
 	return s.saveState(&state)
 }
 
@@ -451,6 +480,10 @@ func validIdentityState(state identityState) bool {
 	if state.FormatVersion != identityStateFormatVersion || !validControlPlaneURL(state.ControlPlaneURL) || !validOptionalAbsolutePath(state.CAFile) || state.ProtocolVersion != Version || !validOpaqueValue(state.AgentID, 256) || !validOpaqueValue(state.NodeID, 256) || len(state.MachineCredential) < 32 || len(state.MachineCredential) > 4096 {
 		return false
 	}
+	// 路径段必须为该身份自身的规范 UUID，拒绝目录穿越与其他身份队列绑定。
+	if state.LogQueueNamespace != "" && (state.LogQueueNamespace != state.AgentID || !identifier.IsCanonicalUUIDV4(state.LogQueueNamespace)) {
+		return false
+	}
 	if state.pendingEnrollment() {
 		return validOpaqueValue(state.EnrollmentID, 256) && len(state.EnrollmentMaterial) >= 32 && len(state.EnrollmentMaterial) <= 4096 && validOpaqueValue(state.ExchangeRequestID, 256)
 	}
@@ -472,7 +505,16 @@ func validRuntimeConfiguration(configuration RuntimeConfiguration) bool {
 
 func validHeartbeat(input Heartbeat) bool {
 	facts := input.Facts
-	if !validOpaqueValue(input.BootID, 256) || input.SentAt.IsZero() || facts.ObservedAt.IsZero() || facts.CapacityTotal != 1 || facts.CapacityUsed < 0 || facts.CapacityUsed > facts.CapacityTotal || !validOpaqueValue(facts.AgentVersion, 128) {
+	if nodefacts.ValidateHost(facts.Host) != nil {
+		return false
+	}
+	if nodefacts.Validate(facts.StartedAt, facts.ObservedAt, facts.RuntimeVersions, facts.ExecutionObservation, facts.LogQueue) != nil {
+		return false
+	}
+	if !validOpaqueValue(input.BootID, 256) || input.SentAt.IsZero() || facts.ObservedAt.IsZero() || facts.CapacityTotal < 0 || facts.CapacityTotal > 1024 || facts.CapacityUsed < 0 || facts.CapacityUsed > facts.CapacityTotal || !validOpaqueValue(facts.AgentVersion, 128) {
+		return false
+	}
+	if facts.MemoryTotalBytes > 1<<53-1 || facts.MemoryAvailableBytes > facts.MemoryTotalBytes {
 		return false
 	}
 	if facts.OperatingSystem != "WINDOWS" && facts.OperatingSystem != "LINUX" {

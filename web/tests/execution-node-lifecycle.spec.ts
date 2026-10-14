@@ -44,35 +44,39 @@ test('节点详情同实例隔离迟到刷新及签发，关闭与路由切换�
   await page.screenshot({ path: info.outputPath('node-detail-route-isolation.png'), fullPage: true }); expect(errors).toEqual([])
 })
 
-test('节点编辑 A → B → 新建保持实例，迟到读取与编辑响应不能覆盖新表单', async ({ page }, info) => {
-  await reads(page); await page.goto('/nodes/A/edit'); await expect(page.getByLabel('节点名称')).toHaveValue('合成节点 A')
-  await page.locator('.node-form-heading').evaluate(element => element.setAttribute('data-instance', 'retained'))
+test('节点编辑 A → B → 新建保持实例，保存期阻断切换，迟到读取不能覆盖新表单', async ({ page }, info) => {
+  await reads(page); await page.goto('/nodes/A/edit'); await expect(page.getByLabel('节点名称', { exact: true })).toHaveValue('合成节点 A')
+  const heading = page.locator('.node-editor h2.ant-drawer-title')
+  await heading.evaluate(element => element.setAttribute('data-instance', 'retained'))
   const writes: Route[] = []; await page.route('**/api/v1/execution-nodes/A', route => {
     if (route.request().method() === 'PATCH') writes.push(route)
     else return route.fulfill({ json: { item: node('A') } })
   })
   await page.getByRole('button', { name: '保存修改' }).click(); await expect.poll(() => writes.length).toBe(1)
-  await navigate(page, '/nodes/B/edit'); await expect(page.getByLabel('节点名称')).toHaveValue('合成节点 B')
+  await navigate(page, '/nodes/B/edit'); await expect(page).toHaveURL(/\/nodes\/A\/edit$/)
   await writes[0]!.fulfill({ json: { item: { ...node('A'), revision: 2 } } }).catch(() => {})
-  await expect(page.getByLabel('节点名称')).toHaveValue('合成节点 B'); await expect(page.locator('.node-form-heading')).toHaveAttribute('data-instance', 'retained')
+  await expect(page.getByText(/节点配置已保存/)).toBeVisible()
+  await navigate(page, '/nodes/B/edit'); await expect(page.getByLabel('节点名称', { exact: true })).toHaveValue('合成节点 B')
+  await expect(heading).toHaveAttribute('data-instance', 'retained')
   const held: Route[] = []; await page.route('**/api/v1/execution-nodes/C', route => { held.push(route) })
   await navigate(page, '/nodes/C/edit'); await expect.poll(() => held.length).toBe(1)
   await navigate(page, '/nodes/new'); await expect(page.getByRole('heading', { name: '注册执行节点' })).toBeVisible()
-  await expect(page.locator('.node-form-heading')).toHaveAttribute('data-instance', 'retained'); await held[0]!.fulfill({ json: { item: node('C') } }).catch(() => {})
-  await expect(page.getByLabel('节点名称')).toHaveValue(''); await expect(page.getByLabel('导出数据目录白名单')).toHaveValue('')
+  await expect(heading).toHaveAttribute('data-instance', 'retained'); await held[0]!.fulfill({ json: { item: node('C') } }).catch(() => {})
+  await expect(page.getByLabel('节点名称', { exact: true })).toHaveValue(''); await expect(page.getByLabel('导出数据目录白名单', { exact: true })).toHaveValue('')
   await page.setViewportSize({ width: 640, height: 720 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: info.outputPath('node-form-mode-reset.png'), fullPage: true })
 })
 
-test('新建防重，离开登记页后迟到成功不得触发导航', async ({ page }) => {
+test('新建防重且保存期间阻断离开，成功后仅进入已创建节点', async ({ page }) => {
   await reads(page); const posts: Route[] = []
   await page.route('**/api/v1/execution-nodes', route => { if (route.request().method() === 'POST') posts.push(route); else return route.fulfill({ json: { items: [] } }) })
-  await page.goto('/nodes/new'); await page.getByLabel('节点名称').fill('合成新建节点'); await page.getByLabel('OB Loader/Dumper 安装目录').fill('E:/synthetic-tools'); await page.getByLabel('工具专用 Java 8 路径').fill('C:/synthetic-java'); await page.getByLabel('导出数据目录白名单').fill('/E:/synthetic-exports')
+  await page.goto('/nodes/new'); await page.getByLabel('节点名称', { exact: true }).fill('合成新建节点'); await page.getByLabel('OB Loader/Dumper 安装目录', { exact: true }).fill('E:/synthetic-tools'); await page.getByLabel('工具专用 Java 8 路径', { exact: true }).fill('C:/synthetic-java'); await page.getByLabel('导出数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
   await page.getByRole('button', { name: '保存并继续 Agent 关联' }).click(); await expect.poll(() => posts.length).toBe(1)
-  await expect(page.getByLabel('节点名称')).toBeDisabled()
-  await navigate(page, '/nodes/B/edit'); await expect(page.getByLabel('节点名称')).toHaveValue('合成节点 B')
+  await expect(page.getByLabel('节点名称', { exact: true })).toBeDisabled()
+  await navigate(page, '/nodes/B/edit'); await expect(page).toHaveURL(/\/nodes\/new$/)
   await posts[0]!.fulfill({ status: 201, json: { id: 'synthetic-created' } }).catch(() => {})
-  await expect(page).toHaveURL(/\/nodes\/B\/edit$/); await expect(page.getByLabel('节点名称')).toHaveValue('合成节点 B'); expect(posts).toHaveLength(1)
+  await expect(page).toHaveURL(/\/nodes\/synthetic-created\?registration=created$/)
+  await expect(page.getByRole('heading', { name: '合成节点 synthetic-created', exact: true })).toBeVisible(); expect(posts).toHaveLength(1)
 })
 
 test('环境操作旧响应不写新节点，单次延迟刷新在离开页面时取消', async ({ page }) => {
@@ -86,6 +90,6 @@ test('环境操作旧响应不写新节点，单次延迟刷新在离开页面�
   await navigate(page, '/nodes/B'); await expect(page.getByRole('heading', { name: '合成节点 B' })).toBeVisible()
   await operations[0]!.fulfill({ json: { item: { ...node('A', true), revision: 2 } } }).catch(() => {})
   await expect(page.getByRole('heading', { name: '合成节点 B' })).toBeVisible(); await page.getByRole('button', { name: '检查节点环境' }).click(); await expect.poll(() => operations.length).toBe(2)
-  await operations[1]!.fulfill({ json: { item: { ...node('B', true), revision: 2 } } }); await expect(page.getByText('环境检查已请求，等待 Agent 回传固定运行时结果。')).toBeVisible()
+  await operations[1]!.fulfill({ json: { item: { ...node('B', true), revision: 2 } } }); await expect(page.getByText('已请求环境检查。', { exact: true })).toBeVisible()
   await navigate(page, '/nodes'); await page.clock.runFor(3000); expect(counts).toEqual({ A: 1, B: 1 })
 })
