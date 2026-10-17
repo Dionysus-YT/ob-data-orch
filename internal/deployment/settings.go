@@ -32,6 +32,8 @@ type Settings struct {
 	PasswordSalt         []byte `json:"passwordSalt"`
 	PasswordHash         []byte `json:"passwordHash"`
 	RealExecutionEnabled bool   `json:"realExecutionEnabled"`
+	// NormalImportExecutionEnabled 只有显式配置才允许冻结并领取普通导入任务。
+	NormalImportExecutionEnabled bool `json:"normalImportExecutionEnabled,omitempty"`
 	// LogRetentionDays 仅控制普通任务日志；零值继承 30 天，审计与任务历史不随之清理。
 	LogRetentionDays int `json:"logRetentionDays,omitempty"`
 }

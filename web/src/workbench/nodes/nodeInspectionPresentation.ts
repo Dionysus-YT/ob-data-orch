@@ -23,7 +23,7 @@ export function inspectionItemGuidance(item: NodeInspectionItem): { reason: stri
       return { reason: `${item.version ? `检测到版本 ${item.version}` : '检测到不支持的版本'}，当前要求 ${expected}。`, action: item.kind === 'JAVA_RUNTIME' ? '在「编辑节点」中选择 Java 8 的程序位置，再重新检查。' : '使用完整的官方 4.3.5 工具包，更新「工具安装目录」后重新检查。' }
     }
     case 'VERSION_PROBE_NOT_REQUESTED':
-      return { reason: '本次没有执行版本检查，尚不能确认实际版本。', action: '点击「检查节点环境」；若刚检查过，请确认控制面与 Agent 已同步更新后重试。' }
+      return { reason: '本次没有执行版本检查，尚不能确认实际版本。', action: '若节点待授权，请点击「授权并检查环境」；已授权时请确认控制面与 Agent 已同步更新后重新检查。' }
     case 'VERSION_PROBE_TIMEOUT':
       return { reason: '版本查询超过等待时间，尚未取得结果。', action: '确认 Agent 与 Java 可正常运行后重新检查；若反复超时，请检查 Agent 运行日志。' }
     case 'VERSION_OUTPUT_INVALID':

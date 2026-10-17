@@ -45,6 +45,8 @@ func bundledExecutionSettings(lookup func(string) (string, bool)) (func(string) 
 	}
 	return func(key string) (string, bool) {
 		switch key {
+		case "OB_DATA_ORCH_ENABLE_NORMAL_IMPORT_EXECUTION":
+			return strconv.FormatBool(bundle.RealExecutionEnabled && bundle.NormalImportExecutionEnabled), true
 		case "OB_DATA_ORCH_ENABLE_REAL_EXECUTION", "OB_DATA_ORCH_ENABLE_AGENT_JDBC_CONNECTION_TEST", "OB_DATA_ORCH_ENABLE_AGENT_EXPORT_PREFLIGHT", "OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE":
 			return strconv.FormatBool(bundle.RealExecutionEnabled), true
 		default:
@@ -61,11 +63,12 @@ type registrationCodePayload struct {
 }
 
 type bundledAgentConfig struct {
-	RealExecutionEnabled bool   `json:"realExecutionEnabled,omitempty"`
-	FormatVersion        string `json:"formatVersion"`
-	ControlPlaneURL      string `json:"controlPlaneUrl"`
-	ControlPlaneCAFile   string `json:"controlPlaneCaFile"`
-	StateDirectory       string `json:"stateDirectory"`
+	NormalImportExecutionEnabled bool   `json:"normalImportExecutionEnabled,omitempty"`
+	RealExecutionEnabled         bool   `json:"realExecutionEnabled,omitempty"`
+	FormatVersion                string `json:"formatVersion"`
+	ControlPlaneURL              string `json:"controlPlaneUrl"`
+	ControlPlaneCAFile           string `json:"controlPlaneCaFile"`
+	StateDirectory               string `json:"stateDirectory"`
 }
 
 func prepareSimpleRegistration(stateStore *agentwire.StateStore, controlPlane config.AgentControlPlane, stdin io.Reader) error {

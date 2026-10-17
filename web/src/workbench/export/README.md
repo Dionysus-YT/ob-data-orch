@@ -29,7 +29,7 @@
 
 操作提示沿用 [P0 状态与反馈规范](../../../../design-system/patterns/status-feedback.md)。草稿操作确认、复制成功和复制失败由生命周期分别持有，入口通过 `useOperationMessage` 展示短时成功；步骤消费持久说明与错误，预检查结论保持结果事实。复制请求与预览的会话序号共同阻断过期回调，反馈不持有命令或 SQL 内容。
 
-步骤组件为 `steps/ExportSourceStep.vue`、`ExportObjectsStep.vue`、`ExportFormatStep.vue`、`ExportOutputStep.vue`、`ExportReviewStep.vue`。`ExportSummary.vue` 只展示事实；`ExportSubmitConfirmation.vue` 负责既有确认 UI、安全取消焦点及其计时器，提交由生命周期能力管理。ExportAdvancedSettings、ExportOptionHint、ExportFormatChoice、SqlQueryEditor 位于本模块 `components/`，是已有导出业务组件；原实现与视觉保留，不标记为尚未经验证的跨业务共享，也不新增通用 Wrapper。
+步骤组件为 `steps/ExportSourceStep.vue`、`steps/ExportObjectsStep.vue`、`steps/ExportFormatStep.vue`、`steps/ExportOutputStep.vue`、`steps/ExportReviewStep.vue`。`ExportSummary.vue` 只展示事实；`ExportSubmitConfirmation.vue` 负责既有确认 UI、安全取消焦点及其计时器，提交由生命周期能力管理。ExportOptionHint、ExportFormatChoice、SqlQueryEditor 位于本模块 `components/`，继续属于导出业务。2026-10-15 按 DEC-052，已有 ExportAdvancedSettings 的呈现移入 `components/WizardAdvancedSettings.vue`，与普通导入复用同一主题、标题与开合反馈；导出各步骤仍独占字段、配置计数与业务规则，不共享导入状态，视觉和开合行为保留。
 
 ## 常见改动路径
 

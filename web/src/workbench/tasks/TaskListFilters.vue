@@ -74,10 +74,10 @@ function clearAll() {
     <div class="task-filter-row">
       <label class="task-filter-search"><span class="orch-sr-only">任务名称 / ID 关键字</span><AInput ref="keywordField" :value="keywordInput" aria-label="任务名称 / ID 关键字" placeholder="搜索任务名称或 ID" :maxlength="128" :disabled="disabled" allow-clear @update:value="onKeyword"><template #prefix><SearchOutlined aria-hidden="true" /></template></AInput></label>
       <label class="task-filter"><span class="orch-sr-only">任务类型</span>
-        <ASelect :value="filters.types[0] ?? ''" aria-label="任务类型" :disabled="disabled" @change="value => emit('update', { types: value ? ['OBDUMPER_EXPORT'] : [] })">
+        <ASelect :value="filters.types[0] ?? ''" aria-label="任务类型" :disabled="disabled" @change="value => emit('update', { types: value === 'OBLOADER_NORMAL_IMPORT' || value === 'OBDUMPER_EXPORT' ? [value] : [] })">
           <ASelectOption value="">全部类型</ASelectOption>
           <ASelectOption value="OBDUMPER_EXPORT">导出</ASelectOption>
-          <ASelectOption value="OBLOADER_NORMAL_IMPORT" disabled>普通导入（尚未开放）</ASelectOption>
+          <ASelectOption value="OBLOADER_NORMAL_IMPORT">普通导入</ASelectOption>
           <ASelectOption value="OBLOADER_DIRECT_LOAD" disabled>旁路导入（尚未开放）</ASelectOption>
         </ASelect>
       </label>

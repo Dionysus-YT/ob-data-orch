@@ -81,7 +81,7 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
               <div class="task-page-actions">
                 <span v-if="lastLoadedAt" class="task-updated">最后更新：{{ lastLoadedAt }}</span>
                 <AButton type="text" :loading="refreshing" :disabled="loading || refreshing" :aria-busy="refreshing" aria-label="刷新" @click="list.refresh()"><template #icon><CheckCircleOutlined v-if="refreshCompleted" aria-hidden="true" /><ReloadOutlined v-else aria-hidden="true" /></template>{{ refreshing ? '刷新中' : refreshCompleted ? '已刷新' : '刷新' }}</AButton>
-                <TaskActionMenu v-if="!restricted" :actions="['CREATE_EXPORT', 'CREATE_NORMAL_IMPORT', 'CREATE_DIRECT_LOAD']" label="新建任务" :session-key="route.fullPath" creation @select="action => action === 'CREATE_EXPORT' && router.push('/exports/new')" />
+                <TaskActionMenu v-if="!restricted" :actions="['CREATE_EXPORT', 'CREATE_NORMAL_IMPORT', 'CREATE_DIRECT_LOAD']" label="新建任务" :session-key="route.fullPath" creation @select="action => action === 'CREATE_EXPORT' ? router.push('/exports/new') : action === 'CREATE_NORMAL_IMPORT' && router.push('/imports/normal/new')" />
               </div>
             </div>
 

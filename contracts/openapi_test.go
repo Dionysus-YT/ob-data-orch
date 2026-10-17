@@ -29,6 +29,13 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/export-config-templates":                         {"get", "post"},
 		"/api/v1/export-config-templates/{templateId}":            {"get", "patch", "delete"},
 		"/api/v1/export-drafts":                                   {"get", "post"},
+		"/api/v1/normal-import-drafts":                            {"get", "post"},
+		"/api/v1/normal-import-drafts/{draftId}":                  {"get", "patch", "delete"},
+		"/api/v1/normal-import-drafts/{draftId}:discover-files":   {"post"},
+		"/api/v1/normal-import-drafts/{draftId}:precheck":         {"post"},
+		"/api/v1/normal-import-drafts/{draftId}:preview-command":  {"post"},
+		"/api/v1/normal-import-drafts/{draftId}:submit":           {"post"},
+		"/api/v1/normal-import-prechecks/{precheckId}":            {"get"},
 		"/api/v1/export-drafts/{draftId}":                         {"get", "patch", "delete"},
 		"/api/v1/export-drafts/{draftId}:precheck":                {"post"},
 		"/api/v1/prechecks/{precheckId}":                          {"get"},
@@ -103,8 +110,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 77 {
-		t.Fatalf("operation count = %d, want 77", operationCount)
+	if operationCount != 87 {
+		t.Fatalf("operation count = %d, want 87", operationCount)
 	}
 }
 

@@ -438,9 +438,17 @@ func runProbeLimited(ctx context.Context, runtime Runtime, input []byte, maximum
 
 // runProbeLimitedWithTimeout 只为五类批量目录延长单次固定探针时限。
 func runProbeLimitedWithTimeout(ctx context.Context, runtime Runtime, input []byte, maximum int, timeout time.Duration) ([]byte, error) {
+	return runFixedProbe(ctx, runtime, input, maximum, timeout, probeMainClass)
+}
+
+// runFixedProbe 只接受仓库内两个固定探针主类，调用方不能提供任意入口或 Shell。
+func runFixedProbe(ctx context.Context, runtime Runtime, input []byte, maximum int, timeout time.Duration, mainClass string) ([]byte, error) {
+	if mainClass != probeMainClass && mainClass != normalImportMainClass {
+		return nil, ErrInvalidRequest
+	}
 	bounded, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	arguments := []string{"-cp", runtime.ProbePath + string(os.PathListSeparator) + runtime.ConnectorPath, probeMainClass}
+	arguments := []string{"-cp", runtime.ProbePath + string(os.PathListSeparator) + runtime.ConnectorPath, mainClass}
 	command := exec.CommandContext(bounded, runtime.JavaPath, arguments...)
 	command.Dir = filepath.Dir(runtime.ProbePath)
 	command.Env = append([]string(nil), runtime.Environment...)

@@ -16,6 +16,7 @@
 | 日志、脱敏、游标与证据 | [日志与执行证据](log-collection-evidence-contract.md) |
 | API、SQLite、迁移与备份 | [API 与 SQLite](api-sqlite-data-contract.md) · [OpenAPI](../../contracts/README.md) · [迁移](../../migrations/README.md) |
 | Export 领域模型与兼容 | [通用导出契约](export-general-contract.md) |
+| 普通导入草稿、文件与检查 | [普通导入技术契约](normal-import-contract.md)，独立 CSV/CUT/SQL 配置及 G2/真实执行边界 |
 | 开发和真实执行准入 | [准入与真实验证门禁](development-readiness-closure.md)，含首条切片与 Windows 验收操作 |
 
 <a id="evidence"></a>

@@ -20,7 +20,7 @@ var taskListStates = map[string]bool{
 }
 
 // taskListTypes 是当前已准入的任务类型；未准入的导入类型拒绝而非静默忽略。
-var taskListTypes = map[string]bool{"OBDUMPER_EXPORT": true}
+var taskListTypes = map[string]bool{"OBDUMPER_EXPORT": true, "OBLOADER_NORMAL_IMPORT": true}
 
 var taskListEnvironments = map[string]bool{"DEVELOPMENT": true, "TEST": true, "STAGING": true, "PRODUCTION": true}
 
@@ -161,6 +161,13 @@ func taskListActions(item store.TaskListItem, realExecutionEnabled, templatesCon
 	actions := []string{"COPY_COMMAND"}
 	if item.State != "WAITING_SCHEDULE" {
 		actions = append(actions, "VIEW_LOGS")
+	}
+	// 普通导入只复用取消生命周期，不取得导出的模板、派生或 dump.ckpt 操作。
+	if item.TaskType == "OBLOADER_NORMAL_IMPORT" {
+		if item.Operable && realExecutionEnabled && !item.ReconciliationRequired && !item.CancellationRequested && (item.State == "WAITING_SCHEDULE" || item.State == "STARTING" || item.State == "RUNNING") {
+			actions = append(actions, "CANCEL")
+		}
+		return actions
 	}
 	if !item.Operable {
 		return actions

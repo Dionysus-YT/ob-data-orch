@@ -12,11 +12,13 @@ func Test执行节点固定环境检查通过后才能启用(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.July, 28, 8, 0, 0, 0, time.UTC)
 	seedExecutionNodeEnvironmentFixture(t, store, now)
+	nodeConfig, _ := store.GetExecutionNode(ctx, "node-environment-1")
+	digest := ExecutionNodeRuntimeConfigurationDigest(nodeConfig)
 
 	factsRevision, err := store.RecordAgentHeartbeat(ctx, AgentHeartbeat{
 		AgentID: "agent-environment-1", NodeID: "node-environment-1", ProtocolVersion: "agent-v1", BootID: "boot-environment-1",
 		RequestID: "heartbeat-environment-1", ObservedAt: now, ReceivedAt: now, CapacityTotal: 1, CapacityUsed: 0,
-		Facts: AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "agent-test-v1", ObservedAt: now},
+		Facts: AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "agent-test-v1", ObservedAt: now, RuntimeConfigurationDigest: digest},
 	})
 	if err != nil || factsRevision != 1 {
 		t.Fatalf("RecordAgentHeartbeat() = %d, %v, want 1, nil", factsRevision, err)
@@ -41,6 +43,7 @@ func Test执行节点固定环境检查通过后才能启用(t *testing.T) {
 	if err := store.CompleteExecutionNodeEnvironmentCheck(ctx, AgentExecutionNodeEnvironmentCheckCompletion{
 		NodeID: "node-environment-1", AgentID: "agent-environment-1", CheckID: "check-environment-1", FactsRevision: factsRevision,
 		Status: "PASSED", Code: "TOOL_RUNTIME_READY", RequestID: "complete-environment-1", CompletedAt: now.Add(3 * time.Second),
+		Inspection: completeInspectionFixture(digest, "check-environment-1", true, now.Add(3*time.Second)),
 	}); err != nil {
 		t.Fatalf("CompleteExecutionNodeEnvironmentCheck() error = %v", err)
 	}
@@ -63,11 +66,13 @@ func Test执行节点环境事实变化会自动重新排队且保留启用状�
 	ctx := context.Background()
 	now := time.Date(2026, time.July, 31, 1, 0, 0, 0, time.UTC)
 	seedExecutionNodeEnvironmentFixture(t, store, now)
+	nodeConfig, _ := store.GetExecutionNode(ctx, "node-environment-1")
+	digest := ExecutionNodeRuntimeConfigurationDigest(nodeConfig)
 
 	factsRevision, err := store.RecordAgentHeartbeat(ctx, AgentHeartbeat{
 		AgentID: "agent-environment-1", NodeID: "node-environment-1", ProtocolVersion: "agent-v1", BootID: "boot-environment-1",
 		RequestID: "heartbeat-refresh-1", ObservedAt: now, ReceivedAt: now, CapacityTotal: 1, CapacityUsed: 0,
-		Facts: AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "agent-test-v1", ObservedAt: now},
+		Facts: AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "agent-test-v1", ObservedAt: now, RuntimeConfigurationDigest: digest},
 	})
 	if err != nil || factsRevision != 1 {
 		t.Fatalf("首个 RecordAgentHeartbeat() = %d, %v", factsRevision, err)
@@ -81,6 +86,7 @@ func Test执行节点环境事实变化会自动重新排队且保留启用状�
 	if err := store.CompleteExecutionNodeEnvironmentCheck(ctx, AgentExecutionNodeEnvironmentCheckCompletion{
 		NodeID: "node-environment-1", AgentID: "agent-environment-1", CheckID: "check-refresh-1", FactsRevision: factsRevision,
 		Status: "PASSED", Code: "TOOL_RUNTIME_READY", RequestID: "complete-refresh-1", CompletedAt: now.Add(time.Second),
+		Inspection: completeInspectionFixture(digest, "check-refresh-1", true, now.Add(time.Second)),
 	}); err != nil {
 		t.Fatalf("完成首个自动环境检查失败: %v", err)
 	}
@@ -94,7 +100,7 @@ func Test执行节点环境事实变化会自动重新排队且保留启用状�
 	factsRevision, err = store.RecordAgentHeartbeat(ctx, AgentHeartbeat{
 		AgentID: "agent-environment-1", NodeID: "node-environment-1", ProtocolVersion: "agent-v1", BootID: "boot-environment-2",
 		RequestID: "heartbeat-refresh-2", ObservedAt: now.Add(3 * time.Second), ReceivedAt: now.Add(3 * time.Second), CapacityTotal: 1, CapacityUsed: 0,
-		Facts: AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "agent-test-v1", ObservedAt: now.Add(3 * time.Second)},
+		Facts: AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "agent-test-v1", ObservedAt: now.Add(3 * time.Second), RuntimeConfigurationDigest: digest},
 	})
 	if err != nil || factsRevision != 2 {
 		t.Fatalf("重启后 RecordAgentHeartbeat() = %d, %v, want 2, nil", factsRevision, err)
@@ -160,7 +166,7 @@ func seedExecutionNodeEnvironmentFixture(t *testing.T, store *Store, now time.Ti
 	}{
 		{`INSERT INTO auth_subjects(subject_id, external_subject, display_name, account_status, directory_revision, created_at, updated_at) VALUES (?, ?, ?, 'ACTIVE', NULL, ?, ?)`, []any{"subject-environment-1", "external-environment-1", "Environment User", utcText(now), utcText(now)}},
 		{`INSERT INTO execution_nodes(node_id, display_name, normalized_name, platform, management_state, allowed_roots_json, tool_config_ref, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, 'WINDOWS_AMD64', 'DISABLED', '["E:\\environment"]', NULL, 1, ?, ?, ?)`, []any{"node-environment-1", "Environment Node", "environment node", "subject-environment-1", utcText(now), utcText(now)}},
-		{`INSERT INTO agents(agent_id, node_id, credential_digest, credential_revision, status, protocol_version, boot_id, last_heartbeat_at, capacity_total, capacity_used, facts_json, facts_revision, created_at, revoked_at) VALUES (?, ?, X'010203', 1, 'ACTIVE', 'agent-v1', NULL, NULL, 1, 0, NULL, 0, ?, NULL)`, []any{"agent-environment-1", "node-environment-1", utcText(now)}},
+		{`INSERT INTO agents(agent_id, node_id, credential_digest, credential_revision, status, protocol_version, boot_id, last_heartbeat_at, capacity_total, capacity_used, facts_json, facts_revision, created_at, revoked_at, environment_inspection_authorized) VALUES (?, ?, X'010203', 1, 'ACTIVE', 'agent-v1', NULL, NULL, 1, 0, NULL, 0, ?, NULL, 1)`, []any{"agent-environment-1", "node-environment-1", utcText(now)}},
 	}
 	for index, statement := range statements {
 		if _, err := store.db.ExecContext(context.Background(), statement.query, statement.args...); err != nil {

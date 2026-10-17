@@ -12,6 +12,8 @@ import (
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/importdomain"
+	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/precheckcontract"
 )
@@ -41,6 +43,8 @@ type PrecheckGrant struct {
 // Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
 // EX-I6：对象存储输出通过 OutputKind + StorageTarget 表达受控 URI 与 --tmp-path；本地输出缺省。
 type PrecheckExecutionContext struct {
+	NormalImport      *importdomain.Config
+	CheckKind         string
 	CompatibilityMode string
 	Database          string
 	Objects           []string
@@ -232,6 +236,7 @@ type precheckCompletionRequest struct {
 }
 
 type precheckCompletionPayload struct {
+	InputManifest *importfiles.Manifest   `json:"inputManifest,omitempty"`
 	LeaseID       string                  `json:"leaseId"`
 	LeaseEpoch    int64                   `json:"leaseEpoch"`
 	BindingDigest string                  `json:"bindingDigest"`
@@ -254,6 +259,8 @@ type precheckBindingPayload struct {
 }
 
 type precheckExecutionContextPayload struct {
+	NormalImport        *importdomain.Config                  `json:"normalImport,omitempty"`
+	CheckKind           string                                `json:"checkKind,omitempty"`
 	CompatibilityMode   string                                `json:"compatibilityMode"`
 	Database            string                                `json:"database"`
 	Objects             []string                              `json:"objects"`
@@ -694,6 +701,7 @@ func (c *httpsClient) completePrecheck(ctx context.Context, state *identityState
 		SentAt:          input.SentAt.UTC().Format(time.RFC3339Nano),
 		PayloadType:     "EXPORT_PREFLIGHT_COMPLETE",
 		Payload: precheckCompletionPayload{
+			InputManifest: input.Report.InputManifest,
 			LeaseID:       input.LeaseID,
 			LeaseEpoch:    input.LeaseEpoch,
 			BindingDigest: input.BindingDigest,
@@ -741,6 +749,7 @@ func (p precheckBindingPayload) toBinding() agentstate.PrecheckBinding {
 
 func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
 	context := PrecheckExecutionContext{
+		NormalImport: p.NormalImport, CheckKind: p.CheckKind,
 		CompatibilityMode: p.CompatibilityMode,
 		Database:          p.Database,
 		Objects:           append([]string(nil), p.Objects...),
@@ -817,6 +826,9 @@ func validPrecheckCompletion(input PrecheckCompletion) bool {
 
 // validLenientReport 复核报告的结构安全，不假设具体检查清单顺序。
 func validLenientReport(report agentpreflight.Report) bool {
+	if report.CheckKind != "" {
+		return agentpreflight.ValidateNormalImportReport(report) == nil
+	}
 	if len(report.Results) != len(precheckcontract.FixedChecks()) && len(report.Results) != len(precheckcontract.StorageOutputChecks()) {
 		return false
 	}
@@ -852,6 +864,18 @@ func validPrecheckResultStatus(status agentpreflight.Status) bool {
 }
 
 func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
+	if grant.Context.NormalImport != nil {
+		expected := precheckcontract.NormalImportChecks(grant.Context.CheckKind)
+		if len(expected) != len(grant.CheckSet) {
+			return false
+		}
+		for i, name := range expected {
+			if string(grant.CheckSet[i]) != name {
+				return false
+			}
+		}
+		return validOpaqueValue(grant.PrecheckID, 256) && validOpaqueValue(grant.LeaseID, 256) && grant.LeaseEpoch > 0 && !grant.ExpiresAt.IsZero() && validOpaqueValue(grant.BindingDigest, 256) && validPrecheckBinding(grant.Binding) && grant.Binding.PrecheckID == grant.PrecheckID && grant.Binding.NodeID == nodeID && validPrecheckExecutionContext(grant.Context)
+	}
 	if !validOpaqueValue(grant.PrecheckID, 256) || !validOpaqueValue(grant.LeaseID, 256) || grant.LeaseEpoch < 1 || grant.ExpiresAt.IsZero() || !validOpaqueValue(grant.BindingDigest, 256) || !validPrecheckBinding(grant.Binding) || !validPrecheckCheckSet(grant.Context.OutputKind, grant.CheckSet) {
 		return false
 	}
@@ -859,6 +883,9 @@ func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
 }
 
 func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
+	if context.NormalImport != nil {
+		return context.OutputPath == "" && context.OutputKind == "" && context.StorageTarget == nil && !context.WeakRead && !context.EnableHiddenPk && !context.AddExtraMessage && agentpreflight.ValidNormalImportContext(context.NormalImport, context.CheckKind, context.CompatibilityMode, context.TargetPlatform, context.AllowedRoots)
+	}
 	if !precheckcontract.ValidSelectionIdentifiers(context.IncludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(context.ExcludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(context.Partitions) {
 		return false
 	}

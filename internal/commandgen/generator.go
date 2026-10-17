@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ob-data-orch/internal/inputpath"
 	"ob-data-orch/internal/outputpath"
 	"ob-data-orch/internal/parammeta"
 )
@@ -158,6 +159,7 @@ func newGenerator(catalog metadataCatalog) (*Generator, error) {
 	}, nil
 }
 
+// Generate 依照固定工具目录产生确定性的执行令牌与脱敏展示，不解析秘密或接收 Shell 文本。
 func (g *Generator) Generate(request Request) (Result, error) {
 	if len(g.versions) != 0 && request.MetadataVersion != g.metadataVersion {
 		if versioned, ok := g.versions[request.MetadataVersion]; ok {
@@ -165,6 +167,9 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		}
 	}
 	issues := g.validateRequestIdentity(request)
+	if g.tool == "OBLOADER" {
+		issues = append(issues, validateNormalImportFields(request)...)
+	}
 	provided := make(map[string]FieldInput, len(request.Fields))
 	for _, field := range request.Fields {
 		definition, known := g.byName[field.Name]
@@ -337,7 +342,7 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		CapabilityVersion:   request.CapabilityVersion,
 		NormalizedFields:    normalized,
 		ArgvTemplate:        argv,
-		RedactedCommand:     renderCommand(request.TargetPlatform, "obdumper", display),
+		RedactedCommand:     renderCommand(request.TargetPlatform, strings.ToLower(g.tool), display),
 		SecretSlots:         secretSlots,
 		SecretSourceSummary: secretSourceSummary,
 		TokenEvidence:       tokenEvidence,
@@ -437,7 +442,7 @@ func normalizeValue(definition parammeta.Definition, value Value, platform Platf
 		if definition.ValueType == "enum" && !contains(definition.AllowedValues, value.String) {
 			return NormalizedValue{}, []string{"PARAMETER_ENUM_INVALID"}
 		}
-		if code := validateObjectNameList(definition.LongName, value.String, capability); code != "" {
+		if code := validateObjectNameList(definition.LongName, value.String, capability); capability != "import-odp-local-v1" && code != "" {
 			return NormalizedValue{}, []string{code}
 		}
 		if definition.ValueType == "path" {
@@ -447,7 +452,9 @@ func normalizeValue(definition parammeta.Definition, value Value, platform Platf
 				if !validControlledStorageURI(outputKind, value.String) {
 					return NormalizedValue{}, []string{"STORAGE_URI_INVALID"}
 				}
-			} else if !validAbsolutePath(platform, value.String) {
+			} else if capability == "import-odp-local-v1" && !inputpath.Valid(string(platform), value.String) {
+				return NormalizedValue{}, []string{"INPUT_PATH_NOT_ABSOLUTE"}
+			} else if capability != "import-odp-local-v1" && !validAbsolutePath(platform, value.String) {
 				return NormalizedValue{}, []string{"OUTPUT_PATH_NOT_ABSOLUTE"}
 			}
 		}

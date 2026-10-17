@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 
 	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/importdomain"
+	"ob-data-orch/internal/importfiles"
+	"ob-data-orch/internal/precheckcontract"
 )
 
 // readPrecheckResourceRequirement 从本次绑定的节点事实和已通过唯一生成器的冻结堆字段计算静态额度。
@@ -32,12 +35,16 @@ func readPrecheckResourceRequirement(ctx context.Context, tx *sql.Tx, binding Pr
 			facts = parsed
 		}
 	}
-	requirement := executionbudget.Preflight(config.Config.PerformanceConfig.JvmMemory, facts.MemoryTotalBytes, policy)
+	memory := config.Config.PerformanceConfig.JvmMemory
+	if normal, err := importdomain.Decode(configJSON); err == nil {
+		memory = normal.Execution.Memory
+	}
+	requirement := executionbudget.Preflight(memory, facts.MemoryTotalBytes, policy)
 	return &requirement, nil
 }
 
 // matchesPrecheckResource 保证上报的资源结论与控制面政策一致；历史报告只用于已有事实读取。
-func matchesPrecheckResource(requirement *executionbudget.PreflightRequirement, results []PrecheckCheckResult) bool {
+func matchesPrecheckResource(requirement *executionbudget.PreflightRequirement, results []PrecheckCheckResult, normalImport *importdomain.Config) bool {
 	expected := "UNKNOWN"
 	if requirement != nil {
 		ready, known := requirement.Qualification()
@@ -48,8 +55,16 @@ func matchesPrecheckResource(requirement *executionbudget.PreflightRequirement, 
 			}
 		}
 	}
+	// 控制面独立复核工具下限，旧 Agent 的通过报告或历史预检查不能绕过新提交门禁。
+	insufficientHeap := requirement != nil && normalImport != nil && normalImport.DataHeapInsufficient(requirement.HeapBytes)
+	if insufficientHeap {
+		expected = "FAILED"
+	}
 	for _, result := range results {
 		if result.Check == "NODE_RESOURCE" {
+			if result.EvidenceCode == precheckcontract.EvidenceImportJVMHeapTooSmall {
+				return insufficientHeap && result.Status == "FAILED"
+			}
 			// 探针异常可以安全回报未知并结束失败报告；只有通过/不通过结论需要吻合静态政策。
 			return result.Status == "UNKNOWN" || result.Status == expected
 		}
@@ -69,10 +84,21 @@ func validateSubmissionPrecheckProof(ctx context.Context, tx *sql.Tx, binding Pr
 	}
 	results := decodePrecheckResults(resultJSON)
 	expected := fixedPrecheckChecks
+	if executionContext.NormalImport != nil {
+		if executionContext.CheckKind != "NORMAL_IMPORT_PREFLIGHT" {
+			return ErrPrecheckInvalid
+		}
+		expected = precheckcontract.NormalImportChecks(executionContext.CheckKind)
+		var manifestJSON string
+		var manifest importfiles.Manifest
+		if tx.QueryRowContext(ctx, `SELECT COALESCE(input_manifest_json,'') FROM precheck_runs WHERE precheck_id=?`, binding.PrecheckID).Scan(&manifestJSON) != nil || json.Unmarshal([]byte(manifestJSON), &manifest) != nil || !manifest.Valid(*executionContext.NormalImport) {
+			return ErrPrecheckInvalid
+		}
+	}
 	if executionContext.OutputKind != "" && executionContext.OutputKind != "LOCAL" {
 		expected = storagePrecheckCheckList()
 	}
-	if !matchesPrecheckShape(results, expected) || !matchesPrecheckResource(executionContext.ResourceRequirement, results) {
+	if !matchesPrecheckShape(results, expected) || !matchesPrecheckResource(executionContext.ResourceRequirement, results, executionContext.NormalImport) {
 		return ErrPrecheckInvalid
 	}
 	for _, result := range results {

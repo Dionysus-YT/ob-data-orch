@@ -24,7 +24,7 @@ var (
 )
 
 // FixedVersionProber 只运行 Java -version 或固定 OBLOADER/OBDUMPER 主类 --version。
-// 本机路径和环境必须来自固化配置；调用端只能在当前检查获明确授权时使用它。
+// 本机路径和环境必须来自固化配置；当前检查须获得控制面确认的固定复验许可，不区分人工或自动来源。
 type FixedVersionProber struct {
 	JavaPath      string
 	ToolHome      string

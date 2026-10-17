@@ -19,9 +19,11 @@
 | 资源图表与额度圆环 | `NodeResourceUsage.vue`、`NodeExecutionQuota.vue`、`nodeResourcePresentation.ts` | 使用真实百分比/预算；未知不填零；仅节点业务组件，不创建通用 UI Wrapper |
 | 磁盘快照补读与缓存 | `useNodeResourceSnapshots.ts` | 只保留采样键及最高使用率磁盘的百分比、已用/总量，不复制详情/路径/表单；同一份事实支持图形与悬停容量，三并发、旧代取消、修订与采样匹配、卸载清空 |
 | 注册码编码与固定启动入口 | `executionNodeEnrollmentInstructions.ts` | 原 `obdo-r1` 协议；固定包下载、启动指令不携带材料 |
-| 请求、安全、响应验证 | `api/browser.ts`、`api/nodeRuntimeFacts.ts` | 原 API/CSRF/If-Match/幂等/错误机制不变；后者是系统、完整检查、节点活动与近期任务的严格 DTO 类型/校验，不依赖 workbench |
+| 请求、安全、响应验证 | `api/browser.ts`、`api/nodeRuntimeFacts.ts`、`api/nodeResponseValidation.ts` | 原 API/CSRF/If-Match/幂等机制不变；采集解析保留严格 DTO 校验，响应错误统一补充区域、固定原因及处理建议，不依赖 workbench |
 
 提示沿用 [P0 状态与反馈规范](../../../../design-system/patterns/status-feedback.md)。操作成功由各会话所有者发布，页面用 `useOperationMessage` 展示短时确认；错误持续使用 Ant Alert，字段归 Form.Item。启用只确认动作，任务预检查边界仍在详情说明。复制成功与失败分开持有，材料关闭或会话重置同时清除。
+
+2026-10-16 响应兼容与错误说明：近期任务保留导出及普通导入的真实类型，未知业务、范围、状态和超量记录继续拒绝。`nodeResponseValidation` 只管理安全错误，不持有节点事实或请求；列表、详情、表单及操作复用原状态所有者。错误保留 `RESPONSE_INVALID`，细分主机、检查、版本、日志队列、任务、额度和注册材料等区域，并给出固定原因与建议；不回显响应值、路径、原始异常或材料。写请求送达后校验响应失败，提示先刷新核对可能已经生效的结果，不假报事务回滚。详情刷新保留可信旧事实，首次失败阻断展示，授权与会话失效规则不变。合成回归与现场验证限制见[本轮记录](../../../../docs/03-technical/evidence/execution-node-response-errors-2026-10-16.md)。
 
 数据源、导出与模板的节点候选复用 `executionNodePresentation.nodePlatformLabel`，统一显示操作系统分类与 CPU 架构；名称与标识仍由各模块现有引用读取能力持有。该跨业务依赖只复用纯格式化规则，不共享列表缓存、表单、请求、身份或任务资格。
 
@@ -50,7 +52,9 @@
 
 后端维护入口：`internal/nodefacts/` 是严格心跳和存储复用的有界类型/校验；`agenttelemetry/versions.go` 只读固化安装元数据；`agentexecution.Worker.ActiveExecution` 是唯一活动位置所有者；`agentlogqueue.Queue.Stats` 是唯一可靠日志队列统计所有者，cmd 只组装并转发。`store/node_execution_observations.go` 核对数据库绑定和任务权限，`controlplane/node_diagnostics.go` 统一详情预算、统计及诊断投影；新增采集沿用 facts_json，不建遥测历史。版本变化使检查失效，动态队列及序号不使检查失效。合成验证与真实部署边界见本轮证据更新。
 
-完整采集维护入口：`agenttelemetry/host*.go` 固定原生系统接口；`agentenvironment/inspection.go` 唯一十项检查与 Direct Load 安全投影；`agentexec/version_probe.go` 唯一固定版本进程边界；`store/node_inspection_audit.go` 持久绑定当前请求许可，store 完成事务保存清单；`store/node_activity.go` 有界读取既有节点审计。近期任务复用原 TaskListQuery 权限，不另建节点任务源。新增协议两端须协调升级，本次没有安装服务、真实工具或数据库验证。
+完整采集维护入口：`agenttelemetry/host*.go` 固定原生系统接口；`agentenvironment/inspection.go` 唯一十项检查与 Direct Load 安全投影；`agentexec/version_probe.go` 唯一固定版本进程边界；`store/node_inspection_audit.go` 保存每次检查许可快照，agents 持续授权与 store 完成事务共同核验清单；`store/node_activity.go` 有界读取既有节点审计。近期任务复用原 TaskListQuery 权限，不另建节点任务源。新增协议两端须协调升级，本次没有安装服务、真实工具或数据库验证。
+
+2026-10-16 自动复验：持续授权随新关联材料或存量节点明确授权写入当前机器身份，不从旧检查追认；身份失效后拒绝旧许可结果。手动/自动复验保留管理状态，已启用节点通过后恢复新任务资格。`nodeCanRequestEnvironmentCheck` 统一主动复验入口，`useNodeDetail` 唯一持有主动写事务和当前自动检查的两分钟串行复读；路由失效停止，自动读取不发成功提示。`UNCONFIRMED` 由已有状态投影区分待授权/待核验，真实失败继续异常。见[验证及升级边界](../../../../docs/03-technical/evidence/execution-node-auto-inspection-2026-10-16.md)。
 
 2026-10-12 最新详情精简：返回与下载统一对象头右上角；不折叠，环境检查移至概览，日志上传队列移至配置。配置以执行环境、工具与内存、上传摘要呈现；隐藏身份、哈希、租约、协议、网段、CPU 型号、原始结果及检查绑定等技术字段。移除活动执行、近期任务、节点事件、Direct Load 摘要、检查记录和最近操作，授权任务统计及底层采集继续保留。配置版本优先实际检查，旧检查与元数据回退均显式标注；不重复概览资源/槽位。浏览器入口同时验证数据存在时隐藏、缺失与真实零、Tab 边界和无折叠。
 

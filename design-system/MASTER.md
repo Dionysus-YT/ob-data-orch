@@ -188,6 +188,8 @@ long technical identifier
 
 2026-10-13 按 [DEC-050](../docs/01-product/decisions.md#dec-050-任务中心重构范围与收窄规则) 登记 Task Center 页面规则入口，并取代 Task Detail 占位；两份 P1 已经用户评审确认，Archetype、Shell 与 Token 不变。
 
+2026-10-15 按用户明确修订及 [DEC-052](../docs/01-product/decisions.md#dec-052-普通导入沿用导出布局与三种文件格式)，普通导入沿用导出的顶部水平 Steps、全宽工作面、摘要和底栏；旁路维持独立流程。具体呈现与未接入门禁见 [Task Builder Pattern](patterns/task-builder.md)，不改变全局 Shell、Archetype 或 Token。
+
 - 改动 Product Shell、Page Archetype、Task Builder、Table model、Drawer anatomy、Status semantics、风险确认或 Reference Page 身份时，必须记录 Design System Change。
 - Token calibration 只能修改已确认视觉方向中的值，记录影响组件、前后值和验证结果。
 - 页面实现必须先选择 Archetype，再应用 DESIGN 与 patterns；不得因实现方便重新引入统一三栏、Card-heavy 或 Wizard-all-the-things 骨架。

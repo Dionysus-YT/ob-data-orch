@@ -1,29 +1,105 @@
 <script setup lang="ts">
-import { Radio as ARadio, Input as AInput, Button as AButton } from 'ant-design-vue'
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-
+import { nextTick, onBeforeUnmount, reactive, ref, toRef, useId, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { Alert, Button, Tag } from 'ant-design-vue'
+import { browserApi } from '@/api/browser'
+import { useOperationMessage } from '@/composables/useOperationMessage'
 import WizardFrame from '@/components/WizardFrame.vue'
+import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
+import { useNormalImportWizard } from '@/workbench/import/normal/useNormalImportWizard'
+import NormalImportSourceStep from '@/workbench/import/normal/steps/NormalImportSourceStep.vue'
+import NormalImportInputStep from '@/workbench/import/normal/steps/NormalImportInputStep.vue'
+import NormalImportObjectsStep from '@/workbench/import/normal/steps/NormalImportObjectsStep.vue'
+import NormalImportExecutionStep from '@/workbench/import/normal/steps/NormalImportExecutionStep.vue'
+import NormalImportReviewStep from '@/workbench/import/normal/steps/NormalImportReviewStep.vue'
+import NormalImportSubmitConfirmation from '@/workbench/import/normal/steps/NormalImportSubmitConfirmation.vue'
+import NormalImportSummary from '@/workbench/import/normal/steps/NormalImportSummary.vue'
+import NormalImportParameterCatalog from '@/workbench/import/normal/components/NormalImportParameterCatalog.vue'
+import '@/workbench/import/normal/normalImportWizard.css'
 
+const requests = new AbortController()
+onBeforeUnmount(() => requests.abort())
 const route = useRoute()
-const activeStep = computed(() => {
-  const value = Number(route.query.step ?? '1')
-  return Number.isInteger(value) && value >= 1 && value <= 6 ? value : 1
-})
-const titles = ['选择数据源', '文件来源', '内容与格式', '对象与映射', '执行参数', '预检查与命令']
+const wizard = reactive(useNormalImportWizard({ api: browserApi(requests.signal), route, router: useRouter(), fieldPrefix: useId() }))
+const { MessageContext } = useOperationMessage([{ content: toRef(wizard, 'operationNotice') }, { content: toRef(wizard, 'copyNotice') }])
+const frame = ref<InstanceType<typeof WizardFrame>>()
+const catalogOpen = ref(false)
+const confirmLeave = ref(false)
+let resolveLeave: ((leave: boolean) => void) | undefined
+let focusGeneration = 0
+watch(() => [wizard.activeStep, route.query.draft, wizard.formSignature], () => { focusGeneration++ }, { flush: 'sync' })
+async function advance() {
+  const focusRequest = ++focusGeneration
+  wizard.nextStep()
+  await nextTick()
+  if (wizard.attemptedStep !== wizard.activeStep || !wizard.currentStepError) return
+  // 长表单校验失败后定位当前工作面的首个错误，键盘用户可直接修正输入。
+  const root = frame.value?.$el as HTMLElement | undefined
+  const errors = Array.from(root?.querySelectorAll<HTMLElement>('.ant-form-item-has-error') ?? [])
+  const error = errors.find(item => item.querySelector('.ant-form-item-explain-error')?.textContent?.trim() === wizard.currentStepError) ?? errors[0]
+  if (!error) return
+  // 等待原生 Collapse 的展开动画和字段反馈布局完成，避免把仍在高度动画中的字段滚到视口外。
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const expansion = error.closest('.ant-collapse-content')
+  await Promise.allSettled((expansion?.getAnimations({ subtree: true }) ?? []).map(animation => animation.finished))
+  await nextTick()
+  if (requests.signal.aborted || focusRequest !== focusGeneration || !error.isConnected) return
+  error.scrollIntoView({ block: 'center', behavior: 'instant' })
+  error?.querySelector<HTMLInputElement>('input:not([disabled]):not([type="hidden"]), textarea:not([disabled])')?.focus({ preventScroll: true })
+}
+function guardLeave() {
+  if (!wizard.hasInputs) return true
+  resolveLeave?.(false)
+  confirmLeave.value = true
+  return new Promise<boolean>(resolve => { resolveLeave = resolve })
+}
+function finishLeave(leave: boolean) {
+  confirmLeave.value = false
+  const resolve = resolveLeave
+  resolveLeave = undefined
+  resolve?.(leave)
+}
+function beforeUnload(event: BeforeUnloadEvent) { if (wizard.hasInputs) { event.preventDefault(); event.returnValue = '' } }
+onBeforeRouteLeave(guardLeave)
+onBeforeRouteUpdate((to, from) => !(wizard.bindingDraftRoute && to.query.draft === wizard.currentDraft?.id) && to.query.draft !== from.query.draft ? guardLeave() : true)
+window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 
 <template>
-  <section class="page-heading"><div><h1>新建普通导入任务</h1><p>OBLOADER 普通导入与旁路导入是两条独立流程；本向导不会生成 <code>--direct</code>、<code>--rpc-port</code> 或 <code>--parallel</code>。</p></div><span class="draft-status">草稿尚未创建</span></section>
-  <WizardFrame kind="normal" :active-step="activeStep">
+  <MessageContext />
+  <section class="page-heading"><h1>新建普通导入任务</h1><Tag :color="wizard.draftDirty ? 'warning' : wizard.currentDraft ? 'success' : 'default'">{{ wizard.draftDirty ? '草稿有未保存更改' : wizard.currentDraft ? '草稿已保存' : '草稿尚未创建' }}</Tag></section>
+  <WizardFrame ref="frame" kind="normal" :active-step="wizard.activeStep" :step-titles="wizard.titles" :progress-percent="wizard.stepProgressPercent" :completed-steps="wizard.completedSteps" class="normal-import-builder" @step-change="wizard.moveToStep">
+    <template #actions><Button @click="catalogOpen = true">全部参数</Button><Button :loading="wizard.savingDraft" :disabled="!wizard.selectedSource || wizard.loadingDraft || wizard.reviewBusy" @click="wizard.saveDraft">保存草稿</Button></template>
     <template #default>
-      <section v-if="activeStep === 1" class="form-section"><h2>选择已有数据源</h2><p>目标数据源和默认数据库来自已登记的 ODP 连接；向导不重复编辑连接信息或凭据。</p><div class="placeholder-control"><span>已授权且完成基础连接测试的数据源将在功能接入后加载</span></div></section>
-      <section v-else-if="activeStep === 2" class="form-section"><h2>文件来源与初步发现</h2><div class="section-block"><h3>输入位置</h3><div class="radio-row"><label><ARadio checked name="source" />执行节点本地绝对路径</label><label><ARadio disabled name="source" />官方支持的远程存储（待安全凭据设计）</label></div><label class="field-label wide-label">文件或目录路径 <b>*</b><AInput aria-label="文件或目录路径 *" placeholder="由执行节点读取的完整绝对路径" /></label><p class="section-hint">不提供浏览器上传、任意 URI、平台文件管理或文件内容编辑。</p></div><div class="section-block"><h3>初步文件发现</h3><div class="placeholder-control short"><span>仅在节点可达后展示路径可读性、按后缀分组的有限样例；不读取业务内容推断字段。</span></div></div><details class="parameter-fold"><summary>高级文件条件 <span>文件正则、编码、第三方文件和临时目录按适用条件显示</span></summary><p>第 3 步确定内容与格式后，系统重新计算有效文件集；当前发现结果不代表可以导入。</p></details></section>
-      <section v-else-if="activeStep === 3" class="form-section"><h2>导入内容与格式</h2><div class="option-grid"><label class="option-card"><ARadio name="content" />仅对象定义<span>仅导入对象结构和对象元数据。</span></label><label class="option-card"><ARadio name="content" />仅数据<span>需要选择一种数据格式。</span></label><label class="option-card selected"><ARadio checked name="content" />对象定义和数据<span>DDL 与数据文件分别处理。</span></label><label class="option-card"><ARadio name="content" />MIX 混合文件<span>独立解析模式；与 DDL 和其他格式互斥。</span></label></div><h3 class="subheading">数据格式</h3><div class="format-grid"><label class="format-card selected"><ARadio checked name="format" />CSV</label><label class="format-card"><ARadio name="format" />Insert SQL</label><label class="format-card"><ARadio name="format" />CUT</label><label class="format-card"><ARadio name="format" />POS<span>必须提供控制文件。</span></label><label class="format-card"><ARadio name="format" />ORC</label><label class="format-card"><ARadio name="format" />Parquet</label><label class="format-card"><ARadio name="format" />Avro<span>不支持 Complex Types。</span></label></div><p class="section-hint">只显示当前格式的活动字段；压缩表示读取 OBDUMPER 压缩输入，不是再次压缩导入数据。</p></section>
-      <section v-else-if="activeStep === 4" class="form-section"><h2>目标对象与文件映射</h2><div class="option-grid"><label class="option-card selected"><ARadio checked name="target" />全部对象<span><code>--all</code> 与具体对象参数严格互斥。</span></label><label class="option-card"><ARadio name="target" />指定对象<span>至少包含一种适用对象表达式。</span></label></div><div class="section-block"><h3>列映射方式</h3><div class="option-grid"><label class="option-card selected"><ARadio checked name="mapping" />按文件列顺序<span>不提供平台智能字段映射。</span></label><label class="option-card"><ARadio name="mapping" />控制文件<span>POS 必填；与自动映射互斥。</span></label><label class="option-card"><ARadio name="mapping" />官方自动列映射<span>仅 CSV / ORC / Parquet。</span></label><label class="option-card"><ARadio name="mapping" />显式列名单<span>按官方字段承载，不做表达式编辑器。</span></label></div></div><p class="section-hint">映射预览只展示由文件头/元数据和目标元数据形成的只读准备结果；最终在预检查中验证。</p></section>
-      <section v-else-if="activeStep === 5" class="form-section"><h2>执行参数与高风险操作</h2><div class="parameter-list"><div><strong>错误与重复数据</strong><span><code>max-discards</code>、<code>max-errors</code>、<code>strict</code> 均独立表达</span><AInput disabled placeholder="沿用官方默认" /></div><div><strong>性能与资源</strong><span>线程、批次、分块、限速与 JVM 内存不提供伪精确推荐</span><AInput disabled placeholder="沿用官方默认" /></div><div><strong>执行节点</strong><span>真实节点可用性和资源由任务预检查确认</span><AInput disabled placeholder="尚未选择" /></div></div><details class="parameter-fold"><summary>高级配置 <span>所有已确认普通导入参数可按分类找到</span></summary><p>折叠不是删除；未显式设置的字段沿用官方默认，不为命令长度主动写出。</p></details><details class="parameter-fold"><summary>专家配置 <span>只开放已映射字段，并受权限和条件约束</span></summary><p><code>replace-data</code>、<code>replace-object</code>、<code>truncate-table</code>、<code>delete-from-table</code>只在适用条件下显示。truncate 与 delete 严格互斥；<code>--yes</code>只由平台在等价确认后派生。</p></details></section>
-      <section v-else class="form-section"><h2>预检查与完整命令</h2><section class="precheck-list"><h3>预检查结果</h3><div v-for="item in ['数据源与权限', '执行节点与工具', '文件集合', '内容与格式', '对象与列映射', '参数约束', '高风险确认']" :key="item" class="precheck-item"><span class="status-dot neutral" /><strong>{{ item }}</strong><span>尚未执行；当前页面不会把未知事实显示为通过。</span></div></section><section class="command-empty"><div><h3>完整命令（脱敏）</h3><AButton disabled>复制脱敏命令</AButton></div><pre><code>完成普通导入配置和 Agent 预检查后，由控制面生成只读、脱敏的 OBLOADER 命令。</code></pre><p>普通导入不会生成旁路导入专属参数。</p></section></section>
+      <Alert v-if="wizard.unsupportedDraft" type="warning" show-icon message="普通导入草稿链接无效，请重新打开。" />
+      <Alert v-if="wizard.draftFailure" type="error" show-icon :message="wizard.draftFailure" />
+      <Alert v-if="wizard.reviewFailure" type="error" show-icon :message="wizard.reviewFailure" />
+      <Alert v-if="wizard.loadingDraft" type="info" show-icon message="正在读取普通导入草稿…" />
+      <Alert v-if="wizard.attemptedStep === wizard.activeStep && wizard.currentStepError" type="error" show-icon :message="wizard.currentStepError" />
+      <template v-if="!wizard.loadingDraft && !wizard.draftLoadFailure && !wizard.unsupportedDraft">
+        <NormalImportSourceStep v-if="wizard.activeStep === wizard.steps.source" :model="wizard" />
+        <NormalImportInputStep v-else-if="wizard.activeStep === wizard.steps.input" :model="wizard" />
+        <NormalImportObjectsStep v-else-if="wizard.activeStep === wizard.steps.objects" :model="wizard" />
+        <NormalImportExecutionStep v-else-if="wizard.activeStep === wizard.steps.execution" :model="wizard" />
+        <NormalImportReviewStep v-else :model="wizard" />
+      </template>
     </template>
-    <template #summary><h2>配置总览</h2><dl class="summary-definition"><div><dt>当前步骤</dt><dd>{{ titles[activeStep - 1] }}</dd></div><div><dt>数据源</dt><dd>尚未选择</dd></div><div><dt>文件来源</dt><dd>尚未配置</dd></div><div><dt>内容与格式</dt><dd>尚未配置</dd></div><div><dt>对象与映射</dt><dd>尚未配置</dd></div><div><dt>预检查</dt><dd>尚未执行</dd></div></dl><p class="aside-note">失败任务只有存在有效 <code>load.ckpt</code>、原路径和不可变快照匹配时，才可能显示从检查点继续。</p></template>
+    <template #summary><NormalImportSummary :model="wizard" /></template>
+    <template #footer>
+      <footer class="wizard-footer">
+        <Button :disabled="wizard.activeStep === 1 || wizard.navigating" @click="wizard.previousStep">上一步</Button>
+        <span :id="wizard.fieldPrefix + '-unavailable'" class="wizard-baseline-note">保存当前活动配置；完整预检查与执行门禁通过后才能提交。</span>
+        <span class="footer-grow" />
+        <Button v-if="wizard.activeStep < wizard.steps.review" type="primary" :loading="wizard.navigating" :disabled="wizard.loadingDraft || wizard.unsupportedDraft || !!wizard.draftLoadFailure || wizard.loadingSources && wizard.activeStep === wizard.steps.source || wizard.loadingNodes && wizard.activeStep === wizard.steps.input" @click="advance">{{ wizard.footerLabel }}</Button>
+        <div v-else class="footer-actions"><Button :loading="wizard.checking || wizard.previewingCommand" :disabled="!wizard.canStartPrecheck" @click="wizard.retryReview">重新预检查</Button><Button type="primary" :loading="wizard.submitting" :disabled="!wizard.canSubmit" :aria-describedby="wizard.fieldPrefix + '-unavailable'" @click="wizard.submitTask()">提交并启动导入</Button></div>
+      </footer>
+    </template>
   </WizardFrame>
+  <NormalImportParameterCatalog :open="catalogOpen" :model="wizard" @close="catalogOpen = false" />
+  <OrchDangerConfirm :open="confirmLeave" title="离开普通导入配置？" confirm-label="放弃配置并离开" cancel-label="继续配置" @cancel="finishLeave(false)" @confirm="finishLeave(true)"><p>当前配置尚未保存，离开后无法恢复。页面内步骤切换会保留配置。</p></OrchDangerConfirm>
+  <NormalImportSubmitConfirmation :model="wizard" />
+  <OrchDangerConfirm :open="wizard.pendingSourceId !== null" title="更换目标数据源？" confirm-label="更换并清除关联配置" cancel-label="保留当前配置" @cancel="wizard.cancelSourceChange" @confirm="wizard.confirmSourceChange"><p>更换后会回填新数据源的默认数据库，并清除对象、排除表、Oracle 会话格式和高风险数据行为。各数据格式的暂存输入会保留，原风险说明确认失效。</p></OrchDangerConfirm>
+  <OrchDangerConfirm :open="wizard.pendingScope !== null" title="改为全部对象？" confirm-label="清除指定对象并切换" cancel-label="保留指定对象" @cancel="wizard.cancelScopeChange" @confirm="wizard.confirmScopeChange"><p>将清除已填写的指定对象表达式。全部对象与具体对象不会同时生效，风险范围将重新计算。</p></OrchDangerConfirm>
+  <OrchDangerConfirm :open="wizard.pendingContent !== null" title="更换导入内容？" confirm-label="清除不适用配置并切换" cancel-label="保留当前内容" @cancel="wizard.cancelContentChange" @confirm="wizard.confirmContentChange"><p>将清除新内容不适用的对象定义、兼容选项与高风险数据行为。各格式输入继续暂存，非活动参数不参与当前配置，原风险说明确认失效。</p></OrchDangerConfirm>
 </template>

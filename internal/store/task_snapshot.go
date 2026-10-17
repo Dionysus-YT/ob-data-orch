@@ -16,7 +16,7 @@ type TaskSnapshotField struct {
 	Source string `json:"source"`
 }
 
-// TaskSnapshotGroup 按导出向导步骤组织字段，不携带原始快照、秘密或凭据标识。
+// TaskSnapshotGroup 按各任务自身的向导步骤组织字段，不携带原始快照、秘密或凭据标识。
 type TaskSnapshotGroup struct {
 	Key    string              `json:"key"`
 	Label  string              `json:"label"`
@@ -29,13 +29,16 @@ func (s *Store) GetAuthorizedTaskSnapshotGroups(ctx context.Context, taskID, sub
 	if err != nil || taskID == "" {
 		return nil, errors.New("task snapshot scope is invalid")
 	}
-	var raw, owner, precheckID, nodeID, sourceID string
-	err = s.db.QueryRowContext(ctx, `SELECT t.snapshot_json, t.creator_subject_id, t.precheck_id, t.node_id, t.data_source_id `+taskListFrom+` WHERE `+predicate, args...).Scan(&raw, &owner, &precheckID, &nodeID, &sourceID)
+	var raw, owner, precheckID, nodeID, sourceID, taskKind string
+	err = s.db.QueryRowContext(ctx, `SELECT t.snapshot_json, t.creator_subject_id, t.precheck_id, t.node_id, t.data_source_id,t.task_type `+taskListFrom+` WHERE `+predicate, args...).Scan(&raw, &owner, &precheckID, &nodeID, &sourceID, &taskKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrDataSourceNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if taskKind == "OBLOADER_NORMAL_IMPORT" {
+		return normalImportTaskSnapshotGroups(raw, owner == subjectID, precheckID)
 	}
 	var frozen struct {
 		Database string        `json:"database"`

@@ -537,11 +537,6 @@
   color: var(--ob-color-form-secondary);
   font-size: var(--ob-component-field-helper-size);
 }
-.subheading {
-  margin: var(--ob-foundation-space-6) 0 var(--ob-foundation-space-3);
-  color: var(--ob-color-form-text);
-  font-size: var(--ob-component-control-font-size);
-}
 .wizard-baseline-note {
   color: var(--ob-color-form-secondary);
   font-size: var(--ob-component-field-helper-size);

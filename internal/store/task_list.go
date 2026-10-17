@@ -65,12 +65,12 @@ func buildTaskListPredicate(input TaskListQuery) (string, []any, error) {
 		add(`f.environment = ?`, input.Environment)
 	}
 	if len(input.Types) > 0 {
-		// 当前任务表只承载 OBDUMPER 导出；其他类型筛选应得到空集而不是被忽略。
+		// 类型只收窄授权范围，不能把普通导入投影成导出或忽略筛选。
 		values := make([]any, 0, len(input.Types))
 		for _, value := range input.Types {
 			values = append(values, value)
 		}
-		add(`'OBDUMPER_EXPORT' IN (`+placeholders(len(values))+`)`, values...)
+		add(`t.task_type IN (`+placeholders(len(values))+`)`, values...)
 	}
 	if len(input.States) > 0 {
 		values := make([]any, 0, len(input.States))
@@ -146,10 +146,10 @@ func (s *Store) ListTaskSummaries(ctx context.Context, input TaskListQuery) ([]T
 	// 可写资格独立于读取范围：全局只读管理员不能借列表获得写操作入口。
 	selectArgs := []any{input.SubjectID, input.SubjectID}
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, 'OBDUMPER_EXPORT',
-               COALESCE(json_extract(t.snapshot_json, '$.database'), ''),
+        SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.task_type,
+               COALESCE(json_extract(t.snapshot_json, '$.config.database'),json_extract(t.snapshot_json, '$.database'), ''),
                COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
-               COALESCE(json_extract(t.snapshot_json, '$.scopeKind'), ''),
+               COALESCE(json_extract(t.snapshot_json, '$.config.scope'),json_extract(t.snapshot_json, '$.scopeKind'), ''),
                t.snapshot_version,
                `+taskListStateExpression+`, COALESCE(e.reconciliation_required, 0),
                t.submitted_at, COALESCE(e.started_at, ''), COALESCE(e.finished_at, ''),

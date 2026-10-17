@@ -163,6 +163,13 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 	if realExecutionConfigErr != nil {
 		return realExecutionConfigErr
 	}
+	normalImportEnabled, normalImportErr := featuregate.LoadNormalImportExecutionEnabled(lookupEnv)
+	if normalImportErr != nil {
+		return normalImportErr
+	}
+	if normalImportEnabled && !realExecutionEnabled {
+		return errors.New("普通导入要求同时开启真实执行")
+	}
 	if realExecutionEnabled && (operatingSystem != "WINDOWS" || architecture != "AMD64") {
 		return errors.New("real execution is currently limited to Windows AMD64 local integration")
 	}
@@ -202,6 +209,7 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 		"stage", map[bool]string{true: "G3_LOCAL_MVP", false: "G2"}[realExecutionEnabled],
 		"networkEnabled", true,
 		"realExecutionEnabled", realExecutionEnabled,
+		"normalImportExecutionEnabled", normalImportEnabled,
 		"agentJDBCConnectionTestEnabled", jdbcConnectionTestEnabled,
 		"agentExportPreflightEnabled", exportPreflightEnabled,
 	)
@@ -258,6 +266,7 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 			},
 			executions: &asynchronousExportExecutionRunner{delegate: &configuredExportExecutionRunner{
 				stateStore: stateStore, lookupEnv: lookupEnv, operatingSystem: operatingSystem, architecture: architecture, bootID: bootID,
+				normalImportEnabled: normalImportEnabled,
 			}, logger: logger, capacity: agenttelemetry.ExecutionWorkerLimit},
 		}
 	}

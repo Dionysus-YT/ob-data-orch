@@ -681,7 +681,7 @@ func (store *PersistentStore) readBatch(batch IndexedBatch) ([]Record, error) {
 
 func verifyIndexedBatch(batch IndexedBatch, records []Record) error {
 	if batch.GapReasonCode != "" {
-		kind, err := storedSourceKind(batch.SourceKind)
+		kind, err := storedSourceKind(batch.SourceKind, batch.ParserVersion)
 		if err != nil || len(records) != 1 {
 			return ErrStorageCorrupt
 		}
@@ -707,7 +707,16 @@ func verifyIndexedBatch(batch IndexedBatch, records []Record) error {
 	return nil
 }
 
-func storedSourceKind(value string) (SourceKind, error) {
+func storedSourceKind(value string, parser ...string) (SourceKind, error) {
+	// SQLite 的 STDOUT/STDERR 是物理来源；工具身份由版本化解析器与正文来源共同核验。
+	if len(parser) == 1 && parser[0] == "obloader-4.3.5-v1" {
+		if value == "STDOUT" {
+			return SourceLoaderStdout, nil
+		}
+		if value == "STDERR" {
+			return SourceLoaderStderr, nil
+		}
+	}
 	switch value {
 	case "STDOUT":
 		return SourceStdout, nil
@@ -746,9 +755,9 @@ func persistedSourceKind(batch Batch) (string, error) {
 
 func persistedSourceKindFromRecord(kind SourceKind) (string, error) {
 	switch kind {
-	case SourceStdout:
+	case SourceStdout, SourceLoaderStdout:
 		return "STDOUT", nil
-	case SourceStderr:
+	case SourceStderr, SourceLoaderStderr:
 		return "STDERR", nil
 	case SourceFile:
 		return "TOOL_FILE", nil

@@ -27,6 +27,84 @@ async function flush() { await Promise.resolve(); await Promise.resolve(); await
 afterEach(() => { for (const scope of scopes.splice(0)) scope.stop(); vi.useRealTimers() })
 
 describe('节点详情事实与操作生命周期', () => {
+  it.each(['ENABLED', 'DISABLED'] as const)('打开详情承接自动检查，完成后保留 %s 管理意图且不发送写请求', async managementState => {
+    vi.useFakeTimers()
+    const api = apiMock()
+    const pending: ExecutionNodeDetail = { ...detail(), managementState, environmentStatus: 'UNCONFIRMED', unavailableReasons: ['ENVIRONMENT_CHECK_IN_PROGRESS'], environmentCheck: { checkId: 'automatic-check', status: 'PENDING', factsRevision: 2 } }
+    api.getExecutionNode.mockResolvedValueOnce(pending).mockResolvedValue({ ...detail(), managementState, acceptsNewTasks: managementState === 'ENABLED', unavailableReasons: managementState === 'ENABLED' ? [] : ['NODE_DISABLED'], environmentCheck: { checkId: 'automatic-check', status: 'PASSED', code: 'TOOL_RUNTIME_READY', factsRevision: 2 } })
+    const { value } = mount(() => useNodeDetail(ref('synthetic-a'), () => api))
+    await flush()
+    expect(value.node.value?.environmentCheck?.status).toBe('PENDING')
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(value.node.value?.managementState).toBe(managementState)
+    expect(value.node.value?.acceptsNewTasks).toBe(managementState === 'ENABLED')
+    expect(api.getExecutionNode).toHaveBeenCalledTimes(2)
+    expect(api.requestExecutionNodeEnvironmentCheck).not.toHaveBeenCalled()
+    expect(api.enableExecutionNode).not.toHaveBeenCalled()
+    expect(value.refreshCompleted.value).toBe(false)
+    expect(value.actionNotice.value).toBe('')
+  })
+
+  it('正常已启用节点也可主动复验，方法入口防重且不发送启用动作', async () => {
+    const api = apiMock()
+    api.getExecutionNode.mockResolvedValue({ ...detail(), managementState: 'ENABLED', acceptsNewTasks: true, unavailableReasons: [] })
+    const { value } = mount(() => useNodeDetail(ref('synthetic-a'), () => api))
+    await flush()
+    const completion = deferred<ExecutionNodeDetail>()
+    api.requestExecutionNodeEnvironmentCheck.mockImplementationOnce(() => completion.promise)
+    const running = value.requestEnvironmentCheck()
+    await value.requestEnvironmentCheck()
+    expect(api.requestExecutionNodeEnvironmentCheck).toHaveBeenCalledTimes(1)
+    completion.resolve({ ...detail(), managementState: 'ENABLED', environmentStatus: 'UNCONFIRMED', unavailableReasons: ['ENVIRONMENT_CHECK_IN_PROGRESS'], environmentCheck: { status: 'PENDING', factsRevision: 2 } })
+    await running
+    expect(value.node.value?.managementState).toBe('ENABLED')
+    expect(api.enableExecutionNode).not.toHaveBeenCalled()
+  })
+
+  it('自动复验同一检查最多复读两分钟，手动刷新不无限续期，待授权不自动复读', async () => {
+    vi.useFakeTimers()
+    const api = apiMock()
+    const pending: ExecutionNodeDetail = { ...detail(), environmentStatus: 'UNCONFIRMED', unavailableReasons: ['ENVIRONMENT_CHECK_IN_PROGRESS'], environmentCheck: { checkId: 'automatic-check', status: 'PENDING', factsRevision: 2 } }
+    api.getExecutionNode.mockResolvedValue(pending)
+    const { value } = mount(() => useNodeDetail(ref('synthetic-a'), () => api))
+    await flush()
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(vi.getTimerCount()).toBe(0)
+    await value.loadNode(true)
+    expect(vi.getTimerCount()).toBe(0)
+    const calls = api.getExecutionNode.mock.calls.length
+    await vi.advanceTimersByTimeAsync(120000)
+    expect(api.getExecutionNode).toHaveBeenCalledTimes(calls)
+    api.getExecutionNode.mockResolvedValue({ ...pending, unavailableReasons: ['ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED'], environmentCheck: { ...pending.environmentCheck!, checkId: 'unauthorized-check' } })
+    await value.loadNode(true)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(api.requestExecutionNodeEnvironmentCheck).not.toHaveBeenCalled()
+  })
+
+  it.each(['切换节点', '卸载', '读取失败', '离线'])('自动复验在%s后停止，迟到读取不能恢复旧会话或继续计时', async boundary => {
+    vi.useFakeTimers()
+    const api = apiMock()
+    const pending: ExecutionNodeDetail = { ...detail(), environmentStatus: 'UNCONFIRMED', unavailableReasons: ['ENVIRONMENT_CHECK_IN_PROGRESS'], environmentCheck: { checkId: 'automatic-check', status: 'PENDING', factsRevision: 2 } }
+    const read = deferred<ExecutionNodeDetail>()
+    api.getExecutionNode.mockResolvedValueOnce(pending).mockImplementationOnce(() => read.promise)
+    const id = ref('synthetic-a')
+    const { value, stop } = mount(() => useNodeDetail(id, () => api))
+    await flush()
+    await vi.advanceTimersByTimeAsync(2500)
+    if (boundary === '切换节点') { id.value = 'synthetic-b'; await flush(); read.resolve(pending) }
+    else if (boundary === '卸载') { stop(); read.resolve(pending) }
+    else if (boundary === '读取失败') read.reject({ status: 503, code: 'EXECUTION_NODE_QUERY_UNAVAILABLE' })
+    else read.resolve({ ...pending, heartbeatStatus: 'OFFLINE' })
+    await flush()
+    expect(vi.getTimerCount()).toBe(0)
+    const calls = api.getExecutionNode.mock.calls.length
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(api.getExecutionNode).toHaveBeenCalledTimes(calls)
+    if (boundary === '切换节点') expect(value.node.value?.id).toBe('synthetic-b')
+    if (boundary === '卸载') expect(value.node.value).toBeUndefined()
+    expect(value.actionNotice.value).toBe('')
+  })
+
   it('A → B → A 复用时旧读取不能复活，路由切换立即清空旧事实并取消等待', async () => {
     const api = apiMock(); const old = deferred<ExecutionNodeDetail>(); api.getExecutionNode.mockImplementationOnce(() => old.promise)
     const id = ref('synthetic-a'); const signals: AbortSignal[] = []

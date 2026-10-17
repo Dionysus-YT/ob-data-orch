@@ -114,7 +114,7 @@ func validGapNotice(gap GapNotice) bool {
 		return false
 	}
 	switch gap.SourceKind {
-	case SourceStdout, SourceStderr, SourceFile:
+	case SourceStdout, SourceStderr, SourceFile, SourceLoaderStdout, SourceLoaderStderr:
 		return true
 	default:
 		return false

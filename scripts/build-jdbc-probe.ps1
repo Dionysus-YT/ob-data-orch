@@ -63,6 +63,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "JDBC 参数前置条件测试失败" }
     & $java -cp $testClasspath com.obdataorch.jdbcprobe.SelectionPreflightTest
     if ($LASTEXITCODE -ne 0) { throw "JDBC 列与分区选择测试失败" }
+    & $java -cp $testClasspath com.obdataorch.jdbcprobe.NormalImportProbeTest
+    if ($LASTEXITCODE -ne 0) { throw "JDBC 普通导入只读检查测试失败" }
 } finally {
     # 清理仅限本次在系统临时目录创建的两个精确路径。
     $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar

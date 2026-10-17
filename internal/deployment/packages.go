@@ -35,7 +35,7 @@ func (b *Browser) agentPackage(w http.ResponseWriter, r *http.Request, packages,
 		http.Error(w, "服务信任配置不可用", 503)
 		return
 	}
-	config, _ := json.Marshal(map[string]any{"formatVersion": "agent-bundle-config-v1", "controlPlaneUrl": b.settings.PublicURL, "controlPlaneCaFile": "control-plane-ca.pem", "stateDirectory": "data/agent-security", "realExecutionEnabled": b.settings.RealExecutionEnabled && target == "windows-x86_64"})
+	config, _ := json.Marshal(map[string]any{"formatVersion": "agent-bundle-config-v1", "controlPlaneUrl": b.settings.PublicURL, "controlPlaneCaFile": "control-plane-ca.pem", "stateDirectory": "data/agent-security", "realExecutionEnabled": b.settings.RealExecutionEnabled && target == "windows-x86_64", "normalImportExecutionEnabled": b.settings.RealExecutionEnabled && b.settings.NormalImportExecutionEnabled && target == "windows-x86_64"})
 	launcher := "启动.cmd"
 	if target != "windows-x86_64" {
 		launcher = "start.sh"

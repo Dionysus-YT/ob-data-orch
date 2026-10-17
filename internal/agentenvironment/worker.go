@@ -50,7 +50,7 @@ func (w *Worker) Run(ctx context.Context, checkID string, factsRevision int64) (
 	return w.RunWithInspection(ctx, checkID, factsRevision, false)
 }
 
-// RunWithInspection 将版本查询范围绑定当前检查授权，自动检查不能继承旧的用户许可。
+// RunWithInspection 仅消费控制面对本次检查确认的固定版本许可；持续授权的自动复验也必须取得该许可。
 func (w *Worker) RunWithInspection(ctx context.Context, checkID string, factsRevision int64, probeAllowed bool) (bool, error) {
 	if strings.TrimSpace(checkID) == "" {
 		return false, nil

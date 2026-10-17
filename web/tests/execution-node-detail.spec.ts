@@ -47,6 +47,117 @@ async function navigate(page: Page, path: string) {
   }, path)
 }
 
+test('打开重启后的自动检查页面会承接结果，已启用节点恢复资格且不发送写请求', async ({ page }, info) => {
+  await mockFacts(page)
+  await page.clock.install()
+  let current = detail('synthetic-detail', { environmentStatus: 'UNCONFIRMED', acceptsNewTasks: false, unavailableReasons: ['ENVIRONMENT_CHECK_IN_PROGRESS'], environmentCheck: { checkId: 'restart-check', status: 'PENDING', factsRevision: 3, requestedAt: sampledAt } })
+  const writes: string[] = []
+  await page.route('**/api/v1/execution-nodes/**', route => {
+    if (route.request().method() !== 'GET') { writes.push(route.request().url()); return route.fulfill({ status: 500, json: {} }) }
+    return route.fulfill({ json: { item: current } })
+  })
+  await page.goto('/nodes/synthetic-detail')
+  await expect(page.locator('[data-state-category="management"]')).toContainText('已启用')
+  await expect(page.locator('[data-state-category="environment"]')).toContainText('检查中')
+  await expect(page.getByText('环境检查期间暂停接收新任务', { exact: true })).toBeVisible()
+  current = { ...current, environmentStatus: 'NORMAL', acceptsNewTasks: true, unavailableReasons: [], environmentCheck: { ...current.environmentCheck!, status: 'PASSED', code: 'TOOL_RUNTIME_READY', completedAt: sampledAt } }
+  await page.clock.runFor(2500)
+  await expect(page.getByText('当前可接收新任务', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-state-category="management"]')).toContainText('已启用')
+  await expect(page.getByRole('button', { name: '启用节点', exact: true })).toHaveCount(0)
+  await expect(page.getByText('已请求环境检查。', { exact: true })).toHaveCount(0)
+  expect(writes).toEqual([])
+  await page.setViewportSize({ width: 640, height: 900 })
+  await page.screenshot({ path: info.outputPath('automatic-inspection-restored-640.png'), fullPage: true })
+})
+
+test('存量节点明确授权后恢复自动复验，正常节点也可主动复验并保留启用', async ({ page }, info) => {
+  await mockFacts(page)
+  await page.clock.install()
+  let current = detail('synthetic-detail', { environmentStatus: 'UNCONFIRMED', acceptsNewTasks: false, unavailableReasons: ['ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED'], environmentCheck: { ...detail().environmentCheck!, status: 'FAILED', code: 'TOOL_RUNTIME_UNAVAILABLE' } })
+  await page.route('**/api/v1/execution-nodes/synthetic-detail', route => route.fulfill({ json: { item: current } }))
+  let checks = 0
+  await page.route('**/api/v1/execution-nodes/synthetic-detail:environment-check', route => {
+    checks++
+    current = { ...current, environmentStatus: 'UNCONFIRMED', acceptsNewTasks: false, unavailableReasons: ['ENVIRONMENT_CHECK_IN_PROGRESS'], environmentCheck: { checkId: `authorized-check-${checks}`, status: 'PENDING', factsRevision: 3, requestedAt: sampledAt }, revision: current.revision + 1 }
+    return route.fulfill({ json: { item: current } })
+  })
+  let enables = 0
+  await page.route('**/api/v1/execution-nodes/synthetic-detail:enable', route => { enables++; return route.fulfill({ status: 500, json: {} }) })
+  await page.goto('/nodes/synthetic-detail')
+  await expect(page.locator('[data-state-category="environment"]')).toContainText('待授权')
+  await expect(page.locator('.node-eligibility-alert')).toContainText('授权仅覆盖固定本机检查和版本查询')
+  await page.screenshot({ path: info.outputPath('inspection-authorization-required.png'), fullPage: true })
+  await page.getByRole('button', { name: '授权并检查环境', exact: true }).click()
+  await expect(page.locator('[data-state-category="environment"]')).toContainText('检查中')
+  await expect(page.locator('[data-state-category="management"]')).toContainText('已启用')
+  current = { ...current, environmentStatus: 'NORMAL', acceptsNewTasks: true, unavailableReasons: [], environmentCheck: { ...current.environmentCheck!, status: 'PASSED', code: 'TOOL_RUNTIME_READY', completedAt: sampledAt } }
+  await page.clock.runFor(2500)
+  await expect(page.getByText('当前可接收新任务', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '重新检查环境', exact: true }).click()
+  await expect(page.locator('[data-state-category="environment"]')).toContainText('检查中')
+  await expect(page.locator('[data-state-category="management"]')).toContainText('已启用')
+  expect(checks).toBe(2)
+  expect(enables).toBe(0)
+})
+
+test('混合导出与普通导入不阻断详情，异常说明区域和原因，刷新失败保留可信事实且可恢复', async ({ page }, info) => {
+  await mockFacts(page)
+  const tasks = ['OBDUMPER_EXPORT', 'OBLOADER_NORMAL_IMPORT'].map((type, index) => ({ id: `synthetic-task-${index}`, type, state: 'SUCCEEDED', reconciliationRequired: false, submittedAt: sampledAt }))
+  const current = { ...detail(), recentTasks: { scope: 'ALL', items: tasks } }
+  let payload: unknown = current
+  await page.route('**/api/v1/execution-nodes/synthetic-detail', route => route.fulfill({ json: { item: payload } }))
+  await page.setViewportSize({ width: 640, height: 900 })
+  await page.goto('/nodes/synthetic-detail')
+  await expect(page.getByRole('heading', { name: current.displayName, exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '运行概览', exact: true })).toBeVisible()
+  const refreshedAt = await page.locator('.node-detail-freshness').textContent()
+  payload = { ...current, recentTasks: { scope: 'ALL', items: [{ ...tasks[0], type: 'synthetic-private-value' }] } }
+  await page.getByRole('button', { name: '刷新节点详情' }).click()
+  const failure = page.getByRole('alert').filter({ hasText: '刷新未完成' })
+  await expect(failure).toContainText('节点近期任务无法校验：存在当前页面尚未支持的任务类型。')
+  await expect(failure).toContainText('联系管理员核对网页与控制面版本')
+  await expect(page.locator('[aria-label="CPU 25.0%"]')).toBeVisible()
+  await expect(page.locator('.node-detail-freshness')).toHaveText(refreshedAt!)
+  await expect(page.getByText('synthetic-private-value')).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: info.outputPath('node-response-error-640.png'), fullPage: true })
+  await page.reload()
+  const blocked = page.getByRole('alert').filter({ hasText: '无法打开执行节点' })
+  await expect(blocked).toContainText('节点近期任务无法校验')
+  await expect(page.getByRole('tab', { name: '运行概览', exact: true })).toHaveCount(0)
+  payload = current
+  await blocked.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '运行概览', exact: true })).toBeVisible()
+  await expect(page.getByText('无法打开执行节点', { exact: true })).toHaveCount(0)
+})
+
+test('环境检查与日志队列校验失败分别显示具体原因，不把异常数据恢复成可用事实', async ({ page }) => {
+  await mockFacts(page)
+  let payload: unknown = detail('synthetic-detail', { environmentCheck: { status: 'PENDING', factsRevision: 1, requestedAt: sampledAt, completedAt: '2026-10-11T00:00:00Z' } })
+  await page.route('**/api/v1/execution-nodes/synthetic-detail', route => route.fulfill({ json: { item: payload } }))
+  await page.goto('/nodes/synthetic-detail')
+  const failure = page.getByRole('alert').filter({ hasText: '无法打开执行节点' })
+  await expect(failure).toContainText('环境检查记录无法校验：检查完成时间早于请求时间。')
+  payload = detail('synthetic-detail', { agentDiagnostics: { ...detail().agentDiagnostics!, logQueue: { pendingBatches: 0, pendingGaps: 0, pendingBytes: 0, lastUploadResult: 'SUCCEEDED', lastUploadAt: '2026-10-11T00:00:00Z' } } })
+  await failure.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(failure).toContainText('日志上传队列无法校验：最近上传时间早于当前 Agent 的启动时间。')
+  await expect(failure).toContainText('检查控制面与 Agent 的版本及上报记录')
+  await expect(page.getByText('当前可接收新任务', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('控制面返回了无效节点采集事实。', { exact: true })).toHaveCount(0)
+})
+
+test('节点列表的预算异常具有原因和处理建议，不能显示伪造额度', async ({ page }) => {
+  await mockFacts(page)
+  await page.route('**/api/v1/execution-nodes', route => route.fulfill({ json: { items: [detail('synthetic-detail', { executionQuota: { totalGiB: 1, reservedGiB: 1, usedGiB: 1 } })] } }))
+  await page.goto('/nodes')
+  const failure = page.getByRole('alert').filter({ hasText: '暂时无法读取执行节点' })
+  await expect(failure).toContainText('执行内存额度无法校验')
+  await expect(failure).toContainText('预留与已用量之和不能超过总量')
+  await expect(failure).toContainText('请刷新页面')
+  await expect(page.locator('[aria-label="执行额度占用 200.0%"]')).toHaveCount(0)
+})
+
 for (const scope of ['MINE', 'ALL'] as const) {
   test('默认概览显示 ' + scope + ' 真实资源与任务范围，Tab 切换只消费同一份详情', async ({ page }, info) => {
     await mockFacts(page)
@@ -233,10 +344,10 @@ test('离线保留快照，管理与 Agent 状态独立，服务错误不清空�
   await page.screenshot({ path: info.outputPath('node-detail-offline.png'), fullPage: true })
 })
 
-test('环境检查覆盖旧正常状态且防重，回传通过后仍需单独启用', async ({ page }) => {
+test('禁用节点复验保留禁用且防重，回传通过后仍需单独启用', async ({ page }) => {
   await mockFacts(page)
   await page.clock.install()
-  let current = detail('synthetic-detail', { environmentStatus: 'EXPIRED', acceptsNewTasks: false, unavailableReasons: ['ENVIRONMENT_CHECK_EXPIRED'] })
+  let current = detail('synthetic-detail', { managementState: 'DISABLED', environmentStatus: 'EXPIRED', acceptsNewTasks: false, unavailableReasons: ['NODE_DISABLED', 'ENVIRONMENT_CHECK_EXPIRED'] })
   await page.route('**/api/v1/execution-nodes/synthetic-detail', route => route.fulfill({ json: { item: current } }))
   const checks: Route[] = []
   await page.route('**/api/v1/execution-nodes/synthetic-detail:environment-check', route => { checks.push(route) })
@@ -247,7 +358,7 @@ test('环境检查覆盖旧正常状态且防重，回传通过后仍需单独�
     return route.fulfill({ json: { item: current } })
   })
   await page.goto('/nodes/synthetic-detail')
-  await expect(page.getByText('环境检查期间节点保持禁用', { exact: true })).toBeVisible()
+  await expect(page.getByText('环境检查期间暂停接收新任务', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '检查节点环境', exact: true }).click()
   await expect.poll(() => checks.length).toBe(1)
   await expect(page.getByRole('button', { name: '刷新节点详情' })).toBeDisabled()
@@ -465,7 +576,7 @@ test('未执行版本查询、超时和无有效输出分别解释，旧检查�
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   const baseline = fullInspection()
   const inspection: NodeRuntimeInspection = { ...baseline, versionProbeAllowed: false, items: baseline.items.map(item => ['JAVA_RUNTIME', 'OBDUMPER_RUNTIME', 'OBLOADER_RUNTIME'].includes(item.kind) ? { ...item, status: 'UNKNOWN', code: 'VERSION_PROBE_NOT_REQUESTED', version: undefined } : item) }
-  let current = detail('synthetic-detail', { managementState: 'DISABLED', environmentStatus: 'ABNORMAL', acceptsNewTasks: false, unavailableReasons: ['NODE_DISABLED', 'TOOL_RUNTIME_UNAVAILABLE'], environmentCheck: { ...detail().environmentCheck!, status: 'FAILED', code: 'TOOL_RUNTIME_UNAVAILABLE', inspection } })
+  let current = detail('synthetic-detail', { managementState: 'DISABLED', environmentStatus: 'UNCONFIRMED', acceptsNewTasks: false, unavailableReasons: ['NODE_DISABLED', 'TOOL_RUNTIME_UNAVAILABLE'], environmentCheck: { ...detail().environmentCheck!, status: 'FAILED', code: 'TOOL_RUNTIME_UNAVAILABLE', inspection } })
   await page.route('**/api/v1/execution-nodes/synthetic-detail', route => route.fulfill({ json: { item: current } }))
   await page.goto('/nodes/synthetic-detail')
   const blocked = page.locator('.node-eligibility-alert')
@@ -476,7 +587,7 @@ test('未执行版本查询、超时和无有效输出分别解释，旧检查�
   const dumper = rows.filter({ has: page.getByText('导出工具', { exact: true }) })
   const loader = rows.filter({ hasText: '导入工具（可选）' })
   await expect(java).toContainText('本次没有执行版本检查，尚不能确认实际版本。')
-  await expect(java).toContainText('若刚检查过，请确认控制面与 Agent 已同步更新后重试')
+  await expect(java).toContainText('若节点待授权，请点击「授权并检查环境」')
   await page.setViewportSize({ width: 1440, height: 1024 })
   await page.locator('section[aria-labelledby="node-inspection-title"]').screenshot({ path: info.outputPath('environment-check-unrequested-1440.png') })
   const queried: NodeRuntimeInspection = { ...inspection, versionProbeAllowed: true, items: inspection.items.map(item => item.kind === 'JAVA_RUNTIME' ? { ...item, code: 'VERSION_UNAVAILABLE' } : item.kind === 'OBDUMPER_RUNTIME' ? { ...item, code: 'VERSION_PROBE_TIMEOUT' } : item.kind === 'OBLOADER_RUNTIME' ? { ...item, code: 'VERSION_OUTPUT_INVALID' } : item) }

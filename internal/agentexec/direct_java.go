@@ -21,6 +21,7 @@ import (
 )
 
 const obdumperMainClass = "com.oceanbase.tools.loaddump.cmd.Obdumper"
+const obloaderMainClass = "com.oceanbase.tools.loaddump.cmd.Obloader"
 
 var (
 	ErrDirectJavaLaunchInvalid = errors.New("直接 Java 启动请求无效")
@@ -38,6 +39,8 @@ var java8UpdatePattern = regexp.MustCompile(`(?m)(?:java|openjdk) version "1\.8\
 // DirectJavaLaunch 是已由 Agent 配置和不可变任务信封共同固定的直接 Java 启动输入。
 // 它不接收 Shell 文本、不继承父进程环境，也不允许密码进入业务参数或环境变量。
 type DirectJavaLaunch struct {
+	// Tool 只能选择固定 OBDUMPER 或 OBLOADER 主类；空值兼容历史导出。
+	Tool                  string
 	Intent                StartIntent
 	BootID                string
 	JavaPath              string
@@ -53,6 +56,8 @@ type DirectJavaLaunch struct {
 // DirectJavaLogStream 是一个来源固定的工具管道流标识。
 // streamId、epoch 和解析器版本必须由不可变任务信封与日志策略共同确定。
 type DirectJavaLogStream struct {
+	// SourceKind 显式区分两种官方工具的管道，不能伪造任意来源。
+	SourceKind    logstream.SourceKind
 	StreamID      string
 	SourceEpoch   int64
 	ParserVersion string
@@ -77,7 +82,7 @@ type DirectJavaProcess struct {
 }
 
 // StartDirectJava 在写入不可覆盖的启动意图后直接启动包内 Java 主类。
-// Windows 启动参数逐项复刻 OBDUMPER 4.3.5 的 obdumper.bat；官方脚本保持只读，
+// Windows 启动参数按固定工具分别复刻 4.3.5 的官方脚本；官方脚本保持只读，
 // 任务级替换包括冻结 --mem 对应的堆，以及 execution 私有安全配置、原始日志和堆转储目录。
 // 该函数仅建立本地进程边界；任务租约、秘密解析、日志脱敏和终态投影必须由上层完成。
 func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch DirectJavaLaunch) (*DirectJavaProcess, error) {
@@ -89,6 +94,9 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 		return nil, ErrDirectJavaLaunchInvalid
 	}
 	profile, err := windowsOBDumperReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
+	if launch.Tool == "OBLOADER" {
+		profile, err = windowsOBLoaderReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
+	}
 	if err != nil {
 		return nil, ErrDirectJavaLaunchInvalid
 	}
@@ -244,7 +252,7 @@ func (p *DirectJavaProcess) Identity() ProcessIdentity {
 
 // Wait 只报告进程是否退出与操作系统退出码，不将退出码解释为工具成功。
 // 它先等待两个管道排空，再回收进程，避免 Wait 过早关闭管道导致末尾日志丢失。
-// OBDUMPER 终态还必须由脱敏日志和结果文件事实共同核对。
+// 工具成功还必须由各自业务所有者核对终态与结果证据。
 func (p *DirectJavaProcess) Wait() (exited bool, exitCode int, err error) {
 	if p == nil || p.command == nil || p.outputDone == nil {
 		return false, 0, ErrDirectJavaWaitFailed
@@ -277,6 +285,24 @@ func (p *DirectJavaProcess) Cancel() error {
 }
 
 func validateDirectJavaLaunch(workspace credential.Workspace, launch DirectJavaLaunch) error {
+	if launch.Tool != "" && launch.Tool != "OBDUMPER" && launch.Tool != "OBLOADER" {
+		return ErrDirectJavaLaunchInvalid
+	}
+	if launch.Tool == "OBLOADER" && !executionargv.ValidNormalImport(launch.BusinessArguments) {
+		return ErrDirectJavaLaunchInvalid
+	}
+	if launch.Tool == "OBLOADER" && (launch.Output.Stdout.SourceKind != logstream.SourceLoaderStdout || launch.Output.Stderr.SourceKind != logstream.SourceLoaderStderr) {
+		return ErrDirectJavaLaunchInvalid
+	}
+	for _, stream := range []DirectJavaLogStream{launch.Output.Stdout, launch.Output.Stderr} {
+		if launch.Tool == "OBLOADER" {
+			if stream.SourceKind != logstream.SourceLoaderStdout && stream.SourceKind != logstream.SourceLoaderStderr {
+				return ErrDirectJavaLaunchInvalid
+			}
+		} else if stream.SourceKind != "" {
+			return ErrDirectJavaLaunchInvalid
+		}
+	}
 	if !opaqueIDPattern.MatchString(launch.BootID) || !workspace.OwnsSecurityConfiguration(launch.SecurityConfiguration) || !isAbsoluteExistingFile(launch.JavaPath) || !isAbsoluteDirectory(launch.ToolHome) || !isDigestOfFile(launch.JavaPath, launch.JavaSHA256) {
 		return ErrDirectJavaLaunchInvalid
 	}
@@ -343,6 +369,9 @@ func collectDirectJavaOutput(stdout, stderr io.ReadCloser, output DirectJavaOutp
 }
 
 func collectDirectJavaStream(reader io.ReadCloser, sourceKind logstream.SourceKind, stream DirectJavaLogStream, policy logstream.Policy, sink func(logstream.Record) error) error {
+	if stream.SourceKind != "" {
+		sourceKind = stream.SourceKind
+	}
 	defer reader.Close()
 	var reassembler logstream.Reassembler
 	sequence := int64(0)

@@ -1,5 +1,9 @@
 # OBDUMPER 跨平台隔离启动入口契约
 
+> 2026-10-16 普通导入执行补充（替代下方 G2 状态）：独立开关和显式类型领取后只启动固定 `com.oceanbase.tools.loaddump.cmd.Obloader`。Windows 单独复刻 obloader.bat 的 fs.page/file.split/dry.run/rebalance.import 属性，不混入导出属性或旁路参数；共享的仅 JVM、安全材料与平台进程隔离。启动前复核冻结配置和文件，拒绝 sys/存储槽位；结果不采用输入计数，固定工具完成证据、受控退出及完整日志共同核对。`NormalImportProbe` v10 保持只读，`load.ckpt` 继续未接入。实际安装与验证见[执行证据](evidence/normal-import-execution-2026-10-16.md)。
+
+> 2026-10-16 普通导入 G2 边界：本契约现有执行入口仍只领取 `OBDUMPER_EXPORT`，普通导入不得复用它启动 OBDUMPER。普通导入工具项只检查固定安装布局；数据库、授权和映射由另一固定 Java 8 主类 `com.obdataorch.jdbcprobe.NormalImportProbe`（现行 v10）只读检查，仍仅加载已核验的 `oceanbase-client-2.4.14.jar`。v10 增加逐表基本权限、定义/数据用途及固定原因，拒绝旧帧、越界权限与额外内容，Go 与内嵌 JAR 配套更新；导出探针协议不变。运行须同时有显式本机开关、固定运行时及完整导入租约；使用一次业务槽位、私有工作区、有界 stdin/stdout、超时和清零，禁止传入文件 SQL、路径、自由 URL/主类/驱动。独立 OBLOADER Worker、成功证据、日志/结果与 `load.ckpt` 恢复尚未实现，当前不可据只读探针或冻结快照宣称可执行。见[普通导入技术契约](normal-import-contract.md)。
+
 2026-10-13 sys 参数增量：附加表定义信息任务复用唯一冻结 argv 和直接 Java 启动。普通 sys 账号由安全事实派生到官方 --sys-user，显示形态遮蔽；sys 密码与业务密码写入同一 execution 私有 RSA 加密配置，各用官方属性 oceanbase.jdbc.sys.password / oceanbase.jdbc.password，两个密码均不进入 argv/环境。Agent 在写入安全材料前复核参数与 sys 槽位对应关系，失败不上进程；进程收尾沿用既有清零与工作区清理。JDBC v6 探针使用重建的固定内嵌 JAR，只进行受限只读参数检查。仅 Java 8 合成验证，不表示官方工具或目标系统实测通过。
 
 > 文档状态：首条纵向切片启动基线，TL-R01～TL-R18 已确认
@@ -9,7 +13,7 @@
 
 > 2026-10-12 平台布局修正：工具目录仍为包含 bin/lib/conf 的安装根，固定 `agentlocalpreflight.ToolLauncherPath` 同时供环境检查和 OBDUMPER 预检查使用。Windows 启动文件为 `<安装根>/bin/windows/obdumper.bat`、`obloader.bat`，Linux 为 `<安装根>/bin/obdumper`、`obloader`；只接受两个固定工具和三个已支持平台，不接受脚本目录作为安装根，也不启动脚本。已以合成夹具覆盖三平台/两工具、非法平台/工具/相对根和错误层级负例；本机官方包目录仅只读核对，没有运行真实工具、安装或重启服务。
 
-> 2026-10-12 节点固定版本检查：`agentexec.FixedVersionProber` 是与数据任务分开的固定检查端口，仅接受 JAVA_RUNTIME、OBDUMPER_RUNTIME、OBLOADER_RUNTIME。当前用户检查的服务端审计许可是启动前提；自动心跳/自动布局检查不启动工具。只运行固化 Java `-version` 或包内固定主类 `--version`，不经过 Shell、不接收业务参数/任意 JVM 配置，不解析凭据或执行数据库操作。
+> 2026-10-16 节点固定版本检查授权修订：`agentexec.FixedVersionProber` 仅接受 JAVA_RUNTIME、OBDUMPER_RUNTIME、OBLOADER_RUNTIME。启动前提为当前 ACTIVE Agent 的持续固定复验授权与本次检查审计快照；新关联材料或存量节点明确授权检查授予，旧身份/材料不追认。已授权重启/配置复验可运行固定版本进程，普通心跳与未授权采集不启动。只运行固化 Java `-version` 或包内固定主类 `--version`，不经过 Shell、不接收业务参数/任意 JVM 配置，不解析凭据或执行数据库操作；身份撤销或替换后不再领取或确认旧许可结果。
 > 版本查询使用最小固定环境、工作根下私有临时目录、16/64 MiB 固定堆、每进程 8 秒与总检查 20 秒预算、16 KiB 合并输出上限及既有平台进程树监管。取消/超限回收进程树，查询后删除临时目录；原始输出只用于唯一纯版本解析并清零，不进入任务日志、响应或审计。启动失败、超时、输出冲突与无法回收明确保持失败/未知，不能推导数据执行可行。
 > 已通过编译 Go 测试程序充当假 Java/工具的隔离检查，包括三种固定查询、超时、超限、非法选择器、冲突输出和临时目录清理；未运行真实 Java/OB 工具或替换本机服务。真实包与 Linux 原生结果仍需受控验证，不能由交叉构建外推。
 

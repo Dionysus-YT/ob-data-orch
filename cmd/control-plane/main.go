@@ -134,6 +134,7 @@ func serveWithDevelopment(ctx context.Context, base, data, devWeb string) (resul
 		return err
 	}
 	dependencies, err := localmvp.DependenciesWithLogs(database, keyring, settings.RealExecutionEnabled, settings.RealExecutionEnabled, filepath.Join(data, "local-mvp-logs"))
+	dependencies.NormalImportExecutionEnabled = settings.RealExecutionEnabled && settings.NormalImportExecutionEnabled
 	if err != nil {
 		return err
 	}

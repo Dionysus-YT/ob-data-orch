@@ -5,7 +5,7 @@ import type { ExportObjectsStepModel } from '../exportStepModels'
 import { Form as AForm, FormItem as AFormItem, RadioGroup as ARadioGroup, RadioButton as ARadioButton, Skeleton as ASkeleton, Select as ASelect, SelectOption as ASelectOption, SelectOptGroup as ASelectOptGroup, Button as AButton, Alert as AAlert, Radio as ARadio, Input as AInput, Modal as AModal, Checkbox as ACheckbox, Empty as AEmpty, List as AList, ListItem as AListItem } from 'ant-design-vue'
 import { CaretDownOutlined, CaretRightOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import SqlQueryEditor from '@/workbench/export/components/SqlQueryEditor.vue'
-import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvancedSettings.vue'
+import ExportAdvancedSettings from '@/components/WizardAdvancedSettings.vue'
 import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue'
 import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 

@@ -5,7 +5,7 @@ import type { ExportFormatStepModel } from '../exportStepModels'
 import { Alert as AAlert, Form as AForm, FormItem as AFormItem, Select as ASelect, SelectOption as ASelectOption, Input as AInput, Checkbox as ACheckbox, RadioGroup as ARadioGroup, Radio as ARadio } from 'ant-design-vue'
 import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue'
 import ExportFormatChoice from '@/workbench/export/components/ExportFormatChoice.vue'
-import ExportAdvancedSettings from '@/workbench/export/components/ExportAdvancedSettings.vue'
+import ExportAdvancedSettings from '@/components/WizardAdvancedSettings.vue'
 import { fileEncodingChoices, fieldSeparatorChoices, cutSeparatorChoices, quoteChoices, lineSeparatorChoices, datetimeFormatChoices, dateFormatChoices } from '../exportPresentation'
 
 const props = defineProps<{ model: ExportFormatStepModel }>()

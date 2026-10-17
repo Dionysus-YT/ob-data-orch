@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { executionNodeErrorMessage, type ApiError, type ExecutionNodeDetail } from '@/api/browser'
-import { nodePrimaryAction } from './executionNodePresentation'
+import { nodeCanRequestEnvironmentCheck, nodePrimaryAction } from './executionNodePresentation'
 import { useNodeSession, type NodeApiFactory } from './nodeSession'
 
 // 详情是节点事实的唯一所有者；读取与版本写入共同管理事实失效及有界的检查复读。
@@ -19,6 +19,7 @@ export function useNodeDetail(nodeID: Readonly<Ref<string>>, createApi?: NodeApi
   let readVersion = 0
   let refreshTimer: ReturnType<typeof setTimeout> | undefined
   let inspectionReadDeadline = 0
+  let inspectionReadCheckID = ''
 
   function scheduleInspectionRead(active: () => boolean, firstRead = false) {
     clearTimeout(refreshTimer)
@@ -33,6 +34,7 @@ export function useNodeDetail(nodeID: Readonly<Ref<string>>, createApi?: NodeApi
     loading.value = refreshing.value = refreshCompleted.value = false
     clearTimeout(refreshTimer)
     inspectionReadDeadline = 0
+    inspectionReadCheckID = ''
   }
   session.onReset(() => {
     invalidateRead()
@@ -59,6 +61,11 @@ export function useNodeDetail(nodeID: Readonly<Ref<string>>, createApi?: NodeApi
       const result = await session.api.getExecutionNode(id)
       if (!current()) return
       node.value = result
+      // 页面首次打开时也承接重启后的自动检查；同一标识最多复读两分钟，不因刷新无限延长。
+      if (result.environmentCheck?.status === 'PENDING' && result.environmentCheck.checkId && result.environmentCheck.checkId !== inspectionReadCheckID && !result.unavailableReasons.includes('ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED')) {
+        inspectionReadCheckID = result.environmentCheck.checkId
+        inspectionReadDeadline = Date.now() + 120000
+      }
       lastLoadedAt.value = new Date().toLocaleString('zh-CN')
       refreshCompleted.value = preserve && !automatic
       scheduleInspectionRead(active)
@@ -72,10 +79,10 @@ export function useNodeDetail(nodeID: Readonly<Ref<string>>, createApi?: NodeApi
     }
   }
 
-  async function performPrimaryAction() {
+  async function performAction(action: 'enable' | 'environment-check' | undefined) {
     const current = node.value
-    const action = primaryAction.value
     if (!session.active() || !current || !action || actionBusy.value) return
+    if (action === 'enable' ? primaryAction.value !== 'enable' : !nodeCanRequestEnvironmentCheck(current)) return
     const active = session.capture()
     invalidateRead()
     actionBusy.value = true
@@ -90,7 +97,7 @@ export function useNodeDetail(nodeID: Readonly<Ref<string>>, createApi?: NodeApi
       actionNotice.value = action === 'enable'
         ? '节点已启用。'
         : '已请求环境检查。'
-      if (action === 'environment-check') { inspectionReadDeadline = Date.now() + 120000; scheduleInspectionRead(active, true) }
+      if (action === 'environment-check') { inspectionReadCheckID = result.environmentCheck?.checkId ?? ''; inspectionReadDeadline = Date.now() + 120000; scheduleInspectionRead(active, true) }
     } catch (error) {
       if (!active()) return
       actionFailure.value = executionNodeErrorMessage(error, action === 'enable' ? '执行节点启用失败。' : '环境检查请求失败。')
@@ -100,5 +107,7 @@ export function useNodeDetail(nodeID: Readonly<Ref<string>>, createApi?: NodeApi
     }
     if (active() && refreshAfterFailure) await loadNode(true)
   }
-  return { session, node, loading, refreshing, refreshCompleted, lastLoadedAt, failure, actionFailure, actionNotice, actionBusy, primaryAction, loadNode, performPrimaryAction }
+  function performPrimaryAction() { return performAction(primaryAction.value) }
+  function requestEnvironmentCheck() { return performAction('environment-check') }
+  return { session, node, loading, refreshing, refreshCompleted, lastLoadedAt, failure, actionFailure, actionNotice, actionBusy, primaryAction, loadNode, performPrimaryAction, requestEnvironmentCheck }
 }

@@ -1,6 +1,10 @@
 # API 契约
 
+2026-10-16 节点自动复验：固定检查授权持续绑定当前 ACTIVE Agent，并逐检查保存许可快照。新关联及存量节点授权检查明确授予；旧材料不追认。手动检查保留管理状态，浏览器新增 UNCONFIRMED 和待授权原因，未知证据与真实异常分别解释；机器回执枚举不变，完整清单和当前事实绑定仍必须通过。见[复验证据](../docs/03-technical/evidence/execution-node-auto-inspection-2026-10-16.md)。
+
 `openapi.json` 是 Export v1 当前 OpenAPI 3.1 契约与安全边界基线，覆盖已实现的浏览器/Agent 操作、结果证据投影和受控取消轮询。
+
+2026-10-15 普通导入 G2 增量使用独立 `/normal-import-drafts`、`/normal-import-prechecks` 与 `normal-import.json` DTO。2026-10-16 补齐受本机开关与完整租约约束的固定只读连接/写权限/映射探针，以及第五步自动准备、提交可选 `taskName` 与服务端自动命名。名称独立冻结，不改变预检查配置；输入文件事实不作为结果，未知证据和独立执行门禁阻断提交。真实 OBLOADER 执行与 load.ckpt 未接入，不能把只读检查或冻结提交结构视为实际可执行能力。具体实现状态见[普通导入技术契约](../docs/03-technical/normal-import-contract.md)。
 
 当前状态为 `G2_CONTRACT_ONLY`：
 

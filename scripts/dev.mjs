@@ -13,8 +13,9 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const mode = process.argv[2] ?? 'control-plane'
-if (!['control-plane', 'agent'].includes(mode) || process.argv.slice(3).some(value => value !== '--real-execution')) throw new Error('用法：dev.ps1 [-Agent] [-RealExecution]')
+if (!['control-plane', 'agent'].includes(mode) || process.argv.slice(3).some(value => !['--real-execution', '--normal-import'].includes(value))) throw new Error('用法：dev.ps1 [-Agent] [-RealExecution] [-NormalImport]')
 const enableRealExecution = process.argv.includes('--real-execution')
+const enableNormalImport = process.argv.includes('--normal-import')
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('当前开发入口仅验证 Windows AMD64')
 const base = path.join(repository, 'var', 'dev', mode)
 const executable = path.join(base, `${mode}.exe`)
@@ -26,8 +27,8 @@ let child, vite, closing = false, lock, input, realExecutionEnabled = false, rel
 
 async function configure(file) {
   const original = JSON.parse(await readFile(file))
-  const settings = developmentSettings(original, mode, enableRealExecution)
-  if (settings.realExecutionEnabled !== original.realExecutionEnabled) {
+  const settings = developmentSettings(original, mode, enableRealExecution, enableNormalImport)
+  if (settings.realExecutionEnabled !== original.realExecutionEnabled || settings.normalImportExecutionEnabled !== original.normalImportExecutionEnabled) {
     const temporary = `${file}.${process.pid}.tmp`
     try {
       await writeFile(temporary, JSON.stringify(settings, null, 2), { flag: 'wx', mode: 0o600 })

@@ -1,0 +1,1966 @@
+{
+  "metadataVersion": "obloader-4.3.5-normal-v1",
+  "tool": "OBLOADER",
+  "toolVersion": "4.3.5-RELEASE",
+  "capabilityVersion": "import-odp-local-v1",
+  "sourceDocuments": [
+    "https://www.oceanbase.com/docs/common-oceanbase-dumper-loader-1000000004997308"
+  ],
+  "categoryOrder": [
+    "CONNECTION",
+    "INPUT",
+    "OBJECTS",
+    "FORMAT",
+    "PARSER",
+    "EXECUTION",
+    "BEHAVIOR"
+  ],
+  "definitions": [
+    {
+      "definitionId": "obloader.normal.host",
+      "productFieldId": "NI-host",
+      "longName": "--host",
+      "category": "CONNECTION",
+      "order": 1,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "DATA_SOURCE",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.user",
+      "productFieldId": "NI-user",
+      "longName": "--user",
+      "category": "CONNECTION",
+      "order": 2,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "DATA_SOURCE",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.database",
+      "productFieldId": "NI-database",
+      "longName": "--database",
+      "category": "CONNECTION",
+      "order": 3,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.port",
+      "productFieldId": "NI-port",
+      "longName": "--port",
+      "category": "CONNECTION",
+      "order": 4,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "DATA_SOURCE",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.password",
+      "productFieldId": "NI-password",
+      "longName": "--password",
+      "shortName": "-p",
+      "category": "CONNECTION",
+      "order": 5,
+      "valueType": "secret-slot",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "SECURITY",
+      "supportState": "ENABLED",
+      "sensitivity": "SECRET",
+      "riskLevel": "HIGH",
+      "confirmationRule": "SECRET_REFERENCE_ONLY",
+      "emissionTarget": "SECURITY_FILE",
+      "securityProperty": "oceanbase.jdbc.password",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.no-sys",
+      "productFieldId": "NI-no-sys",
+      "longName": "--no-sys",
+      "category": "CONNECTION",
+      "order": 6,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "SECURITY",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.yes",
+      "productFieldId": "NI-yes",
+      "longName": "--yes",
+      "category": "CONNECTION",
+      "order": 7,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "SECURITY",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.file-path",
+      "productFieldId": "NI-file-path",
+      "longName": "--file-path",
+      "category": "INPUT",
+      "order": 9,
+      "valueType": "path",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "SLICE_SUBMISSION"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.log-path",
+      "productFieldId": "NI-log-path",
+      "longName": "--log-path",
+      "category": "INPUT",
+      "order": 10,
+      "valueType": "path",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.ctl-path",
+      "productFieldId": "NI-ctl-path",
+      "longName": "--ctl-path",
+      "category": "INPUT",
+      "order": 11,
+      "valueType": "path",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.file-suffix",
+      "productFieldId": "NI-file-suffix",
+      "longName": "--file-suffix",
+      "category": "INPUT",
+      "order": 12,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.file-encoding",
+      "productFieldId": "NI-file-encoding",
+      "longName": "--file-encoding",
+      "category": "INPUT",
+      "order": 13,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.file-regular-expression",
+      "productFieldId": "NI-file-regular-expression",
+      "longName": "--file-regular-expression",
+      "category": "INPUT",
+      "order": 14,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.all",
+      "productFieldId": "NI-all",
+      "longName": "--all",
+      "category": "OBJECTS",
+      "order": 15,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.table",
+      "productFieldId": "NI-table",
+      "longName": "--table",
+      "category": "OBJECTS",
+      "order": 16,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.table-group",
+      "productFieldId": "NI-table-group",
+      "longName": "--table-group",
+      "category": "OBJECTS",
+      "order": 17,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.view",
+      "productFieldId": "NI-view",
+      "longName": "--view",
+      "category": "OBJECTS",
+      "order": 18,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.trigger",
+      "productFieldId": "NI-trigger",
+      "longName": "--trigger",
+      "category": "OBJECTS",
+      "order": 19,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.obj-user",
+      "productFieldId": "NI-obj-user",
+      "longName": "--obj-user",
+      "category": "OBJECTS",
+      "order": 20,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.role",
+      "productFieldId": "NI-role",
+      "longName": "--role",
+      "category": "OBJECTS",
+      "order": 21,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.sequence",
+      "productFieldId": "NI-sequence",
+      "longName": "--sequence",
+      "category": "OBJECTS",
+      "order": 22,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.synonym",
+      "productFieldId": "NI-synonym",
+      "longName": "--synonym",
+      "category": "OBJECTS",
+      "order": 23,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.type",
+      "productFieldId": "NI-type",
+      "longName": "--type",
+      "category": "OBJECTS",
+      "order": 24,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.type-body",
+      "productFieldId": "NI-type-body",
+      "longName": "--type-body",
+      "category": "OBJECTS",
+      "order": 25,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.package",
+      "productFieldId": "NI-package",
+      "longName": "--package",
+      "category": "OBJECTS",
+      "order": 26,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.package-body",
+      "productFieldId": "NI-package-body",
+      "longName": "--package-body",
+      "category": "OBJECTS",
+      "order": 27,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.function",
+      "productFieldId": "NI-function",
+      "longName": "--function",
+      "category": "OBJECTS",
+      "order": 28,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.procedure",
+      "productFieldId": "NI-procedure",
+      "longName": "--procedure",
+      "category": "OBJECTS",
+      "order": 29,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.exclude-table",
+      "productFieldId": "NI-exclude-table",
+      "longName": "--exclude-table",
+      "category": "OBJECTS",
+      "order": 30,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.include-column-names",
+      "productFieldId": "NI-include-column-names",
+      "longName": "--include-column-names",
+      "category": "OBJECTS",
+      "order": 31,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.exclude-column-names",
+      "productFieldId": "NI-exclude-column-names",
+      "longName": "--exclude-column-names",
+      "category": "OBJECTS",
+      "order": 32,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.exclude-data-types",
+      "productFieldId": "NI-exclude-data-types",
+      "longName": "--exclude-data-types",
+      "category": "OBJECTS",
+      "order": 33,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.ddl",
+      "productFieldId": "NI-ddl",
+      "longName": "--ddl",
+      "category": "FORMAT",
+      "order": 34,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "FORMAT",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.csv",
+      "productFieldId": "NI-csv",
+      "longName": "--csv",
+      "category": "FORMAT",
+      "order": 35,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "FORMAT",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.cut",
+      "productFieldId": "NI-cut",
+      "longName": "--cut",
+      "category": "FORMAT",
+      "order": 36,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "FORMAT",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.sql",
+      "productFieldId": "NI-sql",
+      "longName": "--sql",
+      "category": "FORMAT",
+      "order": 37,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "FORMAT",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.column-quote",
+      "productFieldId": "NI-column-quote",
+      "longName": "--column-quote",
+      "category": "PARSER",
+      "order": 38,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.column-separator",
+      "productFieldId": "NI-column-separator",
+      "longName": "--column-separator",
+      "category": "PARSER",
+      "order": 39,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.column-splitter",
+      "productFieldId": "NI-column-splitter",
+      "longName": "--column-splitter",
+      "category": "PARSER",
+      "order": 40,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.line-separator",
+      "productFieldId": "NI-line-separator",
+      "longName": "--line-separator",
+      "category": "PARSER",
+      "order": 41,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.escape-character",
+      "productFieldId": "NI-escape-character",
+      "longName": "--escape-character",
+      "category": "PARSER",
+      "order": 42,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.null-string",
+      "productFieldId": "NI-null-string",
+      "longName": "--null-string",
+      "category": "PARSER",
+      "order": 43,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.empty-string",
+      "productFieldId": "NI-empty-string",
+      "longName": "--empty-string",
+      "category": "PARSER",
+      "order": 44,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.compression-algo",
+      "productFieldId": "NI-compression-algo",
+      "longName": "--compression-algo",
+      "category": "PARSER",
+      "order": 45,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.compression-level",
+      "productFieldId": "NI-compression-level",
+      "longName": "--compression-level",
+      "category": "PARSER",
+      "order": 46,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.date-format",
+      "productFieldId": "NI-date-format",
+      "longName": "--date-format",
+      "category": "PARSER",
+      "order": 47,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.default-date",
+      "productFieldId": "NI-default-date",
+      "longName": "--default-date",
+      "category": "PARSER",
+      "order": 48,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.skip-header",
+      "productFieldId": "NI-skip-header",
+      "longName": "--skip-header",
+      "category": "PARSER",
+      "order": 49,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.skip-footer",
+      "productFieldId": "NI-skip-footer",
+      "longName": "--skip-footer",
+      "category": "PARSER",
+      "order": 50,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.ignore-escape",
+      "productFieldId": "NI-ignore-escape",
+      "longName": "--ignore-escape",
+      "category": "PARSER",
+      "order": 51,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.trail-delimiter",
+      "productFieldId": "NI-trail-delimiter",
+      "longName": "--trail-delimiter",
+      "category": "PARSER",
+      "order": 52,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.with-trim",
+      "productFieldId": "NI-with-trim",
+      "longName": "--with-trim",
+      "category": "PARSER",
+      "order": 53,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.compress",
+      "productFieldId": "NI-compress",
+      "longName": "--compress",
+      "category": "PARSER",
+      "order": 54,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.auto-column-mapping",
+      "productFieldId": "NI-auto-column-mapping",
+      "longName": "--auto-column-mapping",
+      "category": "PARSER",
+      "order": 55,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.max-discards",
+      "productFieldId": "NI-max-discards",
+      "longName": "--max-discards",
+      "category": "EXECUTION",
+      "order": 56,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.max-errors",
+      "productFieldId": "NI-max-errors",
+      "longName": "--max-errors",
+      "category": "EXECUTION",
+      "order": 57,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.thread",
+      "productFieldId": "NI-thread",
+      "longName": "--thread",
+      "category": "EXECUTION",
+      "order": 58,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.batch",
+      "productFieldId": "NI-batch",
+      "longName": "--batch",
+      "category": "EXECUTION",
+      "order": 59,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.block-size",
+      "productFieldId": "NI-block-size",
+      "longName": "--block-size",
+      "category": "EXECUTION",
+      "order": 60,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.max-tps",
+      "productFieldId": "NI-max-tps",
+      "longName": "--max-tps",
+      "category": "EXECUTION",
+      "order": 61,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.max-wait-timeout",
+      "productFieldId": "NI-max-wait-timeout",
+      "longName": "--max-wait-timeout",
+      "category": "EXECUTION",
+      "order": 62,
+      "valueType": "integer",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.strict",
+      "productFieldId": "NI-strict",
+      "longName": "--strict",
+      "category": "EXECUTION",
+      "order": 63,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.rw",
+      "productFieldId": "NI-rw",
+      "longName": "--rw",
+      "category": "EXECUTION",
+      "order": 64,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.mem",
+      "productFieldId": "NI-mem",
+      "longName": "--mem",
+      "category": "EXECUTION",
+      "order": 65,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.nls-date-format",
+      "productFieldId": "NI-nls-date-format",
+      "longName": "--nls-date-format",
+      "category": "EXECUTION",
+      "order": 66,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.nls-timestamp-format",
+      "productFieldId": "NI-nls-timestamp-format",
+      "longName": "--nls-timestamp-format",
+      "category": "EXECUTION",
+      "order": 67,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.nls-timestamp-tz-format",
+      "productFieldId": "NI-nls-timestamp-tz-format",
+      "longName": "--nls-timestamp-tz-format",
+      "category": "EXECUTION",
+      "order": 68,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.compat-mode",
+      "productFieldId": "NI-compat-mode",
+      "longName": "--compat-mode",
+      "category": "EXECUTION",
+      "order": 69,
+      "valueType": "string",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.replace-data",
+      "productFieldId": "NI-replace-data",
+      "longName": "--replace-data",
+      "category": "BEHAVIOR",
+      "order": 70,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.replace-object",
+      "productFieldId": "NI-replace-object",
+      "longName": "--replace-object",
+      "category": "BEHAVIOR",
+      "order": 71,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.truncate-table",
+      "productFieldId": "NI-truncate-table",
+      "longName": "--truncate-table",
+      "category": "BEHAVIOR",
+      "order": 72,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    },
+    {
+      "definitionId": "obloader.normal.delete-from-table",
+      "productFieldId": "NI-delete-from-table",
+      "longName": "--delete-from-table",
+      "category": "BEHAVIOR",
+      "order": 73,
+      "valueType": "flag",
+      "cardinality": "SINGLE",
+      "activation": {
+        "kind": "ALWAYS"
+      },
+      "requiredWhen": {
+        "kind": "NEVER"
+      },
+      "conflictsWith": [],
+      "dependsOn": [],
+      "sourcePolicy": "USER",
+      "supportState": "ENABLED",
+      "sensitivity": "NORMAL",
+      "riskLevel": "LOW",
+      "confirmationRule": "NONE",
+      "emissionTarget": "ARGV",
+      "officialEvidence": [
+        "docs/02-design/normal-import-parameter-mapping.md",
+        "normal-import-v1-G2"
+      ]
+    }
+  ]
+}

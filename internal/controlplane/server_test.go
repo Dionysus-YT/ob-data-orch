@@ -375,7 +375,8 @@ func TestExecutionNodeEnvironmentCheckFailureCarriesDiagnosableCode(t *testing.T
 	}
 	node.Agent = &store.ExecutionNodeAgent{
 		AgentID: "agent-1", ProtocolVersion: "obdo-r1", BootID: "boot-1",
-		LastHeartbeatAt: &now, FactsRevision: 3,
+		EnvironmentInspectionAuthorized: true,
+		LastHeartbeatAt:                 &now, FactsRevision: 3,
 		EnvironmentFacts: store.AgentEnvironmentFacts{
 			OperatingSystem: "WINDOWS", Architecture: "AMD64",
 			// 运行时配置摘要与登记配置一致，才能进入环境检查结果分支（而非配置漂移分支）。
@@ -2738,7 +2739,7 @@ func TestAgentEnrollmentAndHeartbeatUseStrictSecretSafeBoundaries(t *testing.T) 
 		t.Fatalf("decode enrollment issue response: %v", err)
 	}
 	issuedDigest := sha256.Sum256([]byte(issued.EnrollmentMaterial))
-	if issued.EnrollmentID == "" || issued.NodeID != "node-1" || !issued.DisplayedOnce || len(issued.EnrollmentMaterial) < 32 || !bytes.Equal(protocol.issued.TokenDigest, issuedDigest[:]) {
+	if issued.EnrollmentID == "" || issued.NodeID != "node-1" || !issued.DisplayedOnce || len(issued.EnrollmentMaterial) < 32 || !bytes.Equal(protocol.issued.TokenDigest, issuedDigest[:]) || !protocol.issued.EnvironmentInspectionAuthorized {
 		t.Fatalf("unsafe enrollment issue response=%#v persisted=%#v", issued, protocol.issued)
 	}
 

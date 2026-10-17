@@ -104,8 +104,13 @@ func windowsHadoopRuntimeReady(environment []string) bool {
 // EX-I6：StorageConnectivity/StorageAuth 只在对象存储输出任务上被编排器调用；
 // 未装配或未授权时分别投影为受控 UNKNOWN，不把网络错误原文传给预检查结果。
 type Probe struct {
-	JDBC                  agentpreflight.Probe
-	Runtime               RuntimeValidator
+	JDBC    agentpreflight.Probe
+	Runtime RuntimeValidator
+	// ImportRuntime 与 ImportChecks 只服务普通导入，不能复用导出的读权限结论。
+	ImportRuntime RuntimeValidator
+	ImportChecks  agentpreflight.Probe
+	// ImportDatabase 需要普通导入自己的真实探测准入，不能继承导出的凭据解析授权。
+	ImportDatabase        agentpreflight.Probe
 	MinimumAvailableBytes uint64
 	AvailableBytes        func(string) (uint64, error)
 	StorageConnectivity   StorageConnectivityProber
@@ -119,6 +124,9 @@ type Probe struct {
 
 // Probe 只接受既定检查。任何本机事实缺失、路径漂移或依赖异常都以稳定 UNKNOWN 结果失败关闭。
 func (p Probe) Probe(ctx context.Context, check agentpreflight.CheckID, request agentpreflight.Request) (agentpreflight.Result, error) {
+	if request.NormalImport != nil {
+		return p.normalImportResult(ctx, check, request)
+	}
 	if ctx == nil || ctx.Err() != nil {
 		return unavailableResult(check), nil
 	}

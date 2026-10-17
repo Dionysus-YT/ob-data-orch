@@ -15,6 +15,11 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
+  it('普通导入冻结快照使用独立版本与分组，拒绝混入导出版本或旁路格式', async () => {
+    const item = { type: 'OBLOADER_NORMAL_IMPORT', snapshotVersion: 'normal-import-v1', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', format: 'CSV', configFingerprint: 'a'.repeat(64), toolVersion: '4.3.5-RELEASE', metadataVersion: 'obloader-4.3.5-normal-v1', capabilityVersion: 'import-odp-local-v1', groups: ['source', 'input', 'objects', 'execution', 'review'].map(key => ({ key, label: key, fields: [{ key: 'synthetic', label: '合成字段', value: '合成值', source: 'UNKNOWN' }] })) }
+    await expect(apiWith(Response.json({ item })).api.getTaskSnapshot('task-normal')).resolves.toMatchObject({ type: 'OBLOADER_NORMAL_IMPORT', snapshotVersion: 'normal-import-v1' })
+    for (const invalid of [{ ...item, snapshotVersion: 'v2' }, { ...item, format: 'POS' }, { ...item, type: 'OBLOADER_DIRECT_LOAD' }, { ...item, type: 'OBDUMPER_EXPORT', snapshotVersion: 'v2' }]) await expect(apiWith(Response.json({ item: invalid })).api.getTaskSnapshot('task-normal')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
   it('节点预算和任务统计保留真实数值，拒绝越界预算及越权范围', async () => {
     const node = { id: 'node-1', displayName: '合成节点', platform: 'WINDOWS_AMD64', managementState: 'DISABLED', agentAssociationStatus: 'PENDING', heartbeatStatus: 'NEVER_CONNECTED', environmentStatus: 'NOT_CHECKED', capacityStatus: 'UNKNOWN', acceptsNewTasks: false, unavailableReasons: ['AGENT_ASSOCIATION_REQUIRED'], revision: 1, updatedAt: '2026-01-01T00:00:00Z' }
     const valid = { ...node, executionQuota: { totalGiB: 20, usedGiB: 10, reservedGiB: 5 }, taskSummary: { scope: 'ALL', running: 3, waiting: 23, reconciling: 1 }, budgetPolicy: { systemReservedBytes: 2147483648, taskOverheadBytes: 1073741824 }, defaultJvmMemory: '4G' }

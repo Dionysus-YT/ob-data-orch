@@ -4,7 +4,7 @@ import { taskListPageSizes, taskListStates, type TaskEnvironment, type TaskListF
 // 任务中心筛选的唯一路由表示。路由 query 是筛选与条数的唯一来源，组件不持有第二份副本。
 export interface TaskListRouteState {
   readonly keyword: string
-  readonly types: readonly 'OBDUMPER_EXPORT'[]
+  readonly types: readonly ('OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT')[]
   readonly states: readonly TaskListState[]
   // 日期为浏览器本地日期 YYYY-MM-DD，提交时换算为半开区间的 RFC 3339 时刻。
   readonly createdFrom: string
@@ -40,7 +40,7 @@ function validDate(value: string): string {
 export function parseTaskListRoute(query: LocationQuery): TaskListRouteState {
   const list = (key: string) => text(query, key).split(',').map(value => value.trim()).filter(Boolean)
   const states = [...new Set(list('state'))].filter((value): value is TaskListState => (taskListStates as readonly string[]).includes(value))
-  const types = list('type').includes('OBDUMPER_EXPORT') ? ['OBDUMPER_EXPORT' as const] : []
+  const types = [...new Set(list('type'))].filter((value): value is 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT' => value === 'OBDUMPER_EXPORT' || value === 'OBLOADER_NORMAL_IMPORT')
   const environment = text(query, 'environment')
   const scope = text(query, 'scope')
   const limit = Number(text(query, 'limit'))
@@ -135,7 +135,7 @@ export function taskListConditionChips(state: TaskListRouteState, names: (kind: 
   const chips: TaskListConditionChip[] = []
   const range = (from: string, to: string) => from && to ? `${from} 至 ${to}` : from ? `${from} 起` : `至 ${to}`
   if (state.keyword) chips.push({ key: 'keyword', label: `关键字：${state.keyword}`, clear: { keyword: '' } })
-  if (state.types.length) chips.push({ key: 'type', label: '类型：导出', clear: { types: [] } })
+  if (state.types.length) chips.push({ key: 'type', label: `类型：${state.types.map(type => type === 'OBLOADER_NORMAL_IMPORT' ? '普通导入' : '导出').join('、')}`, clear: { types: [] } })
   if (state.states.length) chips.push({ key: 'state', label: `状态：${state.states.map(value => stateNames[value]).join('、')}`, clear: { states: [] } })
   if (state.createdFrom || state.createdTo) chips.push({ key: 'created', label: `创建时间：${range(state.createdFrom, state.createdTo)}`, clear: { createdFrom: '', createdTo: '' } })
   if (state.dataSourceId) chips.push({ key: 'dataSource', label: `数据源：${names('dataSource', state.dataSourceId)}`, clear: { dataSourceId: '' } })

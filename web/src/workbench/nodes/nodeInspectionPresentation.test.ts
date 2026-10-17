@@ -33,7 +33,7 @@ describe('环境检查的可行动解释', () => {
     expect(tool.reason).toContain('4.3.5')
     const unrequested = inspectionItemGuidance(item('JAVA_RUNTIME', 'UNKNOWN', 'VERSION_PROBE_NOT_REQUESTED'))!
     expect(unrequested.reason).toContain('没有执行版本检查')
-    expect(unrequested.action).toContain('若刚检查过')
+    expect(unrequested.action).toContain('授权并检查环境')
     expect(unrequested.action).toContain('同步更新')
     const timeout = inspectionItemGuidance(item('OBDUMPER_RUNTIME', 'UNKNOWN', 'VERSION_PROBE_TIMEOUT'))!
     expect(timeout.reason).toContain('超过等待时间')

@@ -41,4 +41,14 @@ describe('执行节点页面动作与阻断事实', () => {
     expect(nodeUnavailableReasonLabel('')).toBe('控制面未提供具体阻断原因')
     expect(nodeUnavailableReasonLabel('UNRECOGNIZED_REASON')).toContain('未识别')
   })
+
+  it('待授权与待核验使用警告状态，未知证据不显示环境异常', () => {
+    const pending = { ...base, environmentStatus: 'UNCONFIRMED' as const, unavailableReasons: ['TOOL_RUNTIME_UNAVAILABLE'] }
+    expect(nodeCategoryStates(pending)[2]).toMatchObject({ text: '待核验', status: 'warning' })
+    const unauthorized = { ...pending, unavailableReasons: ['ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED', 'ENVIRONMENT_CHECK_IN_PROGRESS'] }
+    expect(nodeCategoryStates(unauthorized)[2]).toMatchObject({ text: '待授权', status: 'warning' })
+    expect(nodePrimaryAction(unauthorized)).toBe('environment-check')
+    expect(nodeUnavailableReasonLabel('ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED')).toContain('授权并检查环境')
+    expect(nodeCategoryStates({ ...base, environmentStatus: 'ABNORMAL' })[2]).toMatchObject({ text: '检查异常', status: 'error' })
+  })
 })

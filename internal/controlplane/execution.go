@@ -13,6 +13,7 @@ import (
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/identity"
+	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/store"
 )
@@ -120,8 +121,17 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 	if !decodeAgentJSON(w, r, &request) {
 		return
 	}
-	if !validExecutionEnvelope(machine, request.agentExecutionEnvelope, "OBDUMPER_EXPORT_CLAIM_NEXT") || request.Payload.Capability != "OBDUMPER_EXPORT" {
+	kind := request.Payload.Capability
+	payloadType := "OBDUMPER_EXPORT_CLAIM_NEXT"
+	if kind == importdomain.TaskType {
+		payloadType = "OBLOADER_NORMAL_IMPORT_CLAIM_NEXT"
+	}
+	if (kind != "OBDUMPER_EXPORT" && kind != importdomain.TaskType) || !validExecutionEnvelope(machine, request.agentExecutionEnvelope, payloadType) {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
+		return
+	}
+	if kind == importdomain.TaskType && !s.normalImportExecutionEnabled {
+		writeError(w, http.StatusServiceUnavailable, "NORMAL_IMPORT_EXECUTION_GATED", "普通导入执行未启用", false)
 		return
 	}
 	executionID, err := identifier.NewUUIDV4()
@@ -141,7 +151,8 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 	}
 	now := time.Now().UTC()
 	grant, found, err := executions.ClaimNextExecution(r.Context(), store.ExecutionClaimNext{
-		AgentID: machine.AgentID, NodeID: machine.NodeID, ExecutionID: executionID, LeaseID: leaseID,
+		TaskType: kind,
+		AgentID:  machine.AgentID, NodeID: machine.NodeID, ExecutionID: executionID, LeaseID: leaseID,
 		ScheduledEventID: scheduledEventID, RequestID: request.RequestID, RequestDigest: executionRequestDigest("CLAIM_NEXT", request.agentExecutionEnvelope, "", request.Payload), LeaseTTL: executionLeaseTTL,
 		HeartbeatFreshAfter: now.Add(-s.heartbeatTTL), Now: now,
 	})
@@ -157,13 +168,18 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeExecutionResponse(w, "EXECUTION_CLAIMED", map[string]any{
+	payload := map[string]any{
 		"taskId": grant.TaskID, "executionId": grant.ExecutionID, "leaseId": grant.LeaseID,
 		"leaseEpoch": grant.LeaseEpoch, "expiresAt": grant.ExpiresAt.Format(time.RFC3339Nano),
 		"envelopeDigest": grant.EnvelopeDigest, "argv": grant.PlannedArgv,
 		"toolVersion": grant.ToolVersion, "metadataVersion": grant.MetadataVersion,
 		"capabilityVersion": grant.CapabilityVersion, "realExecutionEnabled": true,
-	})
+	}
+	// 导出响应保持旧字段集，旧 Agent 不会意外接受普通导入信封。
+	if kind == importdomain.TaskType {
+		payload["taskType"], payload["normalImport"] = grant.TaskType, grant.NormalImport
+	}
+	writeExecutionResponse(w, "EXECUTION_CLAIMED", payload)
 }
 
 func (s *Server) acknowledgeAuthenticatedExecution(w http.ResponseWriter, r *http.Request, executionID string) {

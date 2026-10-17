@@ -14,18 +14,20 @@ import NodeEnvironmentConfiguration from '@/workbench/nodes/NodeEnvironmentConfi
 import NodeRuntimeOverview from '@/workbench/nodes/NodeRuntimeOverview.vue'
 import { nodeAgentPackageURL, nodePlatformHelp } from '@/workbench/nodes/nodePlatformRules'
 import {
-  nodeCategoryStates, nodeCapacitySummary, nodePlatformLabel, nodeTimeLabel, nodeUnavailableReasonLabel,
+  nodeCanRequestEnvironmentCheck, nodeCategoryStates, nodeCapacitySummary, nodePlatformLabel, nodeTimeLabel, nodeUnavailableReasonLabel,
 } from '@/workbench/nodes/executionNodePresentation'
 
 const route = useRoute()
 const nodeID = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
-const { session, node, loading, refreshing, refreshCompleted, lastLoadedAt, failure, actionFailure, actionNotice, actionBusy, primaryAction, loadNode, performPrimaryAction } = useNodeDetail(nodeID)
+const { session, node, loading, refreshing, refreshCompleted, lastLoadedAt, failure, actionFailure, actionNotice, actionBusy, primaryAction, loadNode, performPrimaryAction, requestEnvironmentCheck } = useNodeDetail(nodeID)
 const { enrollmentDialogOpen, enrollment, enrollmentBusy, enrollmentFailure, copyNotice, copyFailure, registrationRequired, registrationCode, issueEnrollment: requestEnrollment, clearEnrollment, copyEnrollmentValue } = useNodeEnrollment(node, session)
 const { MessageContext } = useOperationMessage([{ content: actionNotice }, { content: copyNotice }])
 const modalCloseButton = ref<{ $el: HTMLButtonElement }>()
 const activeTab = ref('overview')
 const states = computed(() => node.value ? nodeCategoryStates(node.value) : [])
 const environmentChecking = computed(() => states.value.some(state => state.key === 'environment' && state.status === 'processing'))
+const inspectionAuthorizationRequired = computed(() => node.value?.unavailableReasons.includes('ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED') === true)
+const canRecheck = computed(() => node.value && primaryAction.value !== 'environment-check' && nodeCanRequestEnvironmentCheck(node.value))
 // Tab 只属于当前详情工作面；对象或授权失效时回到概览，不恢复旧节点的配置区。
 watch(node, value => { if (!value) activeTab.value = 'overview' }, { flush: 'sync' })
 let enrollmentInvoker: HTMLElement | null = null
@@ -82,8 +84,9 @@ watch([enrollmentDialogOpen, modalCloseButton], async ([open], _previous, cleanu
         <AButton :disabled="loading || refreshing || actionBusy" :loading="refreshing" aria-label="刷新节点详情" @click="loadNode(true)"><template #icon><CheckCircleOutlined v-if="refreshCompleted" aria-hidden="true" /><ReloadOutlined v-else aria-hidden="true" /></template><span role="status" aria-live="polite">{{ refreshing ? '刷新中' : refreshCompleted ? '已刷新' : '刷新' }}</span></AButton>
         <AButton v-if="node" :href="agentPackageUrl" download>下载 Agent 包</AButton>
         <RouterLink v-if="node" v-slot="{ href, navigate }" :to="`/nodes/${node.id}/edit`" custom><AButton :href="href" @click="navigate">编辑节点</AButton></RouterLink>
+        <AButton v-if="canRecheck" :loading="actionBusy" @click="requestEnvironmentCheck">重新检查环境</AButton>
         <AButton v-if="registrationRequired" type="primary" :loading="enrollmentBusy" @click="issueEnrollment">生成一次性注册码</AButton>
-        <AButton v-else-if="primaryAction" type="primary" :loading="actionBusy" @click="performPrimaryAction">{{ primaryAction === 'enable' ? '启用节点' : '检查节点环境' }}</AButton>
+        <AButton v-else-if="primaryAction" type="primary" :loading="actionBusy" @click="performPrimaryAction">{{ primaryAction === 'enable' ? '启用节点' : inspectionAuthorizationRequired ? '授权并检查环境' : '检查节点环境' }}</AButton>
         <AButton v-else-if="environmentChecking" disabled>环境检查中</AButton>
       </div>
     </header>
@@ -110,10 +113,11 @@ watch([enrollmentDialogOpen, modalCloseButton], async ([open], _previous, cleanu
           <ul v-if="node.unavailableReasons.length > 1" class="node-blocked-reasons"><li v-for="reason in node.unavailableReasons.slice(1)" :key="reason">{{ nodeUnavailableReasonLabel(reason, node) }}</li></ul>
         </template>
       </AAlert>
-      <AAlert v-if="primaryAction === 'environment-check' || environmentChecking" class="node-feedback" type="info" message="环境检查期间节点保持禁用" description="读取机器和目录事实，并运行固定 Java / 工具版本查询；检查通过后需单独启用节点。具体任务仍需独立预检查。" show-icon />
+      <AAlert v-if="primaryAction === 'environment-check' || environmentChecking" class="node-feedback" type="info" message="环境检查期间暂停接收新任务" description="固定本机检查包含 Java / 工具版本查询，重启后自动复验。检查保留当前启用或禁用状态；已启用节点通过后恢复接收新任务，禁用节点仍需手动启用。具体任务仍需独立预检查。" show-icon />
 
       <section v-if="registrationRequired" class="node-registration" aria-labelledby="node-registration-title">
         <div><h2 id="node-registration-title">完成 Agent 关联</h2><p>{{ platformHelp?.agentInstallHint }}按提示粘贴本页生成的一次性注册码。</p></div>
+        <p>关联即授权此 Agent 自动复验固定本机环境，包含 Java 和工具版本查询；不连接数据库或执行数据任务。删除节点或撤销机器身份后授权失效。</p>
         <span>注册码只显示一次，24 小时内有效；收到心跳并取得环境事实后才能启用。</span>
       </section>
 
@@ -137,6 +141,7 @@ watch([enrollmentDialogOpen, modalCloseButton], async ([open], _previous, cleanu
         <template v-else-if="enrollmentFailure"><AAlert type="error" message="注册码签发失败" :description="enrollmentFailure" show-icon /><AButton @click="issueEnrollment">重新生成</AButton></template>
         <template v-else-if="enrollment">
           <p>在目标机器启动对应 Agent，出现注册提示后粘贴以下注册码。注册码不进入命令行或环境变量。</p>
+          <p>完成关联后，Agent 获得固定本机环境自动复验授权，正常重启会重新检查。该授权不包含数据库访问或数据任务。</p>
           <label class="node-enrollment-material">一次性注册码<ATextarea :value="registrationCode" :rows="5" readonly spellcheck="false" aria-label="一次性 Agent 注册码" /></label>
           <div class="node-copy-actions"><AButton @click="copyEnrollmentValue('注册码', registrationCode)">复制注册码</AButton></div>
           <AAlert v-if="copyFailure" class="node-feedback" type="error" :message="copyFailure" show-icon />

@@ -24,6 +24,16 @@ test('无效开关、外部地址及其他身份目录仍拒绝', () => {
   }
 })
 
+test('普通导入必须显式开启且保留独立开关', () => {
+  const original = { publicUrl: 'https://127.0.0.1:18443', realExecutionEnabled: false }
+  assert.equal(developmentSettings(original, 'control-plane', true).normalImportExecutionEnabled, undefined)
+  assert.throws(() => developmentSettings(original, 'control-plane', false, true))
+  const enabled = developmentSettings(original, 'control-plane', true, true)
+  assert.equal(enabled.normalImportExecutionEnabled, true)
+  assert.deepEqual(developmentSettings(enabled, 'control-plane', false), enabled)
+  assert.throws(() => developmentSettings({ ...enabled, normalImportExecutionEnabled: 'true' }, 'control-plane', false))
+})
+
 test('真实模式只有手工请求才重启，合成模式保留源码自动重启', () => {
   for (const real of [false, true]) {
     for (const changed of [false, true]) {

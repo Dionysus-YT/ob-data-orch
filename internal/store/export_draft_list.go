@@ -43,7 +43,7 @@ func (s *Store) ListOwnedExportDrafts(ctx context.Context, query ExportDraftList
 	if query.SubjectID == "" || query.Limit < 1 || query.Limit > 100 || len(query.Keyword) > 128 || strings.ContainsAny(query.Keyword, "\x00\r\n") || (query.BeforeID == "") != query.BeforeUpdated.IsZero() {
 		return nil, 0, errors.New("export draft list query is invalid")
 	}
-	predicate := `d.owner_subject_id = ? AND d.deleted_at IS NULL
+	predicate := `d.owner_subject_id = ? AND d.deleted_at IS NULL AND d.draft_kind = 'OBDUMPER_EXPORT'
       AND EXISTS (SELECT 1 FROM auth_subjects a WHERE a.subject_id = d.owner_subject_id AND a.account_status = 'ACTIVE')
       AND NOT EXISTS (SELECT 1 FROM tasks t JOIN precheck_runs p ON p.precheck_id=t.precheck_id WHERE p.draft_id=d.draft_id)`
 	args := []any{query.SubjectID}
@@ -111,7 +111,7 @@ func (s *Store) DeleteOwnedExportDraft(ctx context.Context, id, subjectID string
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var actualRevision int64
 		var deleted sql.NullString
-		err := tx.QueryRowContext(ctx, `SELECT d.revision,d.deleted_at FROM export_drafts d WHERE d.draft_id=? AND d.owner_subject_id=? AND EXISTS(SELECT 1 FROM auth_subjects a WHERE a.subject_id=? AND a.account_status='ACTIVE')`, id, subjectID, subjectID).Scan(&actualRevision, &deleted)
+		err := tx.QueryRowContext(ctx, `SELECT d.revision,d.deleted_at FROM export_drafts d WHERE d.draft_id=? AND d.draft_kind='OBDUMPER_EXPORT' AND d.owner_subject_id=? AND EXISTS(SELECT 1 FROM auth_subjects a WHERE a.subject_id=? AND a.account_status='ACTIVE')`, id, subjectID, subjectID).Scan(&actualRevision, &deleted)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrDataSourceNotFound
 		}

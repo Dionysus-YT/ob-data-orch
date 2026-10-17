@@ -3232,8 +3232,8 @@ func seedBaseFixture(t *testing.T, store *Store) {
 		{`INSERT INTO agents(
             agent_id, node_id, credential_digest, credential_revision, status,
             protocol_version, boot_id, last_heartbeat_at, capacity_total, capacity_used,
-            facts_json, facts_revision, created_at, revoked_at
-        ) VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, NULL, 1, ?, NULL)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "agent-v1", "boot-1", utcText(testTime), utcText(testTime)}},
+            facts_json, facts_revision, created_at, revoked_at, environment_inspection_authorized
+        ) VALUES (?, ?, ?, 1, 'ACTIVE', ?, ?, ?, 1, 0, NULL, 1, ?, NULL, 1)`, []any{"agent-1", "node-1", []byte{7, 8, 9}, "agent-v1", "boot-1", utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO export_drafts(draft_id, owner_subject_id, data_source_id, node_id, revision, tool_version, metadata_version, capability_version, config_json, config_fingerprint, invalidation_json, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, '{"database":"synthetic_db","table":"synthetic_table","format":"CSV","filePath":"/E:/tmp/output"}', ?, '{}', ?, ?)`, []any{"draft-1", "subject-1", "source-1", "node-1", "4.3.5-RELEASE", "obdumper-4.3.5-slice-v3", "export-odp-single-table-csv-v1", testFingerprint, utcText(testTime), utcText(testTime)}},
 		{`INSERT INTO precheck_runs(
             precheck_id, draft_id, draft_revision, config_fingerprint, data_source_id,

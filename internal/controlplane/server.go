@@ -30,6 +30,7 @@ import (
 	"ob-data-orch/internal/exportdomain"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/identity"
+	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/nodefacts"
 	"ob-data-orch/internal/outputpath"
@@ -70,19 +71,23 @@ type Server struct {
 	realExecutionEnabled           bool
 	generator                      ExportCommandGenerator
 	// generalGenerator 服务泛化能力切片（full-csv/ddl/ddl-csv）；缺失时泛化请求失败关闭。
-	generalGenerator   ExportCommandGenerator
-	precheckTTL        time.Duration
-	connectionTestTTL  time.Duration
-	enrollmentTTL      time.Duration
-	heartbeatTTL       time.Duration
-	coordinator        *agentstate.Coordinator
-	encryptor          CredentialEncryptor
-	decryptor          CredentialDecryptor
-	storageCredentials StorageCredentialStore
-	templates          ExportTemplateStore
-	csrf               CSRFValidator
-	keyID              string
-	requestIDGenerator func() (string, error)
+	generalGenerator ExportCommandGenerator
+	// 普通导入只复用平台生命周期，使用独立配置存储入口、参数目录与真实能力门禁。
+	normalImports                NormalImportDraftStore
+	normalImportGenerator        NormalImportCommandGenerator
+	normalImportExecutionEnabled bool
+	precheckTTL                  time.Duration
+	connectionTestTTL            time.Duration
+	enrollmentTTL                time.Duration
+	heartbeatTTL                 time.Duration
+	coordinator                  *agentstate.Coordinator
+	encryptor                    CredentialEncryptor
+	decryptor                    CredentialDecryptor
+	storageCredentials           StorageCredentialStore
+	templates                    ExportTemplateStore
+	csrf                         CSRFValidator
+	keyID                        string
+	requestIDGenerator           func() (string, error)
 }
 
 type requestIDResponseWriter struct {
@@ -664,8 +669,13 @@ type Dependencies struct {
 	Generator ExportCommandGenerator
 	// GeneralizedGenerator 服务 EX-I2 起的泛化能力切片；缺失时泛化请求失败关闭，冻结单表 CSV 不受影响。
 	GeneralizedGenerator ExportCommandGenerator
-	PrecheckTTL          time.Duration
-	ConnectionTestTTL    time.Duration
+	// NormalImportDrafts 与 NormalImportGenerator 不从导出能力隐式推导。
+	NormalImportDrafts    NormalImportDraftStore
+	NormalImportGenerator NormalImportCommandGenerator
+	// NormalImportExecutionEnabled 默认关闭，不能继承导出的真实执行授权。
+	NormalImportExecutionEnabled bool
+	PrecheckTTL                  time.Duration
+	ConnectionTestTTL            time.Duration
 	// AgentJDBCConnectionTestEnabled 仅在已授权的本机 G3 连接测试中签发 AGENT_JDBC 租约。
 	// 默认 false 保持 G2 合成结果，且不影响真实工具执行门禁。
 	AgentJDBCConnectionTestEnabled bool
@@ -707,6 +717,9 @@ func NewHandlerWithDependencies(build buildinfo.Info, dependencies Dependencies)
 			server.cancellations = cancellationStore
 		}
 	}
+	server.normalImports = dependencies.NormalImportDrafts
+	server.normalImportGenerator = dependencies.NormalImportGenerator
+	server.normalImportExecutionEnabled = dependencies.NormalImportExecutionEnabled
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
@@ -730,6 +743,9 @@ func (s *Server) browserAuthenticated(w http.ResponseWriter, r *http.Request) {
 	principal, err := s.provider.AuthenticateBrowser(r)
 	if err != nil || identity.Validate(principal, identity.BrowserPrincipal) != nil {
 		writeError(w, http.StatusUnauthorized, "AUTHENTICATION_FAILED", "身份认证失败", false)
+		return
+	}
+	if s.normalImportEntry(w, r, principal) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/data-sources" {
@@ -3502,7 +3518,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request, principal ident
 		return
 	}
 	response := taskOverviewResponse{
-		ID: summary.TaskID, Type: "OBDUMPER_EXPORT", DataSourceID: summary.DataSourceID, NodeID: summary.NodeID,
+		ID: summary.TaskID, Type: projectedTaskType(summary), DataSourceID: summary.DataSourceID, NodeID: summary.NodeID,
 		PrecheckID: summary.PrecheckID, SubmittedAt: summary.SubmittedAt.Format(time.RFC3339Nano),
 		ParentTaskID: summary.ParentTaskID, DerivationKind: summary.DerivationKind,
 	}
@@ -3568,7 +3584,7 @@ func (s *Server) getTaskSnapshot(w http.ResponseWriter, r *http.Request, princip
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": taskSnapshotResponse{
 		Groups: groups,
-		Type:   "OBDUMPER_EXPORT", SnapshotVersion: summary.SnapshotVersion, DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
+		Type:   projectedTaskType(summary), SnapshotVersion: summary.SnapshotVersion, DataSourceID: summary.DataSourceID, NodeID: summary.NodeID, PrecheckID: summary.PrecheckID,
 		ObjectSummary: taskObjectSummary(summary.Database, summary.Table), Format: summary.Format,
 		ConfigFingerprint: summary.ConfigFingerprint, ToolVersion: summary.ToolVersion, MetadataVersion: summary.MetadataVersion,
 		CapabilityVersion: summary.CapabilityVersion,
@@ -4432,6 +4448,7 @@ type agentPrecheckCompletionRequest struct {
 }
 
 type agentPrecheckCompletionPayload struct {
+	InputManifest *importfiles.Manifest        `json:"inputManifest,omitempty"`
 	LeaseID       string                       `json:"leaseId"`
 	LeaseEpoch    int64                        `json:"leaseEpoch"`
 	BindingDigest string                       `json:"bindingDigest"`
@@ -4792,7 +4809,7 @@ func (s *Server) claimNextAuthenticatedPrecheck(w http.ResponseWriter, r *http.R
 		},
 		"bindingDigest": grant.Binding.BindingDigest,
 		// EX-I6：检查清单按冻结草稿的输出类型派生——本地保持冻结六项，对象存储使用存储形态清单。
-		"checkSet":             agentpreflight.ChecksForOutputKind(agentpreflight.OutputKind(grant.ExecutionContext.OutputKind)),
+		"checkSet":             precheckChecksForContext(grant.ExecutionContext),
 		"realExecutionEnabled": false,
 		"executionContext":     precheckExecutionContextPayload(grant.ExecutionContext),
 	})
@@ -4801,6 +4818,9 @@ func (s *Server) claimNextAuthenticatedPrecheck(w http.ResponseWriter, r *http.R
 // precheckExecutionContextPayload 把持久化上下文投影为 Agent 协议载荷；
 // 对象存储输出附带受控存储目标段（不含密钥），本地输出缺省。
 func precheckExecutionContextPayload(context store.PrecheckExecutionContext) map[string]any {
+	if context.NormalImport != nil {
+		return map[string]any{"normalImport": context.NormalImport, "checkKind": context.CheckKind, "compatibilityMode": context.CompatibilityMode, "database": context.Database, "contentKind": context.ContentKind, "targetPlatform": context.TargetPlatform, "allowedRoots": context.AllowedRoots, "resourceRequirement": context.ResourceRequirement}
+	}
 	payload := map[string]any{
 		"compatibilityMode": context.CompatibilityMode,
 		"database":          context.Database, "objects": context.Objects, "objectTypes": context.ObjectTypes,
@@ -5072,7 +5092,7 @@ func (s *Server) completeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Re
 	}
 	if !validPrecheckEnvelope(machine, request.agentPrecheckEnvelope, "EXPORT_PREFLIGHT_COMPLETE") || !validAgentPrecheckPathID(precheckID) ||
 		!validAgentPrecheckOpaque(request.Payload.LeaseID) || request.Payload.LeaseEpoch < 1 || !validAgentPrecheckDigest(request.Payload.BindingDigest) ||
-		(len(request.Payload.Results) != len(precheckcontract.FixedChecks()) && len(request.Payload.Results) != len(precheckcontract.StorageOutputChecks())) {
+		(len(request.Payload.Results) != len(precheckcontract.FixedChecks()) && len(request.Payload.Results) != len(precheckcontract.StorageOutputChecks()) && len(request.Payload.Results) != 1 && len(request.Payload.Results) != 6) {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
@@ -5083,7 +5103,7 @@ func (s *Server) completeAuthenticatedPrecheck(w http.ResponseWriter, r *http.Re
 	result, err := s.agentPrechecks.CompleteAgentPrecheck(r.Context(), store.AgentPrecheckCompletion{
 		AgentID: machine.AgentID, PrecheckID: precheckID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
 		BindingDigest: request.Payload.BindingDigest, RequestID: request.RequestID,
-		RequestDigest: agentPrecheckRequestDigest("COMPLETE", request.agentPrecheckEnvelope, precheckID, request.Payload), Results: results, Now: time.Now().UTC(),
+		RequestDigest: agentPrecheckRequestDigest("COMPLETE", request.agentPrecheckEnvelope, precheckID, request.Payload), Results: results, InputManifest: request.Payload.InputManifest, Now: time.Now().UTC(),
 	})
 	if err != nil {
 		writeAgentPrecheckStoreError(w, err)
@@ -6355,7 +6375,8 @@ func (s *Server) issueAgentEnrollment(w http.ResponseWriter, r *http.Request, pr
 	now := time.Now().UTC()
 	digest := sha256.Sum256(material)
 	err := s.agentProtocol.IssueAgentEnrollment(r.Context(), store.AgentEnrollmentIssue{
-		EnrollmentID: enrollmentID, NodeID: nodeID, ActorID: principal.ID, RequestID: requestID(w),
+		EnvironmentInspectionAuthorized: true,
+		EnrollmentID:                    enrollmentID, NodeID: nodeID, ActorID: principal.ID, RequestID: requestID(w),
 		TokenDigest: digest[:], ExpiresAt: now.Add(s.enrollmentTTL), CreatedAt: now,
 	})
 	if errors.Is(err, store.ErrExecutionNodeNotFound) {
@@ -6991,6 +7012,9 @@ func (s *Server) newExecutionNodeListResponse(node store.ExecutionNode) executio
 	} else if node.ToolHome != "" && node.JavaPath != "" && agent.EnvironmentFacts.RuntimeConfigurationDigest != store.ExecutionNodeRuntimeConfigurationDigest(node) {
 		response.EnvironmentStatus = "ABNORMAL"
 		reasons = append(reasons, "RUNTIME_CONFIGURATION_MISMATCH")
+	} else if !agent.EnvironmentInspectionAuthorized {
+		response.EnvironmentStatus = "UNCONFIRMED"
+		reasons = append(reasons, "ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED")
 	} else {
 		switch node.EnvironmentCheck.Status {
 		case "PASSED":
@@ -7002,8 +7026,10 @@ func (s *Server) newExecutionNodeListResponse(node store.ExecutionNode) executio
 			}
 		case "FAILED":
 			response.EnvironmentStatus = "ABNORMAL"
-			// 透传具体失败码（TOOL_RUNTIME_INVALID/TOOL_RUNTIME_UNAVAILABLE），
-			// 让浏览器能区分工具目录缺失、运行时不可用等可诊断原因，而不是只看到泛化的"环境检查发现异常"。
+			// 采集未知仍阻断新任务，但不能被投影为已证实的安装或环境异常。
+			if node.EnvironmentCheck.Code == "TOOL_RUNTIME_UNAVAILABLE" {
+				response.EnvironmentStatus = "UNCONFIRMED"
+			}
 			if node.EnvironmentCheck.Code != "" {
 				reasons = append(reasons, node.EnvironmentCheck.Code)
 			} else {

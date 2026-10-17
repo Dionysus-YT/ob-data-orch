@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/precheckcontract"
 )
 
@@ -41,18 +42,37 @@ func Test新提交拒绝旧清单及未知资源事实但保留历史读取(t *t
 
 func Test资源回执不得伪造控制面资格(t *testing.T) {
 	for _, requirement := range []*executionbudget.PreflightRequirement{nil, {}, {HeapBytes: 4 << 30, RequiredBytes: 5 << 30, TotalBudgetBytes: 3 << 30}} {
-		if matchesPrecheckResource(requirement, passedPrecheckResults()) {
+		if matchesPrecheckResource(requirement, passedPrecheckResults(), nil) {
 			t.Fatal("伪造通过绕过资源政策")
 		}
 	}
 	requirement := executionbudget.Preflight("", 16<<30, executionbudget.Policy{})
-	if !matchesPrecheckResource(&requirement, passedPrecheckResults()) {
+	if !matchesPrecheckResource(&requirement, passedPrecheckResults(), nil) {
 		t.Fatal("符合可信事实的资源报告被拒绝")
 	}
 	unknown := passedPrecheckResults()
 	unknown[3] = PrecheckCheckResult{Check: "NODE_RESOURCE", Status: "UNKNOWN", EvidenceCode: "NODE_RESOURCE_UNAVAILABLE"}
-	if !matchesPrecheckResource(&requirement, unknown) {
+	if !matchesPrecheckResource(&requirement, unknown, nil) {
 		t.Fatal("已知额度不能阻止探针异常报告未知并结束失败检查")
+	}
+}
+
+func Test普通导入低堆拒绝旧通过且失败证据不能跨用途(t *testing.T) {
+	data := importdomain.Config{Content: "DATA_ONLY"}
+	ddl := importdomain.Config{Content: "DDL_ONLY"}
+	low := executionbudget.Preflight("512M", 16<<30, executionbudget.Policy{})
+	adequate := executionbudget.Preflight("1G", 16<<30, executionbudget.Policy{})
+	failed := []PrecheckCheckResult{{Check: "NODE_RESOURCE", Status: "FAILED", EvidenceCode: precheckcontract.EvidenceImportJVMHeapTooSmall}}
+	if matchesPrecheckResource(&low, passedPrecheckResults(), &data) || !matchesPrecheckResource(&low, failed, &data) {
+		t.Fatal("低堆仍接受旧通过报告或不能记录专用失败证据")
+	}
+	for _, config := range []*importdomain.Config{nil, &ddl} {
+		if matchesPrecheckResource(&low, failed, config) || !matchesPrecheckResource(&low, passedPrecheckResults(), config) {
+			t.Fatal("数据工具下限影响了导出或仅结构检查")
+		}
+	}
+	if matchesPrecheckResource(&adequate, failed, &data) || !matchesPrecheckResource(&adequate, passedPrecheckResults(), &data) || matchesPrecheckResource(nil, failed, &data) {
+		t.Fatal("堆事实与专用失败证据不一致仍被接纳")
 	}
 }
 

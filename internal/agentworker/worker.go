@@ -59,7 +59,7 @@ type SecretResolver interface {
 type ProbeFactory func(SecretResolver) agentpreflight.Probe
 
 // Outcome 是一次已被控制面确认的固定预检查结果。
-// Report 只包含固定检查状态和稳定证据码，不含对象、路径、连接或秘密。
+// Report 包含固定状态、证据码及可选受限相对输入摘要，不含绝对路径、文件内容、连接或秘密。
 type Outcome struct {
 	State  agentwire.PrecheckState
 	Report agentpreflight.Report
@@ -130,9 +130,19 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	defer resolver.close()
 	probe := secretGatedProbe{delegate: w.ProbeFactory(resolver), resolver: resolver}
 	request := requestForGrant(identity.AgentID, grant)
-	report, err := agentpreflight.Run(ctx, request, probe)
+	runContext := ctx
+	if grant.Context.NormalImport != nil {
+		// 文件摘要可能读取大文件；将本机读取约束在剩余租约内，不能因 Agent 主循环尚未退出而无限扫描。
+		bounded, cancel := context.WithTimeout(ctx, grant.ExpiresAt.Sub(w.now()))
+		defer cancel()
+		runContext = bounded
+	}
+	report, err := agentpreflight.Run(runContext, request, probe)
 	if err != nil || agentpreflight.ValidateReportFor(kindForGrant(grant), report) != nil {
 		report = failedReport(kindForGrant(grant), grant.PrecheckID)
+		if grant.Context.NormalImport != nil {
+			report = failedNormalImportReport(grant)
+		}
 	}
 	if w.expired(grant) {
 		return Outcome{}, true, ErrLeaseExpired
@@ -229,6 +239,11 @@ func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflig
 			Endpoint: grant.Context.StorageTarget.Endpoint, TmpPath: grant.Context.StorageTarget.TmpPath,
 		}
 	}
+	if grant.Context.NormalImport != nil {
+		request.NormalImport = cloneNormalImport(grant.Context.NormalImport)
+		request.CheckKind = grant.Context.CheckKind
+		request.Capability = agentpreflight.Capability(grant.Context.CheckKind)
+	}
 	return request
 }
 
@@ -242,7 +257,7 @@ func kindForGrant(grant agentwire.PrecheckGrant) agentpreflight.OutputKind {
 
 func validGrant(identity agentwire.AgentIdentity, localPlatform commandgen.Platform, grant agentwire.PrecheckGrant) bool {
 	if !validPathIdentifier(grant.PrecheckID) || !validOpaque(grant.LeaseID, 256) || grant.Binding.NodeID != identity.NodeID || grant.Context.TargetPlatform != localPlatform || grant.LeaseEpoch < 1 || grant.ExpiresAt.IsZero() ||
-		!validOpaque(grant.BindingDigest, 256) || !validBinding(grant.Binding) || !checkSetForKind(kindForGrant(grant), grant.CheckSet) || !validExecutionContext(grant.Context) {
+		!validOpaque(grant.BindingDigest, 256) || !validBinding(grant.Binding) || !checkSetForGrant(grant) || !validExecutionContext(grant.Context) {
 		return false
 	}
 	return grant.Binding.PrecheckID == grant.PrecheckID
@@ -268,6 +283,12 @@ func checkSetForKind(kind agentpreflight.OutputKind, checkSet []agentpreflight.C
 }
 
 func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) bool {
+	if executionContext.NormalImport != nil {
+		return validNormalImportExecutionContext(executionContext)
+	}
+	if executionContext.CheckKind != "" {
+		return false
+	}
 	if !precheckcontract.ValidSelectionIdentifiers(executionContext.IncludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(executionContext.ExcludeColumnNames) || !precheckcontract.ValidSelectionIdentifiers(executionContext.Partitions) {
 		return false
 	}
@@ -340,6 +361,7 @@ func expectedState(report agentpreflight.Report, state agentwire.PrecheckState) 
 }
 
 func cloneGrant(grant agentwire.PrecheckGrant) agentwire.PrecheckGrant {
+	grant.Context.NormalImport = cloneNormalImport(grant.Context.NormalImport)
 	grant.CheckSet = append([]agentpreflight.CheckID(nil), grant.CheckSet...)
 	grant.Context.AllowedRoots = append([]string(nil), grant.Context.AllowedRoots...)
 	grant.Context.Objects = append([]string(nil), grant.Context.Objects...)

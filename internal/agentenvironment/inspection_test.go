@@ -68,7 +68,7 @@ func inspectionFixture(t *testing.T) (LocalInspector, *fixedVersionStub) {
 	return LocalInspector{Platform: platform, JavaPath: java, ToolHome: tool, WorkspaceRoot: work, LogQueueRoot: queue, ConfigurationDigest: strings.Repeat("a", 64), Versions: versions, ResourceReady: func() bool { return true }, Clock: time.Now}, versions
 }
 
-func Test完整采集区分文件与实际版本且自动检查不启动工具(t *testing.T) {
+func Test完整采集区分文件与实际版本且未授权时不启动工具(t *testing.T) {
 	inspector, versions := inspectionFixture(t)
 	report, err := inspector.Inspect(context.Background(), false)
 	if err != nil {
@@ -76,7 +76,7 @@ func Test完整采集区分文件与实际版本且自动检查不启动工具(t
 	}
 	report.CheckID = "synthetic-check"
 	if nodefacts.ValidateInspection(report) != nil || versions.calls != 0 || len(report.Items) != 10 {
-		t.Fatal("自动采集扩大了版本查询或缺少固定项")
+		t.Fatal("未授权采集扩大了版本查询或缺少固定项")
 	}
 	if status, _ := nodefacts.InspectionResult(report); status != "FAILED" {
 		t.Fatal("未验证实际版本却形成完整通过")
@@ -87,7 +87,7 @@ func Test完整采集区分文件与实际版本且自动检查不启动工具(t
 	}
 	report.CheckID = "synthetic-check"
 	if nodefacts.ValidateInspection(report) != nil || versions.calls != 3 {
-		t.Fatal("手动授权没有采集三个实际版本")
+		t.Fatal("固定复验授权没有采集三个实际版本")
 	}
 	if status, _ := nodefacts.InspectionResult(report); status != "PASSED" {
 		t.Fatal("完整的合成检查不能通过")

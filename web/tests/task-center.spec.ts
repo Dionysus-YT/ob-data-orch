@@ -116,10 +116,26 @@ test('历史名称、已删除对象、核对标识与空态表达', async ({ pa
   await page.goto('/tasks')
   await expect(page.getByText('尚无可展示任务', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '新建任务' }).click()
-  await expect(page.getByRole('menuitem', { name: '普通导入（尚未开放）' })).toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('menuitem', { name: '普通导入', exact: true })).not.toHaveAttribute('aria-disabled', 'true')
   await page.keyboard.press('Escape')
-  await expect(page.getByRole('menuitem', { name: '普通导入（尚未开放）' })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: '普通导入', exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
+})
+
+test('普通导入类型可筛选且新建菜单进入独立向导', async ({ page }, info) => {
+  const requests: URL[] = []
+  await mockFacts(page)
+  await mockTasks(page, [task('normal', { type: 'OBLOADER_NORMAL_IMPORT', state: 'RUNNING', finishedAt: undefined, availableActions: ['VIEW_LOGS', 'COPY_COMMAND', 'CANCEL'] })], url => requests.push(url))
+  await page.goto('/tasks?type=OBLOADER_NORMAL_IMPORT')
+  await expect(page.getByLabel('任务类型', { exact: true })).toContainText('普通导入')
+  await expect(page.getByText('类型：普通导入', { exact: true })).toBeVisible()
+  await expect.poll(() => requests.at(-1)?.searchParams.get('type')).toBe('OBLOADER_NORMAL_IMPORT')
+  await page.getByRole('button', { name: '新建任务' }).click()
+  await expect(page.getByRole('menuitem', { name: '旁路导入（尚未开放）' })).toHaveAttribute('aria-disabled', 'true')
+  await page.getByRole('menuitem', { name: '普通导入', exact: true }).click()
+  await expect(page).toHaveURL(/\/imports\/normal\/new/)
+  await expect(page.getByRole('heading', { name: '新建普通导入任务', exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath('normal-import-enabled-entry.png'), fullPage: true })
 })
 
 test('仅终态任务不自动刷新，三档视口不产生整页横向滚动', async ({ page }, info) => {

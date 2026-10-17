@@ -122,7 +122,7 @@ func Test固定版本授权绑定检查且完整回执原子保存并由心跳�
 	}
 }
 
-func Test人工检查绑定事实漂移后拒绝新旧回执且自动续接不继承许可(t *testing.T) {
+func Test人工检查绑定事实漂移后拒绝新旧回执且新检查复核持续授权(t *testing.T) {
 	s, _ := openTestStore(t)
 	seedBaseFixture(t, s)
 	ctx := context.Background()
@@ -158,14 +158,17 @@ func Test人工检查绑定事实漂移后拒绝新旧回执且自动续接不�
 		t.Fatal("事实漂移没有重新排队自动检查", err)
 	}
 	pending, found, err := s.GetPendingExecutionNodeEnvironmentCheck(ctx, "agent-1", "node-1")
-	if err != nil || !found || pending.CheckID != "auto-restart-check" || pending.VersionProbeAllowed {
-		t.Fatal("自动续接继承了人工版本查询许可", err)
+	if err != nil || !found || pending.CheckID != "auto-restart-check" || !pending.VersionProbeAllowed {
+		t.Fatal("自动续接未复核当前机器的持续检查授权", err)
 	}
 }
 
-func Test自动检查不继承旧版本查询授权且拒绝伪造与迟到回执(t *testing.T) {
+func Test未授权身份的自动检查拒绝伪造与迟到回执(t *testing.T) {
 	s, _ := openTestStore(t)
 	seedBaseFixture(t, s)
+	if _, err := s.db.Exec(`UPDATE agents SET environment_inspection_authorized=0 WHERE agent_id='agent-1'`); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	node, _ := s.GetExecutionNode(ctx, "node-1")
 	now := testTime.Add(time.Minute)

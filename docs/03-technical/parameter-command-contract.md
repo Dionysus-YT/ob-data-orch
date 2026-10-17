@@ -1,5 +1,7 @@
 # 参数元数据与确定性命令生成契约
 
+> 2026-10-16 普通导入 G2：使用独立配置 `normal-import-v1`、元数据 `obloader-4.3.5-normal-v1` 与能力 `import-odp-local-v1`，不继承导出或旁路参数。唯一生成器输出非秘密 argv 与脱敏展示，当前仅本地 CSV/CUT/SQL；输入路径按节点平台原样校验，不套用导出 Hadoop 路径兼容转换。72 条服务端定义与 76 项页面说明的受管差额见[普通导入参数映射](../02-design/normal-import-parameter-mapping.md)，提交及未实现边界见[技术契约](normal-import-contract.md)。
+
 > 文档状态：历史首条纵向切片专项契约；当前 Export v1 以[通用导出技术契约](export-general-contract.md)和[导出模块 Canonical](../02-design/export-module.md)为准
 > 适用范围：OBDUMPER 4.3.5，私有 ODP、单表 CSV 导出历史证据
 > 对应门禁：VS-P0-08、VS-P0-09\

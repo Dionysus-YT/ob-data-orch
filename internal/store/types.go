@@ -7,6 +7,8 @@ import (
 
 	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/importdomain"
+	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/nodefacts"
 )
 
@@ -90,7 +92,10 @@ type DraftUpdate struct {
 	DDLBehaviorJSON       string
 }
 
+// TaskSubmission 只冻结唯一生成器产物与当前检查绑定；普通导入使用独立快照与类型。
 type TaskSubmission struct {
+	// TaskType 只允许已准入的固定任务类型；空值兼容冻结导出调用方。
+	TaskType           string
 	TaskID             string
 	CreatorSubjectID   string
 	AuditActorID       string
@@ -111,7 +116,7 @@ type TaskSubmission struct {
 	// 基于原配置新建 / 从头重新执行 / 从检查点继续均产生新任务 ID 并保留来源关系。
 	ParentTaskID   string
 	DerivationKind string
-	// SnapshotVersion 标记快照结构版本：v1 为原始扁平快照，v2 为泛化快照。
+	// SnapshotVersion 区分导出 v1/v2 与普通导入 normal-import-v1，不跨类型解释。
 	SnapshotVersion        string
 	SnapshotJSON           string
 	PlannedArgvJSON        string
@@ -129,6 +134,8 @@ type TaskSubmissionResult struct {
 // TaskSummary 是任务详情各只读投影共用的冻结非敏感字段。
 // HTTP 层必须按概览、快照、命令证据或执行事实再裁剪，不能把该内部结构整体返回。
 type TaskSummary struct {
+	// TaskType 来自不可变任务类型；历史调用方缺省仍按导出读取。
+	TaskType          string
 	TaskID            string
 	CreatorSubjectID  string
 	DataSourceID      string
@@ -138,7 +145,7 @@ type TaskSummary struct {
 	ToolVersion       string
 	MetadataVersion   string
 	CapabilityVersion string
-	// SnapshotVersion 标记冻结快照的结构版本（v1 或 v2），只读投影不得修改它。
+	// SnapshotVersion 标记导出 v1/v2 或普通导入 normal-import-v1；只读投影不得修改它。
 	SnapshotVersion        string
 	Database               string
 	Table                  string
@@ -354,6 +361,8 @@ type ExecutionControl struct {
 // ExecutionClaimNext 是受认证 Agent 领取本节点下一条冻结导出任务的最小输入。
 // Agent 不能指定 taskId、参数、路径或凭据；这些事实均由控制面在短事务中重新读取。
 type ExecutionClaimNext struct {
+	// TaskType 缺省保持历史导出行为；普通导入必须显式领取。
+	TaskType            string
 	RequestDigest       string
 	AgentID             string
 	NodeID              string
@@ -369,6 +378,8 @@ type ExecutionClaimNext struct {
 // ExecutionLeaseGrant 是控制面签发给已认证 Agent 的不可变任务信封安全投影。
 // PlannedArgv 绝不包含密码；密码只能由后续受租约约束的唯一槽位提供。
 type ExecutionLeaseGrant struct {
+	TaskType          string
+	NormalImport      *importfiles.ExecutionInput
 	TaskID            string
 	ExecutionID       string
 	LeaseID           string
@@ -582,14 +593,16 @@ type ExecutionNodeEnvironmentCheck struct {
 // ExecutionNodeAgent 是节点当前有效 Agent 的只读安全投影。
 // 它不包含机器凭据、关联材料、主机地址、完整路径或任意 Agent 原始负载。
 type ExecutionNodeAgent struct {
-	AgentID          string
-	ProtocolVersion  string
-	BootID           string
-	LastHeartbeatAt  *time.Time
-	FactsRevision    int64
-	EnvironmentFacts AgentEnvironmentFacts
-	CapacityTotal    int
-	CapacityUsed     int
+	// EnvironmentInspectionAuthorized 是当前机器身份的持续固定本机复验授权，不授予数据任务或数据库访问能力。
+	EnvironmentInspectionAuthorized bool
+	AgentID                         string
+	ProtocolVersion                 string
+	BootID                          string
+	LastHeartbeatAt                 *time.Time
+	FactsRevision                   int64
+	EnvironmentFacts                AgentEnvironmentFacts
+	CapacityTotal                   int
+	CapacityUsed                    int
 }
 
 // AgentEnvironmentFacts 是受认证 Agent 的受控环境摘要。
@@ -624,13 +637,15 @@ type AgentDataRootUsage struct {
 // AgentEnrollmentIssue 是节点管理员签发一次性关联材料时持久化的非敏感输入。
 // 原始关联材料只在 HTTP 边界短时存在；仓储层只接收其单向摘要。
 type AgentEnrollmentIssue struct {
-	EnrollmentID string
-	NodeID       string
-	ActorID      string
-	RequestID    string
-	TokenDigest  []byte
-	ExpiresAt    time.Time
-	CreatedAt    time.Time
+	// EnvironmentInspectionAuthorized 由节点管理员签发新关联材料时明确授予，旧材料默认无此授权。
+	EnvironmentInspectionAuthorized bool
+	EnrollmentID                    string
+	NodeID                          string
+	ActorID                         string
+	RequestID                       string
+	TokenDigest                     []byte
+	ExpiresAt                       time.Time
+	CreatedAt                       time.Time
 }
 
 // AgentEnrollmentExchange 是 Agent 使用一次性材料关联机器身份的持久化输入。
@@ -733,7 +748,7 @@ type ExecutionNodeUpdate struct {
 // ExecutionNodeEnvironmentCheckRequest 由已授权节点管理员发起一次固定本机运行时核验。
 // 浏览器不携带检查项、路径、命令或 Agent 身份，检查范围由 Agent 端固定实现。
 type ExecutionNodeEnvironmentCheckRequest struct {
-	// VersionProbeAllowed 仅由明确发起固定版本检查的浏览器动作赋值，自动刷新不能继承。
+	// VersionProbeAllowed 表示管理员同时授权当前 Agent 后续的固定本机复验，不复用旧检查的临时许可。
 	VersionProbeAllowed bool
 	NodeID              string
 	ActorSubjectID      string
@@ -1282,9 +1297,11 @@ type PrecheckRun struct {
 	StorageCredentialRevision int64
 }
 
-// PrecheckCreate 只创建固定 EXPORT_PREFLIGHT 绑定；它不含 Shell、SQL、路径浏览或秘密明文。
+// PrecheckCreate 创建用途固定的导出或普通导入检查绑定；不含 Shell、SQL、路径浏览或秘密明文。
 type PrecheckCreate struct {
 	PrecheckRun
+	// CheckKind 固定区分导出、普通导入文件发现与完整预检查，不能接受任意操作名。
+	CheckKind        string
 	CreatorSubjectID string
 	RequestID        string
 	IdempotencyKey   string
@@ -1364,6 +1381,9 @@ type PrecheckLeaseGrant struct {
 // Objects 是冻结对象清单：SPECIFIED 范围为名称列表，ALL 范围为空清单（按数据库级投影检查）。
 // EX-I6：对象存储输出通过 OutputKind + StorageTarget 表达受控 URI 与 --tmp-path；本地输出缺省。
 type PrecheckExecutionContext struct {
+	// NormalImport 是独立的导入活动配置，非空时禁止套用导出目录与对象语义。
+	NormalImport      *importdomain.Config
+	CheckKind         string
 	CompatibilityMode string
 	Database          string
 	Objects           []string
@@ -1498,6 +1518,8 @@ type PrecheckCheckResult struct {
 // AgentPrecheckCompletion 是受认证 Agent 在当前短租约内提交的固定检查完成事实。
 // 检查结果必须完整匹配固定清单；成功状态由 Store 根据每项结果推导，Agent 不能自行声明。
 type AgentPrecheckCompletion struct {
+	// InputManifest 仅普通导入 INPUT_FILES 通过时提供，由固定扫描器产生。
+	InputManifest *importfiles.Manifest
 	AgentID       string
 	PrecheckID    string
 	LeaseID       string

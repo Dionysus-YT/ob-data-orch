@@ -10,11 +10,12 @@ import (
 	"ob-data-orch/internal/agentexecution"
 	"ob-data-orch/internal/agentlogqueue"
 	"ob-data-orch/internal/agentwire"
+	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/nodefacts"
 	"sort"
 )
 
-// exportExecutionRunner 每次只领取一条已冻结的 OBDUMPER_EXPORT。
+// exportExecutionRunner 沿用历史名称，每次只领取一条显式能力的冻结任务。
 // 它不暴露任意命令、SQL 或路径参数。
 type exportExecutionRunner interface {
 	RunNext(context.Context) (agentexecution.Outcome, bool, error)
@@ -23,16 +24,19 @@ type exportExecutionRunner interface {
 // configuredExportExecutionRunner 每次领取前都从已关联状态重新读取本机 Java、工具和数据目录白名单。
 // 配置缺失、平台不符或目录漂移时 Worker 只上报启动拒绝，不会退化到 PATH 或环境变量路径。
 type configuredExportExecutionRunner struct {
-	stateStore      *agentwire.StateStore
-	lookupEnv       func(string) (string, bool)
-	operatingSystem string
-	architecture    string
-	bootID          string
-	queueMu         sync.Mutex
-	queue           *agentlogqueue.Queue
-	queueRoot       string
-	workersMu       sync.Mutex
-	workers         map[*agentexecution.Worker]struct{}
+	normalImportEnabled bool
+	claimMu             sync.Mutex
+	claimImport         bool
+	stateStore          *agentwire.StateStore
+	lookupEnv           func(string) (string, bool)
+	operatingSystem     string
+	architecture        string
+	bootID              string
+	queueMu             sync.Mutex
+	queue               *agentlogqueue.Queue
+	queueRoot           string
+	workersMu           sync.Mutex
+	workers             map[*agentexecution.Worker]struct{}
 }
 
 func (r *configuredExportExecutionRunner) RunNext(ctx context.Context) (agentexecution.Outcome, bool, error) {
@@ -68,6 +72,15 @@ func (r *configuredExportExecutionRunner) RunNext(ctx context.Context) (agentexe
 		},
 		Clock: time.Now, BootID: r.bootID,
 	}
+	// 在同一平台调度预算内轮询两个显式能力，防止某一类型长期饥饿。
+	r.claimMu.Lock()
+	if r.normalImportEnabled {
+		r.claimImport = !r.claimImport
+		if r.claimImport {
+			worker.TaskType = importdomain.TaskType
+		}
+	}
+	r.claimMu.Unlock()
 	r.workersMu.Lock()
 	if r.workers == nil {
 		r.workers = make(map[*agentexecution.Worker]struct{})

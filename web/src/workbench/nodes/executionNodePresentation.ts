@@ -36,6 +36,7 @@ export function nodeHeartbeatLabel(status: ExecutionNodeSummary['heartbeatStatus
 export function nodeEnvironmentLabel(status: ExecutionNodeSummary['environmentStatus']): string {
   if (status === 'NORMAL') return '检查通过'
   if (status === 'ABNORMAL') return '检查异常'
+  if (status === 'UNCONFIRMED') return '待核验'
   return status === 'EXPIRED' ? '检查已失效' : '未检查'
 }
 
@@ -46,11 +47,12 @@ export function nodeCapacityLabel(status: ExecutionNodeSummary['capacityStatus']
 
 // 各类别独立映射服务端事实；通用接收资格不能扩大为某类导入/导出模块已经可用。
 export function nodeCategoryStates(node: ExecutionNodeSummary): { key: string; label: string; status: 'success' | 'error' | 'warning' | 'default' | 'processing'; text: string }[] {
-  const checking = node.unavailableReasons.includes('ENVIRONMENT_CHECK_IN_PROGRESS')
+  const authorizationRequired = node.unavailableReasons.includes('ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED')
+  const checking = !authorizationRequired && node.unavailableReasons.includes('ENVIRONMENT_CHECK_IN_PROGRESS')
   return [
     { key: 'management', label: '管理', status: node.managementState === 'ENABLED' ? 'success' : node.managementState === 'MAINTENANCE' ? 'warning' : 'default', text: nodeManagementLabel(node.managementState) },
     { key: 'agent', label: 'Agent', status: node.agentAssociationStatus === 'PENDING' ? 'default' : node.heartbeatStatus === 'ONLINE' ? 'success' : node.heartbeatStatus === 'OFFLINE' ? 'error' : 'default', text: node.agentAssociationStatus === 'PENDING' ? nodeAssociationLabel(node.agentAssociationStatus) : nodeHeartbeatLabel(node.heartbeatStatus) },
-    { key: 'environment', label: '运行环境', status: checking ? 'processing' : node.environmentStatus === 'NORMAL' ? 'success' : node.environmentStatus === 'ABNORMAL' ? 'error' : node.environmentStatus === 'EXPIRED' ? 'warning' : 'default', text: checking ? '检查中' : nodeEnvironmentLabel(node.environmentStatus) },
+    { key: 'environment', label: '运行环境', status: checking ? 'processing' : node.environmentStatus === 'NORMAL' ? 'success' : node.environmentStatus === 'ABNORMAL' ? 'error' : node.environmentStatus === 'EXPIRED' || node.environmentStatus === 'UNCONFIRMED' || authorizationRequired ? 'warning' : 'default', text: authorizationRequired ? '待授权' : checking ? '检查中' : nodeEnvironmentLabel(node.environmentStatus) },
     { key: 'capacity', label: '任务槽位', status: node.capacityStatus === 'AVAILABLE' ? 'success' : node.capacityStatus === 'BUSY' ? 'warning' : 'default', text: nodeCapacityLabel(node.capacityStatus) },
   ]
 }
@@ -69,8 +71,8 @@ export function nodeCapacitySummary(node: ExecutionNodeSummary): string {
 export function nodeUnavailableReasonLabel(reason: string, context?: Pick<ExecutionNodeDetail, 'environmentStatus' | 'environmentCheck'>): string {
   if (!reason) return '控制面未提供具体阻断原因'
   const check = context?.environmentCheck
-  // 只用当前异常检查的清单解释当前阻断，避免旧结果或可选项异常被误认为本次失败原因。
-  if (['TOOL_RUNTIME_INVALID', 'TOOL_RUNTIME_UNAVAILABLE', 'ENVIRONMENT_CHECK_ABNORMAL'].includes(reason) && context?.environmentStatus === 'ABNORMAL' && check?.status === 'FAILED' && check.inspection?.checkId === check.checkId) {
+  // 只用当前异常或待核验清单解释阻断，避免旧结果或可选项异常被误认为本次原因。
+  if (['TOOL_RUNTIME_INVALID', 'TOOL_RUNTIME_UNAVAILABLE', 'ENVIRONMENT_CHECK_ABNORMAL'].includes(reason) && (context?.environmentStatus === 'ABNORMAL' || context?.environmentStatus === 'UNCONFIRMED') && check?.status === 'FAILED' && check.inspection?.checkId === check.checkId) {
     const summary = check.inspection && inspectionBlockingSummary(check.inspection)
     if (summary) return summary
   }
@@ -79,6 +81,7 @@ export function nodeUnavailableReasonLabel(reason: string, context?: Pick<Execut
     HEARTBEAT_REQUIRED: '尚未收到 Agent 心跳',
     HEARTBEAT_OFFLINE: 'Agent 当前离线',
     ENVIRONMENT_CHECK_REQUIRED: '尚未完成环境检查，请在 Agent 在线后点击「检查节点环境」。',
+    ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED: '尚未授权 Agent 自动复验环境，请点击「授权并检查环境」。授权仅覆盖固定本机检查和版本查询。',
     ENVIRONMENT_CHECK_IN_PROGRESS: '环境检查进行中，正在等待 Agent 返回结果。',
     ENVIRONMENT_CHECK_ABNORMAL: '环境检查未通过，请查看节点详情中的检查项并按提示处理。',
     TOOL_RUNTIME_INVALID: '环境检查有未通过的必需项，请查看节点详情中的检查结果。',
@@ -95,9 +98,16 @@ export function nodeUnavailableReasonLabel(reason: string, context?: Pick<Execut
   return labels[reason] ?? '控制面返回了未识别的阻断原因，请在节点详情中核对'
 }
 
+// nodeCanRequestEnvironmentCheck 统一主动复验资格；待授权允许替换尚未启动版本查询的自动检查。
+export function nodeCanRequestEnvironmentCheck(node: ExecutionNodeSummary): boolean {
+  return node.agentAssociationStatus === 'ASSOCIATED' && node.heartbeatStatus === 'ONLINE'
+    && !node.unavailableReasons.includes('RUNTIME_CONFIGURATION_MISMATCH')
+    && (!node.unavailableReasons.includes('ENVIRONMENT_CHECK_IN_PROGRESS') || node.unavailableReasons.includes('ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED'))
+}
+
 export function nodePrimaryAction(node: ExecutionNodeSummary): 'environment-check' | 'enable' | undefined {
-  if (node.agentAssociationStatus !== 'ASSOCIATED' || node.heartbeatStatus !== 'ONLINE') return undefined
-  if (node.unavailableReasons.includes('ENVIRONMENT_CHECK_IN_PROGRESS') || node.unavailableReasons.includes('RUNTIME_CONFIGURATION_MISMATCH')) return undefined
+  if (!nodeCanRequestEnvironmentCheck(node)) return undefined
+  if (node.unavailableReasons.includes('ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED')) return 'environment-check'
   if (node.environmentStatus !== 'NORMAL') return 'environment-check'
   if (node.managementState === 'DISABLED' && node.capacityStatus === 'AVAILABLE') return 'enable'
   return undefined

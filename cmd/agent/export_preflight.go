@@ -12,6 +12,7 @@ import (
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/agentworker"
 	"ob-data-orch/internal/commandgen"
+	"ob-data-orch/internal/featuregate"
 	"ob-data-orch/internal/jdbcprobe"
 	"ob-data-orch/internal/nodefacts"
 )
@@ -65,10 +66,12 @@ func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platfo
 		}
 	}
 	jdbcRuntime, jdbcErr := jdbcprobe.DiscoverRuntime(runtimeConfig.JavaPath, runtimeConfig.ToolHome, runtimeConfig.Environment)
+	normalImportEnabled, normalImportGateErr := featuregate.LoadRealExecutionEnabled(r.lookupEnv)
 	storageConnectivityEnabled, _ := r.lookupEnv("OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE")
 	return func(resolver agentworker.SecretResolver) agentpreflight.Probe {
 		probe := agentlocalpreflight.Probe{
 			Runtime:               agentlocalpreflight.ToolRuntimeValidator{JavaPath: runtimeConfig.JavaPath, ToolHome: runtimeConfig.ToolHome, Environment: runtimeConfig.Environment, TargetPlatform: platform},
+			ImportRuntime:         agentlocalpreflight.ImportRuntimeValidator{ToolRuntimeValidator: agentlocalpreflight.ToolRuntimeValidator{JavaPath: runtimeConfig.JavaPath, ToolHome: runtimeConfig.ToolHome, Environment: runtimeConfig.Environment, TargetPlatform: platform}},
 			MinimumAvailableBytes: exportPreflightMinimumAvailableBytes,
 			AvailableBytes:        agentlocalpreflight.AvailableBytes,
 			// 默认探测器不会请求该解析器；只有后续明确启用的 STORAGE_AUTH 实现才能在对应检查阶段使用它。
@@ -82,6 +85,12 @@ func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platfo
 		}
 		if jdbcErr == nil {
 			probe.JDBC = &agentjdbc.PrecheckProbe{WorkspaceRoot: runtimeConfig.WorkspaceRoot, Runtime: jdbcRuntime, Resolver: resolver}
+			// 普通导入使用本轮明确接入的独立只读探针；仍须显式本机开关和完整导入租约，不启动 OBLOADER。
+			if normalImportGateErr == nil && normalImportEnabled {
+				importProbe := &agentjdbc.NormalImportProbe{WorkspaceRoot: runtimeConfig.WorkspaceRoot, Runtime: jdbcRuntime, Resolver: resolver}
+				probe.ImportDatabase = importProbe
+				probe.ImportChecks = importProbe
+			}
 		}
 		return probe
 	}

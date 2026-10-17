@@ -1,5 +1,13 @@
 # 首条切片 API 与 SQLite 数据模型最小契约
 
+> 2026-10-16 节点自动复验：0031 为 agents 与 agent_enrollment_tokens 增加受约束的 environment_inspection_authorized 布尔字段，旧行默认为 0，不改写历史迁移。新关联消费本次材料授权；存量节点明确授权检查在同一事务写入 ACTIVE Agent 授权及检查绑定，关联重放不恢复撤销范围。自动/手动检查保留管理状态，启用和新执行领取复核持续授权。浏览器 environmentStatus 增加 UNCONFIRMED，ENVIRONMENT_CHECK_AUTHORIZATION_REQUIRED 表示待授权，TOOL_RUNTIME_UNAVAILABLE 表示证据待核验；已证实失败仍为 ABNORMAL。检查回执 PASSED/FAILED 枚举不变，完整证据与结论原子保存，旧版仅布局通过回执拒绝。实施与限制见[自动复验证据](evidence/execution-node-auto-inspection-2026-10-16.md)。
+
+> 2026-10-16 普通导入执行：不新增迁移。显式机器能力只领取相同 task_type，默认领取保持导出；配置及含可选 `metadataDigest` 的输入证据进入信封摘要。租约、秘密、取消、日志和事件复用既有短事务。结果以 `normalImport:true` 严格区分，不接受导出文件计数，也不以缺省零值返回浏览器结果；任务中心开放该类型创建、筛选及取消，派生/模板/检查点仍关闭。见 `contracts/normal-import.json` 与[技术契约](normal-import-contract.md)。
+
+> 2026-10-16 普通导入命名补充：`:submit` 接收可选 `taskName`，空值服务端按目标库、格式、UTC 时间与任务 ID 生成，最多 200 个 Unicode 字符且无控制字符。名称写入 `NormalImportSnapshot.taskName` 并绑定幂等摘要，不改写已预检查的配置、指纹或数据库表结构；旧快照展示回退到 `config.taskName`。页面在提交确认弹窗编辑名称，进入第五步自动生成命令和预检查，接口仍沿用已保存修订。
+
+> 2026-10-16 普通导入 G2 补充：独立 `/normal-import-drafts` 与 `/normal-import-prechecks` 使用普通导入配置与校验；0030 仅前向扩展历史草稿表的类型、预检查用途/输入清单及任务类型。导出所有读写限定自身类型，文件用途检查不能提交任务，普通导入冻结任务不能被导出 Worker 领取。类型化协议见 `contracts/normal-import.json`，详细契约与当前未实现项见[普通导入技术契约](normal-import-contract.md)。仅临时 SQLite 验证，未升级现役数据。
+
 > 2026-10-14 任务中心阶段 2–3 补充：概览复用列表的冻结展示与服务端动作资格；授权派生数量及链接最多展开 100 条。快照提供五步字段白名单，路径仅创建者可见，凭据只标记脱敏；历史字段来源为 `UNKNOWN`，不透传原始 JSON。`GET /tasks/{id}/operations` 在当前任务范围合并任务审计白名单与执行事件，固定每页 50 条，游标绑定主体/任务，被拒绝事件标记 `DENIED`。`GET /export-drafts` 仅当前主体未提交且未删除草稿，关键字/计数/游标同一所有权范围；`DELETE /export-drafts/{id}` 要求 CSRF、If-Match、幂等键，原子复验提交与活动预检查租约后标记删除、失效预检查、登记审计及回执。0028 日志清理账本与 0029 草稿删除标记只经隔离 SQLite 验证；实施与限制见[收尾证据](evidence/task-center-phases2-3-2026-10-14.md)，不代表服务安装或现役数据升级已完成。
 
 > 2026-10-14 草稿读取修复：v6 GET 的浏览器严格解码须保留已定义的读取开关、完整 timestampFormats、compressionLevel 和 ddlBehavior（含 sequencePolicy），避免读取后 PATCH 静默丢失活动参数。类型与序列枚举仍失败关闭，未知私有字段不传入编辑表单；业务回填继续归 exportFormMapping。MySQL 页面刷新已真实复验，其余读取形态与非法输入有合成反例；不改变 int64 SCN 的浏览器安全整数限制。见[真实 E2E 记录](evidence/export-mysql-e2e-2026-10-14.md)。

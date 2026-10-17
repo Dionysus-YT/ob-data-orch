@@ -44,8 +44,8 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 29 {
-		t.Fatalf("migration count = %d, want 29", migrationCount)
+	if migrationCount != 31 {
+		t.Fatalf("迁移数量 = %d，期望 31", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -498,7 +498,7 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0020_task_execution_cancellation.sql":                &fstest.MapFile{Data: twentiethMigration},
 	}
 	// 新增迁移仍纳入支持版本，保证本例实际验证旧迁移的校验和失败关闭。
-	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql"} {
+	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql", "0030_normal_import.sql", "0031_node_environment_inspection_authorization.sql"} {
 		data, err := migrations.Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

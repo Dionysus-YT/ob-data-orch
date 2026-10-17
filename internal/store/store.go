@@ -21,6 +21,7 @@ import (
 	"ob-data-orch/internal/agentpreflight"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/executionargv"
+	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/migrate"
 	"ob-data-orch/internal/nodefacts"
@@ -317,7 +318,7 @@ func (s *Store) ListExecutionNodes(ctx context.Context) ([]ExecutionNode, error)
 		       COALESCE(n.environment_check_facts_revision, 0), n.environment_check_requested_at, n.environment_check_completed_at,
 		       n.revision, n.created_at, n.updated_at,
 		       a.agent_id, a.protocol_version, a.boot_id, a.last_heartbeat_at,
-		       a.facts_revision, a.execution_worker_limit, MAX(a.execution_workers_active,a.capacity_used), a.facts_json, n.execution_budget_policy_json
+		       a.facts_revision, a.execution_worker_limit, MAX(a.execution_workers_active,a.capacity_used), a.facts_json, n.execution_budget_policy_json, a.environment_inspection_authorized
 		FROM execution_nodes AS n
 		LEFT JOIN agents AS a ON a.node_id = n.node_id AND a.status = 'ACTIVE'
 		WHERE n.management_state != 'ARCHIVED'
@@ -353,7 +354,7 @@ func (s *Store) GetExecutionNode(ctx context.Context, nodeID string) (ExecutionN
 		       COALESCE(n.environment_check_facts_revision, 0), n.environment_check_requested_at, n.environment_check_completed_at,
 		       n.revision, n.created_at, n.updated_at,
 		       a.agent_id, a.protocol_version, a.boot_id, a.last_heartbeat_at,
-		       a.facts_revision, a.execution_worker_limit, MAX(a.execution_workers_active,a.capacity_used), a.facts_json, n.execution_budget_policy_json
+		       a.facts_revision, a.execution_worker_limit, MAX(a.execution_workers_active,a.capacity_used), a.facts_json, n.execution_budget_policy_json, a.environment_inspection_authorized
 		FROM execution_nodes AS n
 		LEFT JOIN agents AS a ON a.node_id = n.node_id AND a.status = 'ACTIVE'
 		WHERE n.node_id = ? AND n.management_state != 'ARCHIVED'
@@ -429,7 +430,7 @@ func (s *Store) CreateExecutionNode(ctx context.Context, input ExecutionNodeCrea
 }
 
 // UpdateExecutionNode 只更新管理员声明的节点配置与审计事实。
-// 平台或允许根目录变化会使先前固定环境结论失效，并将节点退回禁用状态，防止旧事实覆盖新声明。
+// 保存配置会使先前固定环境结论失效；保留管理意图，待 Agent 同步并重新取证后恢复接收资格。
 func (s *Store) UpdateExecutionNode(ctx context.Context, input ExecutionNodeUpdate) (int64, error) {
 	if err := validateExecutionNodeUpdate(input); err != nil {
 		return 0, err
@@ -497,7 +498,7 @@ func (s *Store) RequestExecutionNodeEnvironmentCheck(ctx context.Context, input 
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		update, err := tx.ExecContext(ctx, `
 			UPDATE execution_nodes
-			SET management_state = 'DISABLED', environment_check_id = ?, environment_check_status = 'PENDING',
+			SET environment_check_id = ?, environment_check_status = 'PENDING',
 				environment_check_code = NULL,
 				environment_check_facts_revision = (SELECT a.facts_revision FROM agents a WHERE a.node_id = execution_nodes.node_id AND a.status = 'ACTIVE'),
 				environment_check_requested_at = ?, environment_check_completed_at = NULL,
@@ -520,7 +521,23 @@ func (s *Store) RequestExecutionNodeEnvironmentCheck(ctx context.Context, input 
 			}
 			return ErrRevisionConflict
 		}
-		if err := insertNodeCheckRequestAudit(ctx, tx, input); err != nil {
+		// 授权随当前 ACTIVE 机器身份保存；主体失效、身份不存在或事务失败均不能留下半份授权。
+		if input.VersionProbeAllowed {
+			granted, err := tx.ExecContext(ctx, `UPDATE agents SET environment_inspection_authorized=1
+				WHERE node_id=? AND status='ACTIVE' AND EXISTS(SELECT 1 FROM auth_subjects WHERE subject_id=? AND account_status='ACTIVE')`, input.NodeID, input.ActorSubjectID)
+			if err != nil {
+				return err
+			}
+			if count, err := granted.RowsAffected(); err != nil || count != 1 {
+				return ErrExecutionNodeEnvironmentCheckRequired
+			}
+		}
+		var probeAllowed bool
+		var agentID string
+		if err := tx.QueryRowContext(ctx, `SELECT agent_id, environment_inspection_authorized FROM agents WHERE node_id=? AND status='ACTIVE'`, input.NodeID).Scan(&agentID, &probeAllowed); err != nil {
+			return ErrExecutionNodeEnvironmentCheckRequired
+		}
+		if err := insertNodeCheckRequestAudit(ctx, tx, input, agentID, probeAllowed); err != nil {
 			return err
 		}
 		result.Revision = input.ExpectedRevision + 1
@@ -561,7 +578,11 @@ func (s *Store) EnsureCurrentExecutionNodeEnvironmentCheck(ctx context.Context, 
 		if affected == 0 {
 			return nil
 		}
-		if err := insertNodeCheckRefreshAudit(ctx, tx, input); err != nil {
+		var probeAllowed bool
+		if err := tx.QueryRowContext(ctx, `SELECT environment_inspection_authorized FROM agents WHERE agent_id=? AND node_id=? AND status='ACTIVE'`, input.AgentID, input.NodeID).Scan(&probeAllowed); err != nil {
+			return err
+		}
+		if err := insertNodeCheckRefreshAudit(ctx, tx, input, probeAllowed); err != nil {
 			return err
 		}
 		queued = true
@@ -579,10 +600,12 @@ func (s *Store) GetPendingExecutionNodeEnvironmentCheck(ctx context.Context, age
 	var checkID string
 	var versionProbeAllowed bool
 	err := s.db.QueryRowContext(ctx, `
-		SELECT n.environment_check_id, EXISTS (
-			SELECT 1 FROM audit_events request JOIN auth_subjects subject ON subject.subject_id=request.actor_id AND subject.account_status='ACTIVE'
-			WHERE request.object_type='EXECUTION_NODE' AND request.object_id=n.node_id AND request.action='EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED'
-			AND request.actor_type='SUBJECT' AND json_extract(request.safe_diff_json,'$.checkId')=n.environment_check_id
+		SELECT n.environment_check_id, a.environment_inspection_authorized=1 AND EXISTS (
+			SELECT 1 FROM audit_events request
+			WHERE request.object_type='EXECUTION_NODE' AND request.object_id=n.node_id AND request.result='SUCCEEDED'
+			AND request.action IN ('EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED','EXECUTION_NODE_ENVIRONMENT_CHECK_REQUEUED')
+			AND json_extract(request.safe_diff_json,'$.checkId')=n.environment_check_id
+			AND json_extract(request.safe_diff_json,'$.agentId')=a.agent_id
 			AND json_extract(request.safe_diff_json,'$.versionProbeAllowed')=1)
 		FROM execution_nodes AS n
 		JOIN agents AS a ON a.node_id = n.node_id AND a.agent_id = ? AND a.status = 'ACTIVE'
@@ -622,16 +645,18 @@ func (s *Store) CompleteExecutionNodeEnvironmentCheck(ctx context.Context, input
 		if readErr != nil {
 			return fmt.Errorf("read execution node environment check completion: %w", readErr)
 		}
-		// 已绑定检查不能在机器事实漂移后换用新版本回执；自动续接仍须新标识且不继承人工许可。
+		// 已绑定检查不能在机器事实漂移后换用新版本回执；新检查独立核对当前机器授权和审计快照。
 		if currentRevision > 0 && currentRevision != input.FactsRevision {
 			return ErrExecutionNodeEnvironmentCheckRequired
 		}
 		var rawFacts sql.NullString
 		var probeAllowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT facts_json, EXISTS(SELECT 1 FROM audit_events request JOIN auth_subjects subject ON subject.subject_id=request.actor_id AND subject.account_status='ACTIVE'
-			WHERE request.object_type='EXECUTION_NODE' AND request.object_id=? AND request.action='EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED' AND request.actor_type='SUBJECT'
-			AND json_extract(request.safe_diff_json,'$.checkId')=? AND json_extract(request.safe_diff_json,'$.versionProbeAllowed')=1)
-			FROM agents WHERE agent_id=? AND node_id=? AND status='ACTIVE' AND facts_revision=?`, input.NodeID, input.CheckID, input.AgentID, input.NodeID, input.FactsRevision).Scan(&rawFacts, &probeAllowed); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT facts_json, environment_inspection_authorized=1 AND EXISTS(SELECT 1 FROM audit_events request
+			WHERE request.object_type='EXECUTION_NODE' AND request.object_id=? AND request.result='SUCCEEDED'
+			AND request.action IN ('EXECUTION_NODE_ENVIRONMENT_CHECK_REQUESTED','EXECUTION_NODE_ENVIRONMENT_CHECK_REQUEUED')
+			AND json_extract(request.safe_diff_json,'$.checkId')=? AND json_extract(request.safe_diff_json,'$.agentId')=?
+			AND json_extract(request.safe_diff_json,'$.versionProbeAllowed')=1)
+			FROM agents WHERE agent_id=? AND node_id=? AND status='ACTIVE' AND facts_revision=?`, input.NodeID, input.CheckID, input.AgentID, input.AgentID, input.NodeID, input.FactsRevision).Scan(&rawFacts, &probeAllowed); err != nil {
 			return ErrExecutionNodeEnvironmentCheckRequired
 		}
 		var currentFacts AgentEnvironmentFacts
@@ -647,7 +672,8 @@ func (s *Store) CompleteExecutionNodeEnvironmentCheck(ctx context.Context, input
 			if input.Inspection.CheckID != input.CheckID || input.Inspection.RuntimeConfigurationDigest != currentFacts.RuntimeConfigurationDigest || input.Inspection.VersionProbeAllowed != probeAllowed || status != input.Status || code != input.Code {
 				return ErrExecutionNodeEnvironmentCheckRequired
 			}
-		} else if probeAllowed && input.Status == "PASSED" {
+		} else if input.Status == "PASSED" {
+			// 旧版仅布局回执不能在未取得完整版本证据时形成通过结论。
 			return ErrExecutionNodeEnvironmentCheckRequired
 		}
 		if currentStatus == input.Status && currentCode == input.Code && currentRevision == input.FactsRevision {
@@ -717,7 +743,7 @@ func (s *Store) EnableExecutionNode(ctx context.Context, input ExecutionNodeEnab
 			  AND environment_check_status = 'PASSED' AND environment_check_code = 'TOOL_RUNTIME_READY'
 			  AND EXISTS (
 				SELECT 1 FROM agents
-				WHERE agents.node_id = execution_nodes.node_id AND agents.status = 'ACTIVE'
+				WHERE agents.node_id = execution_nodes.node_id AND agents.status = 'ACTIVE' AND agents.environment_inspection_authorized=1
 				  AND agents.last_heartbeat_at IS NOT NULL AND agents.last_heartbeat_at >= ?
 				  AND agents.facts_revision = execution_nodes.environment_check_facts_revision
 			  )
@@ -908,6 +934,12 @@ func (s *Store) IssueAgentEnrollment(ctx context.Context, input AgentEnrollmentI
 		return err
 	}
 	return s.withWrite(ctx, func(tx *sql.Tx) error {
+		if input.EnvironmentInspectionAuthorized {
+			var active bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM auth_subjects WHERE subject_id=? AND account_status='ACTIVE')`, input.ActorID).Scan(&active); err != nil || !active {
+				return ErrEnrollmentRejected
+			}
+		}
 		var managementState string
 		err := tx.QueryRowContext(ctx, `
             SELECT management_state
@@ -968,12 +1000,12 @@ func (s *Store) IssueAgentEnrollment(ctx context.Context, input AgentEnrollmentI
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO agent_enrollment_tokens(
                 enrollment_id, node_id, token_digest, status, expires_at, consumed_at,
-                consumed_by_agent_id, created_by, created_at
-            ) VALUES (?, ?, ?, 'ACTIVE', ?, NULL, NULL, ?, ?)
-        `, input.EnrollmentID, input.NodeID, input.TokenDigest, utcText(input.ExpiresAt), input.ActorID, utcText(input.CreatedAt)); err != nil {
+                consumed_by_agent_id, created_by, created_at, environment_inspection_authorized
+            ) VALUES (?, ?, ?, 'ACTIVE', ?, NULL, NULL, ?, ?, ?)
+		`, input.EnrollmentID, input.NodeID, input.TokenDigest, utcText(input.ExpiresAt), input.ActorID, utcText(input.CreatedAt), input.EnvironmentInspectionAuthorized); err != nil {
 			return fmt.Errorf("insert agent enrollment: %w", err)
 		}
-		return insertAudit(ctx, tx, "SUBJECT", input.ActorID, "AGENT_ENROLLMENT_ISSUED", "EXECUTION_NODE", input.NodeID, "SUCCEEDED", input.RequestID, input.CreatedAt)
+		return insertNodeEnrollmentInspectionAudit(ctx, tx, input)
 	})
 }
 
@@ -988,11 +1020,12 @@ func (s *Store) ExchangeAgentEnrollment(ctx context.Context, input AgentEnrollme
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var storedNodeID, status, expiresAt, consumedByAgentID string
 		var tokenDigest []byte
+		var inspectionAuthorized bool
 		err := tx.QueryRowContext(ctx, `
-            SELECT node_id, token_digest, status, expires_at, COALESCE(consumed_by_agent_id, '')
+            SELECT node_id, token_digest, status, expires_at, COALESCE(consumed_by_agent_id, ''), environment_inspection_authorized
             FROM agent_enrollment_tokens
             WHERE enrollment_id = ?
-        `, input.EnrollmentID).Scan(&storedNodeID, &tokenDigest, &status, &expiresAt, &consumedByAgentID)
+        `, input.EnrollmentID).Scan(&storedNodeID, &tokenDigest, &status, &expiresAt, &consumedByAgentID, &inspectionAuthorized)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEnrollmentRejected
 		}
@@ -1064,9 +1097,9 @@ func (s *Store) ExchangeAgentEnrollment(ctx context.Context, input AgentEnrollme
             INSERT INTO agents(
                 agent_id, node_id, credential_digest, credential_revision, status,
                 protocol_version, boot_id, last_heartbeat_at, capacity_total, capacity_used,
-                facts_json, facts_revision, created_at, revoked_at
-            ) VALUES (?, ?, ?, 1, 'ACTIVE', ?, NULL, NULL, 1, 0, NULL, 0, ?, NULL)
-        `, input.AgentID, input.NodeID, input.CredentialDigest, input.ProtocolVersion, utcText(input.ExchangedAt)); err != nil {
+                facts_json, facts_revision, created_at, revoked_at, environment_inspection_authorized
+            ) VALUES (?, ?, ?, 1, 'ACTIVE', ?, NULL, NULL, 1, 0, NULL, 0, ?, NULL, ?)
+        `, input.AgentID, input.NodeID, input.CredentialDigest, input.ProtocolVersion, utcText(input.ExchangedAt), inspectionAuthorized); err != nil {
 			return fmt.Errorf("insert enrolled agent: %w", err)
 		}
 		consumed, err := tx.ExecContext(ctx, `
@@ -1084,6 +1117,18 @@ func (s *Store) ExchangeAgentEnrollment(ctx context.Context, input AgentEnrollme
 		if count != 1 {
 			return ErrEnrollmentRejected
 		}
+		// 新身份的事实版本从零开始；清除旧检查，防止首份事实碰巧同号而沿用旧身份结论。
+		reset, err := tx.ExecContext(ctx, `UPDATE execution_nodes
+			SET environment_check_id=NULL, environment_check_status='NOT_CHECKED', environment_check_code=NULL,
+				environment_check_facts_revision=NULL, environment_check_requested_at=NULL, environment_check_completed_at=NULL,
+				revision=revision+1, updated_at=? WHERE node_id=? AND management_state!='ARCHIVED'`, utcText(input.ExchangedAt), input.NodeID)
+		if err != nil {
+			return fmt.Errorf("invalidate prior agent environment check: %w", err)
+		}
+		if count, err := reset.RowsAffected(); err != nil || count != 1 {
+			return ErrEnrollmentRejected
+		}
+		runtimeConfiguration.Revision++
 		if err := insertAudit(ctx, tx, "AGENT", input.AgentID, "AGENT_ENROLLED", "EXECUTION_NODE", input.NodeID, "SUCCEEDED", input.RequestID, input.ExchangedAt); err != nil {
 			return err
 		}
@@ -1325,13 +1370,14 @@ func scanExecutionNode(row interface{ Scan(...any) error }) (ExecutionNode, erro
 	var environmentCheckRequestedAt, environmentCheckCompletedAt sql.NullString
 	var agentID, protocolVersion, bootID, lastHeartbeatAt, factsJSON sql.NullString
 	var factsRevision, capacityTotal, capacityUsed sql.NullInt64
+	var inspectionAuthorized sql.NullBool
 	var budgetPolicyJSON string
 	if err := row.Scan(&node.NodeID, &node.DisplayName, &node.Platform, &node.ManagementState, &allowedRootsJSON, &node.ToolHome, &node.JavaPath,
 		&node.EnvironmentCheck.CheckID, &node.EnvironmentCheck.Status, &node.EnvironmentCheck.Code,
 		&node.EnvironmentCheck.FactsRevision, &environmentCheckRequestedAt, &environmentCheckCompletedAt,
 		&node.Revision, &createdAt, &updatedAt,
 		&agentID, &protocolVersion, &bootID, &lastHeartbeatAt,
-		&factsRevision, &capacityTotal, &capacityUsed, &factsJSON, &budgetPolicyJSON); err != nil {
+		&factsRevision, &capacityTotal, &capacityUsed, &factsJSON, &budgetPolicyJSON, &inspectionAuthorized); err != nil {
 		return ExecutionNode{}, err
 	}
 	if err := json.Unmarshal([]byte(budgetPolicyJSON), &node.BudgetPolicy); err != nil {
@@ -1364,7 +1410,7 @@ func scanExecutionNode(row interface{ Scan(...any) error }) (ExecutionNode, erro
 		node.EnvironmentCheck.CompletedAt = &parsed
 	}
 	if agentID.Valid {
-		agent := &ExecutionNodeAgent{AgentID: agentID.String, ProtocolVersion: protocolVersion.String, BootID: bootID.String}
+		agent := &ExecutionNodeAgent{AgentID: agentID.String, ProtocolVersion: protocolVersion.String, BootID: bootID.String, EnvironmentInspectionAuthorized: inspectionAuthorized.Valid && inspectionAuthorized.Bool}
 		if factsRevision.Valid {
 			agent.FactsRevision = factsRevision.Int64
 		}
@@ -2077,7 +2123,7 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
                performance_config_json, filter_config_json, ddl_behavior_json,
                COALESCE(source_task_id, ''), COALESCE(source_derivation, ''),
                created_at, updated_at
-        FROM export_drafts WHERE draft_id = ? AND deleted_at IS NULL
+        FROM export_drafts WHERE draft_id = ? AND deleted_at IS NULL AND draft_kind = 'OBDUMPER_EXPORT'
     `, draftID).Scan(&draft.DraftID, &draft.OwnerSubjectID, &draft.DataSourceID, &draft.NodeID, &draft.Revision,
 		&draft.ToolVersion, &draft.MetadataVersion, &draft.CapabilityVersion, &draft.ConfigVersion, &draft.ConfigJSON,
 		&draft.ConfigFingerprint, &draft.InvalidationJSON,
@@ -2105,13 +2151,25 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
 // CreatePrecheck 冻结草稿 revision、指纹、数据源凭据 revision 和节点绑定。
 // 该事务只排队固定检查，不领取租约、不启动进程，也不创建执行任务。
 func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (PrecheckCreateResult, error) {
+	if input.CheckKind != "" && input.CheckKind != "EXPORT_PREFLIGHT" {
+		return PrecheckCreateResult{}, ErrPrecheckInvalid
+	}
+	return s.createPrecheck(ctx, input)
+}
+
+// createPrecheck 只复用平台绑定与事务，不共享导出和导入的业务配置。
+func (s *Store) createPrecheck(ctx context.Context, input PrecheckCreate) (PrecheckCreateResult, error) {
+	kind, operation, draftKind := "EXPORT_PREFLIGHT", "CREATE_EXPORT_PRECHECK", "OBDUMPER_EXPORT"
+	if input.CheckKind != "" && input.CheckKind != "EXPORT_PREFLIGHT" {
+		kind, operation, draftKind = input.CheckKind, "CREATE_"+input.CheckKind, "OBLOADER_NORMAL_IMPORT"
+	}
 	if err := validatePrecheckCreate(input); err != nil {
 		return PrecheckCreateResult{}, err
 	}
 	result := PrecheckCreateResult{PrecheckID: input.PrecheckID}
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var digest, existingID string
-		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = 'CREATE_EXPORT_PRECHECK' AND idempotency_key = ?`, input.CreatorSubjectID, input.IdempotencyKey).Scan(&digest, &existingID)
+		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = ? AND idempotency_key = ?`, input.CreatorSubjectID, operation, input.IdempotencyKey).Scan(&digest, &existingID)
 		if err == nil {
 			if digest != input.RequestDigest {
 				return ErrIdempotencyConflict
@@ -2180,21 +2238,21 @@ func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (Prech
                 credential_id, credential_revision, node_id, agent_id, status, lease_id,
                 lease_epoch, lease_expires_at, result_json, integrity_status, valid_until,
 				created_at, completed_at, node_facts_revision, binding_digest, binding_agent_id,
-				storage_credential_id, storage_credential_revision, sys_credential_id, sys_credential_revision
+				storage_credential_id, storage_credential_revision, sys_credential_id, sys_credential_revision, check_kind
             )
             SELECT ?, d.draft_id, d.revision, d.config_fingerprint, d.data_source_id,
                    ds.credential_id, ds.current_credential_revision, d.node_id, NULL, 'PENDING', NULL,
 				   NULL, NULL, NULL, 'UNKNOWN', ?, ?, NULL, ?, ?, ?,
-				   ?, ?, ?, ?
+				   ?, ?, ?, ?, ?
             FROM export_drafts d JOIN data_sources ds ON ds.data_source_id = d.data_source_id
-            WHERE d.draft_id = ? AND d.deleted_at IS NULL AND d.revision = ? AND d.config_fingerprint = ?
+            WHERE d.draft_kind = ? AND d.draft_id = ? AND d.deleted_at IS NULL AND d.revision = ? AND d.config_fingerprint = ?
               AND d.data_source_id = ? AND d.node_id = ?
               AND ds.credential_id = ? AND ds.current_credential_revision = ?
               AND ds.state = 'ENABLED' AND ds.last_test_status = 'SUCCEEDED'
               AND ds.last_test_source = 'AGENT_JDBC'
 		`, input.PrecheckID, utcText(input.ValidUntil), utcText(input.CreatedAt), nodeFactsRevision, bindingDigest, bindingAgentID,
 			nullableString(input.StorageCredentialID), nullableInt64(input.StorageCredentialRevision),
-			nullableString(input.SysCredentialID), nullableInt64(input.SysCredentialRevision),
+			nullableString(input.SysCredentialID), nullableInt64(input.SysCredentialRevision), kind, draftKind,
 			input.DraftID, input.DraftRevision, input.ConfigFingerprint, input.DataSourceID, input.NodeID,
 			input.CredentialID, input.CredentialRevision)
 		if err != nil {
@@ -2207,10 +2265,14 @@ func (s *Store) CreatePrecheck(ctx context.Context, input PrecheckCreate) (Prech
 		if affected != 1 {
 			return ErrPrecheckInvalid
 		}
-		if err := insertAudit(ctx, tx, "SUBJECT", input.CreatorSubjectID, "EXPORT_PRECHECK_CREATED", "PRECHECK", input.PrecheckID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
+		auditOperation := "EXPORT_PRECHECK_CREATED"
+		if kind != "EXPORT_PREFLIGHT" {
+			auditOperation = kind + "_CREATED"
+		}
+		if err := insertAudit(ctx, tx, "SUBJECT", input.CreatorSubjectID, auditOperation, "PRECHECK", input.PrecheckID, "SUCCEEDED", input.RequestID, input.CreatedAt); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id, operation, idempotency_key, request_digest, result_status, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, 'CREATE_EXPORT_PRECHECK', ?, ?, 202, 'PRECHECK', ?, '{}', ?, ?)`, input.CreatorSubjectID, input.IdempotencyKey, input.RequestDigest, input.PrecheckID, utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour))); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id, operation, idempotency_key, request_digest, result_status, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, 202, 'PRECHECK', ?, '{}', ?, ?)`, input.CreatorSubjectID, operation, input.IdempotencyKey, input.RequestDigest, input.PrecheckID, utcText(input.CreatedAt), utcText(input.CreatedAt.Add(24*time.Hour))); err != nil {
 			return fmt.Errorf("write precheck idempotency: %w", err)
 		}
 		return nil
@@ -2932,11 +2994,17 @@ func (s *Store) CompleteAgentPrecheck(ctx context.Context, input AgentPrecheckCo
 		if kind == "" {
 			kind = agentpreflight.OutputKindLocal
 		}
-		if err := agentpreflight.ValidateReportFor(kind, agentpreflight.Report{PrecheckID: input.PrecheckID, Succeeded: succeeded, Results: reportResults}); err != nil {
+		if executionContext.NormalImport != nil {
+			if !matchesPrecheckShape(input.Results, precheckcontract.NormalImportChecks(executionContext.CheckKind)) || !validNormalImportManifest(*executionContext.NormalImport, input.Results, input.InputManifest) {
+				return ErrPrecheckLeaseRejected
+			}
+		} else if input.InputManifest != nil {
+			return ErrPrecheckLeaseRejected
+		} else if err := agentpreflight.ValidateReportFor(kind, agentpreflight.Report{PrecheckID: input.PrecheckID, Succeeded: succeeded, Results: reportResults}); err != nil {
 			return ErrPrecheckLeaseRejected
 		}
 		// 资源政策由控制面拥有；Agent 不能以伪造通过覆盖缺失或不足的节点额度。
-		if !matchesPrecheckResource(executionContext.ResourceRequirement, input.Results) {
+		if executionContext.CheckKind != "NORMAL_IMPORT_FILES" && !matchesPrecheckResource(executionContext.ResourceRequirement, input.Results, executionContext.NormalImport) {
 			return ErrPrecheckLeaseRejected
 		}
 		if len(executionContext.Objects) > 0 && (len(executionContext.IncludeColumnNames) > 0 || len(executionContext.ExcludeColumnNames) > 0 || len(executionContext.Partitions) > 0) {
@@ -2958,12 +3026,17 @@ func (s *Store) CompleteAgentPrecheck(ctx context.Context, input AgentPrecheckCo
 				}
 			}
 		}
+		var manifestJSON any
+		if input.InputManifest != nil {
+			raw, _ := json.Marshal(input.InputManifest)
+			manifestJSON = string(raw)
+		}
 		updated, err := tx.ExecContext(ctx, `
             UPDATE precheck_runs
-            SET status = ?, result_json = ?, integrity_status = 'COMPLETE', completed_at = ?
+            SET status = ?, result_json = ?, integrity_status = 'COMPLETE', completed_at = ?, input_manifest_json = ?
             WHERE precheck_id = ? AND status = 'LEASED' AND agent_id = ?
               AND lease_id = ? AND lease_epoch = ? AND binding_digest = ?
-		`, status, resultJSON, utcText(input.Now), input.PrecheckID, input.AgentID,
+		`, status, resultJSON, utcText(input.Now), manifestJSON, input.PrecheckID, input.AgentID,
 			input.LeaseID, input.LeaseEpoch, input.BindingDigest)
 		if err != nil {
 			return fmt.Errorf("complete agent precheck: %w", err)
@@ -2984,7 +3057,11 @@ func (s *Store) CompleteAgentPrecheck(ctx context.Context, input AgentPrecheckCo
 		if err := insertAgentPrecheckReceipt(ctx, tx, receipt); err != nil {
 			return err
 		}
-		if err := insertAudit(ctx, tx, "AGENT", input.AgentID, "EXPORT_PRECHECK_COMPLETED", "PRECHECK", input.PrecheckID, status, input.RequestID, input.Now); err != nil {
+		auditOperation := "EXPORT_PRECHECK_COMPLETED"
+		if executionContext.NormalImport != nil {
+			auditOperation = executionContext.CheckKind + "_COMPLETED"
+		}
+		if err := insertAudit(ctx, tx, "AGENT", input.AgentID, auditOperation, "PRECHECK", input.PrecheckID, status, input.RequestID, input.Now); err != nil {
 			return err
 		}
 		result = PrecheckCompletionResult{
@@ -3230,6 +3307,11 @@ func updatePrecheckSecretResolutionReceipt(ctx context.Context, tx *sql.Tx, agen
 }
 
 func readEncryptedPrecheckDatabaseConnection(ctx context.Context, tx *sql.Tx, binding PrecheckBinding) (EncryptedPrecheckDatabaseConnection, error) {
+	// 文件发现仅有文件系统用途，禁止获得数据库槽位，即使租约与身份有效。
+	var checkKind string
+	if err := tx.QueryRowContext(ctx, `SELECT check_kind FROM precheck_runs WHERE precheck_id=?`, binding.PrecheckID).Scan(&checkKind); err != nil || checkKind == "NORMAL_IMPORT_FILES" {
+		return EncryptedPrecheckDatabaseConnection{}, ErrPrecheckLeaseRejected
+	}
 	var connection EncryptedPrecheckDatabaseConnection
 	var connectionKind, username, tenantName, clusterName string
 	err := tx.QueryRowContext(ctx, `
@@ -3452,6 +3534,9 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 	}
 	if err != nil {
 		return PrecheckExecutionContext{}, fmt.Errorf("read precheck execution context: %w", err)
+	}
+	if configVersion == importdomain.ConfigVersion {
+		return normalImportContext(ctx, tx, binding, configJSON, compatibilityMode, platform, allowedRootsJSON)
 	}
 	executionContext, ok := parsePrecheckExecutionContext(configVersion, configJSON)
 	if ok && executionContext.AddExtraMessage != (binding.SysCredentialID != "" && binding.SysCredentialRevision > 0) {
@@ -3952,7 +4037,7 @@ func decodePrecheckResults(value string) []PrecheckCheckResult {
 	if value == "" || json.Unmarshal([]byte(value), &payload) != nil {
 		return nil
 	}
-	if matchesPrecheckShape(payload.Checks, fixedPrecheckChecks) || matchesPrecheckShape(payload.Checks, storagePrecheckCheckList()) || matchesPrecheckShape(payload.Checks, precheckcontract.LegacyChecks(false)) || matchesPrecheckShape(payload.Checks, precheckcontract.LegacyChecks(true)) {
+	if matchesPrecheckShape(payload.Checks, precheckcontract.NormalImportChecks("NORMAL_IMPORT_FILES")) || matchesPrecheckShape(payload.Checks, precheckcontract.NormalImportChecks("NORMAL_IMPORT_PREFLIGHT")) || matchesPrecheckShape(payload.Checks, fixedPrecheckChecks) || matchesPrecheckShape(payload.Checks, storagePrecheckCheckList()) || matchesPrecheckShape(payload.Checks, precheckcontract.LegacyChecks(false)) || matchesPrecheckShape(payload.Checks, precheckcontract.LegacyChecks(true)) {
 		return append([]PrecheckCheckResult(nil), payload.Checks...)
 	}
 	return nil
@@ -4022,7 +4107,7 @@ func (s *Store) UpdateDraft(ctx context.Context, input DraftUpdate) (int64, erro
                 filter_config_json = COALESCE(NULLIF(?, ''), '{}'),
                 ddl_behavior_json = COALESCE(NULLIF(?, ''), '{}'),
                 updated_at = ?
-            WHERE draft_id = ? AND revision = ? AND deleted_at IS NULL
+            WHERE draft_id = ? AND revision = ? AND deleted_at IS NULL AND draft_kind = 'OBDUMPER_EXPORT'
         `, input.ConfigJSON, input.ConfigFingerprint, input.InvalidationJSON, input.ConfigVersion, input.MetadataVersion, input.CapabilityVersion,
 			input.ObjectScopeJSON, input.ContentSelectionJSON, input.DataFormatJSON, input.OutputConfigJSON,
 			input.PerformanceConfigJSON, input.FilterConfigJSON, input.DDLBehaviorJSON,
@@ -4059,9 +4144,13 @@ func (s *Store) SubmitTaskIdempotent(ctx context.Context, input TaskSubmission, 
 		return TaskSubmissionResult{}, errors.New("task submission idempotency is invalid")
 	}
 	result := TaskSubmissionResult{TaskID: input.TaskID}
+	operation := "SUBMIT_EXPORT_DRAFT"
+	if taskType(input) == importdomain.TaskType {
+		operation = "SUBMIT_NORMAL_IMPORT_DRAFT"
+	}
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var digest, existingID string
-		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = 'SUBMIT_EXPORT_DRAFT' AND idempotency_key = ?`, input.CreatorSubjectID, idempotencyKey).Scan(&digest, &existingID)
+		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = ? AND idempotency_key = ?`, input.CreatorSubjectID, operation, idempotencyKey).Scan(&digest, &existingID)
 		if err == nil {
 			if digest != requestDigest {
 				return ErrIdempotencyConflict
@@ -4075,7 +4164,7 @@ func (s *Store) SubmitTaskIdempotent(ctx context.Context, input TaskSubmission, 
 		if err := s.submitTaskTx(ctx, tx, input); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id, operation, idempotency_key, request_digest, result_status, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, 'SUBMIT_EXPORT_DRAFT', ?, ?, 201, 'TASK', ?, '{}', ?, ?)`, input.CreatorSubjectID, idempotencyKey, requestDigest, input.TaskID, utcText(input.SubmittedAt), utcText(input.SubmittedAt.Add(24*time.Hour))); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id, operation, idempotency_key, request_digest, result_status, resource_kind, resource_id, response_json, created_at, expires_at) VALUES (?, ?, ?, ?, 201, 'TASK', ?, '{}', ?, ?)`, input.CreatorSubjectID, operation, idempotencyKey, requestDigest, input.TaskID, utcText(input.SubmittedAt), utcText(input.SubmittedAt.Add(24*time.Hour))); err != nil {
 			return fmt.Errorf("write task submission idempotency: %w", err)
 		}
 		return nil
@@ -4106,15 +4195,18 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 	if err := validateSubmissionPrecheckProof(ctx, tx, precheck.Binding); err != nil {
 		return err
 	}
+	if err := validateTaskPrecheckKind(ctx, tx, input, precheck.Binding); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `
             INSERT INTO tasks(
                 task_id, creator_subject_id, data_source_id, node_id, precheck_id,
                 credential_id, credential_revision, config_fingerprint, tool_version,
                 metadata_version, capability_version, snapshot_version, snapshot_json, planned_argv_json,
                 planned_command_redacted, storage_credential_id, storage_credential_revision,
-                parent_task_id, derivation_kind, submitted_at
+                parent_task_id, derivation_kind, submitted_at, task_type
             )
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?
             WHERE EXISTS (
                 SELECT 1
                 FROM precheck_runs
@@ -4148,7 +4240,7 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 		input.CredentialID, input.CredentialRevision, input.ConfigFingerprint, input.ToolVersion,
 		input.MetadataVersion, input.CapabilityVersion, input.SnapshotVersion, input.SnapshotJSON, input.PlannedArgvJSON,
 		input.PlannedCommandRedacted, nullableString(input.StorageCredentialID), nullableInt64(input.StorageCredentialRevision),
-		input.ParentTaskID, input.DerivationKind, utcText(input.SubmittedAt),
+		input.ParentTaskID, input.DerivationKind, utcText(input.SubmittedAt), taskType(input),
 		input.PrecheckID, input.DataSourceID, input.NodeID, input.CredentialID,
 		input.CredentialRevision, input.ConfigFingerprint, utcText(input.SubmittedAt),
 	)
@@ -4178,10 +4270,11 @@ func parseExecutionResultSummary(value sql.NullString) *ExecutionResultSummary {
 		return nil
 	}
 	var payload struct {
-		Result     string `json:"result"`
-		FileCount  uint64 `json:"fileCount"`
-		TotalBytes uint64 `json:"totalBytes"`
-		Files      []struct {
+		NormalImport bool   `json:"normalImport"`
+		Result       string `json:"result"`
+		FileCount    uint64 `json:"fileCount"`
+		TotalBytes   uint64 `json:"totalBytes"`
+		Files        []struct {
 			Path string `json:"path"`
 			Size uint64 `json:"size"`
 		} `json:"files"`
@@ -4189,6 +4282,10 @@ func parseExecutionResultSummary(value sql.NullString) *ExecutionResultSummary {
 		ObservedAt        string `json:"observedAt"`
 	}
 	if json.Unmarshal([]byte(value.String), &payload) != nil || (payload.Result != "VERIFIED" && payload.Result != "FAILED") {
+		return nil
+	}
+	// 普通导入没有输出文件，不能把缺省数值投影为导出结果；其终态和证据由执行事实展示。
+	if payload.NormalImport {
 		return nil
 	}
 	if payload.Files != nil && len(payload.Files) > 100 {
@@ -4222,10 +4319,10 @@ func (s *Store) GetTaskSummary(ctx context.Context, taskID string) (TaskSummary,
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
 		       t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
-		       t.snapshot_version,
-		       COALESCE(json_extract(t.snapshot_json, '$.database'), ''),
+		       t.snapshot_version, t.task_type,
+		       COALESCE(json_extract(t.snapshot_json, '$.config.database'), json_extract(t.snapshot_json, '$.database'), ''),
 		       COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
-		       COALESCE(json_extract(t.snapshot_json, '$.format'), ''),
+		       CASE WHEN t.task_type='OBLOADER_NORMAL_IMPORT' AND json_extract(t.snapshot_json,'$.config.content')='DDL_ONLY' THEN 'DDL' ELSE COALESCE(json_extract(t.snapshot_json, '$.config.format'),json_extract(t.snapshot_json, '$.format'), '') END,
 		       t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
 		       COALESCE(e.execution_id, ''), COALESCE(e.reconciliation_required, 0),
 		       t.submitted_at, COALESCE(e.started_at, ''), COALESCE(e.finished_at, ''),
@@ -4235,7 +4332,7 @@ func (s *Store) GetTaskSummary(ctx context.Context, taskID string) (TaskSummary,
         WHERE t.task_id = ?
     `, taskID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
-		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
+		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.TaskType, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
 		&submittedAt, &startedAt, &finishedAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -4285,10 +4382,10 @@ func (s *Store) readTaskSummary(ctx context.Context, taskID, subjectID string, g
 	err := s.db.QueryRowContext(ctx, `
 		SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.precheck_id,
 		       t.config_fingerprint, t.tool_version, t.metadata_version, t.capability_version,
-		       t.snapshot_version,
-		       COALESCE(json_extract(t.snapshot_json, '$.database'), ''),
+		       t.snapshot_version, t.task_type,
+		       COALESCE(json_extract(t.snapshot_json, '$.config.database'), json_extract(t.snapshot_json, '$.database'), ''),
 		       COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
-		       COALESCE(json_extract(t.snapshot_json, '$.format'), ''),
+		       CASE WHEN t.task_type='OBLOADER_NORMAL_IMPORT' AND json_extract(t.snapshot_json,'$.config.content')='DDL_ONLY' THEN 'DDL' ELSE COALESCE(json_extract(t.snapshot_json, '$.config.format'),json_extract(t.snapshot_json, '$.format'), '') END,
 		       t.planned_command_redacted, COALESCE(e.state, 'WAITING_SCHEDULE'),
 		       COALESCE(e.execution_id, ''), COALESCE(e.reconciliation_required, 0),
 		       COALESCE(e.cancellation_request_id, ''), COALESCE(e.cancellation_requested_at, ''), COALESCE(e.cancellation_deadline, ''),
@@ -4315,7 +4412,7 @@ func (s *Store) readTaskSummary(ctx context.Context, taskID, subjectID string, g
           )
     `, taskID, subjectID, globalRead, subjectID, subjectID).Scan(&summary.TaskID, &summary.CreatorSubjectID, &summary.DataSourceID, &summary.NodeID,
 		&summary.PrecheckID, &summary.ConfigFingerprint, &summary.ToolVersion, &summary.MetadataVersion,
-		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.Database, &summary.Table, &summary.Format,
+		&summary.CapabilityVersion, &summary.SnapshotVersion, &summary.TaskType, &summary.Database, &summary.Table, &summary.Format,
 		&summary.PlannedCommandRedacted, &summary.State, &summary.ExecutionID, &summary.ReconciliationRequired,
 		&cancellationRequestID, &cancellationRequestedAt, &cancellationDeadline,
 		&submittedAt, &startedAt, &finishedAt, &updatedAt, &resultSummaryJSON, &processEvidenceJSON, &outputKind, &outputPath,
@@ -4337,7 +4434,9 @@ func (s *Store) readTaskSummary(ctx context.Context, taskID, subjectID string, g
 			return TaskSummary{}, fmt.Errorf("parse task cancellation deadline: %w", err)
 		}
 	}
-	summary.OutputLocation = projectTaskOutputLocation(outputKind, outputPath, summary.CreatorSubjectID == subjectID)
+	if summary.TaskType == "OBDUMPER_EXPORT" {
+		summary.OutputLocation = projectTaskOutputLocation(outputKind, outputPath, summary.CreatorSubjectID == subjectID)
+	}
 	if summary.SubmittedAt, err = parseTaskListTime(submittedAt, true); err != nil {
 		return TaskSummary{}, fmt.Errorf("parse task submission time: %w", err)
 	}
@@ -4516,7 +4615,7 @@ func (s *Store) PollExecutionControl(ctx context.Context, input ExecutionControl
 		if json.Unmarshal([]byte(plannedArgvJSON), &plannedArgv) != nil || !validExecutionArgv(plannedArgv) {
 			return ErrEventRejected
 		}
-		expectedDigest, err := executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, plannedArgv)
+		expectedDigest, err := executionTaskEnvelopeDigest(ctx, tx, taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, plannedArgv)
 		if err != nil || subtle.ConstantTimeCompare([]byte(expectedDigest), []byte(input.EnvelopeDigest)) != 1 {
 			return ErrEventRejected
 		}
@@ -4850,6 +4949,7 @@ func (s *Store) ClaimTask(ctx context.Context, input Claim) error {
             SELECT ?, task_id, node_id, ?, 'STARTING', 1, 0, NULL, NULL, ?, NULL, NULL, ?
             FROM tasks
             WHERE task_id = ?
+              AND task_type = 'OBDUMPER_EXPORT'
               AND node_id = ?
               AND EXISTS (
                 SELECT 1 FROM agents
@@ -4896,6 +4996,10 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 		return ExecutionLeaseGrant{}, false, err
 	}
 	var grant ExecutionLeaseGrant
+	kind := input.TaskType
+	if kind == "" {
+		kind = "OBDUMPER_EXPORT"
+	}
 	var found bool
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var receiptDigest, receiptGrant string
@@ -4923,10 +5027,10 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 			}
 			return err
 		}
-		var plannedArgvJSON string
+		var plannedArgvJSON, snapshotJSON string
 		err := tx.QueryRowContext(ctx, `
             SELECT t.task_id, t.planned_argv_json, t.config_fingerprint, t.tool_version,
-                   t.metadata_version, t.capability_version
+                   t.metadata_version, t.capability_version, t.task_type, t.snapshot_json
             FROM tasks AS t
             JOIN precheck_runs AS p ON p.precheck_id = t.precheck_id
             JOIN data_sources AS ds ON ds.data_source_id = t.data_source_id
@@ -4935,11 +5039,11 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
             JOIN auth_subjects AS owner ON owner.subject_id = t.creator_subject_id
             JOIN execution_nodes AS n ON n.node_id = t.node_id
             JOIN agents AS a ON a.agent_id = ? AND a.node_id = t.node_id AND a.status = 'ACTIVE'
-            WHERE t.node_id = ?
+            WHERE t.node_id = ? AND t.task_type = ?
 			  AND NOT EXISTS (SELECT 1 FROM task_executions AS existing WHERE existing.task_id = t.task_id)
 			  AND n.management_state = 'ENABLED'
 			  AND n.environment_check_status = 'PASSED' AND n.environment_check_code = 'TOOL_RUNTIME_READY'
-			  AND n.environment_check_facts_revision = a.facts_revision
+			  AND n.environment_check_facts_revision = a.facts_revision AND a.environment_inspection_authorized=1
 			  AND a.last_heartbeat_at IS NOT NULL AND a.last_heartbeat_at >= ?
               AND a.execution_worker_limit > 0 AND MAX(a.execution_workers_active,a.capacity_used) < a.execution_worker_limit
               AND p.status = 'SUCCEEDED' AND p.integrity_status = 'COMPLETE'
@@ -4949,9 +5053,9 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
               AND cr.status = 'ACTIVE' AND owner.account_status = 'ACTIVE'
             ORDER BY t.submitted_at ASC
             LIMIT 1
-        `, input.AgentID, input.NodeID, utcText(input.HeartbeatFreshAfter), utcText(input.Now)).Scan(
+        `, input.AgentID, input.NodeID, kind, utcText(input.HeartbeatFreshAfter), utcText(input.Now)).Scan(
 			&grant.TaskID, &plannedArgvJSON, &grant.ConfigFingerprint, &grant.ToolVersion,
-			&grant.MetadataVersion, &grant.CapabilityVersion,
+			&grant.MetadataVersion, &grant.CapabilityVersion, &grant.TaskType, &snapshotJSON,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -4962,6 +5066,13 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 		if err := json.Unmarshal([]byte(plannedArgvJSON), &grant.PlannedArgv); err != nil || !validExecutionArgv(grant.PlannedArgv) {
 			return ErrClaimIneligible
 		}
+		if kind == importdomain.TaskType {
+			var valid bool
+			grant.NormalImport, valid = normalImportExecutionInput(kind, snapshotJSON, grant.ToolVersion, grant.MetadataVersion, grant.CapabilityVersion, grant.PlannedArgv)
+			if !valid {
+				return ErrClaimIneligible
+			}
+		}
 		heap, cost, eligible, err := reserveExecutionBudgetTx(ctx, tx, input.NodeID, input.AgentID, grant.PlannedArgv)
 		if err != nil {
 			return err
@@ -4969,7 +5080,7 @@ func (s *Store) ClaimNextExecution(ctx context.Context, input ExecutionClaimNext
 		if !eligible {
 			return nil
 		}
-		digest, err := executionEnvelopeDigest(grant.TaskID, input.NodeID, grant.ConfigFingerprint, grant.ToolVersion, grant.MetadataVersion, grant.CapabilityVersion, grant.PlannedArgv)
+		digest, err := executionTaskEnvelopeDigest(ctx, tx, grant.TaskID, input.NodeID, grant.ConfigFingerprint, grant.ToolVersion, grant.MetadataVersion, grant.CapabilityVersion, grant.PlannedArgv)
 		if err != nil {
 			return err
 		}
@@ -5368,6 +5479,15 @@ func (s *Store) AppendAuthenticatedExecutionEvent(ctx context.Context, agentID s
 		if input.EventSeq != nextSequence {
 			return ErrEventRejected
 		}
+		if input.EventType == "RESULT_FACTS_OBSERVED" {
+			var kind string
+			var facts struct {
+				NormalImport bool `json:"normalImport"`
+			}
+			if tx.QueryRowContext(ctx, `SELECT t.task_type FROM tasks t JOIN task_executions e ON e.task_id=t.task_id WHERE e.execution_id=?`, input.ExecutionID).Scan(&kind) != nil || json.Unmarshal([]byte(input.PayloadJSON), &facts) != nil || (kind == importdomain.TaskType) != facts.NormalImport {
+				return ErrEventRejected
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO execution_events(
                 event_id, execution_id, lease_id, lease_epoch, event_seq, event_type,
@@ -5512,7 +5632,7 @@ func (s *Store) AuthorizeExecutionLogAppend(ctx context.Context, agentID, execut
 	if err := json.Unmarshal([]byte(argvJSON), &argv); err != nil || !validExecutionArgv(argv) {
 		return "", ErrEventRejected
 	}
-	expectedDigest, err := executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, argv)
+	expectedDigest, err := executionTaskEnvelopeDigest(ctx, s.db, taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, argv)
 	if err != nil || subtle.ConstantTimeCompare([]byte(expectedDigest), []byte(envelopeDigest)) != 1 {
 		return "", ErrEventRejected
 	}
@@ -6030,6 +6150,10 @@ func validProjectedExecutionEvent(input ExecutionEvent) bool {
 		}
 		return terminal == "FAILED" && len(payload) == 2 && validExecutionErrorCode(payload["errorCode"])
 	case "RESULT_FACTS_OBSERVED":
+		if payload["normalImport"] == true {
+			result := payload["result"]
+			return payload["checkpointPresent"] == false && ((result == "VERIFIED" && len(payload) == 3) || (result == "FAILED" && len(payload) == 4 && validExecutionErrorCode(payload["errorCode"])))
+		}
 		_, checkpointPresent := payload["checkpointPresent"].(bool)
 		result, resultOK := payload["result"].(string)
 		if !resultOK || (result != "VERIFIED" && result != "FAILED") || !validExecutionCount(payload["fileCount"]) || !validExecutionBytes(payload["totalBytes"]) || !validExecutionOutputFiles(payload["files"]) || !checkpointPresent {
@@ -6324,6 +6448,7 @@ func mergeExecutionResultSummaryTx(ctx context.Context, tx *sql.Tx, executionID 
         ORDER BY event_seq DESC LIMIT 1`, executionID).Scan(&factsPayload)
 	if err == nil {
 		var facts struct {
+			NormalImport      bool   `json:"normalImport"`
 			Result            string `json:"result"`
 			FileCount         uint64 `json:"fileCount"`
 			TotalBytes        uint64 `json:"totalBytes"`
@@ -6335,14 +6460,18 @@ func mergeExecutionResultSummaryTx(ctx context.Context, tx *sql.Tx, executionID 
 		}
 		if json.Unmarshal([]byte(factsPayload), &facts) == nil && (facts.Result == "VERIFIED" || facts.Result == "FAILED") {
 			summary["result"] = facts.Result
-			summary["fileCount"] = facts.FileCount
-			summary["totalBytes"] = facts.TotalBytes
-			summary["checkpointPresent"] = facts.CheckpointPresent
-			files := make([]map[string]any, 0, len(facts.Files))
-			for _, file := range facts.Files {
-				files = append(files, map[string]any{"path": file.Path, "size": file.Size})
+			if facts.NormalImport {
+				summary["normalImport"], summary["checkpointPresent"] = true, false
+			} else {
+				summary["fileCount"] = facts.FileCount
+				summary["totalBytes"] = facts.TotalBytes
+				summary["checkpointPresent"] = facts.CheckpointPresent
+				files := make([]map[string]any, 0, len(facts.Files))
+				for _, file := range facts.Files {
+					files = append(files, map[string]any{"path": file.Path, "size": file.Size})
+				}
+				summary["files"] = files
 			}
-			summary["files"] = files
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read execution result facts: %w", err)
@@ -6934,12 +7063,12 @@ func validateAgentPrecheckCompletion(input AgentPrecheckCompletion) error {
 	if !validAgentOpaqueValue(input.AgentID, 256) || !validAgentOpaqueValue(input.PrecheckID, 256) ||
 		!validAgentOpaqueValue(input.LeaseID, 256) || input.LeaseEpoch < 1 ||
 		!isSHA256(input.BindingDigest) || !validAgentOpaqueValue(input.RequestID, 256) ||
-		!isSHA256(input.RequestDigest) || input.Now.IsZero() || (len(input.Results) != len(fixedPrecheckChecks) && len(input.Results) != len(storagePrecheckCheckList())) {
+		!isSHA256(input.RequestDigest) || input.Now.IsZero() || (len(input.Results) != len(fixedPrecheckChecks) && len(input.Results) != len(storagePrecheckCheckList()) && len(input.Results) != 1 && len(input.Results) != 6) {
 		return errors.New("agent precheck completion is invalid")
 	}
 	seen := make(map[string]bool, len(input.Results))
 	for _, result := range input.Results {
-		if !oneOf(result.Check, "DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "NODE_RESOURCE", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH", "STORAGE_WRITE") ||
+		if !oneOf(result.Check, "INPUT_FILES", "INPUT_MAPPING", "WRITE_ACCESS", "DATABASE_CONNECTIVITY", "OBJECT_ACCESS", "TOOL_ENVIRONMENT", "NODE_RESOURCE", "OUTPUT_PATH", "OUTPUT_EMPTY", "AVAILABLE_SPACE", "STORAGE_CONNECTIVITY", "STORAGE_AUTH", "STORAGE_WRITE") ||
 			seen[result.Check] || !oneOf(result.Status, "PASSED", "FAILED", "UNKNOWN") || !precheckcontract.ValidResult(result.Check, result.Status, result.EvidenceCode) {
 			return errors.New("agent precheck completion results are invalid")
 		}
@@ -6984,7 +7113,7 @@ func validateTaskSubmission(input TaskSubmission) error {
 	if input.TaskID == "" || input.CreatorSubjectID == "" || input.AuditActorID == "" || input.DataSourceID == "" || input.NodeID == "" || input.PrecheckID == "" || input.CredentialID == "" || input.CredentialRevision < 1 || input.ToolVersion == "" || input.MetadataVersion == "" || input.CapabilityVersion == "" || input.RequestID == "" || input.SubmittedAt.IsZero() {
 		return errors.New("task submission identity is invalid")
 	}
-	if !oneOf(input.SnapshotVersion, "v1", "v2") {
+	if !oneOf(taskType(input), "OBDUMPER_EXPORT", importdomain.TaskType) || taskType(input) == importdomain.TaskType && !validateNormalImportSubmission(input) || taskType(input) == "OBDUMPER_EXPORT" && !oneOf(input.SnapshotVersion, "v1", "v2") {
 		return errors.New("task snapshot version is invalid")
 	}
 	if !isSHA256(input.ConfigFingerprint) {
@@ -7010,6 +7139,9 @@ func validateClaim(input Claim) error {
 }
 
 func validateExecutionClaimNext(input ExecutionClaimNext) error {
+	if input.TaskType != "" && input.TaskType != "OBDUMPER_EXPORT" && input.TaskType != importdomain.TaskType {
+		return ErrClaimIneligible
+	}
 	if !isSHA256(input.RequestDigest) {
 		return errors.New("execution claim digest is invalid")
 	}
@@ -7089,7 +7221,7 @@ func executionEnvelopeDigestForStoredTask(ctx context.Context, tx *sql.Tx, execu
 	if err != nil {
 		return "", err
 	}
-	return executionEnvelopeDigest(taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, argv)
+	return executionTaskEnvelopeDigest(ctx, tx, taskID, nodeID, configFingerprint, toolVersion, metadataVersion, capabilityVersion, argv)
 }
 
 func validateExecutionEvent(input ExecutionEvent) error {

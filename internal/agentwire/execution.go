@@ -11,19 +11,25 @@ import (
 
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/executionargv"
+	"ob-data-orch/internal/importdomain"
+	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/logstream"
 )
 
 // ExecutionClaimNext 是 Agent 请求当前节点下一条固定 OBDUMPER_EXPORT 的最小输入。
 // 请求没有 taskId、参数、路径或凭据字段，避免本地调用方把协议扩展成任意执行。
 type ExecutionClaimNext struct {
-	BootID string
-	SentAt time.Time
+	// TaskType 缺省只领取导出；普通导入必须由本机独立开关显式选择。
+	TaskType string
+	BootID   string
+	SentAt   time.Time
 }
 
 // ExecutionGrant 是服务端签发的不可变导出信封。
 // Argv 只含控制面已冻结的非密码令牌，密码另由当前 execution 租约解析。
 type ExecutionGrant struct {
+	TaskType       string
+	NormalImport   *importfiles.ExecutionInput
 	TaskID         string
 	ExecutionID    string
 	LeaseID        string
@@ -258,17 +264,19 @@ type executionLogGapAcceptedPayload struct {
 }
 
 type executionClaimPayload struct {
-	TaskID               string   `json:"taskId"`
-	ExecutionID          string   `json:"executionId"`
-	LeaseID              string   `json:"leaseId"`
-	LeaseEpoch           int64    `json:"leaseEpoch"`
-	ExpiresAt            string   `json:"expiresAt"`
-	EnvelopeDigest       string   `json:"envelopeDigest"`
-	Argv                 []string `json:"argv"`
-	ToolVersion          string   `json:"toolVersion"`
-	MetadataVersion      string   `json:"metadataVersion"`
-	CapabilityVersion    string   `json:"capabilityVersion"`
-	RealExecutionEnabled *bool    `json:"realExecutionEnabled"`
+	TaskType             string                      `json:"taskType,omitempty"`
+	NormalImport         *importfiles.ExecutionInput `json:"normalImport,omitempty"`
+	TaskID               string                      `json:"taskId"`
+	ExecutionID          string                      `json:"executionId"`
+	LeaseID              string                      `json:"leaseId"`
+	LeaseEpoch           int64                       `json:"leaseEpoch"`
+	ExpiresAt            string                      `json:"expiresAt"`
+	EnvelopeDigest       string                      `json:"envelopeDigest"`
+	Argv                 []string                    `json:"argv"`
+	ToolVersion          string                      `json:"toolVersion"`
+	MetadataVersion      string                      `json:"metadataVersion"`
+	CapabilityVersion    string                      `json:"capabilityVersion"`
+	RealExecutionEnabled *bool                       `json:"realExecutionEnabled"`
 }
 
 type executionSecretPayload struct {
@@ -654,6 +662,10 @@ func (s *StateStore) withExecutionState(ctx context.Context, bootID, executionID
 func (c *httpsClient) claimNextExecution(ctx context.Context, state *identityState, requestID string, input ExecutionClaimNext) (ExecutionGrant, bool, error) {
 	request := executionClaimNextRequest{ProtocolVersion: state.ProtocolVersion, AgentID: state.AgentID, NodeID: state.NodeID, BootID: input.BootID, RequestID: requestID, SentAt: input.SentAt.UTC().Format(time.RFC3339Nano), PayloadType: "OBDUMPER_EXPORT_CLAIM_NEXT"}
 	request.Payload.Capability = "OBDUMPER_EXPORT"
+	if input.TaskType == importdomain.TaskType {
+		request.PayloadType = "OBLOADER_NORMAL_IMPORT_CLAIM_NEXT"
+		request.Payload.Capability = importdomain.TaskType
+	}
 	body, err := json.Marshal(request)
 	if err != nil {
 		return ExecutionGrant{}, false, ErrProtocolRejected
@@ -686,6 +698,13 @@ func (c *httpsClient) claimNextExecution(ctx context.Context, state *identitySta
 		return ExecutionGrant{}, false, ErrProtocolRejected
 	}
 	grant := ExecutionGrant{TaskID: payload.TaskID, ExecutionID: payload.ExecutionID, LeaseID: payload.LeaseID, LeaseEpoch: payload.LeaseEpoch, ExpiresAt: expiresAt, EnvelopeDigest: payload.EnvelopeDigest, Argv: append([]string(nil), payload.Argv...)}
+	grant.TaskType, grant.NormalImport = payload.TaskType, payload.NormalImport
+	if input.TaskType == importdomain.TaskType && (grant.TaskType != importdomain.TaskType || payload.ToolVersion != importdomain.ToolVersion || payload.MetadataVersion != importdomain.MetadataVersion || payload.CapabilityVersion != importdomain.CapabilityVersion) {
+		return ExecutionGrant{}, false, ErrProtocolRejected
+	}
+	if input.TaskType != importdomain.TaskType && (grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT") {
+		return ExecutionGrant{}, false, ErrProtocolRejected
+	}
 	if !validExecutionGrant(grant) {
 		return ExecutionGrant{}, false, ErrProtocolRejected
 	}
@@ -705,12 +724,19 @@ func (p *executionSecretPayload) destroy() {
 }
 
 func validExecutionClaimNext(input ExecutionClaimNext) bool {
-	return validOpaqueValue(input.BootID, 256) && !input.SentAt.IsZero()
+	return (input.TaskType == "" || input.TaskType == "OBDUMPER_EXPORT" || input.TaskType == importdomain.TaskType) && validOpaqueValue(input.BootID, 256) && !input.SentAt.IsZero()
 }
 func validExecutionLeaseInput(bootID, executionID, leaseID string, leaseEpoch int64, digest string, sentAt time.Time) bool {
 	return validOpaqueValue(bootID, 256) && validOpaqueValue(executionID, 256) && !strings.ContainsAny(executionID, "/\\?#:") && validOpaqueValue(leaseID, 256) && leaseEpoch > 0 && validExecutionDigest(digest) && !sentAt.IsZero()
 }
 func validExecutionGrant(grant ExecutionGrant) bool {
+	if grant.TaskType == importdomain.TaskType {
+		if grant.NormalImport == nil || !grant.NormalImport.Manifest.Valid(grant.NormalImport.Config) || !executionargv.ValidNormalImport(grant.Argv) {
+			return false
+		}
+	} else if grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT" {
+		return false
+	}
 	return validExecutionLeaseInput("boot", grant.ExecutionID, grant.LeaseID, grant.LeaseEpoch, grant.EnvelopeDigest, grant.ExpiresAt) && validOpaqueValue(grant.TaskID, 256) && !strings.ContainsAny(grant.TaskID, "/\\?#:") && grant.ExpiresAt.After(time.Now().UTC().Add(-5*time.Minute)) && validExecutionArgv(grant.Argv)
 }
 func validExecutionDigest(value string) bool {

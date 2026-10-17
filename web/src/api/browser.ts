@@ -1,5 +1,7 @@
 import { parseNodeHostInventory, parseNodeRuntimeInspection, parseNodeActivity, parseNodeRecentTasks, type NodeHostInventory, type NodeRuntimeInspection, type NodeActivity, type NodeRecentTasks } from './nodeRuntimeFacts'
 import { parseTaskExecutionFacts } from './taskExecutionFacts'
+import { createNormalImportApi, type NormalImportApi } from './normalImport'
+import { invalidNodeResponse, NodeResponseError, readNodeResponse } from './nodeResponseValidation'
 
 export type { NodeHostInventory, NodeRuntimeInspection, NodeInspectionItem, NodeActivity, NodeActivityItem, NodeRecentTasks } from './nodeRuntimeFacts'
 
@@ -61,15 +63,34 @@ export function taskDetailErrorMessage(error: unknown, fallback: string): string
 }
 
 export function executionNodeErrorMessage(error: unknown, fallback: string): string {
-  const apiError = error as Partial<ApiError>
+  if (error instanceof NodeResponseError) return error.message
+  const apiError = (error && typeof error === 'object' ? error : {}) as Partial<ApiError>
   if (apiError.code === 'CSRF_TOKEN_UNAVAILABLE') return '当前页面未获得请求安全令牌，已拒绝写操作。请刷新页面后重试。'
   if (apiError.code === 'EXECUTION_NODE_NAME_UNAVAILABLE') return '执行节点名称不可用，请更换后重试。'
   if (apiError.code === 'EXECUTION_NODE_RUNNING_TASK') return '节点仍有运行或待核对的执行，暂不能永久删除。'
   if (apiError.status === 401) return '登录状态或请求安全校验已失效，请刷新页面后重试。'
   if (apiError.status === 404) return '执行节点不存在或当前身份无权访问。'
-  if (apiError.status === 409 || apiError.status === 412 || apiError.conflict) return '执行节点已发生变化，请刷新后重新比较。'
-  if (apiError.code === 'NETWORK_UNAVAILABLE') return '无法连接控制面，请检查当前环境后重试。'
-  return apiError.message || fallback
+  if (apiError.status === 403) return '当前登录身份无权完成此节点操作，请联系管理员核对权限。'
+  if (apiError.status === 409 || apiError.status === 412 || apiError.conflict) return '执行节点已发生变化，请刷新并核对最新配置后再操作。'
+  if (apiError.code === 'NETWORK_UNAVAILABLE') return '无法连接控制面，请检查控制面服务与网络连接后重试。'
+  const messages: Readonly<Record<string, string>> = {
+    RESPONSE_INVALID: '执行节点数据缺少必要信息或格式不兼容。请刷新页面；若仍出现，请联系管理员核对网页、控制面和 Agent 版本。',
+    API_DEPENDENCY_NOT_CONFIGURED: '控制面尚未配置此节点操作所需的服务，请联系管理员检查执行节点管理配置。',
+    EXECUTION_NODE_QUERY_UNAVAILABLE: '控制面暂时无法读取节点记录、执行额度或任务统计。请重试；若仍失败，请联系管理员检查控制面服务与本地数据库状态。',
+    EXECUTION_NODE_CREATE_UNAVAILABLE: '控制面暂时无法确认节点创建结果，请先刷新节点列表核对，再决定是否重试。',
+    EXECUTION_NODE_UPDATE_UNAVAILABLE: '控制面暂时无法确认节点保存结果，请先刷新并核对节点配置，再决定是否重试。',
+    EXECUTION_NODE_DELETE_UNAVAILABLE: '控制面暂时无法确认节点删除结果，请先刷新节点列表核对，再决定是否重试。',
+    EXECUTION_NODE_ENABLE_UNAVAILABLE: '控制面暂时无法确认节点启用结果，请先刷新并核对节点管理状态，再决定是否重试。',
+    ENVIRONMENT_CHECK_REQUEST_UNAVAILABLE: '控制面暂时无法确认环境检查请求结果，请先刷新节点查看是否已进入检查中，再决定是否重试。',
+    NODE_ENABLE_PRECONDITION_FAILED: '节点尚未满足启用条件，请确认 Agent 在线，并在节点详情完成环境检查后再启用。',
+    AGENT_ENROLLMENT_NOT_CONFIGURED: '控制面尚未配置 Agent 关联服务，请联系管理员完成关联服务配置后重新生成注册码。',
+    AGENT_ENROLLMENT_UNAVAILABLE: '注册码暂时无法签发，请关闭弹层并刷新节点后重试；若仍失败，请联系管理员检查 Agent 关联服务。',
+    EXECUTION_NODE_FIELDS_INVALID: '节点配置未通过校验，请检查表单标出的字段后重新保存。',
+    REVISION_REQUIRED: '当前页面缺少有效的节点版本，请刷新节点后重新操作。',
+  }
+  if (apiError.code && Object.hasOwn(messages, apiError.code)) return messages[apiError.code]!
+  // 未识别错误使用当前动作的固定提示，不展示服务端或程序异常的原始消息。
+  return `${fallback}请刷新节点核对结果；若仍失败，请联系管理员检查控制面服务。`
 }
 
 // storageCredentialErrorMessage 为存储凭据读写失败保留安全错误语义：
@@ -243,7 +264,7 @@ export type ExecutionNodeAgentAssociationStatus = 'PENDING' | 'ASSOCIATED'
 
 export type ExecutionNodeHeartbeatStatus = 'NEVER_CONNECTED' | 'ONLINE' | 'OFFLINE'
 
-export type ExecutionNodeEnvironmentStatus = 'NOT_CHECKED' | 'NORMAL' | 'ABNORMAL' | 'EXPIRED'
+export type ExecutionNodeEnvironmentStatus = 'NOT_CHECKED' | 'NORMAL' | 'ABNORMAL' | 'EXPIRED' | 'UNCONFIRMED'
 
 export type ExecutionNodeCapacityStatus = 'UNKNOWN' | 'AVAILABLE' | 'BUSY'
 
@@ -585,7 +606,7 @@ export interface TaskOverview {
   readonly derivedTasks?: readonly { readonly id: string; readonly displayName: string; readonly state: string }[]
   readonly presentation?: TaskListItem
   readonly id: string
-  readonly type: 'OBDUMPER_EXPORT'
+  readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'
   readonly dataSourceId: string
   readonly nodeId: string
   readonly precheckId: string
@@ -624,8 +645,8 @@ export interface ExportConfigTemplateItem {
 
 export interface TaskSnapshot {
   readonly groups?: readonly TaskSnapshotGroup[]
-  readonly type: 'OBDUMPER_EXPORT'
-  readonly snapshotVersion: 'v1' | 'v2'
+  readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'
+  readonly snapshotVersion: 'v1' | 'v2' | 'normal-import-v1'
   readonly dataSourceId: string
   readonly nodeId: string
   readonly precheckId: string
@@ -638,7 +659,7 @@ export interface TaskSnapshot {
 }
 
 export interface TaskSnapshotGroup {
-  readonly key: 'source' | 'objects' | 'format' | 'output' | 'review'
+  readonly key: 'source' | 'objects' | 'format' | 'output' | 'review' | 'input' | 'execution'
   readonly label: string
   readonly fields: readonly { readonly key: string; readonly label: string; readonly value: string; readonly source: 'UNKNOWN' }[]
 }
@@ -696,7 +717,7 @@ export interface TaskResultSummary {
 
 export interface TaskListItem {
   readonly id: string
-  readonly type: 'OBDUMPER_EXPORT'
+  readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'
   readonly dataSourceId: string
   readonly objectSummary?: string
   readonly state: string
@@ -733,7 +754,7 @@ export interface TaskListFilter {
   readonly nodeId?: string
   readonly scope?: 'MINE' | 'ALL'
   readonly keyword?: string
-  readonly types?: readonly 'OBDUMPER_EXPORT'[]
+  readonly types?: readonly ('OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT')[]
   readonly states?: readonly TaskListState[]
   readonly createdFrom?: string
   readonly createdTo?: string
@@ -792,7 +813,7 @@ export interface TaskLogStream {
   close(): void
 }
 
-export interface BrowserApi {
+export interface BrowserApi extends NormalImportApi {
   listDataSources(): Promise<DataSourceSummary[]>
   listDataSourcePage(query: Record<string, string>): Promise<{ items: DataSourceSummary[]; nextCursor: string; total: number }>
   listExecutionNodes(): Promise<ExecutionNodeSummary[]>
@@ -863,6 +884,10 @@ const unsafeLogPattern = /(?:--(?:user|password)(?:\s+|=)\S+|\b(?:username|passw
 
 export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
   return {
+    ...createNormalImportApi({
+      read: path => request(options, path, { method: 'GET' }),
+      write: (path, body, revision, method = 'POST') => request(options, path, writeRequest(options, body, revision, method, true)),
+    }),
     async listDataSources() {
       const body = await request(options, '/api/v1/data-sources', { method: 'GET' })
       return listOf(body, 'items').map(parseDataSourceSummary)
@@ -875,53 +900,53 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     },
     async listExecutionNodes() {
       const body = await request(options, '/api/v1/execution-nodes', { method: 'GET' })
-      return listOf(body, 'items').map(parseExecutionNodeSummary)
+      return readNodeResponse('list', () => listOf(body, 'items').map(parseExecutionNodeSummary))
     },
     async listExportNodeCandidates() {
       const body = await request(options, '/api/v1/execution-nodes?eligibleFor=OBDUMPER_EXPORT', { method: 'GET' })
-      return listOf(body, 'items').map(parseExecutionNodeCandidate)
+      return readNodeResponse('list', () => listOf(body, 'items').map(parseExecutionNodeCandidate))
     },
     async listDataSourceConnectionTestNodeCandidates() {
       const body = await request(options, '/api/v1/execution-nodes?eligibleFor=DATA_SOURCE_CONNECTION_TEST', { method: 'GET' })
-      return listOf(body, 'items').map(parseExecutionNodeCandidate)
+      return readNodeResponse('list', () => listOf(body, 'items').map(parseExecutionNodeCandidate))
     },
     async getExecutionNode(nodeId) {
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}`, { method: 'GET' })
-      return parseExecutionNodeDetail(requiredObject(body, 'item'))
+      return readNodeResponse('configuration', () => parseExecutionNodeDetail(requiredObject(body, 'item')))
     },
     async createExecutionNode(input) {
       const body = await request(options, '/api/v1/execution-nodes', writeRequest(options, input))
-      return requiredString(body, 'id')
+      return readNodeResponse('creation', () => requiredString(body, 'id'), true)
     },
     async updateExecutionNode(nodeId, revision, input) {
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}`, writeRequest(options, input, revision, 'PATCH', false))
-      return parseExecutionNodeDetail(requiredObject(body, 'item'))
+      return readNodeResponse('configuration', () => parseExecutionNodeDetail(requiredObject(body, 'item')), true)
     },
     async issueExecutionNodeEnrollment(nodeId) {
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}:enrollments`, writeEmptyPost(options))
-      const enrollment = parseExecutionNodeEnrollment(body)
-      if (enrollment.nodeId !== nodeId) {
-        throw localError('RESPONSE_INVALID', '控制面返回了与当前节点不一致的关联材料。')
-      }
-      return enrollment
+      return readNodeResponse('enrollment', () => {
+        const enrollment = parseExecutionNodeEnrollment(body)
+        if (enrollment.nodeId !== nodeId) invalidNodeResponse('注册材料与当前节点不一致。')
+        return enrollment
+      }, true)
     },
     async requestExecutionNodeEnvironmentCheck(nodeId, revision) {
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}:environment-check`, writeVersionedEmptyPost(options, revision))
-      return parseExecutionNodeDetail(requiredObject(body, 'item'))
+      return readNodeResponse('configuration', () => parseExecutionNodeDetail(requiredObject(body, 'item')), true)
     },
     async enableExecutionNode(nodeId, revision) {
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}:enable`, writeVersionedEmptyPost(options, revision))
-      return parseExecutionNodeDetail(requiredObject(body, 'item'))
+      return readNodeResponse('configuration', () => parseExecutionNodeDetail(requiredObject(body, 'item')), true)
     },
     async deleteExecutionNode(nodeId, revision) {
       // 独立动作端点让旧控制面返回 404，避免 HMR 后仍把永久删除执行成归档。
       const body = await request(options, `/api/v1/execution-nodes/${encodeURIComponent(nodeId)}:delete`, writeVersionedEmptyPost(options, revision))
-      const outcome = requiredString(body, 'outcome')
-      const revisionAfterDeletion = requiredNumber(body, 'revision')
-      if (outcome !== 'DELETED' || revisionAfterDeletion !== 0) {
-        throw localError('RESPONSE_INVALID', '控制面返回了无效执行节点删除结果。')
-      }
-      return { outcome, revision: revisionAfterDeletion, agentAccessRevoked: requiredBoolean(body, 'agentAccessRevoked') }
+      return readNodeResponse('deletion', () => {
+        const outcome = requiredString(body, 'outcome')
+        const revisionAfterDeletion = requiredNumber(body, 'revision')
+        if (outcome !== 'DELETED' || revisionAfterDeletion !== 0) invalidNodeResponse('删除结果或删除后的版本不符合约定。')
+        return { outcome: 'DELETED', revision: revisionAfterDeletion, agentAccessRevoked: requiredBoolean(body, 'agentAccessRevoked') }
+      }, true)
     },
     async getDataSource(dataSourceId) {
       const body = await request(options, `/api/v1/data-sources/${encodeURIComponent(dataSourceId)}`, { method: 'GET' })
@@ -1400,9 +1425,11 @@ function parseDataSourceConnectionTestVerificationSource(value: Record<string, u
 }
 
 function parseExecutionNodeCandidate(value: unknown): ExecutionNodeCandidate {
-  const node = asRecord(value)
-  const platform = parseExecutionNodePlatform(node)
-  return { id: requiredString(node, 'id'), displayName: requiredString(node, 'displayName'), platform }
+  return readNodeResponse('summary', () => {
+    const node = asRecord(value)
+    const platform = parseExecutionNodePlatform(node)
+    return { id: requiredString(node, 'id'), displayName: requiredString(node, 'displayName'), platform }
+  })
 }
 
 // parseStorageCredentialListItem 按白名单解析存储凭据安全投影：
@@ -1429,137 +1456,155 @@ function parseStorageCredentialListItem(value: unknown): StorageCredentialListIt
 }
 
 function parseExecutionNodeSummary(value: unknown): ExecutionNodeSummary {
-  const node = asRecord(value)
-  const managementState = requiredString(node, 'managementState')
-  const agentAssociationStatus = parseExecutionNodeAgentAssociationStatus(node)
-  const heartbeatStatus = parseExecutionNodeHeartbeatStatus(node)
-  const lastHeartbeatAt = nullableString(node, 'lastHeartbeatAt')
-  const environmentStatus = parseExecutionNodeEnvironmentStatus(node)
-  const capacityStatus = parseExecutionNodeCapacityStatus(node)
-  const acceptsNewTasks = node.acceptsNewTasks
-  const unavailableReasons = requiredStringList(node, 'unavailableReasons')
-  const agentFacts = parseExecutionNodeAgentFacts(node.agentFacts)
-  if (managementState !== 'ENABLED' && managementState !== 'DISABLED' && managementState !== 'MAINTENANCE') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点管理状态。')
-  }
-  if (typeof acceptsNewTasks !== 'boolean') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点可用性结论。')
-  }
-  if (agentAssociationStatus === 'PENDING' && (heartbeatStatus !== 'NEVER_CONNECTED' || lastHeartbeatAt !== null || agentFacts)) {
-    throw localError('RESPONSE_INVALID', '控制面返回了不一致的 Agent 关联事实。')
-  }
-  if (heartbeatStatus === 'NEVER_CONNECTED' && lastHeartbeatAt !== null) {
-    throw localError('RESPONSE_INVALID', '控制面返回了不一致的节点心跳事实。')
-  }
-  if (acceptsNewTasks && (managementState !== 'ENABLED' || agentAssociationStatus !== 'ASSOCIATED' || heartbeatStatus !== 'ONLINE' || environmentStatus !== 'NORMAL' || capacityStatus !== 'AVAILABLE' || unavailableReasons.length > 0)) {
-    throw localError('RESPONSE_INVALID', '控制面返回了不安全的节点事实状态。')
-  }
-  return {
-    id: requiredString(node, 'id'),
-    displayName: requiredString(node, 'displayName'),
-    platform: parseExecutionNodePlatform(node),
-    managementState,
-    agentAssociationStatus,
-    heartbeatStatus,
-    lastHeartbeatAt,
-    environmentStatus,
-    capacityStatus,
-    acceptsNewTasks,
-    unavailableReasons,
-    ...(agentFacts ? { agentFacts } : {}),
-    ...(node.taskSummary !== undefined ? { taskSummary: parseNodeTaskSummary(node.taskSummary) } : {}),
-    ...(node.executionQuota !== undefined ? { executionQuota: parseNodeExecutionQuota(node.executionQuota) } : {}),
-    ...(node.budgetPolicy !== undefined ? { budgetPolicy: parseNodeBudgetPolicy(node.budgetPolicy) } : {}),
-    ...(node.defaultJvmMemory !== undefined ? { defaultJvmMemory: requiredString(node, 'defaultJvmMemory') } : {}),
-    revision: requiredNumber(node, 'revision'),
-    updatedAt: requiredString(node, 'updatedAt'),
-  }
+  return readNodeResponse('summary', () => {
+    const node = asRecord(value)
+    const managementState = requiredString(node, 'managementState')
+    const agentAssociationStatus = parseExecutionNodeAgentAssociationStatus(node)
+    const heartbeatStatus = parseExecutionNodeHeartbeatStatus(node)
+    const lastHeartbeatAt = nullableString(node, 'lastHeartbeatAt')
+    const environmentStatus = parseExecutionNodeEnvironmentStatus(node)
+    const capacityStatus = parseExecutionNodeCapacityStatus(node)
+    const acceptsNewTasks = node.acceptsNewTasks
+    const unavailableReasons = requiredStringList(node, 'unavailableReasons')
+    const agentFacts = parseExecutionNodeAgentFacts(node.agentFacts)
+    if (managementState !== 'ENABLED' && managementState !== 'DISABLED' && managementState !== 'MAINTENANCE') {
+      invalidNodeResponse('管理状态不在支持范围内。')
+    }
+    if (typeof acceptsNewTasks !== 'boolean') {
+      invalidNodeResponse('是否接收新任务的结论缺失，或格式不正确。')
+    }
+    if (agentAssociationStatus === 'PENDING' && (heartbeatStatus !== 'NEVER_CONNECTED' || lastHeartbeatAt !== null || agentFacts)) {
+      invalidNodeResponse('Agent 尚未关联，却同时返回心跳或资源采样。')
+    }
+    if (heartbeatStatus === 'NEVER_CONNECTED' && lastHeartbeatAt !== null) {
+      invalidNodeResponse('节点标记为从未连接，却同时返回最近心跳时间。')
+    }
+    if (acceptsNewTasks && (managementState !== 'ENABLED' || agentAssociationStatus !== 'ASSOCIATED' || heartbeatStatus !== 'ONLINE' || environmentStatus !== 'NORMAL' || capacityStatus !== 'AVAILABLE' || unavailableReasons.length > 0)) {
+      invalidNodeResponse('接收新任务的结论与管理、心跳、环境、槽位或阻断原因不一致。')
+    }
+    return {
+      id: requiredString(node, 'id'),
+      displayName: requiredString(node, 'displayName'),
+      platform: parseExecutionNodePlatform(node),
+      managementState,
+      agentAssociationStatus,
+      heartbeatStatus,
+      lastHeartbeatAt,
+      environmentStatus,
+      capacityStatus,
+      acceptsNewTasks,
+      unavailableReasons,
+      ...(agentFacts ? { agentFacts } : {}),
+      ...(node.taskSummary !== undefined ? { taskSummary: parseNodeTaskSummary(node.taskSummary) } : {}),
+      ...(node.executionQuota !== undefined ? { executionQuota: parseNodeExecutionQuota(node.executionQuota) } : {}),
+      ...(node.budgetPolicy !== undefined ? { budgetPolicy: parseNodeBudgetPolicy(node.budgetPolicy) } : {}),
+      ...(node.defaultJvmMemory !== undefined ? { defaultJvmMemory: requiredString(node, 'defaultJvmMemory') } : {}),
+      revision: requiredNumber(node, 'revision'),
+      updatedAt: requiredString(node, 'updatedAt'),
+    }
+  })
 }
 
 function parseNodeTaskSummary(value: unknown) {
-  const summary = asRecord(value)
-  const result = { running: requiredNumber(summary, 'running'), waiting: requiredNumber(summary, 'waiting'), reconciling: requiredNumber(summary, 'reconciling') }
-  if (Object.values(result).some(count => !Number.isSafeInteger(count) || count < 0)) throw localError('RESPONSE_INVALID', '控制面返回了无效节点任务统计。')
-  if (summary.scope !== undefined && summary.scope !== 'MINE' && summary.scope !== 'ALL') throw localError('RESPONSE_INVALID', '控制面返回了无效任务统计范围。')
-  return { ...result, scope: summary.scope === 'ALL' ? 'ALL' as const : 'MINE' as const }
+  return readNodeResponse('taskSummary', () => {
+    const summary = asRecord(value)
+    const result = { running: requiredNumber(summary, 'running'), waiting: requiredNumber(summary, 'waiting'), reconciling: requiredNumber(summary, 'reconciling') }
+    if (Object.values(result).some(count => !Number.isSafeInteger(count) || count < 0)) invalidNodeResponse('任务数量必须是精度可靠的非负整数。')
+    if (summary.scope !== undefined && summary.scope !== 'MINE' && summary.scope !== 'ALL') invalidNodeResponse('任务统计范围不在支持范围内。')
+    return { ...result, scope: summary.scope === 'ALL' ? 'ALL' as const : 'MINE' as const }
+  })
 }
 
 function parseNodeExecutionQuota(value: unknown) {
-  const quota = asRecord(value)
-  const result = { totalGiB: requiredNumber(quota, 'totalGiB'), reservedGiB: requiredNumber(quota, 'reservedGiB'), usedGiB: requiredNumber(quota, 'usedGiB') }
-  if (![result.totalGiB, result.reservedGiB, result.usedGiB].every(Number.isFinite) || result.totalGiB <= 0 || result.reservedGiB < 0 || result.usedGiB < 0 || result.reservedGiB + result.usedGiB > result.totalGiB) throw localError('RESPONSE_INVALID', '控制面返回了无效执行预算。')
-  return result
+  return readNodeResponse('quota', () => {
+    const quota = asRecord(value)
+    const result = { totalGiB: requiredNumber(quota, 'totalGiB'), reservedGiB: requiredNumber(quota, 'reservedGiB'), usedGiB: requiredNumber(quota, 'usedGiB') }
+    if (![result.totalGiB, result.reservedGiB, result.usedGiB].every(Number.isFinite) || result.totalGiB <= 0 || result.reservedGiB < 0 || result.usedGiB < 0 || result.reservedGiB + result.usedGiB > result.totalGiB) invalidNodeResponse('额度总量必须大于零，且预留与已用量之和不能超过总量。')
+    return result
+  })
 }
 
 function parseNodeBudgetPolicy(value: unknown) {
-  const policy = asRecord(value)
-  const result = { systemReservedBytes: policy.systemReservedBytes === undefined ? 0 : requiredNonNegativeInteger(policy, 'systemReservedBytes'), taskOverheadBytes: policy.taskOverheadBytes === undefined ? 0 : requiredNonNegativeInteger(policy, 'taskOverheadBytes') }
-  if (!Object.values(result).every(Number.isSafeInteger)) throw localError('RESPONSE_INVALID', '控制面返回了无效节点预算配置。')
-  return result
+  return readNodeResponse('budgetPolicy', () => {
+    const policy = asRecord(value)
+    const result = { systemReservedBytes: policy.systemReservedBytes === undefined ? 0 : requiredNonNegativeInteger(policy, 'systemReservedBytes'), taskOverheadBytes: policy.taskOverheadBytes === undefined ? 0 : requiredNonNegativeInteger(policy, 'taskOverheadBytes') }
+    if (!Object.values(result).every(Number.isSafeInteger)) invalidNodeResponse('系统预留或每任务额外预留不是精度可靠的非负字节数。')
+    return result
+  })
 }
 
 function parseExecutionNodeAgentAssociationStatus(value: Record<string, unknown>): ExecutionNodeAgentAssociationStatus {
-  const status = requiredString(value, 'agentAssociationStatus')
-  if (status !== 'PENDING' && status !== 'ASSOCIATED') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效 Agent 关联状态。')
-  }
-  return status
+  return readNodeResponse('summary', () => {
+    const status = requiredString(value, 'agentAssociationStatus')
+    if (status !== 'PENDING' && status !== 'ASSOCIATED') {
+      invalidNodeResponse('Agent 关联状态不在支持范围内。')
+    }
+    return status
+  })
 }
 
 function parseExecutionNodeHeartbeatStatus(value: Record<string, unknown>): ExecutionNodeHeartbeatStatus {
-  const status = requiredString(value, 'heartbeatStatus')
-  if (status !== 'NEVER_CONNECTED' && status !== 'ONLINE' && status !== 'OFFLINE') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点心跳状态。')
-  }
-  return status
+  return readNodeResponse('summary', () => {
+    const status = requiredString(value, 'heartbeatStatus')
+    if (status !== 'NEVER_CONNECTED' && status !== 'ONLINE' && status !== 'OFFLINE') {
+      invalidNodeResponse('Agent 心跳状态不在支持范围内。')
+    }
+    return status
+  })
 }
 
 function parseExecutionNodeEnvironmentStatus(value: Record<string, unknown>): ExecutionNodeEnvironmentStatus {
-  const status = requiredString(value, 'environmentStatus')
-  if (status !== 'NOT_CHECKED' && status !== 'NORMAL' && status !== 'ABNORMAL' && status !== 'EXPIRED') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点环境状态。')
-  }
-  return status
+  return readNodeResponse('summary', () => {
+    const status = requiredString(value, 'environmentStatus')
+    if (status !== 'NOT_CHECKED' && status !== 'NORMAL' && status !== 'ABNORMAL' && status !== 'EXPIRED' && status !== 'UNCONFIRMED') {
+      invalidNodeResponse('环境状态不在支持范围内。')
+    }
+    return status
+  })
 }
 
 function parseExecutionNodeCapacityStatus(value: Record<string, unknown>): ExecutionNodeCapacityStatus {
-  const status = requiredString(value, 'capacityStatus')
-  if (status !== 'UNKNOWN' && status !== 'AVAILABLE' && status !== 'BUSY') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点容量状态。')
-  }
-  return status
+  return readNodeResponse('summary', () => {
+    const status = requiredString(value, 'capacityStatus')
+    if (status !== 'UNKNOWN' && status !== 'AVAILABLE' && status !== 'BUSY') {
+      invalidNodeResponse('任务槽位状态不在支持范围内。')
+    }
+    return status
+  })
 }
 
 function parseExecutionNodeAgentFacts(value: unknown): ExecutionNodeAgentFacts | undefined {
-  if (value === undefined || value === null) return undefined
-  const facts = asRecord(value)
-  const capacityTotal = requiredNonNegativeInteger(facts, 'capacityTotal')
-  const capacityUsed = requiredNonNegativeInteger(facts, 'capacityUsed')
-  if (capacityUsed > capacityTotal) {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点容量快照。')
-  }
-  const memoryTotalBytes = facts.memoryTotalBytes === undefined ? undefined : requiredNumber(facts, 'memoryTotalBytes')
-  const memoryAvailableBytes = facts.memoryAvailableBytes === undefined ? undefined : requiredNumber(facts, 'memoryAvailableBytes')
-  // 旧服务可省略整对采样；部分缺失、越界或精度不可靠时拒绝投影，不能推算容量。
-  if ((memoryTotalBytes !== undefined || memoryAvailableBytes !== undefined) &&
-    (typeof memoryTotalBytes !== 'number' || typeof memoryAvailableBytes !== 'number' ||
-      !Number.isSafeInteger(memoryTotalBytes) || !Number.isSafeInteger(memoryAvailableBytes) ||
-      memoryTotalBytes <= 0 || memoryAvailableBytes < 0 || memoryAvailableBytes > memoryTotalBytes)) {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效节点内存采样。')
-  }
-  return {
-    os: requiredString(facts, 'os'),
-    arch: requiredString(facts, 'arch'),
-    agentVersion: requiredString(facts, 'agentVersion'),
-    bootId: requiredString(facts, 'bootId'),
-    observedAt: requiredString(facts, 'observedAt'),
-    capacityTotal,
-    capacityUsed,
-    cpuUsagePercent: optionalPercentage(facts, 'cpuUsagePercent'),
-    memoryUsagePercent: optionalPercentage(facts, 'memoryUsagePercent'),
-    memoryTotalBytes,
-    memoryAvailableBytes,
-  }
+  return readNodeResponse('agentFacts', () => {
+    if (value === undefined || value === null) return undefined
+    const facts = asRecord(value)
+    const capacityTotal = requiredNonNegativeInteger(facts, 'capacityTotal')
+    const capacityUsed = requiredNonNegativeInteger(facts, 'capacityUsed')
+    if (capacityUsed > capacityTotal) {
+      invalidNodeResponse('已用任务槽位超过了总槽位数。')
+    }
+    const memoryTotalBytes = facts.memoryTotalBytes === undefined ? undefined : requiredNumber(facts, 'memoryTotalBytes')
+    const memoryAvailableBytes = facts.memoryAvailableBytes === undefined ? undefined : requiredNumber(facts, 'memoryAvailableBytes')
+    // 旧服务可省略整对采样；部分缺失、越界或精度不可靠时拒绝投影，不能推算容量。
+    if ((memoryTotalBytes !== undefined || memoryAvailableBytes !== undefined) &&
+      (typeof memoryTotalBytes !== 'number' || typeof memoryAvailableBytes !== 'number' ||
+        !Number.isSafeInteger(memoryTotalBytes) || !Number.isSafeInteger(memoryAvailableBytes) ||
+        memoryTotalBytes <= 0 || memoryAvailableBytes < 0 || memoryAvailableBytes > memoryTotalBytes)) {
+      invalidNodeResponse('物理内存总量与可用量缺项、超出可靠范围，或可用量大于总量。')
+    }
+    return {
+      os: requiredString(facts, 'os'),
+      arch: requiredString(facts, 'arch'),
+      agentVersion: requiredString(facts, 'agentVersion'),
+      bootId: requiredString(facts, 'bootId'),
+      observedAt: requiredString(facts, 'observedAt'),
+      capacityTotal,
+      capacityUsed,
+      cpuUsagePercent: optionalPercentage(facts, 'cpuUsagePercent'),
+      memoryUsagePercent: optionalPercentage(facts, 'memoryUsagePercent'),
+      memoryTotalBytes,
+      memoryAvailableBytes,
+    }
+  })
 }
 
 function parseExecutionNodeDetail(value: Record<string, unknown>): ExecutionNodeDetail {
@@ -1579,134 +1624,163 @@ function parseExecutionNodeDetail(value: Record<string, unknown>): ExecutionNode
   }
 }
 
+const nodeDiagnosticLabels: Readonly<Record<string, string>> = {
+  factsRevision: '绑定事实版本', leaseEpoch: '执行租约版本', lastEventSeq: '最近事件序号',
+  pendingBatches: '待上传日志批次数', pendingGaps: '待补传日志缺口数', pendingBytes: '待上传字节数',
+  checkId: '检查标识', agentId: 'Agent 标识', taskId: '任务标识', executionId: '执行标识', leaseId: '租约标识',
+  startedAt: 'Agent 启动时间', requestedAt: '检查请求时间', completedAt: '检查完成时间', lastUploadAt: '最近上传时间',
+}
+
 function nodeDiagnosticInteger(value: Record<string, unknown>, field: string, maximum = Number.MAX_SAFE_INTEGER): number {
-  const number = requiredNonNegativeInteger(value, field)
-  if (!Number.isSafeInteger(number) || number > maximum) throw localError('RESPONSE_INVALID', '控制面返回了无效节点诊断数值。')
+  const number = value[field]
+  if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 0 || number > maximum) invalidNodeResponse(`${nodeDiagnosticLabels[field] ?? '诊断计数'}缺失、为负数、超过上限或超出可靠整数范围。`)
   return number
 }
 
 function nodeDiagnosticTime(value: Record<string, unknown>, field: string): string | undefined {
   if (value[field] === undefined) return undefined
-  const time = requiredString(value, field)
-  if (!/^\d{4}-\d{2}-\d{2}T/.test(time) || !Number.isFinite(Date.parse(time))) throw localError('RESPONSE_INVALID', '控制面返回了无效节点诊断时间。')
+  const time = value[field]
+  if (typeof time !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(time) || !Number.isFinite(Date.parse(time))) invalidNodeResponse(`${nodeDiagnosticLabels[field] ?? '诊断时间'}的格式不正确。`)
   return time
 }
 
 function nodeDiagnosticID(value: Record<string, unknown>, field: string): string {
-  const id = requiredString(value, field)
-  if (!/^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$/.test(id)) throw localError('RESPONSE_INVALID', '控制面返回了无效节点诊断标识。')
+  const id = value[field]
+  if (typeof id !== 'string' || !/^[0-9A-Za-z][0-9A-Za-z_-]{0,255}$/.test(id)) invalidNodeResponse(`${nodeDiagnosticLabels[field] ?? '诊断记录标识'}缺失，或格式不正确。`)
   return id
 }
 
 function parseNodeEnvironmentCheck(value: unknown): ExecutionNodeDetail['environmentCheck'] {
-  if (value === undefined) return undefined
-  const check = asRecord(value)
-  const status = requiredString(check, 'status')
-  if (status !== 'NOT_CHECKED' && status !== 'PENDING' && status !== 'PASSED' && status !== 'FAILED') throw localError('RESPONSE_INVALID', '控制面返回了无效环境检查记录。')
-  const code = check.code === undefined ? undefined : requiredString(check, 'code')
-  if (code !== undefined && !['TOOL_RUNTIME_READY', 'TOOL_RUNTIME_INVALID', 'TOOL_RUNTIME_UNAVAILABLE'].includes(code)) throw localError('RESPONSE_INVALID', '控制面返回了无效环境检查结果码。')
-  const factsRevision = nodeDiagnosticInteger(check, 'factsRevision')
-  const requestedAt = nodeDiagnosticTime(check, 'requestedAt')
-  const completedAt = nodeDiagnosticTime(check, 'completedAt')
-  if ((completedAt && requestedAt && Date.parse(completedAt) < Date.parse(requestedAt)) || (status === 'PASSED' && (code !== 'TOOL_RUNTIME_READY' || factsRevision < 1 || !completedAt))) throw localError('RESPONSE_INVALID', '控制面返回了不完整环境检查记录。')
-  const source = check.source === undefined ? undefined : requiredString(check, 'source') as 'SUBJECT' | 'AGENT' | 'SYSTEM' | 'UNKNOWN'
-  if (source !== undefined && !['SUBJECT', 'AGENT', 'SYSTEM', 'UNKNOWN'].includes(source)) throw localError('RESPONSE_INVALID', '控制面返回了无效检查来源。')
-  return { checkId: check.checkId === undefined ? undefined : nodeDiagnosticID(check, 'checkId'), status, code, factsRevision, requestedAt, completedAt, source, inspection: parseNodeRuntimeInspection(check.inspection) }
+  return readNodeResponse('environmentCheck', () => {
+    if (value === undefined) return undefined
+    const check = asRecord(value)
+    const status = requiredString(check, 'status')
+    if (status !== 'NOT_CHECKED' && status !== 'PENDING' && status !== 'PASSED' && status !== 'FAILED') invalidNodeResponse('环境检查状态不在支持范围内。')
+    const code = check.code === undefined ? undefined : requiredString(check, 'code')
+    if (code !== undefined && !['TOOL_RUNTIME_READY', 'TOOL_RUNTIME_INVALID', 'TOOL_RUNTIME_UNAVAILABLE'].includes(code)) invalidNodeResponse('存在当前页面尚未支持的环境检查结果码。')
+    const factsRevision = nodeDiagnosticInteger(check, 'factsRevision')
+    const requestedAt = nodeDiagnosticTime(check, 'requestedAt')
+    const completedAt = nodeDiagnosticTime(check, 'completedAt')
+    if (completedAt && requestedAt && Date.parse(completedAt) < Date.parse(requestedAt)) invalidNodeResponse('检查完成时间早于请求时间。')
+    if (status === 'PASSED' && (code !== 'TOOL_RUNTIME_READY' || factsRevision < 1 || !completedAt)) invalidNodeResponse('检查标记为通过，但缺少成功结果、绑定事实版本或完成时间。')
+    const source = check.source === undefined ? undefined : requiredString(check, 'source') as 'SUBJECT' | 'AGENT' | 'SYSTEM' | 'UNKNOWN'
+    if (source !== undefined && !['SUBJECT', 'AGENT', 'SYSTEM', 'UNKNOWN'].includes(source)) invalidNodeResponse('环境检查来源不在支持范围内。')
+    return { checkId: check.checkId === undefined ? undefined : nodeDiagnosticID(check, 'checkId'), status, code, factsRevision, requestedAt, completedAt, source, inspection: parseNodeRuntimeInspection(check.inspection) }
+  })
 }
 
 function parseInstalledRuntimeVersion(value: unknown, java: boolean): InstalledRuntimeVersion | undefined {
-  if (value === undefined) return undefined
-  const item = asRecord(value)
-  const version = requiredString(item, 'version')
-  const source = requiredString(item, 'source')
-  if (!/^[0-9][0-9A-Za-z._+-]{0,63}$/.test(version) || (java ? source !== 'JAVA_RELEASE' : source !== 'JAR_MANIFEST' && source !== 'JAR_POM')) throw localError('RESPONSE_INVALID', '控制面返回了无效安装版本事实。')
-  return { version, source: source as InstalledRuntimeVersion['source'] }
+  return readNodeResponse('runtimeVersions', () => {
+    if (value === undefined) return undefined
+    const item = asRecord(value)
+    const version = requiredString(item, 'version')
+    const source = requiredString(item, 'source')
+    if (!/^[0-9][0-9A-Za-z._+-]{0,63}$/.test(version) || (java ? source !== 'JAVA_RELEASE' : source !== 'JAR_MANIFEST' && source !== 'JAR_POM')) invalidNodeResponse('安装版本格式不正确，或版本来源与运行时类型不匹配。')
+    return { version, source: source as InstalledRuntimeVersion['source'] }
+  })
 }
 
 function parseNodeAgentDiagnostics(value: unknown, observedAt: string | undefined): ExecutionNodeAgentDiagnostics | undefined {
-  if (value === undefined) return undefined
-  const item = asRecord(value)
-  const digest = (field: string, optional = false) => {
-    if (optional && item[field] === undefined) return undefined
-    const value = requiredString(item, field)
-    if (!/^[a-f0-9]{64}$/.test(value)) throw localError('RESPONSE_INVALID', '控制面返回了无效运行配置摘要。')
-    return value
-  }
-  const versions = item.runtimeVersions === undefined ? undefined : asRecord(item.runtimeVersions)
-  const startedAt = nodeDiagnosticTime(item, 'startedAt')
-  if (startedAt && observedAt && Date.parse(startedAt) > Date.parse(observedAt)) throw localError('RESPONSE_INVALID', '控制面返回了矛盾的 Agent 启动时间。')
-  const protocolVersion = requiredString(item, 'protocolVersion')
-  if (!/^[0-9A-Za-z._-]{1,64}$/.test(protocolVersion)) throw localError('RESPONSE_INVALID', '控制面返回了无效 Agent 协议版本。')
-  return {
-    agentId: nodeDiagnosticID(item, 'agentId'), protocolVersion, factsRevision: nodeDiagnosticInteger(item, 'factsRevision'), startedAt,
-    host: parseNodeHostInventory(item.host),
-    runtimeConfigurationDigest: digest('runtimeConfigurationDigest', true), expectedRuntimeConfigurationDigest: digest('expectedRuntimeConfigurationDigest')!,
-    runtimeVersions: versions ? { java: parseInstalledRuntimeVersion(versions.java, true), obloader: parseInstalledRuntimeVersion(versions.obloader, false), obdumper: parseInstalledRuntimeVersion(versions.obdumper, false) } : undefined,
-    logQueue: parseNodeLogQueue(item.logQueue, observedAt, startedAt),
-  }
+  return readNodeResponse('diagnostics', () => {
+    if (value === undefined) return undefined
+    const item = asRecord(value)
+    const digest = (field: string, optional = false) => {
+      if (optional && item[field] === undefined) return undefined
+      const value = requiredString(item, field)
+      if (!/^[a-f0-9]{64}$/.test(value)) invalidNodeResponse('运行配置摘要的格式不正确，无法核对配置是否一致。')
+      return value
+    }
+    const versions = item.runtimeVersions === undefined ? undefined : asRecord(item.runtimeVersions)
+    const startedAt = nodeDiagnosticTime(item, 'startedAt')
+    if (startedAt && observedAt && Date.parse(startedAt) > Date.parse(observedAt)) invalidNodeResponse('Agent 启动时间晚于本次资源采样时间。')
+    const protocolVersion = requiredString(item, 'protocolVersion')
+    if (!/^[0-9A-Za-z._-]{1,64}$/.test(protocolVersion)) invalidNodeResponse('Agent 协议版本缺失或格式不正确。')
+    return {
+      agentId: nodeDiagnosticID(item, 'agentId'), protocolVersion, factsRevision: nodeDiagnosticInteger(item, 'factsRevision'), startedAt,
+      host: parseNodeHostInventory(item.host),
+      runtimeConfigurationDigest: digest('runtimeConfigurationDigest', true), expectedRuntimeConfigurationDigest: digest('expectedRuntimeConfigurationDigest')!,
+      runtimeVersions: versions ? { java: parseInstalledRuntimeVersion(versions.java, true), obloader: parseInstalledRuntimeVersion(versions.obloader, false), obdumper: parseInstalledRuntimeVersion(versions.obdumper, false) } : undefined,
+      logQueue: parseNodeLogQueue(item.logQueue, observedAt, startedAt),
+    }
+  })
 }
 
 function parseNodeLogQueue(value: unknown, observedAt: string | undefined, startedAt: string | undefined): ExecutionNodeLogQueue | undefined {
-  if (value === undefined) return undefined
-  const item = asRecord(value)
-  const lastUploadResult = requiredString(item, 'lastUploadResult')
-  const lastUploadAt = nodeDiagnosticTime(item, 'lastUploadAt')
-  if ((lastUploadResult !== 'UNKNOWN' && lastUploadResult !== 'SUCCEEDED' && lastUploadResult !== 'FAILED') || (lastUploadResult === 'UNKNOWN' ? lastUploadAt !== undefined : lastUploadAt === undefined) || (lastUploadAt && observedAt && Date.parse(lastUploadAt) > Date.parse(observedAt)) || (lastUploadAt && startedAt && Date.parse(lastUploadAt) < Date.parse(startedAt))) throw localError('RESPONSE_INVALID', '控制面返回了无效日志队列上传事实。')
-  return { pendingBatches: nodeDiagnosticInteger(item, 'pendingBatches', 2 ** 30), pendingGaps: nodeDiagnosticInteger(item, 'pendingGaps', 2 ** 30), pendingBytes: nodeDiagnosticInteger(item, 'pendingBytes', 2 ** 30 + 16 * 2 ** 20), lastUploadResult, lastUploadAt }
+  return readNodeResponse('logQueue', () => {
+    if (value === undefined) return undefined
+    const item = asRecord(value)
+    const lastUploadResult = requiredString(item, 'lastUploadResult')
+    const lastUploadAt = nodeDiagnosticTime(item, 'lastUploadAt')
+    if (lastUploadResult !== 'UNKNOWN' && lastUploadResult !== 'SUCCEEDED' && lastUploadResult !== 'FAILED') invalidNodeResponse('存在当前页面尚未支持的上传结果。')
+    if (lastUploadResult === 'UNKNOWN' ? lastUploadAt !== undefined : lastUploadAt === undefined) invalidNodeResponse('上传结果与上传时间缺项或互相矛盾。')
+    if (lastUploadAt && observedAt && Date.parse(lastUploadAt) > Date.parse(observedAt)) invalidNodeResponse('最近上传时间晚于本次资源采样时间。')
+    if (lastUploadAt && startedAt && Date.parse(lastUploadAt) < Date.parse(startedAt)) invalidNodeResponse('最近上传时间早于当前 Agent 的启动时间。')
+    return { pendingBatches: nodeDiagnosticInteger(item, 'pendingBatches', 2 ** 30), pendingGaps: nodeDiagnosticInteger(item, 'pendingGaps', 2 ** 30), pendingBytes: nodeDiagnosticInteger(item, 'pendingBytes', 2 ** 30 + 16 * 2 ** 20), lastUploadResult, lastUploadAt }
+  })
 }
 
 function parseNodeActiveExecutions(value: unknown): ExecutionNodeDetail['activeExecutions'] {
-  if (value === undefined) return undefined
-  const item = asRecord(value)
-  const scope = requiredString(item, 'scope')
-  if ((scope !== 'READABLE' && scope !== 'ALL') || !Array.isArray(item.items) || item.items.length > 1024) throw localError('RESPONSE_INVALID', '控制面返回了无效活动执行事实。')
-  const seen = new Set<string>()
-  const items = item.items.map(value => {
+  return readNodeResponse('activeExecutions', () => {
+    if (value === undefined) return undefined
     const item = asRecord(value)
-    const executionId = nodeDiagnosticID(item, 'executionId')
-    const leaseEpoch = nodeDiagnosticInteger(item, 'leaseEpoch')
-    if (seen.has(executionId) || leaseEpoch < 1) throw localError('RESPONSE_INVALID', '控制面返回了冲突的活动执行事实。')
-    seen.add(executionId)
-    return { taskId: nodeDiagnosticID(item, 'taskId'), executionId, leaseId: nodeDiagnosticID(item, 'leaseId'), leaseEpoch, lastEventSeq: nodeDiagnosticInteger(item, 'lastEventSeq') }
+    const scope = requiredString(item, 'scope')
+    if (scope !== 'READABLE' && scope !== 'ALL') invalidNodeResponse('活动任务的读取范围不在支持范围内。')
+    if (!Array.isArray(item.items) || item.items.length > 1024) invalidNodeResponse('活动任务列表缺失，或超过允许的数量上限。')
+    const seen = new Set<string>()
+    const items = item.items.map(value => {
+      const item = asRecord(value)
+      const executionId = nodeDiagnosticID(item, 'executionId')
+      const leaseEpoch = nodeDiagnosticInteger(item, 'leaseEpoch')
+      if (seen.has(executionId)) invalidNodeResponse('同一活动任务重复出现，无法确认执行状态。')
+      if (leaseEpoch < 1) invalidNodeResponse('活动任务的执行租约版本无效。')
+      seen.add(executionId)
+      return { taskId: nodeDiagnosticID(item, 'taskId'), executionId, leaseId: nodeDiagnosticID(item, 'leaseId'), leaseEpoch, lastEventSeq: nodeDiagnosticInteger(item, 'lastEventSeq') }
+    })
+    return { scope, items }
   })
-  return { scope, items }
 }
 
 function optionalExecutionNodeDataRootUsages(value: Record<string, unknown>, field: string): readonly ExecutionNodeDataRootUsage[] | undefined {
-  const raw = value[field]
-  if (raw === undefined) return undefined
-  if (!Array.isArray(raw)) throw localError('RESPONSE_INVALID', '控制面返回了无效数据目录空间采样。')
-  return raw.map((item) => {
-    const usage = asRecord(item)
-    const totalBytes = requiredNumber(usage, 'totalBytes')
-    const availableBytes = requiredNumber(usage, 'availableBytes')
-    if (!Number.isSafeInteger(totalBytes) || !Number.isSafeInteger(availableBytes) || totalBytes < 0 || availableBytes < 0 || availableBytes > totalBytes) {
-      throw localError('RESPONSE_INVALID', '控制面返回了无效数据目录空间采样。')
-    }
-    return { root: requiredString(usage, 'root'), totalBytes, availableBytes }
+  return readNodeResponse('dataRootUsages', () => {
+    const raw = value[field]
+    if (raw === undefined) return undefined
+    if (!Array.isArray(raw)) invalidNodeResponse('目录空间列表格式不正确，或容量不可靠、可用空间大于总量。')
+    return raw.map((item) => {
+      const usage = asRecord(item)
+      const totalBytes = requiredNumber(usage, 'totalBytes')
+      const availableBytes = requiredNumber(usage, 'availableBytes')
+      if (!Number.isSafeInteger(totalBytes) || !Number.isSafeInteger(availableBytes) || totalBytes < 0 || availableBytes < 0 || availableBytes > totalBytes) {
+        invalidNodeResponse('目录空间列表格式不正确，或容量不可靠、可用空间大于总量。')
+      }
+      return { root: requiredString(usage, 'root'), totalBytes, availableBytes }
+    })
   })
 }
 
 function parseExecutionNodeEnrollment(value: Record<string, unknown>): ExecutionNodeEnrollment {
-  if (value.displayedOnce !== true) {
-    throw localError('RESPONSE_INVALID', '控制面未确认关联材料只能展示一次，已拒绝保留。')
-  }
-  return {
-    requestId: requiredString(value, 'requestId'),
-    enrollmentId: requiredString(value, 'enrollmentId'),
-    nodeId: requiredString(value, 'nodeId'),
-    enrollmentMaterial: requiredString(value, 'enrollmentMaterial'),
-    expiresAt: requiredString(value, 'expiresAt'),
-    displayedOnce: true,
-  }
+  return readNodeResponse('enrollment', () => {
+    if (value.displayedOnce !== true) {
+      invalidNodeResponse('控制面未确认注册材料只能展示一次，页面已拒绝保留。')
+    }
+    return {
+      requestId: requiredString(value, 'requestId'),
+      enrollmentId: requiredString(value, 'enrollmentId'),
+      nodeId: requiredString(value, 'nodeId'),
+      enrollmentMaterial: requiredString(value, 'enrollmentMaterial'),
+      expiresAt: requiredString(value, 'expiresAt'),
+      displayedOnce: true,
+    }
+  })
 }
 
 function parseExecutionNodePlatform(value: Record<string, unknown>): ExecutionNodePlatform {
-  const platform = requiredString(value, 'platform')
-  if (platform !== 'WINDOWS_AMD64' && platform !== 'LINUX_AMD64' && platform !== 'LINUX_ARM64') {
-    throw localError('RESPONSE_INVALID', '控制面返回了无效执行节点平台。')
-  }
-  return platform
+  return readNodeResponse('platform', () => {
+    const platform = requiredString(value, 'platform')
+    if (platform !== 'WINDOWS_AMD64' && platform !== 'LINUX_AMD64' && platform !== 'LINUX_ARM64') {
+      invalidNodeResponse('操作系统与 CPU 架构组合不在支持范围内。')
+    }
+    return platform
+  })
 }
 
 function parseExportDraftListItem(raw: unknown): ExportDraftListItem {
@@ -2086,7 +2160,7 @@ function parseExportConfigTemplateItem(value: unknown): ExportConfigTemplateItem
 
 function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
   const type = requiredString(value, 'type')
-  if (type !== 'OBDUMPER_EXPORT') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务类型。')
+  if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务类型。')
   const parentTaskId = optionalString(value, 'parentTaskId')
   const derivationKind = optionalString(value, 'derivationKind')
   if (derivationKind !== undefined && derivationKind !== 'REBUILD_FROM_CONFIG' && derivationKind !== 'RERUN_FROM_SCRATCH' && derivationKind !== 'CHECKPOINT_RESUME') {
@@ -2116,14 +2190,16 @@ function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
 function parseTaskSnapshot(value: Record<string, unknown>): TaskSnapshot {
   const type = requiredString(value, 'type')
   const snapshotVersion = requiredString(value, 'snapshotVersion')
+  if (snapshotVersion !== 'v1' && snapshotVersion !== 'v2' && snapshotVersion !== 'normal-import-v1') throw localError('RESPONSE_INVALID', '冻结配置版本无效。')
   const format = requiredString(value, 'format')
-  if (type !== 'OBDUMPER_EXPORT' || (snapshotVersion !== 'v1' && snapshotVersion !== 'v2') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV' && format !== 'DDL_CUT' && format !== 'DDL_SQL')) {
+  if ((type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') || (type === 'OBDUMPER_EXPORT' ? snapshotVersion !== 'v1' && snapshotVersion !== 'v2' : snapshotVersion !== 'normal-import-v1') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV' && format !== 'DDL_CUT' && format !== 'DDL_SQL') || type === 'OBLOADER_NORMAL_IMPORT' && !['CSV', 'CUT', 'SQL', 'DDL', 'DDL_CSV', 'DDL_CUT', 'DDL_SQL'].includes(format)) {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务快照。')
   }
   const groups = value['groups'] === undefined ? undefined : listOf(value, 'groups').map(raw => {
     const group = asRecord(raw)
     const key = requiredString(group, 'key')
-    if (!['source', 'objects', 'format', 'output', 'review'].includes(key)) throw localError('RESPONSE_INVALID', '冻结配置分组无效。')
+    const allowedGroups = type === 'OBLOADER_NORMAL_IMPORT' ? ['source', 'input', 'objects', 'execution', 'review'] : ['source', 'objects', 'format', 'output', 'review']
+    if (!allowedGroups.includes(key)) throw localError('RESPONSE_INVALID', '冻结配置分组无效。')
     const fields = listOf(group, 'fields').map(rawField => {
       const field = asRecord(rawField)
       if (field['source'] !== 'UNKNOWN') throw localError('RESPONSE_INVALID', '冻结配置来源尚未支持。')
@@ -2228,7 +2304,7 @@ function parseTaskListItem(value: unknown): TaskListItem {
   const type = requiredString(item, 'type')
   const stageEvidence = requiredString(item, 'stageEvidence')
   const progressEvidence = requiredString(item, 'progressEvidence')
-  if (type !== 'OBDUMPER_EXPORT' || stageEvidence !== 'UNAVAILABLE' || progressEvidence !== 'UNAVAILABLE') {
+  if ((type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') || stageEvidence !== 'UNAVAILABLE' || progressEvidence !== 'UNAVAILABLE') {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务列表证据。')
   }
   return {

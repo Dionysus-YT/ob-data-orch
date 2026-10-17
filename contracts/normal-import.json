@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "normal-import.json",
+  "title": "普通导入 G2 配置、草稿与文件检查",
+  "$defs": {
+    "Text": { "type": "string", "maxLength": 4096 },
+    "Digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "Config": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dataSourceId", "nodeId", "database", "filePath", "content", "scope", "parser", "execution", "cleanup"],
+      "properties": {
+        "dataSourceId": { "$ref": "#/$defs/Text" }, "nodeId": { "$ref": "#/$defs/Text" }, "database": { "$ref": "#/$defs/Text" }, "filePath": { "type": "string", "maxLength": 2048 },
+        "fileSuffix": { "$ref": "#/$defs/Text" }, "fileEncoding": { "$ref": "#/$defs/Text" }, "fileRegex": { "$ref": "#/$defs/Text" }, "logPath": { "type": "string", "maxLength": 2048 },
+        "content": { "enum": ["", "DDL_ONLY", "DATA_ONLY", "DDL_AND_DATA"] }, "format": { "enum": ["", "CSV", "CUT", "SQL"] }, "scope": { "enum": ["", "ALL", "SPECIFIC"] },
+        "objects": { "type": "object", "propertyNames": { "enum": ["table", "table-group", "view", "trigger", "obj-user", "role", "sequence", "synonym", "type", "type-body", "package", "package-body", "function", "procedure"] }, "additionalProperties": { "$ref": "#/$defs/Text" } },
+        "excludeTables": { "$ref": "#/$defs/Text" }, "parser": { "$ref": "#/$defs/Parser" }, "execution": { "$ref": "#/$defs/Execution" }, "mapping": { "$ref": "#/$defs/Mapping" },
+        "compatMysql": { "type": "boolean" }, "replaceData": { "type": "boolean" }, "replaceObject": { "type": "boolean" }, "cleanup": { "enum": ["NONE", "TRUNCATE", "DELETE"] }, "taskName": { "$ref": "#/$defs/Text" }
+      },
+      "description": "草稿允许未填完；检查与命令生成由服务端复验必填、兼容模式、格式、互斥、数值与路径规则。只接收活动参数，禁止旁路、导出、任意 SQL、argv、秘密和客户端运行事实。"
+    },
+    "Parser": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "columnSeparator": { "$ref": "#/$defs/Text" }, "columnQuote": { "$ref": "#/$defs/Text" }, "columnSplitter": { "$ref": "#/$defs/Text" }, "lineSeparator": { "$ref": "#/$defs/Text" }, "escapeCharacter": { "$ref": "#/$defs/Text" },
+        "skipHeader": { "type": "boolean" }, "skipFooter": { "type": "boolean" }, "ignoreEscape": { "type": "boolean" }, "trailDelimiter": { "type": "boolean" }, "withTrim": { "type": "boolean" }, "compress": { "type": "boolean" },
+        "nullString": { "$ref": "#/$defs/Text" }, "emptyString": { "$ref": "#/$defs/Text" }, "compressionAlgo": { "enum": ["", "zstd", "zlib", "gzip", "snappy"] }, "compressionLevel": { "$ref": "#/$defs/Text" }, "dateFormat": { "$ref": "#/$defs/Text" }, "defaultDate": { "$ref": "#/$defs/Text" }
+      }
+    },
+    "Mapping": { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "enum": ["POSITION", "CONTROL", "AUTO", "EXPLICIT"] }, "ctlPath": { "$ref": "#/$defs/Text" }, "includeColumns": { "$ref": "#/$defs/Text" }, "excludeColumns": { "$ref": "#/$defs/Text" }, "excludeDataTypes": { "$ref": "#/$defs/Text" } } },
+    "Execution": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "maxDiscards": { "$ref": "#/$defs/Text" }, "maxErrors": { "$ref": "#/$defs/Text" }, "strict": { "enum": ["", "true", "false"] }, "thread": { "$ref": "#/$defs/Text" }, "rw": { "$ref": "#/$defs/Text" }, "batch": { "$ref": "#/$defs/Text" }, "blockSize": { "$ref": "#/$defs/Text" }, "maxTps": { "$ref": "#/$defs/Text" }, "maxWaitTimeout": { "$ref": "#/$defs/Text" }, "memory": { "$ref": "#/$defs/Text" }, "nlsDateFormat": { "$ref": "#/$defs/Text" }, "nlsTimestampFormat": { "$ref": "#/$defs/Text" }, "nlsTimestampTzFormat": { "$ref": "#/$defs/Text" }
+      }
+    },
+    "Write": { "type": "object", "additionalProperties": false, "required": ["configVersion", "config"], "properties": { "configVersion": { "const": "normal-import-v1" }, "config": { "$ref": "#/$defs/Config" } } },
+    "Submit": { "type": "object", "additionalProperties": false, "required": ["precheckId"], "properties": { "precheckId": { "type": "string", "minLength": 1, "maxLength": 256 }, "confirmedConfigFingerprint": { "$ref": "#/$defs/Digest" }, "taskName": { "type": "string", "maxLength": 200, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$" } }, "description": "只引用服务端保存的当前完整预检查；任务名称在提交时可选填写，去除首尾空白后留空由服务端按目标库、格式、UTC 时间和任务标识生成。名称独立冻结，不改写已预检查配置。不接受浏览器提供的 argv、文件证明或执行事实。" },
+    "Draft": {
+      "type": "object", "additionalProperties": false, "required": ["id", "revision", "configVersion", "config", "configFingerprint", "metadataVersion", "capabilityVersion", "executionEnabled", "updatedAt"],
+      "properties": { "id": { "type": "string" }, "revision": { "type": "integer", "minimum": 1 }, "configVersion": { "const": "normal-import-v1" }, "config": { "$ref": "#/$defs/Config" }, "configFingerprint": { "$ref": "#/$defs/Digest" }, "metadataVersion": { "const": "obloader-4.3.5-normal-v1" }, "capabilityVersion": { "const": "import-odp-local-v1" }, "executionEnabled": { "type": "boolean" }, "updatedAt": { "type": "string", "format": "date-time" } }
+    },
+    "Manifest": {
+      "type": "object", "additionalProperties": false, "required": ["files", "fileCount", "totalBytes", "digest"],
+      "properties": {
+        "fileCount": { "type": "integer", "minimum": 1, "maximum": 1024 }, "totalBytes": { "type": "integer", "minimum": 0 }, "digest": { "$ref": "#/$defs/Digest" }, "metadataDigest": { "$ref": "#/$defs/Digest", "description": "可选官方辅助清单的有界摘要，不是数据文件或数据库结果。" },
+        "files": { "type": "array", "minItems": 1, "maxItems": 1024, "items": { "type": "object", "additionalProperties": false, "required": ["path", "kind", "object", "size", "modified", "sha256"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 512 }, "kind": { "enum": ["DATA", "DDL"] }, "object": { "type": "string" }, "size": { "type": "integer", "minimum": 0 }, "modified": { "type": "string", "pattern": "^-?[0-9]{1,19}$", "description": "Unix 纳秒时间以字符串表示，保持 int64 精度。" }, "sha256": { "$ref": "#/$defs/Digest" } } } }
+      }, "description": "只含受限相对路径和摘要，文件数量、总量、排序、去重、范围、摘要及内容类型均须复核；不是导入结果。"
+    },
+    "ExecutionInput": { "type": "object", "additionalProperties": false, "required": ["config", "manifest"], "properties": { "config": { "$ref": "#/$defs/Config" }, "manifest": { "$ref": "#/$defs/Manifest" } }, "description": "仅显式普通导入机器领取响应携带；完整内容纳入租约摘要，Agent 在解析秘密前和启动前复核。" },
+    "ResultFacts": { "type": "object", "additionalProperties": false, "required": ["result", "normalImport", "checkpointPresent"], "properties": { "result": { "enum": ["VERIFIED", "FAILED"] }, "normalImport": { "const": true }, "checkpointPresent": { "const": false }, "errorCode": { "enum": ["PROCESS_EXIT_NONZERO", "PROCESS_WAIT_FAILED", "TOOL_FAILED", "EVIDENCE_UNAVAILABLE", "CANCELLED_BY_REQUEST"] } }, "description": "只有失败可带固定错误码；拒绝导出文件计数、任意路径及 load.ckpt 继续资格。" },
+    "Check": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "draftId", "draftRevision", "configFingerprint", "status", "integrityStatus", "validUntil", "checkKind", "results", "inputManifest", "executionEnabled"],
+      "properties": {
+        "id": { "type": "string" }, "draftId": { "type": "string" }, "draftRevision": { "type": "integer", "minimum": 1 }, "configFingerprint": { "$ref": "#/$defs/Digest" }, "status": { "enum": ["PENDING", "LEASED", "SUCCEEDED", "FAILED", "INVALIDATED", "EXPIRED"] }, "integrityStatus": { "enum": ["UNKNOWN", "COMPLETE", "INCOMPLETE"] }, "validUntil": { "type": "string", "format": "date-time" }, "checkKind": { "enum": ["NORMAL_IMPORT_FILES", "NORMAL_IMPORT_PREFLIGHT"] }, "executionEnabled": { "type": "boolean" },
+        "inputManifest": { "oneOf": [{ "$ref": "#/$defs/Manifest" }, { "type": "null" }] },
+        "results": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "object", "additionalProperties": false, "required": ["check", "status", "evidenceCode"], "properties": { "check": { "enum": ["DATABASE_CONNECTIVITY", "WRITE_ACCESS", "TOOL_ENVIRONMENT", "NODE_RESOURCE", "INPUT_FILES", "INPUT_MAPPING"] }, "status": { "enum": ["PASSED", "FAILED", "UNKNOWN"] }, "evidenceCode": { "type": "string" } } } }
+      }, "description": "文件发现严格只含 INPUT_FILES；完整预检查按定义顺序包含六项。文件发现、UNKNOWN、过期或不完整事实不能解锁提交。"
+    }
+  }
+}

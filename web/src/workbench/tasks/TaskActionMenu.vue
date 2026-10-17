@@ -10,8 +10,8 @@ const props = defineProps<{ actions: readonly Action[]; label: string; busy?: bo
 const emit = defineEmits<{ select: [action: Action] }>()
 const open = ref(false), menu = ref<HTMLElement>(), trigger = ref<{ $el: HTMLButtonElement }>()
 let frame: number | undefined, sequence = 0, disposed = false, openIntent = false
-function actionLabel(action: Action) { return action === 'SUBMIT' ? '提交执行' : action === 'DELETE' ? '删除草稿' : action === 'CREATE_EXPORT' ? '导出' : action === 'CREATE_NORMAL_IMPORT' ? '普通导入（尚未开放）' : action === 'CREATE_DIRECT_LOAD' ? '旁路导入（尚未开放）' : taskActionLabels[action] }
-function disabled(action: Action) { return action === 'CREATE_NORMAL_IMPORT' || action === 'CREATE_DIRECT_LOAD' }
+function actionLabel(action: Action) { return action === 'SUBMIT' ? '提交执行' : action === 'DELETE' ? '删除草稿' : action === 'CREATE_EXPORT' ? '导出' : action === 'CREATE_NORMAL_IMPORT' ? '普通导入' : action === 'CREATE_DIRECT_LOAD' ? '旁路导入（尚未开放）' : taskActionLabels[action] }
+function disabled(action: Action) { return action === 'CREATE_DIRECT_LOAD' }
 function entries() { return Array.from(menu.value?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? []) }
 async function close(restore = true) { const current = ++sequence; openIntent = false; if (frame !== undefined) cancelAnimationFrame(frame); open.value = false; await nextTick(); if (!disposed && restore && current === sequence) trigger.value?.$el.focus() }
 function toggle() { if (props.busy) return; if (open.value) void close(); else { openIntent = true; open.value = true } }

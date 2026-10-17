@@ -33,6 +33,9 @@ const (
 	SourceStdout SourceKind = "OBDUMPER_STDOUT"
 	SourceStderr SourceKind = "OBDUMPER_STDERR"
 	SourceFile   SourceKind = "OBDUMPER_FILE"
+	// SourceLoaderStdout 和 SourceLoaderStderr 是普通导入真实管道来源，不混入导出日志。
+	SourceLoaderStdout SourceKind = "OBLOADER_STDOUT"
+	SourceLoaderStderr SourceKind = "OBLOADER_STDERR"
 )
 
 type RecordKind string

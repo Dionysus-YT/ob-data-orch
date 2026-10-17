@@ -1,4 +1,4 @@
-// Package agentexecution 只编排已冻结的 OBDUMPER_EXPORT 信封。
+// Package agentexecution 编排已冻结的官方工具信封；导出和普通导入各自复核业务与结果边界。
 // 它不接收浏览器参数、任意命令、任意 SQL 或任意文件操作。
 package agentexecution
 
@@ -22,6 +22,7 @@ import (
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/identifier"
+	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/nodefacts"
 	"ob-data-orch/internal/outputpath"
@@ -88,9 +89,11 @@ type Outcome struct {
 	CheckpointPresent bool
 }
 
-// Worker 每个实例最多执行一条 OBDUMPER_EXPORT；并行实例由装配层和控制面预算约束。
+// Worker 每个实例最多执行一条显式类型的冻结任务；并行实例由装配层和控制面预算约束。
 // 执行前只接受固定参数集合；任一校验失败都上报 START_REJECTED，绝不尝试替代命令或路径。
 type Worker struct {
+	// TaskType 缺省只领取导出；普通导入由装配层显式传入独立能力。
+	TaskType string
 	Protocol Protocol
 	Runtime  Runtime
 	Clock    func() time.Time
@@ -121,14 +124,14 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 			return Outcome{}, false, ErrExecutionRejected
 		}
 	}
-	grant, found, err := w.Protocol.ClaimNextExecution(ctx, agentwire.ExecutionClaimNext{BootID: w.BootID, SentAt: w.now()})
+	grant, found, err := w.Protocol.ClaimNextExecution(ctx, agentwire.ExecutionClaimNext{TaskType: w.TaskType, BootID: w.BootID, SentAt: w.now()})
 	if err != nil {
 		return Outcome{}, false, err
 	}
 	if !found {
 		return Outcome{}, false, nil
 	}
-	if !validGrant(grant) || !w.now().Before(grant.ExpiresAt) {
+	if !validGrant(grant) || !w.now().Before(grant.ExpiresAt) || (w.TaskType == importdomain.TaskType) != (grant.TaskType == importdomain.TaskType) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	w.mu.Lock()
@@ -153,14 +156,18 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, nil
 	}
 	executionPaths, ok := executionPathsFromArgv(w.Runtime.TargetPlatform, grant.Argv)
-	if !ok || (!executionPaths.StorageOutput && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots)) ||
-		(executionPaths.LogPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.LogPath, w.Runtime.AllowedRoots)) ||
+	isImport := grant.TaskType == importdomain.TaskType
+	if isImport {
+		executionPaths, ok = w.normalImportPaths(ctx, grant)
+	}
+	if !ok || (!isImport && !executionPaths.StorageOutput && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots)) ||
+		(!isImport && executionPaths.LogPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.LogPath, w.Runtime.AllowedRoots)) ||
 		(executionPaths.TmpPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.TmpPath, w.Runtime.AllowedRoots)) {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	var localOutputPath string
-	if !executionPaths.StorageOutput {
+	if !isImport && !executionPaths.StorageOutput {
 		localOutputPath, ok = outputpath.LocalFilesystemPath(w.Runtime.TargetPlatform, executionPaths.OutputPath)
 		if !ok {
 			_ = w.appendStartRejected(ctx, grant)
@@ -180,7 +187,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	defer slot.Destroy()
-	if !validExecutionSysSlot(grant.Argv, slot) {
+	if !validExecutionSysSlot(grant.Argv, slot) || isImport && slot.StorageCredential != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
@@ -226,11 +233,27 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 	defer policy.Destroy()
 	logs := newLogUploader(ctx, w.Protocol, w.BootID, grant, queue, w.Runtime.LogQueueObserver)
+	tool, parser := "", "direct-java-v1"
+	stdout, stderr := agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 1, ParserVersion: parser}, agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 2, ParserVersion: parser}
+	terminal := &normalImportTerminal{}
+	sink := logs.append
+	if isImport {
+		// 解析只接收第一层脱敏后的固定工具管道；日志缺口或未知完成标记不能解锁成功。
+		tool, parser = "OBLOADER", "obloader-4.3.5-v1"
+		stdout.SourceKind, stderr.SourceKind = logstream.SourceLoaderStdout, logstream.SourceLoaderStderr
+		stdout.ParserVersion, stderr.ParserVersion = parser, parser
+		sink = func(record logstream.Record) error { terminal.observe(record); return logs.append(record) }
+		if _, valid := w.normalImportPaths(ctx, grant); !valid || !w.now().Before(grant.ExpiresAt) {
+			_ = w.appendStartRejected(ctx, grant)
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+		}
+	}
 	process, err := agentexec.StartDirectJava(ctx, workspace, agentexec.DirectJavaLaunch{
+		Tool:   tool,
 		Intent: agentexec.StartIntent{ExecutionID: grant.ExecutionID, TaskID: grant.TaskID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, CreatedAt: w.now()},
 		BootID: w.BootID, JavaPath: w.Runtime.JavaPath, JavaSHA256: javaDigest, ToolHome: w.Runtime.ToolHome,
 		SecurityConfiguration: paths.SecurityConfiguration, BusinessArguments: append([]string(nil), grant.Argv...), Environment: toolEnvironment,
-		Output: agentexec.DirectJavaOutput{Policy: policy, Stdout: agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 1, ParserVersion: "direct-java-v1"}, Stderr: agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 2, ParserVersion: "direct-java-v1"}, Sink: logs.append},
+		Output: agentexec.DirectJavaOutput{Policy: policy, Stdout: stdout, Stderr: stderr, Sink: sink},
 	})
 	if err != nil {
 		// 已创建而监管未成立的进程不能被当作无进程；保留分配，等待租约核对。
@@ -263,6 +286,9 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
 	}
 	nextSequence++
+	if isImport {
+		return w.finishNormalImport(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, treeObserved, terminal, logs)
+	}
 	if cancelRequested {
 		if err := w.appendEvent(ctx, grant, nextSequence, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED", "errorCode": agentwire.ExecutionErrorCancelledByRequest}); err != nil {
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
@@ -433,6 +459,9 @@ func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.Execu
 }
 
 func (w *Worker) validConfiguration() bool {
+	if w.TaskType != "" && w.TaskType != "OBDUMPER_EXPORT" && w.TaskType != importdomain.TaskType {
+		return false
+	}
 	if w.Protocol == nil || w.Clock == nil || w.BootID == "" || filepath.IsAbs(w.Runtime.JavaPath) == false || filepath.IsAbs(w.Runtime.ToolHome) == false || filepath.IsAbs(w.Runtime.WorkspaceRoot) == false || len(w.Runtime.Environment) == 0 || len(w.Runtime.AllowedRoots) == 0 {
 		return false
 	}
@@ -472,6 +501,12 @@ func (w *Worker) ActiveExecution() (nodefacts.ActiveExecution, bool) {
 func validGrant(grant agentwire.ExecutionGrant) bool {
 	// v11 有 79 个固定字段，按每个字段最多两个令牌保留受限容量。
 	if grant.TaskID == "" || grant.ExecutionID == "" || grant.LeaseID == "" || grant.LeaseEpoch < 1 || len(grant.EnvelopeDigest) != 64 || len(grant.Argv) == 0 || len(grant.Argv) > 160 {
+		return false
+	}
+	if grant.TaskType == importdomain.TaskType {
+		return grant.NormalImport != nil && grant.NormalImport.Manifest.Valid(grant.NormalImport.Config) && executionargv.ValidNormalImport(grant.Argv)
+	}
+	if grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT" {
 		return false
 	}
 	_, ok := executionPathArguments(grant.Argv)
@@ -733,6 +768,8 @@ func checkpointPresent(outputPath string) bool {
 }
 
 type logUploader struct {
+	// gapped 表示正文曾因容量丢弃，不能用仍可见的完成标记断言完整成功。
+	gapped   bool
 	ctx      context.Context
 	protocol Protocol
 	bootID   string
@@ -803,6 +840,7 @@ func (u *logUploader) append(record logstream.Record) error {
 // enqueueLocalSpoolLimitGap 在正文批次无法持久化时保存同一来源的无正文缺口。
 // 缺口成功入队后继续排空工具来源；若连缺口都不能持久化则返回错误，由上层以失败关闭处理。
 func (u *logUploader) enqueueLocalSpoolLimitGap(record logstream.Record) error {
+	u.gapped = true
 	return u.queue.EnqueueGap(agentlogqueue.GapEntry{
 		ExecutionID: u.grant.ExecutionID, LeaseID: u.grant.LeaseID, LeaseEpoch: u.grant.LeaseEpoch, EnvelopeDigest: u.grant.EnvelopeDigest,
 		Gap: logstream.GapNotice{
