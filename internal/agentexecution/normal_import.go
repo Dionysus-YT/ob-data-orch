@@ -58,6 +58,20 @@ func normalImportArgumentsMatch(argv []string, config importdomain.Config) bool 
 	}
 	for i := 0; i < len(argv); i++ {
 		name := argv[i]
+		if strings.HasPrefix(name, "--strict=") {
+			if _, exists := values["--strict"]; exists {
+				return false
+			}
+			value := strings.TrimPrefix(name, "--strict=")
+			if value != "true" && value != "false" {
+				return false
+			}
+			values["--strict"] = value
+			continue
+		}
+		if name == "--strict" {
+			return false
+		}
 		if _, exists := values[name]; exists {
 			return false
 		}

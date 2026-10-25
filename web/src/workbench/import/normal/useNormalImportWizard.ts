@@ -14,7 +14,7 @@ import { useNormalImportReviewAutomation } from './useNormalImportReviewAutomati
 export function useNormalImportWizard(deps: {
   api: NormalImportApi & NormalImportReferenceApi
   route: Pick<RouteLocationNormalizedLoaded, 'query'>
-  router: Pick<Router, 'replace'>
+  router: Pick<Router, 'replace' | 'push'>
   fieldPrefix: string
 }) {
   const form = createNormalImportForm()
@@ -32,9 +32,11 @@ export function useNormalImportWizard(deps: {
     navigateTask: id => deps.router.replace({ name: 'task-detail', params: { id } }),
   })
   const attemptedStep = ref(0)
+  const validationAttempt = ref(0)
   const navigating = ref(false)
   let disposed = false
   const activeStep = computed(() => {
+    if (draft.rerunLocked.value) return normalImportSteps.review
     const value = Number(deps.route.query.step ?? 1)
     return Number.isInteger(value) && value >= normalImportSteps.source && value <= normalImportSteps.review ? value : normalImportSteps.source
   })
@@ -62,6 +64,7 @@ export function useNormalImportWizard(deps: {
   const footerLabel = computed(() => activeStep.value === normalImportSteps.execution ? '查看预检查与命令' : `下一步：${normalImportTitles[activeStep.value] ?? ''}`)
 
   async function moveToStep(step: number) {
+    if (draft.rerunLocked.value && step !== normalImportSteps.review) return
     if (disposed || navigating.value || !Number.isInteger(step) || step < normalImportSteps.source || step > normalImportSteps.review || step === activeStep.value) return
     navigating.value = true
     try { await deps.router.replace({ query: { ...deps.route.query, step: String(step) } }) }
@@ -70,6 +73,7 @@ export function useNormalImportWizard(deps: {
   function nextStep() {
     if (disposed || navigating.value || activeStep.value >= normalImportSteps.review || unsupportedDraft.value) return
     attemptedStep.value = activeStep.value
+    validationAttempt.value++
     if (!currentStepError.value) void moveToStep(activeStep.value + 1)
   }
   function previousStep() { if (activeStep.value > 1) void moveToStep(activeStep.value - 1) }
@@ -92,12 +96,14 @@ export function useNormalImportWizard(deps: {
     void references.loadSources(); void references.loadNodes()
   }
   watch(() => deps.route.query.draft, () => { void openDraftSession() }, { flush: 'sync' })
+  function retryDraft() { if (!draft.loadingDraft.value && draft.draftLoadFailure.value) void openDraftSession() }
+  function goToSources() { void deps.router.push('/data-sources') }
   onMounted(() => { void openDraftSession() })
   onScopeDispose(() => { disposed = true })
   return {
     form, ...references, ...parameters, ...draft, ...review, ...automation, hasInputs, fieldPrefix: deps.fieldPrefix, titles: normalImportTitles, steps: normalImportSteps,
-    activeStep, attemptedStep, navigating, unsupportedDraft, currentStepIssues, currentStepError, completedSteps, stepProgressPercent,
-    footerLabel, moveToStep, nextStep, previousStep, fieldError,
+    activeStep, attemptedStep, validationAttempt, navigating, unsupportedDraft, currentStepIssues, currentStepError, completedSteps, stepProgressPercent,
+    footerLabel, moveToStep, nextStep, previousStep, fieldError, retryDraft, goToSources,
   }
 }
 

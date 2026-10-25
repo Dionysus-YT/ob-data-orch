@@ -29,7 +29,7 @@ func ValidNormalImportContext(c *importdomain.Config, kind, mode string, platfor
 }
 
 func validateNormalImportRequest(r Request) error {
-	if r.NormalImport == nil || r.InputManifest != nil || string(r.Capability) != r.CheckKind || !ValidNormalImportContext(r.NormalImport, r.CheckKind, r.CompatibilityMode, r.TargetPlatform, r.AllowedRoots) ||
+	if r.DirectLoad != nil || r.NormalImport == nil || r.InputManifest != nil || string(r.Capability) != r.CheckKind || !ValidNormalImportContext(r.NormalImport, r.CheckKind, r.CompatibilityMode, r.TargetPlatform, r.AllowedRoots) ||
 		r.PrecheckID == "" || r.AgentID == "" || r.LeaseID == "" || r.LeaseEpoch < 1 || r.Binding.DraftRevision < 1 || r.Binding.CredentialRevision < 1 || r.Binding.NodeFactsVersion < 1 ||
 		r.PrecheckID != r.Binding.PrecheckID || r.NodeID != r.Binding.NodeID || r.NormalImport.NodeID != r.NodeID || r.Database != r.NormalImport.Database || r.ActiveExecution ||
 		r.OutputPath != "" || r.OutputKind != "" || r.LogPath != "" || r.StorageTarget != nil || r.WeakRead || r.EnableHiddenPk || r.AddExtraMessage || r.SkipCheckDir ||
@@ -107,7 +107,7 @@ func runNormalImport(ctx context.Context, r Request, p Probe) (Report, error) {
 // ValidateNormalImportReport 复核独立清单与整体状态，输入证据还须按冻结上下文复验。
 func ValidateNormalImportReport(report Report) error {
 	checks := precheckcontract.NormalImportChecks(report.CheckKind)
-	if len(checks) == 0 || len(report.Results) != len(checks) || report.PrecheckID == "" {
+	if len(checks) == 0 || len(report.Results) != len(checks) || report.PrecheckID == "" || report.DirectLoadConfigFingerprint != "" {
 		return ErrInvalidRequest
 	}
 	passed := true

@@ -38,7 +38,7 @@ describe('操作记录与草稿会话', () => {
     const reads = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue({ items: [draft('new')], totalPages: 2, nextCursor: 'page-two' })
     const remove = vi.fn(() => deleting.promise), navigate = vi.fn()
     const query = ref({ draftKeyword: 'old' }); const scope = effectScope(); scopes.push(scope)
-    const model = scope.run(() => useTaskDraftList(query, vi.fn(), navigate, () => ({ listExportDrafts: reads, deleteExportDraft: remove })))!
+    const model = scope.run(() => useTaskDraftList(query, vi.fn(), navigate, () => ({ listTaskDrafts: reads, deleteExportDraft: remove, deleteNormalImportDraft: vi.fn(async () => {}), deleteDirectLoadDraft: vi.fn(async () => {}) })))!
     query.value = { draftKeyword: 'new' }; await settle(); old.resolve({ items: [draft('old')], totalPages: 1 }); await settle()
     expect(model.items.value.map(item => item.id)).toEqual(['new'])
     model.next(); await settle(); expect(reads).toHaveBeenLastCalledWith(10, 'new', 'page-two')
@@ -50,7 +50,7 @@ describe('操作记录与草稿会话', () => {
     const deleting = deferred<void>(); let denied = false
     const reads = vi.fn(async () => { if (denied) throw { status: 403, code: 'DENIED', message: '无权读取' }; return { items: [draft('A')], totalPages: 1 } })
     const query = ref({ draftKeyword: 'A' }); const scope = effectScope(); scopes.push(scope)
-    const model = scope.run(() => useTaskDraftList(query, vi.fn(), vi.fn(), () => ({ listExportDrafts: reads, deleteExportDraft: () => deleting.promise })))!
+    const model = scope.run(() => useTaskDraftList(query, vi.fn(), vi.fn(), () => ({ listTaskDrafts: reads, deleteExportDraft: () => deleting.promise, deleteNormalImportDraft: vi.fn(async () => {}), deleteDirectLoadDraft: vi.fn(async () => {}) })))!
     await settle(); model.requestDelete(draft('A')); const pending = model.confirmDelete(); query.value = { draftKeyword: 'B' }; await settle()
     deleting.resolve(); await pending; expect(model.notice.value).toBe(''); expect(model.confirmation.value).toBeUndefined(); expect(model.busyId.value).toBe('')
     denied = true; await model.load(true); expect(model.restricted.value).toBe(true); expect(model.items.value).toEqual([]); expect(model.totalPages.value).toBe(0)
@@ -63,5 +63,22 @@ describe('操作记录与草稿会话', () => {
     expect(taskResultText(undefined, true)).toBe('尚无结果证据')
     expect(taskResultText({ result: 'FAILED' }, true)).toBe('结果未通过核验')
     expect(taskResultText({ result: 'VERIFIED' }, true)).toBe('远端对象未逐项核验')
+  })
+  it('统一草稿保持导入类型，恢复与删除使用导入入口', async () => {
+    const item = { ...draft('normal'), type: 'OBLOADER_NORMAL_IMPORT' as const, availableActions: ['CONTINUE_EDIT', 'DELETE'] as const }
+    const navigate = vi.fn(), removeImport = vi.fn(async () => {}), removeExport = vi.fn(async () => {})
+    const scope = effectScope(); scopes.push(scope)
+    const model = scope.run(() => useTaskDraftList(ref({}), vi.fn(), navigate, () => ({ listTaskDrafts: vi.fn(async () => ({ items: [item], totalPages: 1 })), deleteExportDraft: removeExport, deleteNormalImportDraft: removeImport, deleteDirectLoadDraft: vi.fn(async () => {}) })))!
+    await settle(); model.open(item)
+    expect(navigate).toHaveBeenCalledWith({ path: '/imports/normal/new', query: { draft: 'normal', step: '1' } })
+    model.requestDelete(item); await model.confirmDelete()
+    expect(removeImport).toHaveBeenCalledExactlyOnceWith(item); expect(removeExport).not.toHaveBeenCalled()
+  })
+  it('旁路草稿恢复到独立最终步，删除不会调用其他任务类型', async () => {
+    const item={...draft('direct'),type:'OBLOADER_DIRECT_LOAD' as const,availableActions:['CONTINUE_EDIT','SUBMIT','DELETE'] as const},navigate=vi.fn(),remove=vi.fn(async()=>{}),removeOther=vi.fn(async()=>{})
+    const scope=effectScope();scopes.push(scope)
+    const model=scope.run(()=>useTaskDraftList(ref({}),vi.fn(),navigate,()=>({listTaskDrafts:vi.fn(async()=>({items:[item],totalPages:1})),deleteExportDraft:removeOther,deleteNormalImportDraft:removeOther,deleteDirectLoadDraft:remove})))!
+    await settle();model.open(item,true);expect(navigate).toHaveBeenCalledWith({path:'/imports/direct/new',query:{draft:'direct',step:'5'}})
+    model.requestDelete(item);await model.confirmDelete();expect(remove).toHaveBeenCalledExactlyOnceWith(item);expect(removeOther).not.toHaveBeenCalled()
   })
 })

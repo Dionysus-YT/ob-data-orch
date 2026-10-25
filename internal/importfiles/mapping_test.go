@@ -66,7 +66,7 @@ func Test三格式首条结构与CSV列名映射(t *testing.T) {
 		{name: "CSV默认单引号", content: "1,'synthetic,a'\n", whole: true, config: importdomain.Config{Format: "CSV"}, count: 2},
 		{name: "CSV多字符分隔与引号内换行", content: "1||'synthetic\nvalue'\n", whole: true, config: importdomain.Config{Format: "CSV", Parser: importdomain.Parser{ColumnSeparator: "||"}}, count: 2},
 		{name: "CSV自动列名", content: "'id','note'\n1,'synthetic'\n", whole: true, config: importdomain.Config{Format: "CSV", Mapping: &importdomain.Mapping{Kind: "AUTO"}}, count: 2, names: []string{"id", "note"}},
-		{name: "CUT显式分隔与尾分隔", content: "1|##|synthetic|##|\n", whole: true, config: importdomain.Config{Format: "CUT", Parser: importdomain.Parser{ColumnSplitter: "|##|", TrailDelimiter: true}}, count: 2},
+		{name: "CUT显式分隔与尾分隔", content: "1|##|synthetic|##|\n", whole: true, config: importdomain.Config{Format: "CUT", Parser: importdomain.Parser{ColumnSplitter: "|##|", TrailDelimiter: true, LineSeparator: `\n`}}, count: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			count, names, ok := delimitedColumns([]byte(test.content), test.whole, test.config)

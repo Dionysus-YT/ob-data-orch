@@ -1,0 +1,4 @@
+.audit-detail-facts { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 3fr); gap: var(--ob-foundation-space-3); margin-block: var(--ob-foundation-space-4); }
+.audit-detail-facts dt { color: var(--ob-color-secondary); }
+.audit-detail-facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 680px) { .audit-detail-facts { grid-template-columns: minmax(0, 1fr); } }

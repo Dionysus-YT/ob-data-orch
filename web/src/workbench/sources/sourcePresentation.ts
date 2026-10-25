@@ -50,6 +50,7 @@ export function sourceUpdate(form: SourceForm, source: DataSourceDetail, clearSy
     if (form[key].trim() !== (source[key] ?? '')) changed[key] = form[key].trim()
   }
   if (form.environment && form.environment !== source.environment) changed.environment = form.environment
+  if (form.connectionKind !== source.connectionKind) changed.connectionKind = form.connectionKind
   if (form.compatibilityMode !== source.compatibilityMode) changed.compatibilityMode = form.compatibilityMode
   if (form.port !== source.port) changed.port = form.port
   const database = form.compatibilityMode === 'MYSQL' ? form.defaultDatabase ?? '' : ''

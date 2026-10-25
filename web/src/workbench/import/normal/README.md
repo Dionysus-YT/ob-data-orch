@@ -1,5 +1,9 @@
 # 普通导入向导维护索引
 
+2026-10-17 跨模块一致性整改：按用户确认沿用 Task Builder Pattern 的共同摘要、预检查与命令呈现。`useNormalImportReview` 从本模块唯一检查事实派生总览，检查通过与执行开放分开表达；复制失败使用同一会话内的独立反馈并留在命令区，迟到回调不能重放。草稿读取重试复用既有路由会话与 epoch；提交确认显示冻结目标并以安全返回获得初始焦点。高级字段重复校验继续展开和定位，参数抽屉的快速开关沿用公共焦点栈。来源日期仅复用数据源模块的纯呈现函数，读取、资格、清值、检查与提交仍由本模块独立持有。
+
+本轮前端 40 文件 / 521 项单元测试、构建（含类型）、lint、两项架构检查通过；47 个不同仓库 Chrome 场景分批验证，包含三档桌面、普通导入原生 200% 缩放、两模块快速抽屉与数据源标准页回归。外部目录 `ob-data-orch-ui-consistency-fix-20261017` 保留整改报告、79 张采纳截图与验证台账。平台样式审计仍为原有 59 项且无新增，环境 Token、工作面阴影和表格几何三项问题另行处理；本轮不提升真实导入能力或部署状态，未接入真实数据库、凭据、Agent 或官方工具执行。
+
 2026-10-16 执行切片：独立持久开关、显式类型领取、固定 Obloader 主类与专用完成证据已接通。入口和步骤布局不变；平台生命周期在 `internal/agentexecution`，导入文件/参数复核与结果归其 `normal_import.go`，固定启动属性归 `internal/agentexec/normal_import.go`。不引入旁路依赖，`load.ckpt` 继续仍关闭；安装和真实状态以[执行证据](../../../../../docs/03-technical/evidence/normal-import-execution-2026-10-16.md)为准。
 
 本模块按用户 2026-10-15 确认，完成前端五步交互与架构重构；[DEC-051](../../../../../docs/01-product/decisions.md#dec-051-普通导入五步向导与旁路模块解耦) 将文件来源和内容与格式合并。设计沿用 [Task Builder](../../../../../design-system/patterns/task-builder.md)、[前端平台基线](../../../../../docs/03-technical/frontend-platform-baseline.md#复杂向导架构与开发规范)和[普通导入业务契约](../../../../../docs/02-design/normal-import-module.md)，不复制导出资格、参数或恢复语义。
@@ -103,3 +107,5 @@
 平台样式审计仍未通过：2026-10-15 在仓库 HEAD 的独立临时源码快照与当前工作树分别运行同一检查器，均为 59 项，忽略行号后集合一致。本次移除普通导入占位页唯一使用的 `.subheading` 规则，未新增平台告警；其他历史空选择器、裸视觉值和节点自绘 Primitive 不属于本次重构范围。
 
 `tokens:check` 同样存在既有失败：HEAD 临时源码快照检查退出 1，当前 `tokens.ts`、`tokens.css` 与 HEAD 在忽略 CRLF 后逐字相同，生成脚本未修改。本次未执行 Token 重生成或改动全局视觉值，此项不能算作通过。
+
+2026-10-19 历史配置复用：草稿 DTO 的 sourceTaskId/sourceDerivation 只由服务端提供；useNormalImportDraft 独占 rerunLocked 派生状态，useNormalImportWizard 将其限定在第五步，视图消费状态，不复制锁定资格。服务端及仓储独立复验原配置与来源，提交仍取得新检查与确认。普通导入模板与草稿管理使用独立配置模型，见[复用契约](../../../../../docs/03-technical/normal-import-contract.md#2026-10-19-草稿管理与历史配置复用)。

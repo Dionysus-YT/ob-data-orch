@@ -2,7 +2,7 @@
 
 > 状态：**P0 Visual / Implementation Contract**
 >
-> 版本：4.0 · 2026-09-17
+> 版本：4.1 · 2026-10-19
 >
 > 适用范围：OB Data Orch 前端视觉语言、token、Ant Theme、Product CSS Variables、组件语义与页面实现约束。
 
@@ -129,12 +129,14 @@ Success / Warning / Error 继续通过 Ant semantic token 表达；业务页面�
 | Page Padding | `20-24px`，当前产品壳使用 `24px` |
 | Section Gap | `16 / 24 / 32px` |
 | Control Height | `36px` |
-| Table Header | `36px` |
+| Table Header | 管理表格 `36px`；向导预检查结果表 `44px` |
 | Table Row | `40-44px`，当前基线 `42px` |
 | Body | `14px` |
 | Metadata | `12px` |
 
-页面层级优先使用 Page Background、Surface、Spacing、Typography 和 Hairline Border。Card 只用于真正独立的信息单元；Table 不默认包大型 Card；普通页面分区不使用阴影。阴影只允许真实浮层：Drawer、Modal、Dropdown、Popover、Tooltip。
+页面层级优先使用 Page Background、Surface、Spacing、Typography 和 Hairline Border。Card 只用于真正独立的信息单元；Table 不默认包大型 Card。按 2026-10-19 用户要求以现有页面更新规范，管理主工作面 `.orch-management`、向导主工作面 `.orch-task-workspace`、设置主工作面 `.settings-main` 允许使用现有 `foundation.surfaceShadow`；内部表单分组、普通分区与嵌套 Card 保持平面，不叠加阴影。现役占位页 `.empty-state` 的阴影作为兼容例外保留，不复制到新页面内部分区。浮层 Drawer、Modal、Dropdown、Popover、Tooltip 使用现有 overlay / drawer shadow。
+
+表格密度按用途区分：管理列表继续消费 `component.table.headerHeight = 36` 和 `rowHeight = 42`；导出与普通导入的预检查结果表保留已验证的 `44px` 表头，多行检查结果按内容自然增高。不得将预检查的例外扩展到所有管理列表，具体边界见 [Tables Pattern](patterns/tables.md)。
 
 Radius：control `4-6px`，surface `6-8px`。禁止 `16px+` 圆角、pill everywhere 和装饰性大圆角。
 
@@ -184,6 +186,15 @@ CSS Variables 只负责 Ant 不应知道的产品布局、密度与证据结构�
 
 Design Token taxonomy 见 [tokens/README.md](tokens/README.md)。实现唯一值源为 [tokens.ts](../web/src/platform/tokens.ts)。
 
+现役图标字形及选择项中的视觉例外按下表限定，不新增全局 Token。审计只认可对应文件、选择器、属性与值同时匹配的声明；其他裸颜色、裸字号继续阻断。后续修改这些元素时优先复用已有 Token 或 Ant 主题能力。
+
+| 文件 | 选择器 / 属性 / 值 | 范围与理由 |
+| --- | --- | --- |
+| `web/src/platform/shell.css` | `.nav-icon` / `font-size` / `16px` | 与现役 16px 导航 SVG 对齐的图标几何，不改变 UI 正文字号 |
+| `web/src/workbench/export/components/SqlQueryEditor.vue` | `.sql-query-in-icon` / `font-size` / `8px` | SQL 工具栏 IN 图形中的字形；不用于普通文本或输入区 |
+| `web/src/workbench/sources/SourceEditor.vue` | `.orch-environment-chip` / `font-size` / `12px` | Ant Select 选项内部的静态环境标记；元信息密度与现役页面一致 |
+| 同上 | `.orch-environment-chip--default` / `background` / `#f0f0f0` | 仅禁选的“默认”提示；不是已保存环境值或状态色 |
+
 ## 9. Component Semantics
 
 组件按用户意图选择，而不是按外观选择。基础映射：
@@ -207,6 +218,8 @@ Design Token taxonomy 见 [tokens/README.md](tokens/README.md)。实现唯一值
 | 执行进度 | Progress |
 
 详细规则见 [component-semantics.md](patterns/component-semantics.md)。
+
+节点执行额度的 SVG 分段及只用于键盘聚焦 Tooltip 的原生 `button` 是已登记领域图形例外，详见该 Pattern 与 [执行节点 P1](pages/execution-nodes.md)。不据此允许自建通用按钮或复制 Ant 交互状态。
 
 ## 10. Action Hierarchy
 

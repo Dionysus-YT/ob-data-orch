@@ -17,6 +17,13 @@ const validInput = {
 }
 
 describe('数据源表单字段错误', () => {
+  it('直连保留租户并拒绝携带代理集群', () => {
+    const input = { ...validInput, connectionKind: 'OBSERVER_DIRECT' as const, clusterName: '' }
+    expect(validateDataSourceForm(input, true)).toEqual({})
+    expect(validateDataSourceForm({ ...input, clusterName: 'synthetic-cluster' }, true)).toHaveProperty('clusterName')
+    expect(validateDataSourceForm({ ...input, tenantName: '' }, true)).toHaveProperty('tenantName')
+    expect(dataSourceFieldErrorsFromApi({ fieldErrors: [{ field: 'connectionKind', message: '连接方式无效' }] })).toEqual({ connectionKind: '连接方式无效' })
+  })
   it('把新增表单的本地校验绑定到对应字段', () => {
     expect(validateDataSourceForm({
       ...validInput,
@@ -29,7 +36,7 @@ describe('数据源表单字段错误', () => {
       password: '',
     }, true)).toEqual({
       displayName: '请输入数据源名称。',
-      host: '请输入 ODP 地址。',
+      host: '请输入连接地址。',
       port: 'SQL 端口必须是 1 到 65535 之间的整数。',
       tenantName: '请输入租户名称。',
       username: '请输入用户名。',

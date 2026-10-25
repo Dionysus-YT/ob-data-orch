@@ -1,6 +1,19 @@
 import { parseNodeHostInventory, parseNodeRuntimeInspection, parseNodeActivity, parseNodeRecentTasks, type NodeHostInventory, type NodeRuntimeInspection, type NodeActivity, type NodeRecentTasks } from './nodeRuntimeFacts'
 import { parseTaskExecutionFacts } from './taskExecutionFacts'
+import { parseTaskProgressEvidence, type TaskProgress } from './taskProgress'
+export type { TaskProgress } from './taskProgress'
 import { createNormalImportApi, type NormalImportApi } from './normalImport'
+import { createDirectLoadApi, type DirectLoadApi } from './directLoad'
+import { createOverviewApi, type OverviewApi } from './overview'
+import { createAccessControlApi, type AccessControlApi } from './accessControl'
+import { createLogRetentionApi, type LogRetentionApi } from './logRetention'
+import { createSchedulingPolicyApi, type SchedulingPolicyApi } from './schedulingPolicy'
+import { createSchedulingTimingApi, type SchedulingTimingApi } from './schedulingTiming'
+import { createSchedulingCandidatesApi, type SchedulingCandidatesApi } from './schedulingCandidates'
+import { createSecurityPolicyApi, type SecurityPolicyApi } from './securityPolicy'
+import { createToolCompatibilityApi, type ToolCompatibilityApi } from './toolCompatibility'
+import { createAuditLogApi, type AuditLogApi } from './auditLogs'
+import { createLogQueryApi, type LogQueryApi } from './logQuery'
 import { invalidNodeResponse, NodeResponseError, readNodeResponse } from './nodeResponseValidation'
 
 export type { NodeHostInventory, NodeRuntimeInspection, NodeInspectionItem, NodeActivity, NodeActivityItem, NodeRecentTasks } from './nodeRuntimeFacts'
@@ -155,7 +168,7 @@ export interface DataSourceDetail extends DataSourceProjection {
 export interface DataSourceWrite {
   readonly displayName: string
   readonly environment: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
-  readonly connectionKind: 'ODP'
+  readonly connectionKind: 'ODP' | 'OBSERVER_DIRECT'
   readonly compatibilityMode: 'MYSQL' | 'ORACLE'
   readonly host: string
   readonly port: number
@@ -172,7 +185,7 @@ export interface DataSourceWrite {
 export interface DataSourceUpdate {
   readonly displayName?: string
   readonly environment?: 'DEVELOPMENT' | 'TEST' | 'STAGING' | 'PRODUCTION'
-  readonly connectionKind?: 'ODP'
+  readonly connectionKind?: 'ODP' | 'OBSERVER_DIRECT'
   readonly compatibilityMode?: 'MYSQL' | 'ORACLE'
   readonly host?: string
   readonly port?: number
@@ -511,7 +524,8 @@ export interface DDLBehaviorOptions {
 
 export interface GeneralizedExportConfig {
   readonly objectScope: ExportObjectScope
-  readonly contentSelection: { readonly contentKind: ExportContentKind }
+  // 空内容仅表示未完成的编辑草稿，READY 写入仍须完整校验。
+  readonly contentSelection: { readonly contentKind: ExportContentKind | '' }
   readonly dataFormat?: {
     readonly formatKind: ExportDataFormatKind
     readonly csvOptions?: CsvOptions
@@ -536,6 +550,8 @@ export interface GeneralizedExportConfig {
     readonly tmpPath?: string
     // EX-I6 存储凭据槽位（2026-08-14）：对象存储输出的凭据引用；可缺省（依赖 Hadoop 标准配置链），LOCAL 输出不携带。
     readonly storageCredential?: StorageCredentialReference
+    // 仅编辑草稿保存未组成 URI 的位置字段；完整配置不得携带。
+    readonly storageLocationDraft?: { readonly bucket: string; readonly path: string; readonly endpoint: string; readonly region: string }
   }
   readonly filterConfig?: FilterOptions
   readonly performanceConfig?: PerformanceOptions
@@ -546,12 +562,14 @@ export interface GeneralizedExportConfig {
 // ExportDraftInput 是向导提交的当前泛化草稿请求；v5 扁平形态仅由历史兼容路径使用。
 export interface ExportDraftInput {
   readonly configVersion: 'v6'
+  readonly draftState?: 'EDITING' | 'READY'
   readonly dataSourceId: string
   readonly nodeId: string
   readonly config: GeneralizedExportConfig
 }
 
 export interface ExportDraft {
+  readonly draftState?: 'EDITING' | 'READY'
   readonly sourceTaskId?: string
   readonly sourceDerivation?: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
   readonly id: string
@@ -577,6 +595,10 @@ export interface ExportDraftListItem {
   readonly availableActions: readonly ('CONTINUE_EDIT' | 'SUBMIT' | 'DELETE')[]
 }
 export interface ExportDraftListPage { readonly items: readonly ExportDraftListItem[]; readonly nextCursor?: string; readonly totalPages: number }
+
+export type SupportedTaskType = 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT' | 'OBLOADER_DIRECT_LOAD'
+export interface TaskDraftListItem extends Omit<ExportDraftListItem, 'type'> { readonly type: SupportedTaskType }
+export interface TaskDraftListPage { readonly items: readonly TaskDraftListItem[]; readonly nextCursor?: string; readonly totalPages: number }
 
 export interface CommandPreview {
   readonly command: string
@@ -606,7 +628,7 @@ export interface TaskOverview {
   readonly derivedTasks?: readonly { readonly id: string; readonly displayName: string; readonly state: string }[]
   readonly presentation?: TaskListItem
   readonly id: string
-  readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'
+  readonly type: SupportedTaskType
   readonly dataSourceId: string
   readonly nodeId: string
   readonly precheckId: string
@@ -620,6 +642,7 @@ export interface TaskOverview {
 export type TaskDerivationKind = 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH' | 'CHECKPOINT_RESUME'
 
 export interface TaskDerivedDraft {
+	readonly taskType?: SupportedTaskType
   readonly draftId: string
   readonly sourceTaskId: string
   readonly derivation: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
@@ -643,10 +666,12 @@ export interface ExportConfigTemplateItem {
   readonly updatedAt: string
 }
 
+export interface ConfigTemplateItem extends ExportConfigTemplateItem { readonly taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'> }
+
 export interface TaskSnapshot {
   readonly groups?: readonly TaskSnapshotGroup[]
-  readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'
-  readonly snapshotVersion: 'v1' | 'v2' | 'normal-import-v1'
+  readonly type: SupportedTaskType
+  readonly snapshotVersion: 'v1' | 'v2' | 'normal-import-v1' | 'direct-load-v1'
   readonly dataSourceId: string
   readonly nodeId: string
   readonly precheckId: string
@@ -659,7 +684,7 @@ export interface TaskSnapshot {
 }
 
 export interface TaskSnapshotGroup {
-  readonly key: 'source' | 'objects' | 'format' | 'output' | 'review' | 'input' | 'execution'
+  readonly key: 'source' | 'objects' | 'format' | 'output' | 'review' | 'input' | 'execution' | 'applicability' | 'connection' | 'target'
   readonly label: string
   readonly fields: readonly { readonly key: string; readonly label: string; readonly value: string; readonly source: 'UNKNOWN' }[]
 }
@@ -685,6 +710,7 @@ export interface TaskOperation {
 }
 
 export interface TaskExecution {
+  readonly schedulingWaitReason?: 'PLATFORM_CONCURRENCY_LIMIT' | 'SCHEDULING_POLICY_UNAVAILABLE'
   readonly cancelAvailable?: boolean
   readonly cancelRequested?: boolean
   readonly cancelDeadline?: string
@@ -697,8 +723,9 @@ export interface TaskExecution {
   readonly state: string
   readonly executionId?: string
   readonly reconciliationRequired: boolean
-  readonly stageEvidence: 'UNAVAILABLE'
-  readonly progressEvidence: 'UNAVAILABLE'
+  readonly stageEvidence: 'UNAVAILABLE' | 'RELIABLE'
+  readonly progressEvidence: 'UNAVAILABLE' | 'PERCENT'
+  readonly progress?: TaskProgress
   readonly startedAt?: string
   readonly finishedAt?: string
   readonly updatedAt: string
@@ -717,12 +744,13 @@ export interface TaskResultSummary {
 
 export interface TaskListItem {
   readonly id: string
-  readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'
+  readonly type: SupportedTaskType
   readonly dataSourceId: string
   readonly objectSummary?: string
   readonly state: string
-  readonly stageEvidence: 'UNAVAILABLE'
-  readonly progressEvidence: 'UNAVAILABLE'
+  readonly stageEvidence: 'UNAVAILABLE' | 'RELIABLE'
+  readonly progressEvidence: 'UNAVAILABLE' | 'PERCENT'
+  readonly progress?: TaskProgress
   readonly reconciliationRequired: boolean
   readonly nodeId: string
   readonly ownedByCurrentUser: boolean
@@ -754,12 +782,14 @@ export interface TaskListFilter {
   readonly nodeId?: string
   readonly scope?: 'MINE' | 'ALL'
   readonly keyword?: string
-  readonly types?: readonly ('OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT')[]
+  readonly types?: readonly SupportedTaskType[]
   readonly states?: readonly TaskListState[]
   readonly createdFrom?: string
   readonly createdTo?: string
   readonly startedFrom?: string
   readonly startedTo?: string
+  readonly finishedFrom?: string
+  readonly finishedTo?: string
   readonly dataSourceId?: string
   readonly environment?: TaskEnvironment
   readonly creatorId?: string
@@ -813,10 +843,10 @@ export interface TaskLogStream {
   close(): void
 }
 
-export interface BrowserApi extends NormalImportApi {
+export interface BrowserApi extends NormalImportApi, DirectLoadApi, OverviewApi, AccessControlApi, LogRetentionApi, SchedulingPolicyApi, SchedulingTimingApi, SchedulingCandidatesApi, SecurityPolicyApi, ToolCompatibilityApi, LogQueryApi, AuditLogApi {
   listDataSources(): Promise<DataSourceSummary[]>
   listDataSourcePage(query: Record<string, string>): Promise<{ items: DataSourceSummary[]; nextCursor: string; total: number }>
-  listExecutionNodes(): Promise<ExecutionNodeSummary[]>
+  listExecutionNodes(options?: { forTaskSelection: boolean }): Promise<ExecutionNodeSummary[]>
   listExportNodeCandidates(): Promise<ExecutionNodeCandidate[]>
   listDataSourceConnectionTestNodeCandidates(): Promise<ExecutionNodeCandidate[]>
   getExecutionNode(nodeId: string): Promise<ExecutionNodeDetail>
@@ -838,6 +868,7 @@ export interface BrowserApi extends NormalImportApi {
   getExportObjectCatalogQuery(queryId: string): Promise<ExportObjectCatalogQuery>
   createExportDraft(input: ExportDraftInput): Promise<string>
   listExportDrafts(limit: TaskListPageSize, keyword?: string, cursor?: string): Promise<ExportDraftListPage>
+  listTaskDrafts(limit: TaskListPageSize, keyword?: string, cursor?: string): Promise<TaskDraftListPage>
   deleteExportDraft(draftId: string, revision: number): Promise<void>
   getExportDraft(draftId: string): Promise<ExportDraft>
   updateExportDraft(draft: ExportDraft): Promise<ExportDraft>
@@ -860,6 +891,10 @@ export interface BrowserApi extends NormalImportApi {
   resumeTaskFromCheckpoint(taskId: string): Promise<TaskDerivedResume>
   // EX-I8 模板复用：列表/改名/删除、从成功任务保存模板、由模板创建草稿。
   listExportConfigTemplates(): Promise<ExportConfigTemplateItem[]>
+  listConfigTemplates(): Promise<ConfigTemplateItem[]>
+  renameConfigTemplate(templateId: string, revision: number, displayName: string): Promise<number>
+  deleteConfigTemplate(templateId: string, revision: number): Promise<void>
+  createTaskDraftFromTemplate(templateId: string, dataSourceId: string, nodeId: string, taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'>): Promise<{ draftId: string; taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'> }>
   saveTaskTemplate(taskId: string, displayName: string): Promise<string>
   renameExportConfigTemplate(templateId: string, revision: number, displayName: string): Promise<number>
   deleteExportConfigTemplate(templateId: string, revision: number): Promise<void>
@@ -883,7 +918,50 @@ const unsafeCommandPattern = /(?:--password|(?:^|\s)-p)(?:\s+|=)(?!["']?\*{3,}["
 const unsafeLogPattern = /(?:--(?:user|password)(?:\s+|=)\S+|\b(?:username|password)\s*[:=]\s*\S+)/i
 
 export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
+  const logTransport: Parameters<typeof createLogQueryApi>[0] = {
+      read: (path, signal) => request(options, path, { method: 'GET', signal }),
+      write: (path, body, signal) => request(options, path, { ...writeRequest(options, body, undefined, 'POST', false), signal }),
+      download: async (path, body, signal) => {
+        const init = writeRequest(options, body, undefined, 'POST', false)
+        let response: Response
+        try { response = await options.fetcher(path, { ...init, signal, credentials: 'same-origin', cache: 'no-store' }) } catch { throw localError('NETWORK_UNAVAILABLE', '日志下载未完成，请重试。', true) }
+        if (!response.ok) throw toApiError(response.status, asRecord(await response.json().catch(() => ({}))))
+        if (response.headers.get('Content-Type')?.toLowerCase() !== 'text/plain; charset=utf-8' || Number(response.headers.get('Content-Length')) > 100 * 1024 * 1024) throw localError('RESPONSE_INVALID', '日志下载响应无法校验。')
+        const file = await response.blob()
+        if (file.size > 100 * 1024 * 1024) throw localError('RESPONSE_INVALID', '日志下载超过大小限制。')
+        return file
+      },
+    }
   return {
+    ...createSchedulingCandidatesApi({
+      read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }),
+      write: (path, body, revision, key, signal) => request(options, path, { ...writeRequest(options, body, revision, 'PATCH', true, key), ...(signal ? { signal } : {}) }),
+    }),
+    ...createSchedulingTimingApi({
+      read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }),
+      write: (path, body, revision, key, signal) => request(options, path, { ...writeRequest(options, body, revision, 'PATCH', true, key), ...(signal ? { signal } : {}) }),
+    }),
+    ...createSchedulingPolicyApi({
+      read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }),
+      write: (path, body, revision, key, signal) => request(options, path, { ...writeRequest(options, body, revision, 'PATCH', true, key), ...(signal ? { signal } : {}) }),
+    }),
+    ...createLogRetentionApi({
+      read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }),
+      write: (path, body, revision, key, signal) => request(options, path, { ...writeRequest(options, body, revision, 'PATCH', true, key), ...(signal ? { signal } : {}) }),
+    }),
+    ...createSecurityPolicyApi({ read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }) }),
+    ...createToolCompatibilityApi({ read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }) }),
+    ...createLogQueryApi(logTransport),
+    ...createAuditLogApi(logTransport),
+    ...createOverviewApi({ read: path => request(options, path, { method: 'GET' }) }),
+    ...createAccessControlApi({
+      read: (path, signal) => request(options, path, { method: 'GET', ...(signal ? { signal } : {}) }),
+      write: (path, body, revision, key, signal) => request(options, path, { ...writeRequest(options, body, revision, 'PATCH', true, key), ...(signal ? { signal } : {}) }),
+    }),
+    ...createDirectLoadApi({
+      read: path => request(options, path, { method: 'GET' }),
+      write: (path, body, revision, method = 'POST', idempotencyKey) => request(options, path, writeRequest(options, body, revision, method, true, idempotencyKey)),
+    }),
     ...createNormalImportApi({
       read: path => request(options, path, { method: 'GET' }),
       write: (path, body, revision, method = 'POST') => request(options, path, writeRequest(options, body, revision, method, true)),
@@ -898,8 +976,8 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       if (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0 || typeof body.nextCursor !== 'string') throw new Error('数据源分页响应无效')
       return { items: listOf(body, 'items').map(parseDataSourceSummary), nextCursor: body.nextCursor, total }
     },
-    async listExecutionNodes() {
-      const body = await request(options, '/api/v1/execution-nodes', { method: 'GET' })
+    async listExecutionNodes(selection) {
+      const body = await request(options, selection?.forTaskSelection ? '/api/v1/execution-nodes?candidateOrder=platform' : '/api/v1/execution-nodes', { method: 'GET' })
       return readNodeResponse('list', () => listOf(body, 'items').map(parseExecutionNodeSummary))
     },
     async listExportNodeCandidates() {
@@ -1017,6 +1095,13 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       const body = await request(options, `/api/v1/export-drafts?${query}`, { method: 'GET' })
       return { items: listOf(body, 'items').map(parseExportDraftListItem), nextCursor: optionalString(body, 'nextCursor'), totalPages: requiredNonNegativeInteger(body, 'totalPages') }
     },
+    async listTaskDrafts(limit, keyword, cursor) {
+      const query = new URLSearchParams({ limit: String(limit) })
+      if (keyword) query.set('keyword', keyword)
+      if (cursor) query.set('cursor', cursor)
+      const body = await request(options, `/api/v1/task-drafts?${query}`, { method: 'GET' })
+      return { items: listOf(body, 'items').map(parseTaskDraftListItem), nextCursor: optionalString(body, 'nextCursor'), totalPages: requiredNonNegativeInteger(body, 'totalPages') }
+    },
     async deleteExportDraft(draftId, revision) {
       const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draftId)}`, writeRequest(options, {}, revision, 'DELETE', true))
       if (body['deleted'] !== true) throw localError('RESPONSE_INVALID', '草稿删除结果无效。')
@@ -1027,7 +1112,7 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     },
     async updateExportDraft(draft) {
       // 草稿更新必须提交完整 v6 写请求；服务端按 configVersion 路由并重新失败关闭校验。
-      const input: ExportDraftInput = { configVersion: 'v6', dataSourceId: draft.dataSourceId, nodeId: draft.nodeId, config: draft.config }
+      const input: ExportDraftInput = { configVersion: 'v6', ...(draft.draftState ? { draftState: draft.draftState } : {}), dataSourceId: draft.dataSourceId, nodeId: draft.nodeId, config: draft.config }
       const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draft.id)}`, writeRequest(options, input, draft.revision, 'PATCH'))
       return parseExportDraft(requiredObject(body, 'item'))
     },
@@ -1075,7 +1160,7 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       if (filter?.keyword) query.set('keyword', filter.keyword)
       if (filter?.types?.length) query.set('type', filter.types.join(','))
       if (filter?.states?.length) query.set('state', filter.states.join(','))
-      for (const key of ['createdFrom', 'createdTo', 'startedFrom', 'startedTo', 'dataSourceId', 'environment', 'creatorId'] as const) {
+      for (const key of ['createdFrom', 'createdTo', 'startedFrom', 'startedTo', 'finishedFrom', 'finishedTo', 'dataSourceId', 'environment', 'creatorId'] as const) {
         const value = filter?.[key]
         if (value) query.set(key, value)
       }
@@ -1126,7 +1211,9 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       if (responded !== derivation || sourceTaskId !== taskId) {
         throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的派生草稿。')
       }
-      return { draftId, sourceTaskId, derivation }
+      const taskType = optionalString(body, 'taskType') ?? 'OBDUMPER_EXPORT'
+      if (taskType !== 'OBDUMPER_EXPORT' && taskType !== 'OBLOADER_NORMAL_IMPORT' && taskType !== 'OBLOADER_DIRECT_LOAD') throw localError('RESPONSE_INVALID', '派生草稿类型无效。')
+      return { draftId, sourceTaskId, derivation, taskType }
     },
     async resumeTaskFromCheckpoint(taskId) {
       const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:resume-checkpoint`, writeEmptyPost(options))
@@ -1139,6 +1226,26 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async listExportConfigTemplates() {
       const body = await request(options, '/api/v1/export-config-templates', { method: 'GET' })
       return listOf(body, 'items').map(parseExportConfigTemplateItem)
+    },
+    async listConfigTemplates() {
+      const body = await request(options, '/api/v1/config-templates', { method: 'GET' })
+      return listOf(body, 'items').map(raw => {
+        const value = asRecord(raw), taskType = value['taskType']
+        if (taskType !== 'OBDUMPER_EXPORT' && taskType !== 'OBLOADER_NORMAL_IMPORT') throw localError('RESPONSE_INVALID', '模板类型尚未支持。')
+        return { ...parseExportConfigTemplateItem(value), taskType }
+      })
+    },
+    async renameConfigTemplate(templateId, revision, displayName) {
+      const body = await request(options, `/api/v1/config-templates/${encodeURIComponent(templateId)}`, writeRequest(options, { displayName }, revision, 'PATCH', false))
+      return requiredNumber(body, 'revision')
+    },
+    async deleteConfigTemplate(templateId, revision) {
+      await request(options, `/api/v1/config-templates/${encodeURIComponent(templateId)}`, writeRequest(options, {}, revision, 'DELETE', false))
+    },
+    async createTaskDraftFromTemplate(templateId, dataSourceId, nodeId, taskType) {
+      const body = await request(options, `/api/v1/config-templates/${encodeURIComponent(templateId)}:create-draft`, writeRequest(options, { dataSourceId, nodeId }))
+      if (requiredString(body, 'templateId') !== templateId || requiredString(body, 'taskType') !== taskType) throw localError('RESPONSE_INVALID', '控制面返回了与模板类型不一致的草稿。')
+      return { draftId: requiredString(body, 'draftId'), taskType }
     },
     async saveTaskTemplate(taskId, displayName) {
       const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:save-template`, writeRequest(options, { displayName }))
@@ -1217,7 +1324,7 @@ export function browserApi(signal?: AbortSignal): BrowserApi {
   })
 }
 
-function writeRequest(options: BrowserApiOptions, body: unknown, revision?: number, method = 'POST', includeIdempotency = revision === undefined): RequestInit {
+function writeRequest(options: BrowserApiOptions, body: unknown, revision?: number, method = 'POST', includeIdempotency = revision === undefined, idempotencyKey?: string): RequestInit {
   const csrfToken = options.csrfToken()
   if (!csrfToken) {
     throw localError('CSRF_TOKEN_UNAVAILABLE', '当前环境未提供浏览器 CSRF 令牌，已拒绝写操作。')
@@ -1230,7 +1337,7 @@ function writeRequest(options: BrowserApiOptions, body: unknown, revision?: numb
     headers['If-Match'] = `"rev-${revision}"`
   }
   if (includeIdempotency) {
-    headers['Idempotency-Key'] = options.idempotencyKey()
+    headers['Idempotency-Key'] = idempotencyKey ?? options.idempotencyKey()
   }
   return { method, headers, body: JSON.stringify(body) }
 }
@@ -1784,8 +1891,15 @@ function parseExecutionNodePlatform(value: Record<string, unknown>): ExecutionNo
 }
 
 function parseExportDraftListItem(raw: unknown): ExportDraftListItem {
+  const item = parseTaskDraftListItem(raw)
+  if (item.type !== 'OBDUMPER_EXPORT') throw localError('RESPONSE_INVALID', '导出草稿类型无效。')
+  return { ...item, type: 'OBDUMPER_EXPORT' }
+}
+
+function parseTaskDraftListItem(raw: unknown): TaskDraftListItem {
   const value = asRecord(raw)
-  if (value['type'] !== 'OBDUMPER_EXPORT') throw localError('RESPONSE_INVALID', '草稿类型尚未支持。')
+  const type = value['type']
+  if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT' && type !== 'OBLOADER_DIRECT_LOAD') throw localError('RESPONSE_INVALID', '草稿类型尚未支持。')
   const availableActions = listOf(value, 'availableActions').map(action => {
     if (action !== 'CONTINUE_EDIT' && action !== 'SUBMIT' && action !== 'DELETE') throw localError('RESPONSE_INVALID', '草稿操作资格无效。')
     return action
@@ -1794,11 +1908,14 @@ function parseExportDraftListItem(raw: unknown): ExportDraftListItem {
   if (!Number.isSafeInteger(revision) || revision < 1) throw localError('RESPONSE_INVALID', '草稿版本无效。')
   const sourceDerivation = optionalString(value, 'sourceDerivation')
   if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH') throw localError('RESPONSE_INVALID', '草稿来源无效。')
-  return { id: requiredString(value, 'id'), type: 'OBDUMPER_EXPORT', displayName: requiredString(value, 'displayName'), dataSourceId: requiredString(value, 'dataSourceId'), nodeId: requiredString(value, 'nodeId'), revision, sourceTaskId: optionalString(value, 'sourceTaskId'), sourceDerivation, createdAt: requiredString(value, 'createdAt'), updatedAt: requiredString(value, 'updatedAt'), availableActions }
+  return { id: requiredString(value, 'id'), type, displayName: requiredString(value, 'displayName'), dataSourceId: requiredString(value, 'dataSourceId'), nodeId: requiredStringAllowEmpty(value, 'nodeId'), revision, sourceTaskId: optionalString(value, 'sourceTaskId'), sourceDerivation, createdAt: requiredString(value, 'createdAt'), updatedAt: requiredString(value, 'updatedAt'), availableActions }
 }
 
 function parseExportDraft(value: Record<string, unknown>): ExportDraft {
   const configVersion = requiredString(value, 'configVersion')
+  const draftState = value['draftState']
+  if (draftState !== undefined && draftState !== 'EDITING' && draftState !== 'READY' || draftState === 'EDITING' && configVersion !== 'v6') throw localError('RESPONSE_INVALID', '导出草稿阶段无效。')
+  if ((draftState === 'EDITING') !== (value['capabilityVersion'] === 'export-draft-edit-v1')) throw localError('RESPONSE_INVALID', '导出草稿能力标记不一致。')
   if (configVersion !== 'v5' && configVersion !== 'v6') {
     throw localError('RESPONSE_INVALID', '控制面返回了未知的草稿配置版本。')
   }
@@ -1807,13 +1924,14 @@ function parseExportDraft(value: Record<string, unknown>): ExportDraft {
   if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH') throw localError('RESPONSE_INVALID', '草稿来源无效。')
   if ((sourceTaskId === undefined) !== (sourceDerivation === undefined)) throw localError('RESPONSE_INVALID', '草稿来源不一致。')
   return {
+    ...(draftState ? { draftState } : {}),
     ...(sourceTaskId && sourceDerivation ? { sourceTaskId, sourceDerivation } : {}),
     id: requiredString(value, 'id'),
     dataSourceId: requiredString(value, 'dataSourceId'),
-    nodeId: requiredString(value, 'nodeId'),
+    nodeId: draftState === 'EDITING' ? draftEditingString(value, 'nodeId') : requiredString(value, 'nodeId'),
     revision: requiredNumber(value, 'revision'),
     configVersion,
-    config: parseDraftInput(requiredObject(value, 'config')),
+    config: parseDraftInput(requiredObject(value, 'config'), draftState === 'EDITING'),
     configFingerprint: requiredString(value, 'configFingerprint'),
   }
 }
@@ -1821,7 +1939,8 @@ function parseExportDraft(value: Record<string, unknown>): ExportDraft {
 // parseDraftInput 解析 v6 标准文档：嵌套泛化配置位于 config 键内，
 // 顶层扁平投影键（database/scopeKind/table/contentKind/format/filePath 等）只用于展示，不参与输入重建。
 // Go 对 nil 切片序列化为 null，可选数组字段的 null 与缺省等价。
-function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfig {
+function parseDraftInput(value: Record<string, unknown>, editing = false): GeneralizedExportConfig {
+  if (editing && value['draftState'] !== 'EDITING') throw localError('RESPONSE_INVALID', '导出编辑草稿标记不一致。')
   const nested = requiredObject(value, 'config')
   const scope = requiredObject(nested, 'objectScope')
   const scopeKind = requiredString(scope, 'scopeKind')
@@ -1862,8 +1981,8 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
     excludeTables.push(...(excludeTablesRaw as string[]))
   }
   const contentSelection = requiredObject(nested, 'contentSelection')
-  const contentKind = requiredString(contentSelection, 'contentKind')
-  if (contentKind !== 'DATA_ONLY' && contentKind !== 'DDL_ONLY' && contentKind !== 'DDL_AND_DATA') {
+  const contentKind = editing ? draftEditingString(contentSelection, 'contentKind') : requiredString(contentSelection, 'contentKind')
+  if (!(editing && contentKind === '') && contentKind !== 'DATA_ONLY' && contentKind !== 'DDL_ONLY' && contentKind !== 'DDL_AND_DATA') {
     throw localError('RESPONSE_INVALID', '控制面返回了未知的导出内容。')
   }
   let dataFormat: GeneralizedExportConfig['dataFormat']
@@ -1885,7 +2004,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
   }
   return {
     objectScope: {
-      database: requiredString(scope, 'database'),
+      database: editing ? draftEditingString(scope, 'database', true) : requiredString(scope, 'database'),
       scopeKind,
       objectTypes: objectTypes.length > 0 ? objectTypes : undefined,
       expressions: expressions.length > 0 ? expressions : undefined,
@@ -1895,7 +2014,7 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
     dataFormat,
     outputConfig: {
       outputKind,
-      filePath: requiredString(outputConfig, 'filePath'),
+      filePath: editing ? draftEditingString(outputConfig, 'filePath') : requiredString(outputConfig, 'filePath'),
       logPath: optionalDraftString(outputConfig, 'logPath'),
       skipCheckDir: optionalDraftBoolean(outputConfig, 'skipCheckDir'),
       noNestedDir: optionalBoolean(outputConfig, 'noNestedDir'),
@@ -1910,11 +2029,27 @@ function parseDraftInput(value: Record<string, unknown>): GeneralizedExportConfi
       tmpPath: optionalDraftString(outputConfig, 'tmpPath'),
       // EX-I6 存储凭据槽位：对象存储输出的凭据引用往返；LOCAL 输出不携带。
       storageCredential: parseStorageCredentialReference(outputConfig),
+      storageLocationDraft: parseExportStorageLocationDraft(outputConfig, editing),
     },
     filterConfig: parseFilterConfig(nested),
     performanceConfig: parsePerformanceConfig(nested),
     ddlBehavior: parseDDLBehavior(nested),
   }
+}
+
+// 编辑草稿只允许明确的空字符串；类型错误不能被解释为未填写。
+function draftEditingString(value: Record<string, unknown>, key: string, allowMissing = false): string {
+  if (allowMissing && value[key] === undefined) return ''
+  if (typeof value[key] !== 'string') throw localError('RESPONSE_INVALID', '导出编辑草稿字段类型无效。')
+  return value[key]
+}
+
+function parseExportStorageLocationDraft(value: Record<string, unknown>, editing: boolean): GeneralizedExportConfig['outputConfig']['storageLocationDraft'] {
+  if (value['storageLocationDraft'] === undefined || value['storageLocationDraft'] === null) return undefined
+  if (!editing) throw localError('RESPONSE_INVALID', '完整导出配置包含未完成位置。')
+  const location = requiredObject(value, 'storageLocationDraft')
+  if (Object.keys(location).some(key => !['bucket', 'path', 'endpoint', 'region'].includes(key))) throw localError('RESPONSE_INVALID', '导出存储位置包含未知字段。')
+  return { bucket: draftEditingString(location, 'bucket'), path: draftEditingString(location, 'path'), endpoint: draftEditingString(location, 'endpoint'), region: draftEditingString(location, 'region') }
 }
 
 // parseTimestampFormats 按固定字段读取值格式与 NLS 配置，禁止草稿恢复静默丢失已保存选项。
@@ -2160,7 +2295,7 @@ function parseExportConfigTemplateItem(value: unknown): ExportConfigTemplateItem
 
 function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
   const type = requiredString(value, 'type')
-  if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务类型。')
+  if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT' && type !== 'OBLOADER_DIRECT_LOAD') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务类型。')
   const parentTaskId = optionalString(value, 'parentTaskId')
   const derivationKind = optionalString(value, 'derivationKind')
   if (derivationKind !== undefined && derivationKind !== 'REBUILD_FROM_CONFIG' && derivationKind !== 'RERUN_FROM_SCRATCH' && derivationKind !== 'CHECKPOINT_RESUME') {
@@ -2190,15 +2325,15 @@ function parseTaskOverview(value: Record<string, unknown>): TaskOverview {
 function parseTaskSnapshot(value: Record<string, unknown>): TaskSnapshot {
   const type = requiredString(value, 'type')
   const snapshotVersion = requiredString(value, 'snapshotVersion')
-  if (snapshotVersion !== 'v1' && snapshotVersion !== 'v2' && snapshotVersion !== 'normal-import-v1') throw localError('RESPONSE_INVALID', '冻结配置版本无效。')
+  if (snapshotVersion !== 'v1' && snapshotVersion !== 'v2' && snapshotVersion !== 'normal-import-v1' && snapshotVersion !== 'direct-load-v1') throw localError('RESPONSE_INVALID', '冻结配置版本无效。')
   const format = requiredString(value, 'format')
-  if ((type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') || (type === 'OBDUMPER_EXPORT' ? snapshotVersion !== 'v1' && snapshotVersion !== 'v2' : snapshotVersion !== 'normal-import-v1') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV' && format !== 'DDL_CUT' && format !== 'DDL_SQL') || type === 'OBLOADER_NORMAL_IMPORT' && !['CSV', 'CUT', 'SQL', 'DDL', 'DDL_CSV', 'DDL_CUT', 'DDL_SQL'].includes(format)) {
+  if ((type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT' && type !== 'OBLOADER_DIRECT_LOAD') || (type === 'OBDUMPER_EXPORT' ? snapshotVersion !== 'v1' && snapshotVersion !== 'v2' : type === 'OBLOADER_NORMAL_IMPORT' ? snapshotVersion !== 'normal-import-v1' : snapshotVersion !== 'direct-load-v1') || (format !== 'CSV' && format !== 'CUT' && format !== 'SQL' && format !== 'POS' && format !== 'PARQUET' && format !== 'ORC' && format !== 'AVRO' && format !== 'DDL' && format !== 'DDL_CSV' && format !== 'DDL_CUT' && format !== 'DDL_SQL') || type === 'OBLOADER_NORMAL_IMPORT' && !['CSV', 'CUT', 'SQL', 'DDL', 'DDL_CSV', 'DDL_CUT', 'DDL_SQL'].includes(format) || type === 'OBLOADER_DIRECT_LOAD' && !['CSV', 'SQL', 'PARQUET', 'ORC'].includes(format)) {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务快照。')
   }
   const groups = value['groups'] === undefined ? undefined : listOf(value, 'groups').map(raw => {
     const group = asRecord(raw)
     const key = requiredString(group, 'key')
-    const allowedGroups = type === 'OBLOADER_NORMAL_IMPORT' ? ['source', 'input', 'objects', 'execution', 'review'] : ['source', 'objects', 'format', 'output', 'review']
+    const allowedGroups = type === 'OBLOADER_DIRECT_LOAD' ? ['applicability', 'connection', 'input', 'target', 'execution', 'review'] : type === 'OBLOADER_NORMAL_IMPORT' ? ['source', 'input', 'objects', 'execution', 'review'] : ['source', 'objects', 'format', 'output', 'review']
     if (!allowedGroups.includes(key)) throw localError('RESPONSE_INVALID', '冻结配置分组无效。')
     const fields = listOf(group, 'fields').map(rawField => {
       const field = asRecord(rawField)
@@ -2207,7 +2342,7 @@ function parseTaskSnapshot(value: Record<string, unknown>): TaskSnapshot {
     })
     return { key: key as TaskSnapshotGroup['key'], label: requiredString(group, 'label'), fields }
   })
-  if (groups && (groups.length !== 5 || new Set(groups.map(group => group.key)).size !== 5)) throw localError('RESPONSE_INVALID', '冻结配置分组不完整。')
+  if (groups && (groups.length !== (type === 'OBLOADER_DIRECT_LOAD' ? 6 : 5) || new Set(groups.map(group => group.key)).size !== (type === 'OBLOADER_DIRECT_LOAD' ? 6 : 5))) throw localError('RESPONSE_INVALID', '冻结配置分组不完整。')
   return {
     ...(groups ? { groups } : {}),
     type,
@@ -2238,18 +2373,12 @@ function parseTaskCommandEvidence(value: Record<string, unknown>): TaskCommandEv
 }
 
 function parseTaskExecution(value: Record<string, unknown>): TaskExecution {
-  const stageEvidence = requiredString(value, 'stageEvidence')
-  const progressEvidence = requiredString(value, 'progressEvidence')
-  if (stageEvidence !== 'UNAVAILABLE' || progressEvidence !== 'UNAVAILABLE') {
-    throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的执行证据。')
-  }
   return {
     ...parseTaskExecutionFacts(value),
     state: requiredString(value, 'state'),
     executionId: optionalString(value, 'executionId'),
     reconciliationRequired: requiredBoolean(value, 'reconciliationRequired'),
-    stageEvidence,
-    progressEvidence,
+    ...parseTaskProgressEvidence(value, undefined, () => { throw localError('RESPONSE_INVALID', '控制面返回了无效任务进度。') }),
     startedAt: optionalString(value, 'startedAt'),
     finishedAt: optionalString(value, 'finishedAt'),
     updatedAt: requiredString(value, 'updatedAt'),
@@ -2302,9 +2431,7 @@ function parseTaskResultSummary(value: unknown): TaskResultSummary | undefined {
 function parseTaskListItem(value: unknown): TaskListItem {
   const item = asRecord(value)
   const type = requiredString(item, 'type')
-  const stageEvidence = requiredString(item, 'stageEvidence')
-  const progressEvidence = requiredString(item, 'progressEvidence')
-  if ((type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') || stageEvidence !== 'UNAVAILABLE' || progressEvidence !== 'UNAVAILABLE') {
+  if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT' && type !== 'OBLOADER_DIRECT_LOAD') {
     throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的任务列表证据。')
   }
   return {
@@ -2313,8 +2440,7 @@ function parseTaskListItem(value: unknown): TaskListItem {
     dataSourceId: requiredString(item, 'dataSourceId'),
     objectSummary: optionalString(item, 'objectSummary'),
     state: requiredString(item, 'state'),
-    stageEvidence,
-    progressEvidence,
+    ...parseTaskProgressEvidence(item, type, () => { throw localError('RESPONSE_INVALID', '控制面返回了无效任务进度。') }),
     reconciliationRequired: requiredBoolean(item, 'reconciliationRequired'),
     nodeId: requiredString(item, 'nodeId'),
     ownedByCurrentUser: requiredBoolean(item, 'ownedByCurrentUser'),
@@ -2331,7 +2457,7 @@ function parseTaskListItem(value: unknown): TaskListItem {
     creatorName: optionalString(item, 'creatorName'),
     cancelRequested: requiredBoolean(item, 'cancelRequested'),
     // 未知操作丢弃而不是推断，前端只渲染已识别的服务端资格。
-    availableActions: listOf(item, 'availableActions').filter((value): value is TaskListAction => typeof value === 'string' && (taskListActions as readonly string[]).includes(value)),
+    availableActions: listOf(item, 'availableActions').filter((value): value is TaskListAction => typeof value === 'string' && (taskListActions as readonly string[]).includes(value) && (type !== 'OBLOADER_DIRECT_LOAD' || !['CHECKPOINT_RESUME', 'SAVE_TEMPLATE', 'CANCEL'].includes(value))),
   }
 }
 

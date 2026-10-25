@@ -1,7 +1,10 @@
 package importfiles
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -34,20 +37,36 @@ type MappingTable struct {
 
 // MappingPlan 是当前输入证据的有界结构投影；不确定语法保持未知，不据此证明全部数据行合法。
 type MappingPlan struct {
-	Tables   []MappingTable
+	Tables []MappingTable
+	// Objects 只包含已完整识别的非表声明及受限依赖。
+	Objects  []DefinitionObject
 	Complete bool
+	// CSVWhitespaceLoss 表示完整摘要读取中发现固定工具会静默移除的未引用空格。
+	CSVWhitespaceLoss bool
 	// DDLComplete 只有全部定义均可核算基本操作权限时为真，未知定义不冒充 CREATE TABLE。
 	DDLComplete bool
 }
 
 // InspectMapping 在相同允许根目录内重读当前清单，核对摘要后提取首条记录的列结构。
-// 压缩、非 UTF-8、控制文件和不能解释的语法不冒充已验证；返回前清零文件前缀。
+// 仅接受已核验的编码、压缩与控制映射子集；不能解释的语法保持未知，返回前清零文件前缀。
 func InspectMapping(ctx context.Context, c importdomain.Config, manifest Manifest, roots []string) (MappingPlan, error) {
 	plan := MappingPlan{Complete: true, DDLComplete: !c.HasDDL()}
 	if ctx == nil || !manifest.Valid(c) {
 		return plan, errors.New("映射输入绑定无效")
 	}
 	byName := map[string]MappingTable{}
+	var controls map[string][]string
+	if c.Mapping != nil && c.Mapping.Kind == "CONTROL" {
+		var err error
+		controls, err = controlMappings(ctx, c, manifest, roots)
+		if errors.Is(err, errMappingUnsupported) {
+			plan.Complete = false
+			return plan, nil
+		}
+		if err != nil {
+			return plan, err
+		}
+	}
 	definitions := map[string]MappingTable{}
 	if c.HasDDL() {
 		plan.DDLComplete = !c.Parser.Compress
@@ -59,11 +78,28 @@ func InspectMapping(ctx context.Context, c importdomain.Config, manifest Manifes
 				definitions[entry.Object] = MappingTable{Name: entry.Object, HasDefinition: true}
 				continue
 			}
-			prefix, whole, err := mappingPrefix(ctx, c.FilePath, entry, roots)
+			prefix, whole, err := mappingPrefix(ctx, c.FilePath, entry, roots, nil)
 			if err != nil {
 				return plan, err
 			}
 			definition, ok := inspectTableDefinition(string(prefix), c.Database, entry.Object)
+			if !ok && whole {
+				if object, known := inspectObjectDefinition(string(prefix), entry.Object, c); known {
+					duplicate := false
+					for _, previous := range plan.Objects {
+						duplicate = duplicate || (previous.Kind == object.Kind && previous.Name == object.Name)
+					}
+					if duplicate {
+						plan.DDLComplete = false
+					} else {
+						plan.Objects = append(plan.Objects, object)
+					}
+					for i := range prefix {
+						prefix[i] = 0
+					}
+					continue
+				}
+			}
 			for i := range prefix {
 				prefix[i] = 0
 			}
@@ -91,14 +127,48 @@ func InspectMapping(ctx context.Context, c importdomain.Config, manifest Manifes
 			continue
 		}
 		table := MappingTable{Name: entry.Object, HasData: true}
-		if c.Parser.Compress || c.FileEncoding != "" && !strings.EqualFold(c.FileEncoding, "UTF-8") && !strings.EqualFold(c.FileEncoding, "UTF8") || c.Mapping != nil && c.Mapping.Kind == "CONTROL" || c.Parser.SkipFooter {
+		if c.FileEncoding != "" && !strings.EqualFold(c.FileEncoding, "UTF-8") && !strings.EqualFold(c.FileEncoding, "UTF8") {
 			plan.Complete = false
 		} else {
-			prefix, whole, err := mappingPrefix(ctx, c.FilePath, entry, roots)
+			var whitespace *csvWhitespaceGuard
+			if c.Format == "CSV" && !c.Parser.WithTrim {
+				whitespace = newCSVWhitespaceGuard(c.Parser.ColumnSeparator, c.Parser.ColumnQuote, c.Parser.EscapeCharacter, c.Parser.SkipHeader || c.Mapping != nil && c.Mapping.Kind == "AUTO")
+			}
+			codec := ""
+			if c.Parser.Compress {
+				codec = c.Parser.CompressionAlgo
+				if codec == "" {
+					codec = "zstd"
+				}
+			}
+			prefix, whole, err := mappingReadPrefix(ctx, c.FilePath, entry, roots, whitespace, codec)
+			if whitespace != nil {
+				plan.CSVWhitespaceLoss = plan.CSVWhitespaceLoss || whitespace.loss
+				if whitespace.loss || whitespace.invalid {
+					plan.Complete = false
+				}
+			}
+			if errors.Is(err, errMappingUnsupported) {
+				plan.Complete = false
+				byName[table.Name] = table
+				continue
+			}
 			if err != nil {
 				return plan, err
 			}
 			structure := prefix
+			if c.Parser.SkipFooter {
+				var ok bool
+				structure, ok = withoutFooter(structure, whole, c)
+				if !ok {
+					plan.Complete = false
+					byName[table.Name] = table
+					for i := range prefix {
+						prefix[i] = 0
+					}
+					continue
+				}
+			}
 			if !whole {
 				// 有界前缀可能恰好切断 UTF-8 字符；仅去掉末端残片，不把它当成首条完整记录的编码错误。
 				for removed := 0; removed < utf8.UTFMax-1 && len(structure) > 0; removed++ {
@@ -121,6 +191,14 @@ func InspectMapping(ctx context.Context, c importdomain.Config, manifest Manifes
 				if !ok || !validMappingNames(table.Names) {
 					plan.Complete = false
 					table.Columns, table.Names = 0, nil
+				}
+				if controls != nil {
+					names := controls[entry.Object]
+					if len(names) != table.Columns {
+						plan.Complete = false
+					} else {
+						table.Names = names
+					}
 				}
 			}
 			for index := range prefix {
@@ -146,7 +224,28 @@ func InspectMapping(ctx context.Context, c importdomain.Config, manifest Manifes
 	return plan, nil
 }
 
-func mappingPrefix(ctx context.Context, input string, entry File, roots []string) ([]byte, bool, error) {
+func mappingPrefix(ctx context.Context, input string, entry File, roots []string, whitespace *csvWhitespaceGuard) ([]byte, bool, error) {
+	return mappingReadPrefix(ctx, input, entry, roots, whitespace, "")
+}
+
+var errMappingUnsupported = errors.New("映射解析能力不可确认")
+
+type mappingContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r mappingContextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
+}
+
+func mappingReadPrefix(ctx context.Context, input string, entry File, roots []string, whitespace *csvWhitespaceGuard, codec string) ([]byte, bool, error) {
+	if whitespace != nil {
+		defer whitespace.clear()
+	}
 	root, relative, err := openBounded(input, roots)
 	if err != nil {
 		return nil, false, errors.New("映射输入路径不可用")
@@ -180,6 +279,26 @@ func mappingPrefix(ctx context.Context, input string, entry File, roots []string
 		}
 	}()
 	hash := sha256.New()
+	reader := io.Reader(io.TeeReader(mappingContextReader{ctx: ctx, reader: file}, hash))
+	var decoded io.ReadCloser
+	var compressed *bufio.Reader
+	if codec != "" {
+		compressed = bufio.NewReader(reader)
+		switch codec {
+		case "gzip":
+			decoded, err = gzip.NewReader(compressed)
+		case "zlib":
+			decoded, err = zlib.NewReader(compressed)
+		default:
+			return nil, false, errMappingUnsupported
+		}
+		if err != nil {
+			return nil, false, errMappingUnsupported
+		}
+		defer decoded.Close()
+		reader = decoded
+	}
+	var decodedBytes int64
 	for {
 		if ctx.Err() != nil {
 			for i := range prefix {
@@ -187,22 +306,46 @@ func mappingPrefix(ctx context.Context, input string, entry File, roots []string
 			}
 			return nil, false, ctx.Err()
 		}
-		count, readErr := file.Read(buffer)
+		count, readErr := reader.Read(buffer)
 		if count > 0 {
-			hash.Write(buffer[:count])
+			decodedBytes += int64(count)
+			// 解压总量有硬上限，压缩炸弹或超限输入不能获得通过。
+			if codec != "" && decodedBytes > 32<<20 {
+				for i := range prefix {
+					prefix[i] = 0
+				}
+				return nil, false, errMappingUnsupported
+			}
+			if whitespace != nil {
+				whitespace.feed(buffer[:count], false)
+			}
 			if len(prefix) < limit {
 				keep := min(count, limit-len(prefix))
 				prefix = append(prefix, buffer[:keep]...)
 			}
 		}
 		if readErr == io.EOF {
+			if whitespace != nil {
+				whitespace.feed(nil, true)
+			}
 			break
 		}
 		if readErr != nil {
 			for i := range prefix {
 				prefix[i] = 0
 			}
+			if codec != "" {
+				return nil, false, errMappingUnsupported
+			}
 			return nil, false, errors.New("映射输入读取失败")
+		}
+	}
+	if compressed != nil {
+		if _, err := compressed.Peek(1); err != io.EOF {
+			for i := range prefix {
+				prefix[i] = 0
+			}
+			return nil, false, errMappingUnsupported
 		}
 	}
 	after, err := file.Stat()
@@ -212,12 +355,37 @@ func mappingPrefix(ctx context.Context, input string, entry File, roots []string
 		}
 		return nil, false, errors.New("映射输入摘要变化")
 	}
-	return prefix, int64(len(prefix)) == entry.Size, nil
+	return prefix, int64(len(prefix)) == decodedBytes, nil
+}
+
+func withoutFooter(data []byte, whole bool, c importdomain.Config) ([]byte, bool) {
+	if c.Format != "CUT" {
+		return nil, false
+	}
+	separator := strings.NewReplacer(`\r`, "\r", `\n`, "\n").Replace(c.Parser.LineSeparator)
+	if separator != "\n" && separator != "\r\n" && separator != "\r" {
+		return nil, false
+	}
+	needed := 1
+	if c.Parser.SkipHeader {
+		needed++
+	}
+	if !whole {
+		return data, bytes.Count(data, []byte(separator)) >= needed
+	}
+	trimmed := bytes.TrimSuffix(data, []byte(separator))
+	last := bytes.LastIndex(trimmed, []byte(separator))
+	if last < 0 {
+		return nil, false
+	}
+	remaining := trimmed[:last+len(separator)]
+	return remaining, bytes.Count(remaining, []byte(separator)) >= needed
 }
 
 func delimitedColumns(input []byte, whole bool, c importdomain.Config) (int, []string, bool) {
 	data := bytes.TrimPrefix(input, []byte{0xef, 0xbb, 0xbf})
 	separator, quote, escape := c.Parser.ColumnSeparator, c.Parser.ColumnQuote, c.Parser.EscapeCharacter
+	lineSeparator := ""
 	if separator == "" {
 		separator = ","
 	}
@@ -232,6 +400,17 @@ func delimitedColumns(input []byte, whole bool, c importdomain.Config) (int, []s
 		quote = ""
 		if c.Parser.IgnoreEscape {
 			escape = ""
+		}
+		// CUT 不像 CSV 自动识别换行；空值必须由平台适配入口先解析成工具的真实默认。
+		switch c.Parser.LineSeparator {
+		case `\n`, "\n":
+			lineSeparator = "\n"
+		case `\r`, "\r":
+			lineSeparator = "\r"
+		case `\r\n`, "\r\n":
+			lineSeparator = "\r\n"
+		default:
+			return 0, nil, false
 		}
 	}
 	if separator == "" || c.Parser.LineSeparator != "" && !isStandardLineSeparator(c.Parser.LineSeparator) {
@@ -277,6 +456,10 @@ func delimitedColumns(input []byte, whole bool, c importdomain.Config) (int, []s
 			continue
 		}
 		if !quoted && (text[index] == '\n' || text[index] == '\r') {
+			if c.Format == "CUT" && !strings.HasPrefix(text[index:], lineSeparator) {
+				// 错配换行会成为工具字段内容，甚至破坏尾分隔符；不能继续返回映射通过。
+				return 0, nil, false
+			}
 			fields = append(fields, field.String())
 			field.Reset()
 			rows = append(rows, fields)
@@ -284,6 +467,10 @@ func delimitedColumns(input []byte, whole bool, c importdomain.Config) (int, []s
 			ended = true
 			if len(rows) >= needed {
 				break
+			}
+			if c.Format == "CUT" {
+				index += len(lineSeparator)
+				continue
 			}
 			if text[index] == '\r' && index+1 < len(text) && text[index+1] == '\n' {
 				index++

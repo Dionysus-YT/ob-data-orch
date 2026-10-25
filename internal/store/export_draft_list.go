@@ -23,6 +23,9 @@ type ExportDraftListQuery struct {
 	BeforeID      string
 }
 
+// TaskDraftListQuery 沿用同一所有权、筛选与分页输入，统一当前已接入的三类草稿。
+type TaskDraftListQuery = ExportDraftListQuery
+
 // ExportDraftListItem 是草稿管理的安全投影，不含路径、配置 JSON、凭据引用或命令。
 type ExportDraftListItem struct {
 	ID               string    `json:"id"`
@@ -38,12 +41,28 @@ type ExportDraftListItem struct {
 	AvailableActions []string  `json:"availableActions"`
 }
 
+// TaskDraftListItem 是三类草稿共用的安全摘要，类型决定恢复与删除入口。
+type TaskDraftListItem = ExportDraftListItem
+
 // ListOwnedExportDrafts 的授权、关键字、数量与游标均在 SQL 中生效，已提交或删除的草稿不进入列表。
 func (s *Store) ListOwnedExportDrafts(ctx context.Context, query ExportDraftListQuery) ([]ExportDraftListItem, int, error) {
+	return s.listOwnedTaskDrafts(ctx, query, false)
+}
+
+// ListOwnedTaskDrafts 在同一 SQL 范围中分页三类草稿，不在浏览器拼接分页或计数。
+func (s *Store) ListOwnedTaskDrafts(ctx context.Context, query TaskDraftListQuery) ([]TaskDraftListItem, int, error) {
+	return s.listOwnedTaskDrafts(ctx, query, true)
+}
+
+func (s *Store) listOwnedTaskDrafts(ctx context.Context, query ExportDraftListQuery, includeImport bool) ([]ExportDraftListItem, int, error) {
 	if query.SubjectID == "" || query.Limit < 1 || query.Limit > 100 || len(query.Keyword) > 128 || strings.ContainsAny(query.Keyword, "\x00\r\n") || (query.BeforeID == "") != query.BeforeUpdated.IsZero() {
 		return nil, 0, errors.New("export draft list query is invalid")
 	}
-	predicate := `d.owner_subject_id = ? AND d.deleted_at IS NULL AND d.draft_kind = 'OBDUMPER_EXPORT'
+	kinds := `d.draft_kind = 'OBDUMPER_EXPORT'`
+	if includeImport {
+		kinds = `d.draft_kind IN ('OBDUMPER_EXPORT','OBLOADER_NORMAL_IMPORT','OBLOADER_DIRECT_LOAD')`
+	}
+	predicate := `d.owner_subject_id = ? AND d.deleted_at IS NULL AND ` + kinds + `
       AND EXISTS (SELECT 1 FROM auth_subjects a WHERE a.subject_id = d.owner_subject_id AND a.account_status = 'ACTIVE')
       AND NOT EXISTS (SELECT 1 FROM tasks t JOIN precheck_runs p ON p.precheck_id=t.precheck_id WHERE p.draft_id=d.draft_id)`
 	args := []any{query.SubjectID}
@@ -62,7 +81,7 @@ func (s *Store) ListOwnedExportDrafts(ctx context.Context, query ExportDraftList
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT d.draft_id,d.data_source_id,COALESCE(d.node_id,''),d.revision,
       COALESCE(json_extract(d.config_json,'$.database'),json_extract(d.config_json,'$.objectScope.database'),''), COALESCE(json_extract(d.config_json,'$.table'),''),
-      COALESCE(d.source_task_id,''),COALESCE(d.source_derivation,''),d.created_at,d.updated_at,
+      COALESCE(d.source_task_id,''),COALESCE(d.source_derivation,''),d.created_at,d.updated_at,d.capability_version,d.draft_kind,
       EXISTS (SELECT 1 FROM precheck_runs p WHERE p.draft_id=d.draft_id AND p.status='LEASED' AND (julianday(p.lease_expires_at) IS NULL OR julianday(p.lease_expires_at)>julianday(?)))
       FROM export_drafts d WHERE `+predicate+` ORDER BY d.updated_at DESC,d.draft_id DESC LIMIT ?`, append(append([]any{utcText(time.Now())}, args...), query.Limit+1)...)
 	if err != nil {
@@ -72,20 +91,28 @@ func (s *Store) ListOwnedExportDrafts(ctx context.Context, query ExportDraftList
 	items := []ExportDraftListItem{}
 	for rows.Next() {
 		var item ExportDraftListItem
-		var database, table, created, updated string
+		var database, table, created, updated, capability string
 		var leased bool
-		if err := rows.Scan(&item.ID, &item.DataSourceID, &item.NodeID, &item.Revision, &database, &table, &item.SourceTaskID, &item.SourceDerivation, &created, &updated, &leased); err != nil {
+		if err := rows.Scan(&item.ID, &item.DataSourceID, &item.NodeID, &item.Revision, &database, &table, &item.SourceTaskID, &item.SourceDerivation, &created, &updated, &capability, &item.Type, &leased); err != nil {
 			return nil, 0, err
 		}
-		item.Type = "OBDUMPER_EXPORT"
 		item.DisplayName = "导出草稿"
+		if item.Type == "OBLOADER_DIRECT_LOAD" {
+			item.DisplayName = "旁路导入草稿"
+		}
+		if item.Type == "OBLOADER_NORMAL_IMPORT" {
+			item.DisplayName = "普通导入草稿"
+		}
 		if database != "" {
 			item.DisplayName = database
 			if table != "" {
 				item.DisplayName += "." + table
 			}
 		}
-		item.AvailableActions = []string{"CONTINUE_EDIT", "SUBMIT"}
+		item.AvailableActions = []string{"CONTINUE_EDIT"}
+		if item.Type == "OBDUMPER_EXPORT" && capability != ExportEditingCapabilityVersion {
+			item.AvailableActions = append(item.AvailableActions, "SUBMIT")
+		}
 		if !leased {
 			item.AvailableActions = append(item.AvailableActions, "DELETE")
 		}

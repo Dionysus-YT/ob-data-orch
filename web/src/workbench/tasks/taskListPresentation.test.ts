@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { TaskListItem } from '@/api/browser'
 import { taskHistoricalName, taskMoreActions, taskNeedsReconciliation, taskRowPrimary, taskStageLabel, taskStateBadgeStatus, taskStateLabel } from './taskListPresentation'
-import { taskDurationText, taskStateText } from './taskStatePresentation'
+import { isKnownTaskState, taskDurationText, taskStateText } from './taskStatePresentation'
 
 function syntheticTask(overrides: Partial<TaskListItem> = {}): TaskListItem {
   return {
@@ -30,6 +30,14 @@ describe('任务列表可靠证据降级', () => {
   it('八种状态共用一份文案', () => {
     expect(['DRAFT', 'WAITING_SCHEDULE', 'STARTING', 'RUNNING', 'CANCELLING', 'SUCCEEDED', 'FAILED', 'CANCELLED'].map(taskStateText))
       .toEqual(['草稿', '等待调度', '启动中', '运行中', '取消中', '成功', '失败', '已取消'])
+  })
+
+  it('原型成员名和缺失状态不命中业务白名单', () => {
+    for (const state of ['constructor', '__proto__', 'toString', undefined]) {
+      expect(isKnownTaskState(state)).toBe(false)
+      expect(taskStateText(state)).toBe('状态核对中')
+      expect(taskStateBadgeStatus(syntheticTask({ state: state ?? '' }))).toBe('warning')
+    }
   })
 })
 

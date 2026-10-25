@@ -64,14 +64,15 @@ public final class NormalImportProbe {
         } catch(SQLException exception) {return blocked(UNKNOWN);}
         Check write;
         if((input.flags&16)!=0&&(input.flags&32)==0)write=unknown("DDL_UNSUPPORTED");
-        else if(input.tables.isEmpty())write=unknown("INPUT_CONTEXT_UNAVAILABLE");
+        else if(input.tables.isEmpty()&&input.objects.isEmpty())write=unknown("INPUT_CONTEXT_UNAVAILABLE");
         else write=mysql?mysqlPrivileges(connection,input):oraclePrivileges(connection,input);
+        if(PASS.equals(write.status)&&!input.objects.isEmpty())write=ObjectImportPrivileges.verify(connection,input);
         Check mapping=(input.flags&2)==0?verified():((input.flags&1)==0||input.tables.isEmpty()?unknown("INPUT_UNSUPPORTED"):mapping(connection,input,mysql));
         return new String[]{PASS,write.status,mapping.status,write.reason,mapping.reason};
     }
 
     private static String[] blocked(String database){return new String[]{database,UNKNOWN,UNKNOWN,"DATABASE_UNAVAILABLE","DATABASE_UNAVAILABLE"};}
-    private static final class Check {final String status,reason;Check(String status,String reason){this.status=status;this.reason=reason;}}
+    static final class Check {final String status,reason;Check(String status,String reason){this.status=status;this.reason=reason;}}
     private static Check verified(){return new Check(PASS,"VERIFIED");}
     private static Check unknown(String reason){return new Check(UNKNOWN,reason);}
     private static Check rejected(String reason){return new Check(FAIL,reason);}
@@ -133,12 +134,18 @@ public final class NormalImportProbe {
                 identity.setQueryTimeout(5);
                 try(ResultSet current=identity.executeQuery("SELECT SYS_CONTEXT('USERENV', 'CURRENT_USER') FROM DUAL")) {if(!current.next())return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");user=current.getString(1);if(user==null||current.next())return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");}
             }
+        } catch(SQLException|RuntimeException exception) {return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");}
+        boolean owner=input.database.equals(user),needsSystem=!owner;
+        for(Table table:input.tables)needsSystem|=(table.privileges&CREATE)!=0;
+        if(!needsSystem)return verified();
+        try {
             try(Statement statement=connection.createStatement()) {
                 statement.setQueryTimeout(5);int count=0;
-                try(ResultSet rows=statement.executeQuery("SELECT PRIVILEGE FROM SESSION_PRIVS")) {while(rows.next()){if(++count>4096)return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");String privilege=rows.getString(1);if(privilege==null)return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");privileges.add(privilege);}}
+                // 所属 Schema 的既有表操作来自对象所有权；仅 CREATE 或跨 Schema 操作需要系统权限事实。
+                // OceanBase Oracle 模式使用当前用户直接授权视图，不依赖未实现的 SESSION_PRIVS，也不展开角色。
+                try(ResultSet rows=statement.executeQuery("SELECT PRIVILEGE FROM USER_SYS_PRIVS")) {while(rows.next()){if(++count>4096)return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");String privilege=rows.getString(1);if(privilege==null)return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");privileges.add(privilege);}}
             }
         } catch(SQLException|RuntimeException exception) {return unknown("SCHEMA_PRIVILEGES_UNAVAILABLE");}
-        boolean owner=input.database.equals(user);
         String[] names={"INSERT ANY TABLE","UPDATE ANY TABLE","DELETE ANY TABLE","CREATE ANY TABLE","ALTER ANY TABLE","DROP ANY TABLE"};
         int[] masks={INSERT,UPDATE,DELETE,CREATE,ALTER,DROP};
         for(Table table:input.tables)for(int i=0;i<masks.length;i++)if((table.privileges&masks[i])!=0) {
@@ -158,33 +165,36 @@ public final class NormalImportProbe {
                 if((table.flags&2)!=0&&table.targets.isEmpty())return unknown("INPUT_DEFINITION_UNSUPPORTED");
                 String tablePattern=mysql?null:pattern(table.name,escape),schemaPattern=mysql?null:pattern(input.database,escape);
                 if(!mysql&&(tablePattern==null||schemaPattern==null))return unknown("TARGET_METADATA_UNAVAILABLE");
-                List<String> columns=new ArrayList<String>();Set<String> required=new HashSet<String>();
+                List<String> columns=new ArrayList<String>();Set<String> required=new HashSet<String>(),seenColumns=new HashSet<String>();
                 if((input.flags&8)!=0&&(table.flags&2)!=0) {
                     if(table.targets.isEmpty())return unknown("INPUT_DEFINITION_UNSUPPORTED");
                     columns.addAll(table.targets);required.addAll(table.required);
                 } else if(mysql) {
-                    try(PreparedStatement query=connection.prepareStatement("SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, TABLE_SCHEMA, TABLE_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION")) {
+                    try(PreparedStatement query=connection.prepareStatement("SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, TABLE_SCHEMA, TABLE_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION")) {
                         query.setQueryTimeout(5);query.setString(1,input.database);query.setString(2,table.name);
                         try(ResultSet rows=query.executeQuery()) {int observedColumns=0;while(rows.next()) {
                             if(++observedColumns>4096||!input.database.equals(rows.getString(5))||!table.name.equals(rows.getString(6)))return unknown("TARGET_METADATA_UNAVAILABLE");
                             String name=rows.getString(1),nullable=rows.getString(2),value=rows.getString(3),extra=rows.getString(4);
-                            if(name==null||extra==null||columns.contains(name)||!("YES".equals(nullable)||"NO".equals(nullable)))return unknown("TARGET_METADATA_UNAVAILABLE");
+                            if(name==null||extra==null||!seenColumns.add(name)||!("YES".equals(nullable)||"NO".equals(nullable)))return unknown("TARGET_METADATA_UNAVAILABLE");
                             String attributes=extra.toUpperCase(Locale.ROOT);
                             if(attributes.contains("VIRTUAL GENERATED")||attributes.contains("STORED GENERATED"))continue;
-                            columns.add(name);if("NO".equals(nullable)&&value==null&&!attributes.contains("AUTO_INCREMENT"))required.add(name);
+                            if("NO".equals(nullable)&&value==null&&!attributes.contains("AUTO_INCREMENT"))required.add(name);
+                            if(!input.excludedTypes.isEmpty()){String type=rows.getString(7);if(type==null)return unknown("TARGET_METADATA_UNAVAILABLE");if(input.excludedTypes.contains(type.toUpperCase(Locale.ROOT)))continue;}
+                            columns.add(name);
                         }}
                     }
                 } else try(ResultSet rows=metadata.getColumns(null,schemaPattern,tablePattern,"%")) {
-                    while(rows.next()) {
-                        if(columns.size()>=4096||!input.database.equals(rows.getString("TABLE_SCHEM"))||!table.name.equals(rows.getString("TABLE_NAME")))return unknown("TARGET_METADATA_UNAVAILABLE");
-                        String name=rows.getString("COLUMN_NAME");if(name==null||columns.contains(name))return unknown("TARGET_METADATA_UNAVAILABLE");
+                    int observedColumns=0;while(rows.next()) {
+                        if(++observedColumns>4096||!input.database.equals(rows.getString("TABLE_SCHEM"))||!table.name.equals(rows.getString("TABLE_NAME")))return unknown("TARGET_METADATA_UNAVAILABLE");
+                        String name=rows.getString("COLUMN_NAME");if(name==null||!seenColumns.add(name))return unknown("TARGET_METADATA_UNAVAILABLE");
                         String generated="";try{generated=rows.getString("IS_GENERATEDCOLUMN");}catch(SQLException unsupported){return unknown("TARGET_METADATA_UNAVAILABLE");}
                         if("YES".equalsIgnoreCase(generated))continue;
-                        columns.add(name);
                         String auto=rows.getString("IS_AUTOINCREMENT");String value=rows.getString("COLUMN_DEF");int nullable=rows.getInt("NULLABLE");
                         if(rows.wasNull())return unknown("TARGET_METADATA_UNAVAILABLE");
                         if(nullable!=DatabaseMetaData.columnNoNulls&&nullable!=DatabaseMetaData.columnNullable)return unknown("TARGET_METADATA_UNAVAILABLE");
                         if(nullable==DatabaseMetaData.columnNoNulls&&value==null&&!"YES".equalsIgnoreCase(auto))required.add(name);
+                        if(!input.excludedTypes.isEmpty()){String type=rows.getString("TYPE_NAME");if(type==null)return unknown("TARGET_METADATA_UNAVAILABLE");type=type.toUpperCase(Locale.ROOT);int precision=type.indexOf('(');if(precision>=0)type=type.substring(0,precision);if(input.excludedTypes.contains(type))continue;}
+                        columns.add(name);
                     }
                 }
                 if(columns.isEmpty()) {columns.addAll(table.targets);required.addAll(table.required);}
@@ -202,23 +212,28 @@ public final class NormalImportProbe {
     private static String pattern(String value,String escape) {if(escape==null||escape.isEmpty())return value.indexOf('%')>=0||value.indexOf('_')>=0?null:value;return value.replace(escape,escape+escape).replace("%",escape+"%").replace("_",escape+"_");}
 
     static final class Table {String name;int columns,privileges,flags;List<String> names=new ArrayList<String>(),targets=new ArrayList<String>(),required=new ArrayList<String>();}
+    static final class Definition {String kind,name,reference;}
     static final class Grant {final String database,table;final int mask;final boolean global,allTables;Grant(String database,String table,int mask,boolean global,boolean allTables){this.database=database;this.table=table;this.mask=mask;this.global=global;this.allTables=allTables;}}
     static final class Input {
         String host,mode,database;int port,flags;byte[] username,password;
         List<String> includes=new ArrayList<String>(),excludes=new ArrayList<String>();List<Table> tables=new ArrayList<Table>();
+        List<String> excludedTypes=new ArrayList<String>();List<Definition> objects=new ArrayList<Definition>();
         static Input read() throws IOException {
             byte[] raw=new byte[1024*1024+1];Input result=new Input();int length=0;
             try {
                 while(length<raw.length){int count=System.in.read(raw,length,raw.length-length);if(count<0)break;length+=count;}
                 if(length>=raw.length)throw new IllegalArgumentException();
                 DataInputStream stream=new DataInputStream(new ByteArrayInputStream(raw,0,length));
-                if(stream.readInt()!=10)throw new IllegalArgumentException();result.host=text(stream,253);result.port=stream.readInt();
+                if(stream.readInt()!=11)throw new IllegalArgumentException();result.host=text(stream,253);result.port=stream.readInt();
                 result.username=value(stream,256);result.password=value(stream,4096);result.mode=text(stream,16);result.database=identifier(stream);
                 for(byte value:result.username)if(value==10||value==13)throw new IllegalArgumentException();for(byte value:result.password)if(value==10||value==13)throw new IllegalArgumentException();
                 result.flags=stream.readInt();result.includes=names(stream);result.excludes=names(stream);
                 int count=stream.readInt();if(count<0||count>1024)throw new IllegalArgumentException();Set<String> seen=new HashSet<String>();
                 for(int i=0;i<count;i++){Table table=new Table();table.name=identifier(stream);table.columns=stream.readInt();table.privileges=stream.readInt();table.flags=stream.readInt();table.names=names(stream);table.targets=names(stream);table.required=names(stream);if(table.columns<0||table.columns>4096||table.privileges<0||table.privileges>63||table.flags<1||table.flags>3||table.privileges==0&&((result.flags&16)==0||(result.flags&32)!=0)||!seen.add(table.name)||!table.targets.containsAll(table.required)||(table.flags&2)==0&&!table.targets.isEmpty()||(result.flags&32)!=0&&(table.flags&2)!=0&&table.targets.isEmpty())throw new IllegalArgumentException();result.tables.add(table);}
-                boolean hasData=false,hasDefinition=false;for(Table table:result.tables){hasData|=(table.flags&1)!=0;hasDefinition|=(table.flags&2)!=0;}
+                result.excludedTypes=names(stream);for(String type:result.excludedTypes)if(!Arrays.asList("BLOB","TINYBLOB","MEDIUMBLOB","LONGBLOB","CLOB","TEXT","TINYTEXT","MEDIUMTEXT","LONGTEXT","RAW","BINARY","VARBINARY","CHAR","VARCHAR","VARCHAR2","NUMBER","DECIMAL","INT","INTEGER","DATE","TIMESTAMP").contains(type))throw new IllegalArgumentException();
+                int objectCount=stream.readInt();if(objectCount<0||objectCount+count>1024)throw new IllegalArgumentException();Set<String> objectKeys=new HashSet<String>();
+                for(int i=0;i<objectCount;i++){Definition object=new Definition();object.kind=text(stream,32);object.name=identifier(stream);object.reference=text(stream,256);if(!ObjectImportPrivileges.validKind(object.kind)||!object.name.matches("[A-Za-z_][A-Za-z_0-9$]{0,127}")||!object.reference.isEmpty()&&!object.reference.matches("[A-Za-z_][A-Za-z_0-9$]{0,127}")||!objectKeys.add(object.kind+":"+object.name))throw new IllegalArgumentException();result.objects.add(object);}
+                boolean hasData=false,hasDefinition=!result.objects.isEmpty();for(Table table:result.tables){hasData|=(table.flags&1)!=0;hasDefinition|=(table.flags&2)!=0;}
                 if((result.flags&2)==0&&hasData||(result.flags&16)==0&&hasDefinition||((result.flags&1)!=0&&(result.flags&2)!=0&&!hasData)||((result.flags&32)!=0&&(result.flags&16)!=0&&!hasDefinition))throw new IllegalArgumentException();
                 if(!result.host.matches("[A-Za-z0-9][A-Za-z0-9.-]{0,252}")||result.port<1||result.port>65535||result.username.length==0||result.password.length==0||!("MYSQL".equals(result.mode)||"ORACLE".equals(result.mode))||result.flags<0||result.flags>63||!result.includes.isEmpty()&&!result.excludes.isEmpty()||stream.read()!=-1)throw new IllegalArgumentException();
                 return result;

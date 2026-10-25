@@ -133,7 +133,7 @@ func (integrationIdentityProvider) AuthenticateAgent(*http.Request) (identity.Pr
 type integrationAuthorizer struct{}
 
 func (integrationAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
-	if (scope == identity.ScopeDataSourceRead && objectID == "source-1") || (scope == identity.ScopeNodeUse && objectID == "node-1") {
+	if ((scope == identity.ScopeDataSourceRead || scope == identity.ScopeDataSourceUse) && objectID == "source-1") || (scope == identity.ScopeNodeUse && objectID == "node-1") {
 		return nil
 	}
 	return errors.New("synthetic scope denied")

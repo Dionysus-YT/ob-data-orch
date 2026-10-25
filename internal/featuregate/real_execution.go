@@ -11,6 +11,22 @@ const RealExecutionEnvironmentVariable = "OB_DATA_ORCH_ENABLE_REAL_EXECUTION"
 // NormalImportEnvironmentVariable 是普通导入独立开关，不由导出开关隐式开启。
 const NormalImportEnvironmentVariable = "OB_DATA_ORCH_ENABLE_NORMAL_IMPORT_EXECUTION"
 
+// DirectLoadExecutionEnvironmentVariable 独立控制旁路写入，不能从其他任务类型继承。
+const DirectLoadExecutionEnvironmentVariable = "OB_DATA_ORCH_ENABLE_DIRECT_LOAD_EXECUTION"
+
+// DirectLoadProbeEnvironmentVariable 独立控制旁路只读 JDBC、SQL/RPC 与固定版本检查。
+const DirectLoadProbeEnvironmentVariable = "OB_DATA_ORCH_ENABLE_DIRECT_LOAD_PROBE"
+
+// LoadDirectLoadExecutionEnabled 读取旁路显式写入开关，调用方仍须复核真实执行和探针门禁。
+func LoadDirectLoadExecutionEnabled(lookupEnv func(string) (string, bool)) (bool, error) {
+	return loadExecutionEnabled(lookupEnv, DirectLoadExecutionEnvironmentVariable)
+}
+
+// LoadDirectLoadProbeEnabled 读取旁路显式检查开关；未配置或非法值不能放行秘密解析。
+func LoadDirectLoadProbeEnabled(lookupEnv func(string) (string, bool)) (bool, error) {
+	return loadExecutionEnabled(lookupEnv, DirectLoadProbeEnvironmentVariable)
+}
+
 // LoadNormalImportExecutionEnabled 读取普通导入显式开关；调用方仍须同时满足真实执行门禁。
 func LoadNormalImportExecutionEnabled(lookupEnv func(string) (string, bool)) (bool, error) {
 	return loadExecutionEnabled(lookupEnv, NormalImportEnvironmentVariable)

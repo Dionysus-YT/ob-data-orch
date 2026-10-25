@@ -11,6 +11,7 @@ import (
 
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/importdomain"
@@ -126,12 +127,19 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 	if kind == importdomain.TaskType {
 		payloadType = "OBLOADER_NORMAL_IMPORT_CLAIM_NEXT"
 	}
-	if (kind != "OBDUMPER_EXPORT" && kind != importdomain.TaskType) || !validExecutionEnvelope(machine, request.agentExecutionEnvelope, payloadType) {
+	if kind == directload.TaskType {
+		payloadType = "OBLOADER_DIRECT_LOAD_CLAIM_NEXT"
+	}
+	if (kind != "OBDUMPER_EXPORT" && kind != importdomain.TaskType && kind != directload.TaskType) || !validExecutionEnvelope(machine, request.agentExecutionEnvelope, payloadType) {
 		writeError(w, http.StatusBadRequest, "AGENT_REQUEST_INVALID", "Agent 请求无效", false)
 		return
 	}
 	if kind == importdomain.TaskType && !s.normalImportExecutionEnabled {
 		writeError(w, http.StatusServiceUnavailable, "NORMAL_IMPORT_EXECUTION_GATED", "普通导入执行未启用", false)
+		return
+	}
+	if kind == directload.TaskType && !s.directLoadExecutionEnabled {
+		writeError(w, http.StatusServiceUnavailable, "DIRECT_LOAD_EXECUTION_GATED", "旁路导入执行未启用", false)
 		return
 	}
 	executionID, err := identifier.NewUUIDV4()
@@ -154,6 +162,7 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 		TaskType: kind,
 		AgentID:  machine.AgentID, NodeID: machine.NodeID, ExecutionID: executionID, LeaseID: leaseID,
 		ScheduledEventID: scheduledEventID, RequestID: request.RequestID, RequestDigest: executionRequestDigest("CLAIM_NEXT", request.agentExecutionEnvelope, "", request.Payload), LeaseTTL: executionLeaseTTL,
+		// 最新覆盖由 Store 在回执重放之后、同一领取事务内应用，策略故障不能阻断既有回执。
 		HeartbeatFreshAfter: now.Add(-s.heartbeatTTL), Now: now,
 	})
 	if errors.Is(err, store.ErrIdempotencyConflict) || errors.Is(err, store.ErrClaimIneligible) || errors.Is(err, store.ErrPrecheckLeaseRejected) {
@@ -178,6 +187,9 @@ func (s *Server) claimNextAuthenticatedExecution(w http.ResponseWriter, r *http.
 	// 导出响应保持旧字段集，旧 Agent 不会意外接受普通导入信封。
 	if kind == importdomain.TaskType {
 		payload["taskType"], payload["normalImport"] = grant.TaskType, grant.NormalImport
+	}
+	if kind == directload.TaskType {
+		payload["taskType"], payload["directLoad"] = grant.TaskType, grant.DirectLoad
 	}
 	writeExecutionResponse(w, "EXECUTION_CLAIMED", payload)
 }
@@ -223,7 +235,7 @@ func (s *Server) renewAuthenticatedExecution(w http.ResponseWriter, r *http.Requ
 	}
 	now := time.Now().UTC()
 	expiresAt := now.Add(executionLeaseTTL)
-	if err := executions.RenewExecutionLease(r.Context(), store.LeaseRenewal{ExecutionID: executionID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch, AgentID: machine.AgentID, ExpiresAt: expiresAt}); err != nil {
+	if err := executions.RenewExecutionLease(r.Context(), store.LeaseRenewal{ExecutionID: executionID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch, AgentID: machine.AgentID, ExpiresAt: expiresAt, Now: now, EnvelopeDigest: request.Payload.EnvelopeDigest}); err != nil {
 		writeExecutionStoreError(w, err)
 		return
 	}
@@ -292,6 +304,10 @@ func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *h
 		return
 	}
 	defer encrypted.Destroy()
+	if encrypted.TaskType == directload.TaskType && !s.directLoadExecutionEnabled {
+		writeExecutionStoreError(w, store.ErrEventRejected)
+		return
+	}
 	finish := func(succeeded bool) error {
 		return executions.FinishExecutionSecretResolution(r.Context(), store.ExecutionSecretResolutionOutcome{
 			AgentID: machine.AgentID, ExecutionID: executionID, LeaseID: request.Payload.LeaseID, LeaseEpoch: request.Payload.LeaseEpoch,
@@ -299,7 +315,7 @@ func (s *Server) resolveAuthenticatedExecutionSecret(w http.ResponseWriter, r *h
 		})
 	}
 	owner := identity.Principal{Type: identity.BrowserPrincipal, ID: encrypted.OwnerSubjectID}
-	if identity.Validate(owner, identity.BrowserPrincipal) != nil || s.authorizer == nil || identity.Can(r.Context(), s.authorizer, owner, identity.ScopeDataSourceRead, encrypted.DataSourceID) != nil || identity.Can(r.Context(), s.authorizer, owner, identity.ScopeNodeUse, encrypted.NodeID) != nil {
+	if identity.Validate(owner, identity.BrowserPrincipal) != nil || s.authorizer == nil || identity.Can(r.Context(), s.authorizer, owner, identity.ScopeDataSourceUse, encrypted.DataSourceID) != nil || identity.Can(r.Context(), s.authorizer, owner, identity.ScopeNodeUse, encrypted.NodeID) != nil {
 		_ = finish(false)
 		writeExecutionStoreError(w, store.ErrEventRejected)
 		return

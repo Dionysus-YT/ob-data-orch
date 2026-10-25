@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Alert as AAlert, Badge as ABadge, Collapse as ACollapse, CollapsePanel as ACollapsePanel, Skeleton, Button as AButton, Textarea as ATextarea, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Checkbox as ACheckbox, Drawer as ADrawer, Form as AForm, FormItem as AFormItem, InputPassword as AInputPassword } from 'ant-design-vue'
-import { computed, nextTick, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { DownOutlined, RightOutlined, DatabaseOutlined, ReloadOutlined, ApiOutlined } from '@ant-design/icons-vue'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
@@ -14,11 +14,12 @@ import { useSourceEditor } from './useSourceEditor'
 import { product } from '@/platform/tokens'
 import { useAntDrawerDialog } from '@/composables/useAntDrawerDialog'
 import { useOperationMessage } from '@/composables/useOperationMessage'
+import { useLogoutGuard } from '@/composables/useLogoutGuard'
 import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 
 const props = defineProps<{ api: SourceGateway; sourceId: string | null; initialMode: 'MYSQL' | 'ORACLE'; focusTest?: boolean; preview: boolean }>()
 const emit = defineEmits<{ close: []; saved: [id: string] }>()
-const { source, form, clearSys, parserInput, errors, failure, feedback, feedbackType, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, busy, invalidated, testBlocked, load, loadNodes, onNodeDropdownVisibleChange, parseConnection, save, startTest } = useSourceEditor(props.api, props.sourceId, (id) => emit('saved', id), props.initialMode)
+const { source, form, clearSys, parserInput, errors, failure, feedback, feedbackType, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, busy, invalidated, testBlocked, load, loadNodes, onNodeDropdownVisibleChange, parseConnection, selectConnectionKind, save, startTest } = useSourceEditor(props.api, props.sourceId, (id) => emit('saved', id), props.initialMode)
 const { MessageContext } = useOperationMessage([{ content: feedback, type: feedbackType }])
 const modeLabel = computed(() => form.compatibilityMode === 'ORACLE' ? 'OceanBase Oracle' : 'OceanBase MySQL')
 const nameOpen = ref(false)
@@ -43,12 +44,16 @@ function close() {
 }
 function cancelClose() { confirmClose.value = false; resolveNavigation?.(false); resolveNavigation = undefined }
 function acceptClose() { confirmClose.value = false; if (resolveNavigation) { resolveNavigation(true); resolveNavigation = undefined } else emit('close') }
-onBeforeRouteLeave(() => {
+function guardNavigation() {
   if (saving.value) return false
   if (!dirty.value && !testing.value) return true
+  resolveNavigation?.(false)
   confirmClose.value = true
   return new Promise<boolean>((resolve) => { resolveNavigation = resolve })
-})
+}
+onBeforeRouteLeave(guardNavigation)
+useLogoutGuard(guardNavigation)
+onBeforeUnmount(cancelClose)
 async function saveForm() {
   if (busy.value) return
   if (isNew.value) {
@@ -145,9 +150,10 @@ watch(loading, async (value) => {
           <section class="orch-form-section">
             <h3>连接地址</h3>
             <div class="orch-form-grid orch-source-group">
-              <AFormItem label="主机 IP/域名" name="host" html-for="source-host" required :validate-status="errors.host ? 'error' : undefined" :help="errors.host" class="orch-host-field"><AInput id="source-host" v-model:value="form.host" name="host" :maxlength="253" required placeholder="请输入 ODP 主机 IP 或域名" :aria-invalid="Boolean(errors.host)" @input="clearError('host')" /></AFormItem>
+              <AFormItem label="连接方式" name="connectionKind" html-for="source-connection-kind" required class="orch-span-all" :validate-status="errors.connectionKind ? 'error' : undefined" :help="errors.connectionKind"><ASelect id="source-connection-kind" :value="form.connectionKind" :disabled="busy" :options="[{ value: 'ODP', label: '通过 ODP 连接' }, { value: 'OBSERVER_DIRECT', label: '直连 OBServer' }]" @change="value => selectConnectionKind(value as 'ODP' | 'OBSERVER_DIRECT')" /></AFormItem>
+              <AFormItem label="主机 IP/域名" name="host" html-for="source-host" required :validate-status="errors.host ? 'error' : undefined" :help="errors.host" class="orch-host-field"><AInput id="source-host" v-model:value="form.host" name="host" :maxlength="253" required :placeholder="form.connectionKind === 'ODP' ? '请输入 ODP 主机 IP 或域名' : '请输入 OBServer 主机 IP 或域名'" :aria-invalid="Boolean(errors.host)" @input="clearError('host')" /></AFormItem>
               <AFormItem label="端口" name="port" html-for="source-port" required :validate-status="errors.port ? 'error' : undefined" :help="errors.port"><AInput id="source-port" v-model:value.number="form.port" name="port" placeholder="请输入端口" type="number" min="1" max="65535" required :aria-invalid="Boolean(errors.port)" @input="clearError('port')" /></AFormItem>
-              <AFormItem label="集群名（可选）" name="clusterName" html-for="source-cluster" :validate-status="errors.clusterName ? 'error' : undefined" :help="errors.clusterName"><AInput id="source-cluster" v-model:value="form.clusterName" name="clusterName" placeholder="可选，留空时使用 用户@租户" :maxlength="256" :aria-invalid="Boolean(errors.clusterName)" @input="clearError('clusterName')" /></AFormItem>
+              <AFormItem v-if="form.connectionKind === 'ODP'" label="集群名（可选）" name="clusterName" html-for="source-cluster" :validate-status="errors.clusterName ? 'error' : undefined" :help="errors.clusterName"><AInput id="source-cluster" v-model:value="form.clusterName" name="clusterName" placeholder="可选，留空时使用 用户@租户" :maxlength="256" :aria-invalid="Boolean(errors.clusterName)" @input="clearError('clusterName')" /></AFormItem>
               <AFormItem label="租户名" name="tenantName" html-for="source-tenant" required :validate-status="errors.tenantName ? 'error' : undefined" :help="errors.tenantName"><AInput id="source-tenant" v-model:value="form.tenantName" name="tenantName" placeholder="请输入租户名" :maxlength="256" required :aria-invalid="Boolean(errors.tenantName)" @input="clearError('tenantName')" /></AFormItem>
               <AFormItem v-if="form.compatibilityMode === 'MYSQL'" label="默认数据库（可选）" name="defaultDatabase" html-for="source-default-database" :validate-status="errors.defaultDatabase ? 'error' : undefined" :help="errors.defaultDatabase" class="orch-span-all"><AInput id="source-default-database" v-model:value="form.defaultDatabase" name="defaultDatabase" placeholder="可选，用于任务默认回填" :maxlength="512" :aria-invalid="Boolean(errors.defaultDatabase)" @input="clearError('defaultDatabase')" /></AFormItem>
             </div>

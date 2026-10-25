@@ -1,0 +1,2346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "direct-load.json",
+  "title": "旁路导入独立配置与参数事实基线",
+  "$defs": {
+    "Config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataSourceId",
+        "nodeId",
+        "database",
+        "scenario",
+        "rpcPort",
+        "table",
+        "filePath",
+        "format",
+        "applicability"
+      ],
+      "properties": {
+        "dataSourceId": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "nodeId": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "database": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "table": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "filePath": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "columnSeparator": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "thread": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "parallel": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "scenario": {
+          "enum": [
+            "",
+            "CLOUD_ODP",
+            "PRIVATE_ODP",
+            "OBSERVER_DIRECT"
+          ]
+        },
+        "rpcPort": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "format": {
+          "enum": [
+            "",
+            "CSV",
+            "SQL",
+            "PARQUET",
+            "ORC"
+          ]
+        },
+        "applicability": {
+          "$ref": "#/$defs/Applicability"
+        },
+        "externalData": {
+          "type": "boolean"
+        },
+        "replaceData": {
+          "type": "boolean"
+        },
+        "truncateTable": {
+          "type": "boolean"
+        }
+      },
+      "description": "配置读取兼容历史枚举，不表示当前可用范围。活动写入使用 LocalConfig，仅本地 ODP/OBServer 与 CSV；服务端复验单表、本地路径和入口确认。无凭据、argv、SQL文本、客户端版本或结构事实。真实执行默认关闭。"
+    },
+    "LocalConfig": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Config"
+        },
+        {
+          "properties": {
+            "scenario": {
+              "enum": [
+                "",
+                "PRIVATE_ODP",
+                "OBSERVER_DIRECT"
+              ]
+            },
+            "format": {
+              "enum": [
+                "",
+                "CSV"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "当前本地部署的活动配置；空值只用于未完成草稿，不将历史场景或格式静默转换为本地值。"
+    },
+    "Applicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "singleTable",
+        "wholeTableCommit",
+        "noCheckpoint",
+        "structureLimits"
+      ],
+      "properties": {
+        "singleTable": {
+          "type": "boolean"
+        },
+        "wholeTableCommit": {
+          "type": "boolean"
+        },
+        "noCheckpoint": {
+          "type": "boolean"
+        },
+        "structureLimits": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "fileCount",
+        "totalBytes",
+        "digest"
+      ],
+      "properties": {
+        "fileCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "metadataDigest": {
+          "$ref": "#/$defs/Digest",
+          "description": "可选官方辅助清单的有界摘要，不是数据文件或数据库结果。"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "kind",
+              "object",
+              "size",
+              "modified",
+              "sha256"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "kind": {
+                "const": "DATA"
+              },
+              "object": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "modified": {
+                "type": "string",
+                "pattern": "^-?[0-9]{1,19}$",
+                "description": "Unix 纳秒时间以字符串表示，保持 int64 精度。"
+              },
+              "sha256": {
+                "$ref": "#/$defs/Digest"
+              }
+            }
+          }
+        }
+      },
+      "description": "只含受限相对路径和摘要，文件数量、总量、排序、去重、范围、摘要及内容类型均须复核；不是导入结果。"
+    },
+    "Write": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configVersion",
+        "config"
+      ],
+      "properties": {
+        "configVersion": {
+          "const": "direct-load-v1"
+        },
+        "config": {
+          "$ref": "#/$defs/LocalConfig"
+        }
+      }
+    },
+    "Submit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "precheckId",
+        "taskName",
+        "confirmedConfigFingerprint"
+      ],
+      "properties": {
+        "precheckId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "taskName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+        },
+        "confirmedConfigFingerprint": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "description": "执行与独立旁路探针开关默认关闭；显式开启后仍须当前完整九项检查、三键安全投影、单表输入证明、数据源写权限、管理员及当前配置风险确认。浏览器不能提交 argv、版本、结构、表空状态或节点事实。"
+    },
+    "Draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "configVersion",
+        "config",
+        "configFingerprint",
+        "metadataVersion",
+        "capabilityVersion",
+        "executionEnabled",
+        "updatedAt",
+        "rpcPortSource",
+        "parametersLocked"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "configVersion": {
+          "const": "direct-load-v1"
+        },
+        "config": {
+          "$ref": "#/$defs/Config"
+        },
+        "configFingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "metadataVersion": {
+          "const": "obloader-4.3.5-direct-v1"
+        },
+        "capabilityVersion": {
+          "const": "direct-load-local-v1"
+        },
+        "executionEnabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "rpcPortSource": {
+          "const": "MANUAL"
+        },
+        "sourceTaskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceDerivation": {
+          "enum": [
+            "REBUILD_FROM_CONFIG",
+            "RERUN_FROM_SCRATCH"
+          ]
+        },
+        "parametersLocked": {
+          "type": "boolean"
+        }
+      },
+      "dependentRequired": {
+        "sourceTaskId": [
+          "sourceDerivation"
+        ],
+        "sourceDerivation": [
+          "sourceTaskId"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sourceDerivation": {
+                "const": "RERUN_FROM_SCRATCH"
+              }
+            },
+            "required": [
+              "sourceDerivation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parametersLocked": {
+                "const": true
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "parametersLocked": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "draftId",
+        "draftRevision",
+        "configFingerprint",
+        "status",
+        "integrityStatus",
+        "validUntil",
+        "checkKind",
+        "results",
+        "inputManifest",
+        "executionEnabled"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "draftId": {
+          "type": "string"
+        },
+        "draftRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "configFingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "status": {
+          "enum": [
+            "PENDING",
+            "LEASED",
+            "SUCCEEDED",
+            "FAILED",
+            "INVALIDATED",
+            "EXPIRED"
+          ]
+        },
+        "integrityStatus": {
+          "enum": [
+            "UNKNOWN",
+            "COMPLETE",
+            "INCOMPLETE"
+          ]
+        },
+        "validUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "checkKind": {
+          "enum": [
+            "DIRECT_LOAD_FILES",
+            "DIRECT_LOAD_PREFLIGHT"
+          ]
+        },
+        "executionEnabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "inputManifest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Manifest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "results": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 9,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "check",
+              "status",
+              "evidenceCode"
+            ],
+            "properties": {
+              "check": {
+                "enum": [
+                  "TOOL_ENVIRONMENT",
+                  "NODE_RESOURCE",
+                  "INPUT_FILES",
+                  "DATABASE_CONNECTIVITY",
+                  "RPC_CONNECTIVITY",
+                  "DIRECT_LOAD_VERSION",
+                  "WRITE_ACCESS",
+                  "DIRECT_LOAD_STRUCTURE",
+                  "DIRECT_LOAD_CONFIG"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "PASSED",
+                  "FAILED",
+                  "UNKNOWN"
+                ]
+              },
+              "evidenceCode": {
+                "type": "string",
+                "enum": [
+                  "DIRECT_LOAD_VERIFIED",
+                  "DIRECT_LOAD_REJECTED",
+                  "DIRECT_LOAD_UNAVAILABLE",
+                  "DIRECT_LOAD_PROBE_NOT_CONFIGURED",
+                  "PRECHECK_BLOCKED_BY_TOOL",
+                  "PRECHECK_BLOCKED_BY_DATABASE",
+                  "DIRECT_LOAD_TABLE_NOT_FOUND",
+                  "DIRECT_LOAD_BIT_BLOCKED",
+                  "DIRECT_LOAD_BINARY_BLOCKED",
+                  "DIRECT_LOAD_VIRTUAL_BLOCKED",
+                  "DIRECT_LOAD_REPLACE_INDEX_BLOCKED",
+                  "DIRECT_LOAD_REPLACE_LOB_BLOCKED",
+                  "DIRECT_LOAD_TABLE_FACT_UNAVAILABLE"
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "PASSED"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "evidenceCode": {
+                      "enum": [
+                        "DIRECT_LOAD_VERIFIED"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "FAILED"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "evidenceCode": {
+                      "enum": [
+                        "DIRECT_LOAD_REJECTED",
+                        "DIRECT_LOAD_TABLE_NOT_FOUND",
+                        "DIRECT_LOAD_BIT_BLOCKED",
+                        "DIRECT_LOAD_BINARY_BLOCKED",
+                        "DIRECT_LOAD_VIRTUAL_BLOCKED",
+                        "DIRECT_LOAD_REPLACE_INDEX_BLOCKED",
+                        "DIRECT_LOAD_REPLACE_LOB_BLOCKED"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "UNKNOWN"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "evidenceCode": {
+                      "enum": [
+                        "DIRECT_LOAD_UNAVAILABLE",
+                        "DIRECT_LOAD_PROBE_NOT_CONFIGURED",
+                        "PRECHECK_BLOCKED_BY_TOOL",
+                        "PRECHECK_BLOCKED_BY_DATABASE",
+                        "DIRECT_LOAD_TABLE_FACT_UNAVAILABLE"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "evidenceCode": {
+                      "enum": [
+                        "DIRECT_LOAD_TABLE_NOT_FOUND",
+                        "DIRECT_LOAD_BIT_BLOCKED",
+                        "DIRECT_LOAD_BINARY_BLOCKED",
+                        "DIRECT_LOAD_VIRTUAL_BLOCKED",
+                        "DIRECT_LOAD_REPLACE_INDEX_BLOCKED",
+                        "DIRECT_LOAD_REPLACE_LOB_BLOCKED",
+                        "DIRECT_LOAD_TABLE_FACT_UNAVAILABLE"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_STRUCTURE"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "directLoadConfigFingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "submittedTaskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "仅返回当前所有者同一预检查已创建的任务，用于不确定提交结果核对，不授予再次执行资格。"
+        }
+      },
+      "description": "文件发现严格只含 INPUT_FILES；完整预检查按固定顺序包含九项。UNKNOWN、过期、文件清单缺失或配置安全投影缺失均不能解锁提交。",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "checkKind": {
+                "const": "DIRECT_LOAD_FILES"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "results": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "prefixItems": [
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "INPUT_FILES"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "items": false
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "results": {
+                "type": "array",
+                "minItems": 9,
+                "maxItems": 9,
+                "prefixItems": [
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "TOOL_ENVIRONMENT"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "NODE_RESOURCE"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "INPUT_FILES"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "DATABASE_CONNECTIVITY"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "RPC_CONNECTIVITY"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "DIRECT_LOAD_VERSION"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "WRITE_ACCESS"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "DIRECT_LOAD_STRUCTURE"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/CheckResult"
+                      },
+                      {
+                        "properties": {
+                          "check": {
+                            "const": "DIRECT_LOAD_CONFIG"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "items": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "checkKind": {
+                "const": "DIRECT_LOAD_PREFLIGHT"
+              },
+              "results": {
+                "contains": {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_CONFIG"
+                    },
+                    "status": {
+                      "const": "PASSED"
+                    }
+                  },
+                  "required": [
+                    "check",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "checkKind",
+              "results"
+            ]
+          },
+          "then": {
+            "required": [
+              "directLoadConfigFingerprint"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "directLoadConfigFingerprint"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "CheckResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check",
+        "status",
+        "evidenceCode"
+      ],
+      "properties": {
+        "check": {
+          "enum": [
+            "TOOL_ENVIRONMENT",
+            "NODE_RESOURCE",
+            "INPUT_FILES",
+            "DATABASE_CONNECTIVITY",
+            "RPC_CONNECTIVITY",
+            "DIRECT_LOAD_VERSION",
+            "WRITE_ACCESS",
+            "DIRECT_LOAD_STRUCTURE",
+            "DIRECT_LOAD_CONFIG"
+          ]
+        },
+        "status": {
+          "enum": [
+            "PASSED",
+            "FAILED",
+            "UNKNOWN"
+          ]
+        },
+        "evidenceCode": {
+          "type": "string",
+          "enum": [
+            "DIRECT_LOAD_VERIFIED",
+            "DIRECT_LOAD_REJECTED",
+            "DIRECT_LOAD_UNAVAILABLE",
+            "DIRECT_LOAD_PROBE_NOT_CONFIGURED",
+            "PRECHECK_BLOCKED_BY_TOOL",
+            "PRECHECK_BLOCKED_BY_DATABASE",
+            "DIRECT_LOAD_TABLE_NOT_FOUND",
+            "DIRECT_LOAD_BIT_BLOCKED",
+            "DIRECT_LOAD_BINARY_BLOCKED",
+            "DIRECT_LOAD_VIRTUAL_BLOCKED",
+            "DIRECT_LOAD_REPLACE_INDEX_BLOCKED",
+            "DIRECT_LOAD_REPLACE_LOB_BLOCKED",
+            "DIRECT_LOAD_TABLE_FACT_UNAVAILABLE"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASSED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidenceCode": {
+                "enum": [
+                  "DIRECT_LOAD_VERIFIED"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "FAILED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidenceCode": {
+                "enum": [
+                  "DIRECT_LOAD_REJECTED",
+                  "DIRECT_LOAD_TABLE_NOT_FOUND",
+                  "DIRECT_LOAD_BIT_BLOCKED",
+                  "DIRECT_LOAD_BINARY_BLOCKED",
+                  "DIRECT_LOAD_VIRTUAL_BLOCKED",
+                  "DIRECT_LOAD_REPLACE_INDEX_BLOCKED",
+                  "DIRECT_LOAD_REPLACE_LOB_BLOCKED"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "UNKNOWN"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidenceCode": {
+                "enum": [
+                  "DIRECT_LOAD_UNAVAILABLE",
+                  "DIRECT_LOAD_PROBE_NOT_CONFIGURED",
+                  "PRECHECK_BLOCKED_BY_TOOL",
+                  "PRECHECK_BLOCKED_BY_DATABASE",
+                  "DIRECT_LOAD_TABLE_FACT_UNAVAILABLE"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evidenceCode": {
+                "enum": [
+                  "DIRECT_LOAD_TABLE_NOT_FOUND",
+                  "DIRECT_LOAD_BIT_BLOCKED",
+                  "DIRECT_LOAD_BINARY_BLOCKED",
+                  "DIRECT_LOAD_VIRTUAL_BLOCKED",
+                  "DIRECT_LOAD_REPLACE_INDEX_BLOCKED",
+                  "DIRECT_LOAD_REPLACE_LOB_BLOCKED",
+                  "DIRECT_LOAD_TABLE_FACT_UNAVAILABLE"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "check": {
+                "const": "DIRECT_LOAD_STRUCTURE"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PrecheckProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "draftRevision",
+        "configFingerprint",
+        "results"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "draftRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "configFingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "results": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "TOOL_ENVIRONMENT"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "NODE_RESOURCE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "INPUT_FILES"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DATABASE_CONNECTIVITY"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "RPC_CONNECTIVITY"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_VERSION"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "WRITE_ACCESS"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_STRUCTURE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_CONFIG"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "Snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configVersion",
+        "taskType",
+        "taskName",
+        "config",
+        "inputManifest",
+        "precheckProof",
+        "directLoadConfigFingerprint"
+      ],
+      "properties": {
+        "configVersion": {
+          "const": "direct-load-v1"
+        },
+        "taskType": {
+          "const": "OBLOADER_DIRECT_LOAD"
+        },
+        "taskName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "config": {
+          "$ref": "#/$defs/Config"
+        },
+        "inputManifest": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "precheckProof": {
+          "$ref": "#/$defs/PrecheckProof"
+        },
+        "directLoadConfigFingerprint": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "description": "只由服务端冻结，严格拒绝重复键、大小写别名、空值和未声明字段；不接受普通导入或导出证明。"
+    },
+    "ExecutionInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compatibilityMode",
+        "config",
+        "manifest",
+        "directLoadConfigFingerprint"
+      ],
+      "properties": {
+        "compatibilityMode": {
+          "enum": [
+            "MYSQL",
+            "ORACLE"
+          ]
+        },
+        "config": {
+          "$ref": "#/$defs/LocalConfig"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "directLoadConfigFingerprint": {
+          "$ref": "#/$defs/Digest"
+        }
+      }
+    },
+    "ResultFacts": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "directLoad",
+            "serverCommitObserved",
+            "checkpointPresent"
+          ],
+          "properties": {
+            "result": {
+              "const": "VERIFIED"
+            },
+            "directLoad": {
+              "const": true
+            },
+            "serverCommitObserved": {
+              "const": true
+            },
+            "checkpointPresent": {
+              "const": false
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "directLoad",
+            "serverCommitObserved",
+            "checkpointPresent",
+            "errorCode"
+          ],
+          "properties": {
+            "result": {
+              "const": "FAILED"
+            },
+            "directLoad": {
+              "const": true
+            },
+            "serverCommitObserved": {
+              "type": "boolean"
+            },
+            "checkpointPresent": {
+              "const": false
+            },
+            "errorCode": {
+              "enum": [
+                "START_REJECTED",
+                "PROCESS_EXIT_NONZERO",
+                "PROCESS_WAIT_FAILED",
+                "TOOL_FAILED",
+                "RESULT_VERIFICATION_FAILED",
+                "EXECUTION_EVIDENCE_UNAVAILABLE",
+                "CANCELLED_BY_REQUEST",
+                "CANCEL_TIMEOUT",
+                "CANCEL_FAILED"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "只有同冻结表固定服务端提交成功终态、受控退出零和完整日志均确认后可 VERIFIED。已启动后的失败必须核对；未观察到提交行不等于未提交。无文件或行数计数。"
+    },
+    "PrecheckResults": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "INPUT_FILES"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        },
+        {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "TOOL_ENVIRONMENT"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "NODE_RESOURCE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "INPUT_FILES"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DATABASE_CONNECTIVITY"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "RPC_CONNECTIVITY"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_VERSION"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "WRITE_ACCESS"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_STRUCTURE"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/CheckResult"
+                },
+                {
+                  "properties": {
+                    "check": {
+                      "const": "DIRECT_LOAD_CONFIG"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        }
+      ]
+    },
+    "PrecheckCheckSet": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [
+            {
+              "const": "INPUT_FILES"
+            }
+          ],
+          "items": false
+        },
+        {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "prefixItems": [
+            {
+              "const": "TOOL_ENVIRONMENT"
+            },
+            {
+              "const": "NODE_RESOURCE"
+            },
+            {
+              "const": "INPUT_FILES"
+            },
+            {
+              "const": "DATABASE_CONNECTIVITY"
+            },
+            {
+              "const": "RPC_CONNECTIVITY"
+            },
+            {
+              "const": "DIRECT_LOAD_VERSION"
+            },
+            {
+              "const": "WRITE_ACCESS"
+            },
+            {
+              "const": "DIRECT_LOAD_STRUCTURE"
+            },
+            {
+              "const": "DIRECT_LOAD_CONFIG"
+            }
+          ],
+          "items": false
+        }
+      ]
+    },
+    "PrecheckExecutionContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "directLoad",
+        "checkKind",
+        "compatibilityMode",
+        "database",
+        "contentKind",
+        "targetPlatform",
+        "allowedRoots",
+        "resourceRequirement"
+      ],
+      "properties": {
+        "directLoad": {
+          "$ref": "#/$defs/LocalConfig"
+        },
+        "checkKind": {
+          "enum": [
+            "DIRECT_LOAD_FILES",
+            "DIRECT_LOAD_PREFLIGHT"
+          ]
+        },
+        "compatibilityMode": {
+          "enum": [
+            "MYSQL",
+            "ORACLE"
+          ]
+        },
+        "database": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "contentKind": {
+          "const": "DATA_ONLY"
+        },
+        "targetPlatform": {
+          "enum": [
+            "WINDOWS_AMD64",
+            "LINUX_AMD64",
+            "LINUX_ARM64"
+          ]
+        },
+        "allowedRoots": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "resourceRequirement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "heapBytes",
+            "requiredBytes",
+            "totalBudgetBytes"
+          ],
+          "properties": {
+            "heapBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requiredBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "totalBudgetBytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "parameterCatalog": [
+    {
+      "name": "--all",
+      "status": "明确不适用",
+      "description": "导入全部对象/表数据；旁路官方明确禁止多表。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--auto-column-mapping",
+      "status": "待官方参数映射确认",
+      "description": "CSV/ORC/Parquet 按列名自动映射；当前旁路专题未说明是否支持。",
+      "disposition": "保留映射，验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--avro",
+      "status": "待官方参数映射确认",
+      "description": "导入 Avro；普通导入支持 Primary/Logical Types，不支持 Complex Types；旁路适用性未确认。",
+      "disposition": "格式暂不开放",
+      "evidence": "S2/S4",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--batch",
+      "status": "待官方参数映射确认",
+      "description": "普通导入每批事务记录数；旁路按表整体提交，是否影响 Direct Load 未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--block-size",
+      "status": "待官方参数映射确认",
+      "description": "普通导入大文件逻辑切分阈值；Direct Load 是否共用未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--buffer-size",
+      "status": "明确不适用",
+      "description": "help-only 的 ring buffer capacity，无当前官网语义。",
+      "disposition": "不显示、不生成",
+      "evidence": "H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--character-set",
+      "status": "待官方参数映射确认",
+      "description": "创建数据库连接使用的字符集；旁路连接适用性合理但专题未逐项说明。",
+      "disposition": "专家映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--cluster",
+      "status": "旁路已确认",
+      "description": "私有 OceanBase + ODP 场景集群名；OBServer 直连不使用。",
+      "disposition": "数据源按连接场景派生",
+      "evidence": "S1",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--column-delimiter",
+      "status": "废弃/兼容",
+      "description": "CSV 包围符的过时别名，与 column-quote 同义。",
+      "disposition": "不显示，历史识别",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--column-quote",
+      "status": "待官方参数映射确认",
+      "description": "CSV 字符串包围符；旁路 CSV 是否完整支持该解析项未单独说明。",
+      "disposition": "CSV 专家映射保留",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--column-separator",
+      "status": "旁路已确认",
+      "description": "CSV 列分隔符；官方旁路命令示例使用。",
+      "disposition": "CSV 高级配置",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--column-splitter",
+      "status": "待官方参数映射确认",
+      "description": "CUT 列分隔字符串；CUT 的旁路适用性未确认。",
+      "disposition": "格式未确认前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--compat-mode",
+      "status": "明确不适用",
+      "description": "用于兼容导入 MySQL 表定义；旁路只导入表数据。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--compress",
+      "status": "待官方参数映射确认",
+      "description": "读取经 OBDUMPER 压缩的 CSV/CUT/POS/SQL；Direct Load 适用性未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2/S4",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--compression-algo",
+      "status": "待官方参数映射确认",
+      "description": "压缩输入算法 zstd/zlib/gzip/snappy。",
+      "disposition": "依赖 compress，验证前不开放",
+      "evidence": "S2/S4",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--compression-level",
+      "status": "待官方参数映射确认",
+      "description": "压缩等级；zstd/zlib 有范围，gzip/snappy 不支持。",
+      "disposition": "依赖 compress，验证前不开放",
+      "evidence": "S2/S4",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--csv",
+      "status": "旁路已确认",
+      "description": "导入 CSV 数据；当前官方旁路示例明确使用。",
+      "disposition": "当前已确认格式",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--ctl-path",
+      "status": "待官方参数映射确认",
+      "description": "控制文件目录；POS 必需，其他解析/预处理可用；旁路适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--cut",
+      "status": "待官方参数映射确认",
+      "description": "导入 CUT 数据；旁路专题无格式矩阵。",
+      "disposition": "格式暂不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--database",
+      "status": "旁路已确认",
+      "description": "目标数据库/Schema，官方旁路示例必备。",
+      "disposition": "普通模式，必填",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--date-format",
+      "status": "待官方参数映射确认",
+      "description": "MySQL DATE/DATETIME 原数据格式，与 default-date 配合；旁路适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--ddl",
+      "status": "明确不适用",
+      "description": "导入对象定义；旁路是单表数据写入。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--default-date",
+      "status": "待官方参数映射确认",
+      "description": "MySQL DATE/DATETIME 解析失败替代值；旁路适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--delete-from-table",
+      "status": "待官方参数映射确认",
+      "description": "普通导入前 DELETE 目标表数据；旁路专题未确认适用性。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--direct",
+      "status": "旁路已确认",
+      "description": "开启 Direct Load；根据目标表是否为空自动采用全量或增量旁路模式。",
+      "disposition": "必选、系统固定生成",
+      "evidence": "S1/S2/H",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--empty-string",
+      "status": "待官方参数映射确认",
+      "description": "指定值按空字符串处理；旁路 CSV 适用性未单独说明。",
+      "disposition": "CSV 映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--enable-hidden-pk",
+      "status": "明确不适用",
+      "description": "当前官方资料确认的是 OBDUMPER 导出侧隐藏主键语义。",
+      "disposition": "不显示、不生成",
+      "evidence": "H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--escape-character",
+      "status": "待官方参数映射确认",
+      "description": "CSV/CUT 转义字符；旁路适用性未单独说明。",
+      "disposition": "格式映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--exclude-column-names",
+      "status": "待官方参数映射确认",
+      "description": "排除指定列；与控制文件有约束；旁路列映射适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--exclude-data-types",
+      "status": "待官方参数映射确认",
+      "description": "跳过指定数据类型；不能绕过旁路不支持结构限制。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--exclude-table",
+      "status": "明确不适用",
+      "description": "排除多表范围中的表；旁路只允许一个明确目标表。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--external-data",
+      "status": "旁路已确认",
+      "description": "第三方文件模式；官方旁路 CSV 示例使用，精确 MANIFEST 行为待实测。",
+      "disposition": "高级配置",
+      "evidence": "S3/H",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--file-encoding",
+      "status": "待官方参数映射确认",
+      "description": "输入文件编码，区别于数据库字符集；Direct Load 适用性未逐项说明。",
+      "disposition": "文件高级映射保留",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--file-path",
+      "status": "旁路已确认",
+      "description": "输入文件/目录路径；官方旁路命令必备。",
+      "disposition": "普通模式，必填",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--file-regular-expression",
+      "status": "待官方参数映射确认",
+      "description": "用正则筛选输入文件；同表分片场景合理，但旁路专题未说明。",
+      "disposition": "高级映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--file-suffix",
+      "status": "待官方参数映射确认",
+      "description": "自定义输入文件后缀；旁路专题未逐项说明。",
+      "disposition": "CSV 文件匹配映射保留",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--function",
+      "status": "明确不适用",
+      "description": "导入函数定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--help",
+      "status": "CLI 元参数",
+      "description": "显示命令行帮助。",
+      "disposition": "不进入任务配置",
+      "evidence": "S2/H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--host",
+      "status": "旁路已确认",
+      "description": "ODP 或 OBServer 地址；旁路需同时建立 SQL/RPC 目标。",
+      "disposition": "数据源快照",
+      "evidence": "S1/S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--ignore-escape",
+      "status": "待官方参数映射确认",
+      "description": "CUT 忽略转义；CUT 旁路适用性未确认。",
+      "disposition": "格式未确认前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--ignore-unhex",
+      "status": "明确不适用",
+      "description": "普通导入可忽略二进制字符串解码，但旁路当前存在 BIT/二进制类型限制，不能用它绕过。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--include-column-names",
+      "status": "待官方参数映射确认",
+      "description": "指定目标列顺序；旁路列映射适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--line-separator",
+      "status": "待官方参数映射确认",
+      "description": "CSV/CUT/POS/SQL 行分隔符；旁路适用性未逐项说明。",
+      "disposition": "CSV 映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--log-path",
+      "status": "待官方参数映射确认",
+      "description": "OBLOADER 运行日志目录；通用运行能力，旁路专题未单列。",
+      "disposition": "执行节点/高级配置，待验证",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--logical-database",
+      "status": "明确不适用",
+      "description": "ODP Sharding 逻辑库标识；旁路专题只确认 ODP 连接，不确认逻辑库。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--max-discards",
+      "status": "明确不适用",
+      "description": "普通导入单表重复数据上限；官方明确不适用于旁路。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--max-errors",
+      "status": "明确不适用",
+      "description": "普通导入单表写入错误上限；官方明确不适用于旁路。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--max-tps",
+      "status": "待官方参数映射确认",
+      "description": "普通导入限速；Direct Load 是否生效未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--max-wait-timeout",
+      "status": "待官方参数映射确认",
+      "description": "普通导入等待服务端合并时长；Direct Load 是否生效未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--mem",
+      "status": "待官方参数映射确认",
+      "description": "JVM 内存大小，属于客户端进程资源；旁路精确影响未说明。",
+      "disposition": "节点高级映射保留",
+      "evidence": "H",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--mix",
+      "status": "明确不适用",
+      "description": "DDL/DML 混合文本解析；不符合单表数据 Direct Load 边界。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--nls-date-format",
+      "status": "待官方参数映射确认",
+      "description": "Oracle 会话日期格式；旁路数据解析适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--nls-timestamp-format",
+      "status": "待官方参数映射确认",
+      "description": "Oracle 会话时间戳格式；旁路适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--nls-timestamp-tz-format",
+      "status": "待官方参数映射确认",
+      "description": "Oracle 带时区时间戳格式；旁路适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--no-sys",
+      "status": "明确不适用",
+      "description": "专题页注明只用于 OceanBase V4.0.0 之前，而旁路支持版本均更高。",
+      "disposition": "当前版本不生成",
+      "evidence": "S1",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--null-string",
+      "status": "待官方参数映射确认",
+      "description": "指定值按 NULL 处理；旁路 CSV 适用性未逐项说明。",
+      "disposition": "CSV 映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--obj-user",
+      "status": "明确不适用",
+      "description": "导入用户定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--orc",
+      "status": "旁路已确认",
+      "description": "导入 ORC；OceanBase Cloud 官方页明确可用于 Direct Load。",
+      "disposition": "云 ODP 开放；私有路径待官方参数映射确认",
+      "evidence": "S2/S6",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--package",
+      "status": "明确不适用",
+      "description": "导入程序包定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--package-body",
+      "status": "明确不适用",
+      "description": "导入程序包体定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--par",
+      "status": "旁路已确认",
+      "description": "导入 Parquet；OceanBase Cloud 官方页明确可用于 Direct Load。",
+      "disposition": "云 ODP 开放；私有路径待官方参数映射确认",
+      "evidence": "S2/S6",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--parallel",
+      "status": "旁路已确认",
+      "description": "OBServer 写入与排序工作线程数，默认 1，建议结合租户 CPU 并与 thread 一致。",
+      "disposition": "高级配置",
+      "evidence": "S1/S2/H",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--password",
+      "status": "旁路已确认",
+      "description": "数据库密码。",
+      "disposition": "数据源快照，脱敏",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--pause",
+      "status": "待官方参数映射确认",
+      "description": "普通导入停导内存水位阈值；Direct Load 是否生效未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--port",
+      "status": "旁路已确认",
+      "description": "SQL 端口，不等于 RPC 端口。",
+      "disposition": "数据源快照",
+      "evidence": "S1/S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--pos",
+      "status": "待官方参数映射确认",
+      "description": "导入定长 POS，需要控制文件；旁路专题无格式矩阵。",
+      "disposition": "格式暂不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--procedure",
+      "status": "明确不适用",
+      "description": "导入存储过程定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--public-cloud",
+      "status": "旁路已确认",
+      "description": "云数据库 OceanBase + ODP 场景必需标识。",
+      "disposition": "数据源场景派生",
+      "evidence": "S1/S2",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--public-synonym",
+      "status": "明确不适用",
+      "description": "仅在 help Usage 出现且属于定义对象，官网无旁路语义。",
+      "disposition": "不显示、不生成",
+      "evidence": "H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--replace-data",
+      "status": "旁路已确认",
+      "description": "全量模式可用；增量模式仅无索引或 LOB 时可用；不能解决唯一索引冲突。",
+      "disposition": "专家配置，条件显示",
+      "evidence": "S1/S2",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--replace-object",
+      "status": "明确不适用",
+      "description": "替换 DDL/MIX 中已有对象定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--retry",
+      "status": "明确不适用",
+      "description": "从 load.ckpt 继续普通导入；官方明确旁路不支持重试/断点续传。",
+      "disposition": "不显示、不生成",
+      "evidence": "S1/S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--role",
+      "status": "明确不适用",
+      "description": "导入角色定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--rpc-port",
+      "status": "旁路已确认",
+      "description": "Direct Load RPC 端口，云 ODP 常见 3307、私有 ODP 2885、OBServer 2882；必须实际校验。",
+      "disposition": "普通模式，必填",
+      "evidence": "S1/S2/S3/H",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--rw",
+      "status": "待官方参数映射确认",
+      "description": "普通导入文件解析线程比例；Direct Load 是否共用未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--sequence",
+      "status": "明确不适用",
+      "description": "导入序列定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--server",
+      "status": "明确不适用",
+      "description": "help-only 的 remote load/dump，官网无部署语义。",
+      "disposition": "不显示、不生成",
+      "evidence": "H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--session-config",
+      "status": "旁路已确认",
+      "description": "指定连接配置文件；该文件同时承载 direct_path_load 节点配置。",
+      "disposition": "执行节点派生/专家摘要",
+      "evidence": "S2/C",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--skip-footer",
+      "status": "待官方参数映射确认",
+      "description": "CUT 跳过末行；CUT 旁路适用性未确认。",
+      "disposition": "格式未确认前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--skip-header",
+      "status": "待官方参数映射确认",
+      "description": "CSV/CUT 跳过首行；旁路 CSV 适用性未逐项说明。",
+      "disposition": "CSV 映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--slow",
+      "status": "待官方参数映射确认",
+      "description": "普通导入慢导内存水位阈值；Direct Load 是否生效未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--source-type",
+      "status": "待官方参数映射确认",
+      "description": "Hive 路径列解析，支持 ORC/Parquet；旁路适用性未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--sql",
+      "status": "旁路已确认",
+      "description": "导入 INSERT SQL 数据文件；OceanBase Cloud 官方页明确可用于 Direct Load。",
+      "disposition": "云 ODP 开放；私有路径待官方参数映射确认",
+      "evidence": "S2/S6",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--storage-uri",
+      "status": "废弃/兼容",
+      "description": "旧远程存储参数，V4.3.0 起整合到 file-path。",
+      "disposition": "不显示，历史识别",
+      "evidence": "S4/H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--strict",
+      "status": "待官方参数映射确认",
+      "description": "脏数据是否影响普通导入退出码；旁路错误语义未说明。",
+      "disposition": "验证前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--synonym",
+      "status": "明确不适用",
+      "description": "导入同义词定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--sys-password",
+      "status": "明确不适用",
+      "description": "只用于 OceanBase V4.0.0 之前，与旁路支持版本无交集。",
+      "disposition": "当前版本不生成",
+      "evidence": "S1",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--sys-user",
+      "status": "明确不适用",
+      "description": "只用于 OceanBase V4.0.0 之前，与旁路支持版本无交集。",
+      "disposition": "当前版本不生成",
+      "evidence": "S1",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--table",
+      "status": "旁路已确认",
+      "description": "唯一目标表；旁路不允许多表或星号。",
+      "disposition": "普通模式，单值必填",
+      "evidence": "S1/S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--table-group",
+      "status": "明确不适用",
+      "description": "导入表组定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--tenant",
+      "status": "旁路已确认",
+      "description": "云 ODP、私有 ODP 场景按专题页要求派生；OBServer 直连不使用独立 tenant。",
+      "disposition": "数据源场景派生",
+      "evidence": "S1",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--thread",
+      "status": "旁路已确认",
+      "description": "客户端到服务端连接池规模；官方建议与 parallel 一致。",
+      "disposition": "高级配置",
+      "evidence": "S1/S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--tmp-path",
+      "status": "待官方参数映射确认",
+      "description": "本地缓冲数据与日志目录；远程存储 Direct Load 行为未确认。",
+      "disposition": "验证前不开放",
+      "evidence": "H",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--trail-delimiter",
+      "status": "待官方参数映射确认",
+      "description": "CUT 行尾分隔符；CUT 旁路适用性未确认。",
+      "disposition": "格式未确认前不开放",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--trigger",
+      "status": "明确不适用",
+      "description": "导入触发器定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--truncate-table",
+      "status": "旁路已确认",
+      "description": "导入前 Truncate 目标表；官方旁路命令示例使用，属于高风险行为。",
+      "disposition": "专家配置，二次确认",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--type",
+      "status": "明确不适用",
+      "description": "导入类型定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--type-body",
+      "status": "明确不适用",
+      "description": "导入类型体定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--user",
+      "status": "旁路已确认",
+      "description": "数据库用户名；Oracle 兼容模式用户名需大写，连接场景决定 tenant/cluster 表达。",
+      "disposition": "数据源快照",
+      "evidence": "S1/S2",
+      "supportState": "ENABLED"
+    },
+    {
+      "name": "--version",
+      "status": "CLI 元参数",
+      "description": "显示工具版本。",
+      "disposition": "节点预检查使用，不进入任务配置",
+      "evidence": "S2/H",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--view",
+      "status": "明确不适用",
+      "description": "导入视图定义。",
+      "disposition": "不显示、不生成",
+      "evidence": "S2",
+      "supportState": "UNSUPPORTED"
+    },
+    {
+      "name": "--with-trim",
+      "status": "待官方参数映射确认",
+      "description": "删除输入数据左右空格；旁路 CSV 适用性未逐项说明。",
+      "disposition": "CSV 映射保留，验证前标记",
+      "evidence": "S2",
+      "supportState": "VALIDATION_GATED"
+    },
+    {
+      "name": "--yes",
+      "status": "旁路已确认",
+      "description": "跳过 truncate/delete 的 CLI 交互确认；旁路已确认 truncate 时由平台风险确认后派生。",
+      "disposition": "不作独立开关，按需派生",
+      "evidence": "S2/S3",
+      "supportState": "ENABLED"
+    }
+  ]
+}

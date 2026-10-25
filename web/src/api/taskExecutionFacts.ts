@@ -3,9 +3,14 @@ export function parseTaskExecutionFacts(value: Record<string, unknown>) {
   const facts: {
     cancelAvailable?: boolean; cancelRequested?: boolean; cancelDeadline?: string; exitCode?: number; elapsedMs?: number; errorCode?: string; errorSummary?: string;
     plannedActualMatch?: 'MATCHED' | 'MISMATCHED' | 'UNAVAILABLE';
+    schedulingWaitReason?: 'PLATFORM_CONCURRENCY_LIMIT' | 'SCHEDULING_POLICY_UNAVAILABLE';
     outputLocation?: { kind: 'LOCAL' | 'OSS' | 'S3' | 'COS' | 'OBS' | 'UNAVAILABLE'; value?: string; redaction: 'FULL' | 'KIND_ONLY' | 'UNAVAILABLE' }
   } = {}
   const fail = () => { throw new Error('任务执行事实不符合响应契约。') }
+  if (value.schedulingWaitReason !== undefined) {
+    if (value.state !== 'WAITING_SCHEDULE' || value.executionId || !['PLATFORM_CONCURRENCY_LIMIT', 'SCHEDULING_POLICY_UNAVAILABLE'].includes(String(value.schedulingWaitReason))) fail()
+    facts.schedulingWaitReason = value.schedulingWaitReason as NonNullable<typeof facts.schedulingWaitReason>
+  }
   for (const key of ['cancelAvailable', 'cancelRequested'] as const) {
     if (value[key] !== undefined) { if (typeof value[key] !== 'boolean') fail(); facts[key] = value[key] as boolean }
   }

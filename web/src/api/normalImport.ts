@@ -5,12 +5,14 @@ export interface NormalImportConfig {
   fileSuffix?: string; fileEncoding?: string; fileRegex?: string; logPath?: string; excludeTables?: string; taskName?: string
   objects?: Record<string, string>; parser: Record<string, string | boolean>; execution: Record<string, string>
   mapping?: { kind: 'POSITION' | 'CONTROL' | 'AUTO' | 'EXPLICIT'; ctlPath?: string; includeColumns?: string; excludeColumns?: string; excludeDataTypes?: string }
-  compatMysql?: boolean; replaceData?: boolean; replaceObject?: boolean; cleanup: 'NONE' | 'TRUNCATE' | 'DELETE'
+  compatMysql?: boolean; compatMysqlVersion?: '' | 'mysql56' | 'mysql57' | 'mysql80'; replaceData?: boolean; replaceObject?: boolean; cleanup: 'NONE' | 'TRUNCATE' | 'DELETE'
 }
 export interface NormalImportDraft {
   id: string; revision: number; configVersion: 'normal-import-v1'; config: NormalImportConfig; configFingerprint: string; executionEnabled: boolean
+  sourceTaskId?: string; sourceDerivation?: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
 }
 export interface NormalImportManifest {
+  controlDigest?: string
   metadataDigest?: string
   fileCount: number; totalBytes: number; digest: string
   files: { path: string; kind: 'DATA' | 'DDL'; object: string; size: number; modified: string; sha256: string }[]
@@ -29,7 +31,7 @@ export interface NormalImportApi {
   updateNormalImportDraft(draft: NormalImportDraft, config: NormalImportConfig): Promise<NormalImportDraft>
   getNormalImportDraft(id: string): Promise<NormalImportDraft>
   listNormalImportDrafts(): Promise<{ id: string; revision: number; updatedAt: string }[]>
-  deleteNormalImportDraft(draft: NormalImportDraft): Promise<void>
+  deleteNormalImportDraft(draft: Pick<NormalImportDraft, 'id' | 'revision'>): Promise<void>
   previewNormalImportCommand(draft: NormalImportDraft): Promise<NormalImportCommand>
   startNormalImportCheck(draft: NormalImportDraft, filesOnly: boolean): Promise<string>
   getNormalImportCheck(id: string): Promise<NormalImportCheck>
@@ -50,7 +52,7 @@ function integer(value: unknown, min = 0): number { return typeof value === 'num
 function fingerprint(value: unknown): string { const result = string(value); return digest.test(result) ? result : invalid() }
 function identifier(value: unknown): string { const result = string(value); return result && result.length <= 256 && !/[\s/\\?#]/.test(result) && !Array.from(result).some(character => character.charCodeAt(0) < 32) ? result : invalid() }
 function known(value: ObjectValue, fields: readonly string[]) { if (Object.keys(value).some(key => !fields.includes(key))) invalid() }
-const configKeys = ['dataSourceId', 'nodeId', 'database', 'filePath', 'fileSuffix', 'fileEncoding', 'fileRegex', 'logPath', 'content', 'format', 'scope', 'objects', 'excludeTables', 'parser', 'mapping', 'execution', 'compatMysql', 'replaceData', 'replaceObject', 'cleanup', 'taskName']
+const configKeys = ['dataSourceId', 'nodeId', 'database', 'filePath', 'fileSuffix', 'fileEncoding', 'fileRegex', 'logPath', 'content', 'format', 'scope', 'objects', 'excludeTables', 'parser', 'mapping', 'execution', 'compatMysql', 'compatMysqlVersion', 'replaceData', 'replaceObject', 'cleanup', 'taskName']
 const parserStrings = ['columnSeparator', 'columnQuote', 'columnSplitter', 'lineSeparator', 'escapeCharacter', 'nullString', 'emptyString', 'compressionAlgo', 'compressionLevel', 'dateFormat', 'defaultDate']
 const parserBooleans = ['skipHeader', 'skipFooter', 'ignoreEscape', 'trailDelimiter', 'withTrim', 'compress']
 const executionKeys = ['maxDiscards', 'maxErrors', 'strict', 'thread', 'rw', 'batch', 'blockSize', 'maxTps', 'maxWaitTimeout', 'memory', 'nlsDateFormat', 'nlsTimestampFormat', 'nlsTimestampTzFormat']
@@ -62,6 +64,7 @@ function parseConfig(raw: unknown): NormalImportConfig {
     else string(value)
   }
   for (const key of ['dataSourceId', 'nodeId', 'database', 'filePath', 'scope', 'content', 'cleanup']) string(config[key])
+  if (!['', 'mysql56', 'mysql57', 'mysql80'].includes(string(config.compatMysqlVersion ?? ''))) invalid()
   if (!['', 'DDL_ONLY', 'DATA_ONLY', 'DDL_AND_DATA'].includes(string(config.content)) || !['', 'CSV', 'CUT', 'SQL'].includes(string(config.format ?? '')) || !['', 'ALL', 'SPECIFIC'].includes(string(config.scope)) || !['NONE', 'TRUNCATE', 'DELETE'].includes(string(config.cleanup))) invalid()
   const parser = object(config.parser); known(parser, [...parserStrings, ...parserBooleans])
   for (const [key, value] of Object.entries(parser)) { if (parserBooleans.includes(key) ? typeof value !== 'boolean' : typeof value !== 'string') invalid() }
@@ -76,7 +79,10 @@ function parseConfig(raw: unknown): NormalImportConfig {
 }
 function parseDraft(raw: ObjectValue): NormalImportDraft {
   if (raw.configVersion !== 'normal-import-v1' || raw.metadataVersion !== 'obloader-4.3.5-normal-v1' || raw.capabilityVersion !== 'import-odp-local-v1' || typeof raw.executionEnabled !== 'boolean') invalid()
-  return { id: identifier(raw.id), revision: integer(raw.revision, 1), configVersion: raw.configVersion, config: parseConfig(raw.config), configFingerprint: fingerprint(raw.configFingerprint), executionEnabled: raw.executionEnabled }
+  const sourceTaskId = raw.sourceTaskId === undefined || raw.sourceTaskId === '' ? undefined : identifier(raw.sourceTaskId)
+  const sourceDerivation = raw.sourceDerivation === undefined || raw.sourceDerivation === '' ? undefined : raw.sourceDerivation
+  if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH' || Boolean(sourceTaskId) !== Boolean(sourceDerivation)) invalid()
+  return { id: identifier(raw.id), revision: integer(raw.revision, 1), configVersion: raw.configVersion, config: parseConfig(raw.config), configFingerprint: fingerprint(raw.configFingerprint), executionEnabled: raw.executionEnabled, ...(sourceTaskId ? { sourceTaskId, sourceDerivation: sourceDerivation as NormalImportDraft['sourceDerivation'] } : {}) }
 }
 function parseManifest(raw: unknown): NormalImportManifest | undefined {
   if (raw === null || raw === undefined) return undefined
@@ -92,7 +98,7 @@ function parseManifest(raw: unknown): NormalImportManifest | undefined {
     return { path, kind: file.kind as 'DATA' | 'DDL', object: string(file.object), size: integer(file.size), modified, sha256: fingerprint(file.sha256) }
   })
   if (files.reduce((sum, file) => sum + file.size, 0) !== totalBytes) invalid()
-  return { fileCount, totalBytes, digest: fingerprint(value.digest), files, ...(value.metadataDigest === undefined ? {} : { metadataDigest: fingerprint(value.metadataDigest) }) }
+  return { fileCount, totalBytes, digest: fingerprint(value.digest), files, ...(value.metadataDigest === undefined ? {} : { metadataDigest: fingerprint(value.metadataDigest) }), ...(value.controlDigest === undefined ? {} : { controlDigest: fingerprint(value.controlDigest) }) }
 }
 function parseCheck(value: ObjectValue): NormalImportCheck {
   const kind = value.checkKind
@@ -118,7 +124,7 @@ function validEvidence(check: string, status: string, code: string): boolean {
     TOOL_ENVIRONMENT: { PASSED: ['TOOL_RUNTIME_READY'], FAILED: ['TOOL_RUNTIME_INVALID'], UNKNOWN: ['TOOL_RUNTIME_UNAVAILABLE'] },
     NODE_RESOURCE: { PASSED: ['NODE_RESOURCE_READY'], FAILED: ['NODE_RESOURCE_INSUFFICIENT', 'IMPORT_JVM_HEAP_TOO_SMALL'], UNKNOWN: ['NODE_RESOURCE_UNAVAILABLE'] },
     WRITE_ACCESS: { PASSED: ['IMPORT_VERIFIED'], FAILED: ['IMPORT_REJECTED', 'IMPORT_WRITE_PERMISSION_REJECTED', 'IMPORT_WRITE_INSERT_REQUIRED', 'IMPORT_WRITE_UPDATE_REQUIRED', 'IMPORT_WRITE_DELETE_REQUIRED', 'IMPORT_WRITE_CREATE_REQUIRED', 'IMPORT_WRITE_ALTER_REQUIRED', 'IMPORT_WRITE_DROP_REQUIRED'], UNKNOWN: ['IMPORT_UNAVAILABLE', 'PRECHECK_BLOCKED_BY_TOOL', 'PRECHECK_BLOCKED_BY_DATABASE', 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED', 'IMPORT_WRITE_PERMISSION_UNAVAILABLE', 'IMPORT_WRITE_GRANTS_UNAVAILABLE', 'IMPORT_WRITE_GRANTS_UNSUPPORTED', 'IMPORT_WRITE_DDL_UNSUPPORTED', 'IMPORT_WRITE_INPUT_UNAVAILABLE', 'IMPORT_WRITE_SCHEMA_UNAVAILABLE', 'IMPORT_WRITE_CLEANUP_SCOPE_UNAVAILABLE'] },
-    INPUT_MAPPING: { PASSED: ['IMPORT_VERIFIED'], FAILED: ['IMPORT_REJECTED', 'IMPORT_INPUT_MAPPING_MISMATCH', 'IMPORT_COLUMN_COUNT_MISMATCH', 'IMPORT_COLUMN_NAME_MISMATCH', 'IMPORT_REQUIRED_COLUMN_MISSING'], UNKNOWN: ['IMPORT_UNAVAILABLE', 'PRECHECK_BLOCKED_BY_TOOL', 'PRECHECK_BLOCKED_BY_DATABASE', 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED', 'IMPORT_INPUT_MAPPING_UNAVAILABLE', 'IMPORT_INPUT_MAPPING_UNSUPPORTED', 'IMPORT_TARGET_METADATA_UNAVAILABLE', 'IMPORT_TARGET_STRUCTURE_MISSING', 'IMPORT_INPUT_DEFINITION_UNSUPPORTED', 'IMPORT_AUTO_COLUMNS_UNSUPPORTED', 'IMPORT_INPUT_FILES_CHANGED'] },
+    INPUT_MAPPING: { PASSED: ['IMPORT_VERIFIED'], FAILED: ['IMPORT_REJECTED', 'IMPORT_INPUT_MAPPING_MISMATCH', 'IMPORT_COLUMN_COUNT_MISMATCH', 'IMPORT_COLUMN_NAME_MISMATCH', 'IMPORT_REQUIRED_COLUMN_MISSING', 'IMPORT_CSV_WHITESPACE_UNQUOTED'], UNKNOWN: ['IMPORT_UNAVAILABLE', 'PRECHECK_BLOCKED_BY_TOOL', 'PRECHECK_BLOCKED_BY_DATABASE', 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED', 'IMPORT_INPUT_MAPPING_UNAVAILABLE', 'IMPORT_INPUT_MAPPING_UNSUPPORTED', 'IMPORT_TARGET_METADATA_UNAVAILABLE', 'IMPORT_TARGET_STRUCTURE_MISSING', 'IMPORT_INPUT_DEFINITION_UNSUPPORTED', 'IMPORT_AUTO_COLUMNS_UNSUPPORTED', 'IMPORT_INPUT_FILES_CHANGED'] },
   }
   const codes = common[check] ?? { PASSED: ['IMPORT_VERIFIED'], FAILED: ['IMPORT_REJECTED'], UNKNOWN: ['IMPORT_UNAVAILABLE', 'PRECHECK_BLOCKED_BY_TOOL', 'PRECHECK_BLOCKED_BY_DATABASE', ...(check === 'WRITE_ACCESS' || check === 'INPUT_MAPPING' ? ['NORMAL_IMPORT_PROBE_NOT_CONFIGURED'] : [])] }
   return codes[status]?.includes(code) ?? false

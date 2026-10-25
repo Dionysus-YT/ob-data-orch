@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { NormalImportApi, NormalImportCheck, NormalImportCommand } from '@/api/normalImport'
 import type { NormalImportDraftState } from './useNormalImportDraft'
+import { normalImportBlockingSummary } from './normalImportPrecheckPresentation'
 
 // 预览、检查与提交消费冻结草稿；每次配置或会话变化立即撤销旧结果和确认。
 export function useNormalImportReview(deps: {
@@ -9,13 +10,13 @@ export function useNormalImportReview(deps: {
 }) {
   const commandPreview = ref<NormalImportCommand | null>(null), activePrecheck = ref<NormalImportCheck | null>(null), discoveredFiles = ref<NormalImportCheck | null>(null)
   const previewingCommand = ref(false), checking = ref(false), submitting = ref(false), copyingCommand = ref(false)
-  const reviewFailure = ref(''), copyNotice = ref(''), submitConfirmationOpen = ref(false), checkExpired = ref(false)
+  const reviewFailure = ref(''), copyNotice = ref(''), copyFailure = ref(''), submitConfirmationOpen = ref(false), checkExpired = ref(false)
   const taskNameInput = ref(''), taskNameError = ref('')
   let disposed = false, epoch = 0, preparingDraftEpoch: number | undefined, pollTimer: ReturnType<typeof setTimeout> | undefined, expiryTimer: ReturnType<typeof setTimeout> | undefined
   function stopTimers() { clearTimeout(pollTimer); clearTimeout(expiryTimer); pollTimer = undefined; expiryTimer = undefined }
   function clearFrozenFacts() {
     stopTimers(); commandPreview.value = null; activePrecheck.value = null; discoveredFiles.value = null
-    copyNotice.value = ''; submitConfirmationOpen.value = false; checkExpired.value = false
+    copyNotice.value = copyFailure.value = ''; submitConfirmationOpen.value = false; checkExpired.value = false
   }
   function resetReview() {
     epoch++; preparingDraftEpoch = undefined; clearFrozenFacts()
@@ -44,6 +45,21 @@ export function useNormalImportReview(deps: {
       && check.checkKind === 'NORMAL_IMPORT_PREFLIGHT' && check.status === 'SUCCEEDED' && check.integrityStatus === 'COMPLETE' && !!check.inputManifest
       && check.draftId === draft.id && check.draftRevision === draft.revision && check.configFingerprint === draft.configFingerprint && Date.parse(check.validUntil) > Date.now()
   })
+  const precheckOverview = computed<{ type: 'info' | 'success' | 'warning' | 'error'; message: string; description: string }>(() => {
+    const check = activePrecheck.value
+    if (!deps.complete.value) return { type: 'info', message: '草稿尚未完成配置', description: '请补齐前四步；配置与命令准备就绪后自动检查。' }
+    if (deps.draft.draftDirty.value || deps.draft.draftNeedsRebind.value) return { type: 'warning', message: '配置已变化，原检查结果已失效', description: '请保存当前配置后重新检查。' }
+    if (reviewFailure.value) return { type: 'error', message: '无法完成当前操作', description: reviewFailure.value }
+    if (check && ['PENDING', 'LEASED'].includes(check.status)) return { type: 'info', message: check.status === 'LEASED' ? '执行节点正在检查' : '等待执行节点领取预检查', description: '检查结果返回后将在下方展示；预检查不会启动导入。' }
+    if (reviewBusy.value) return { type: 'info', message: '正在准备预检查', description: '当前配置与命令准备就绪后自动检查。' }
+    if (checkExpired.value || check?.status === 'EXPIRED') return { type: 'warning', message: '预检查结果已过期', description: '请重新检查，取得当前有效的结果后再提交。' }
+    if (check?.status === 'INVALIDATED') return { type: 'warning', message: '预检查结果已失效', description: '请核对当前配置并重新检查。' }
+    if (check?.status === 'FAILED') return { type: 'error', message: '预检查未通过', description: `${normalImportBlockingSummary(check) || '检查结果不完整'}。请按对应项目修正后重新检查。` }
+    if (canSubmit.value) return { type: 'success', message: '预检查通过，可以提交', description: '当前配置的必需检查全部通过；提交后才会启动导入。' }
+    if (check?.status === 'SUCCEEDED' && (!check.executionEnabled || !deps.draft.currentDraft.value?.executionEnabled)) return { type: 'warning', message: '预检查通过，执行暂未开放', description: '检查通过不代表允许启动；当前执行门禁仍阻断提交。' }
+    if (check) return { type: 'warning', message: '预检查结果无法用于当前配置', description: '结果缺失、绑定不一致或命令已变化；请重新检查。' }
+    return { type: 'info', message: '等待自动预检查', description: '准备就绪后自动开始；检查结束后可手动重新检查。' }
+  })
   async function previewCommand() {
     if (!canPreview.value) return
     const request = epoch; previewingCommand.value = true; reviewFailure.value = ''
@@ -59,6 +75,7 @@ export function useNormalImportReview(deps: {
   async function startCheck(filesOnly = false) {
     if (filesOnly ? !canDiscoverFiles.value : !canStartPrecheck.value) return
     const request = ++epoch; stopTimers(); checking.value = true; reviewFailure.value = ''; submitConfirmationOpen.value = false
+    copyingCommand.value = false; copyNotice.value = copyFailure.value = ''
     activePrecheck.value = null; checkExpired.value = false
     if (filesOnly) discoveredFiles.value = null
     try {
@@ -87,9 +104,9 @@ export function useNormalImportReview(deps: {
   async function copyCommand() {
     const command = commandPreview.value
     if (!command || disposed || copyingCommand.value) return
-    const request = epoch; copyingCommand.value = true; copyNotice.value = ''
-    try { await navigator.clipboard.writeText(command.redactedCommand); if (!disposed && request === epoch) copyNotice.value = '脱敏命令已复制' }
-    catch { if (!disposed && request === epoch) reviewFailure.value = '复制失败，请重试。' }
+    const request = epoch; copyingCommand.value = true; copyNotice.value = copyFailure.value = ''
+    try { await navigator.clipboard.writeText(command.redactedCommand); if (!disposed && request === epoch) copyNotice.value = '脱敏命令已复制。' }
+    catch { if (!disposed && request === epoch) copyFailure.value = '复制失败，请检查浏览器剪贴板权限或手动选择复制。' }
     finally { if (!disposed && request === epoch) copyingCommand.value = false }
   }
   async function submitTask(confirmed = false) {
@@ -108,5 +125,5 @@ export function useNormalImportReview(deps: {
     finally { if (!disposed && request === epoch) submitting.value = false }
   }
   onScopeDispose(() => { disposed = true; resetReview() })
-  return { commandPreview, activePrecheck, discoveredFiles, previewingCommand, checking, submitting, copyingCommand, reviewFailure, copyNotice, submitConfirmationOpen, taskNameInput, taskNameError, checkExpired, reviewBusy, canPreview, canDiscoverFiles, canStartPrecheck, canSubmit, previewCommand, startCheck, copyCommand, submitTask, resetReview }
+  return { commandPreview, activePrecheck, discoveredFiles, previewingCommand, checking, submitting, copyingCommand, reviewFailure, copyNotice, copyFailure, precheckOverview, submitConfirmationOpen, taskNameInput, taskNameError, checkExpired, reviewBusy, canPreview, canDiscoverFiles, canStartPrecheck, canSubmit, previewCommand, startCheck, copyCommand, submitTask, resetReview }
 }

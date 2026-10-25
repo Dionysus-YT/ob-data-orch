@@ -1,3 +1,4 @@
+import dayjs from 'dayjs'
 import type { TaskEnvironment } from '@/api/browser'
 
 // 八种任务状态的唯一文案来源；列表与详情共用，避免同一状态出现两种说法。
@@ -14,11 +15,12 @@ const taskStateLabels: Readonly<Record<string, string>> = {
 
 /** 未知状态不伪装为任何业务状态，统一显示状态核对中。 */
 export function taskStateText(state?: string): string {
-  return taskStateLabels[state ?? ''] ?? '状态核对中'
+  return isKnownTaskState(state) ? taskStateLabels[state ?? '']! : '状态核对中'
 }
 
+// 只接受白名单自有属性，不能把对象原型成员当作业务状态。
 export function isKnownTaskState(state?: string): boolean {
-  return taskStateLabels[state ?? ''] !== undefined
+  return state !== undefined && Object.hasOwn(taskStateLabels, state)
 }
 
 /** 非终态任务需要持续核对，供自动刷新判断。 */
@@ -58,8 +60,9 @@ export function taskDurationText(startedAt?: string, finishedAt?: string, now = 
   return `${rest} 秒`
 }
 
+/** 任务时间使用浏览器本地时区与固定 24 小时格式，不受本地化分隔符和补零规则影响。 */
 export function taskDateTimeText(value?: string): string {
   if (!value) return '—'
   const parsed = new Date(value)
-  return Number.isNaN(parsed.valueOf()) ? '—' : parsed.toLocaleString('zh-CN')
+  return Number.isNaN(parsed.valueOf()) ? '—' : dayjs(parsed).format('YYYY-MM-DD HH:mm:ss')
 }

@@ -9,6 +9,7 @@ import (
 
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
+	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
@@ -143,6 +144,8 @@ type StorageCredentialResolver interface {
 // Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
 // EX-I6：对象存储输出任务通过 StorageTarget 携带受控 URI 与临时目录；本地输出为 nil。
 type Request struct {
+	// DirectLoad 只承载旁路独立配置，不能与普通导入同时存在。
+	DirectLoad   *directload.Config
 	NormalImport *importdomain.Config
 	// InputManifest 仅由本次 Agent 文件检查产生，不接受协议调用方预置。
 	InputManifest     *importfiles.Manifest
@@ -198,11 +201,13 @@ type Result struct {
 
 // Report 保持固定清单的顺序和全部结果，供后续协议适配使用。
 type Report struct {
-	CheckKind     string
-	InputManifest *importfiles.Manifest
-	PrecheckID    string
-	Succeeded     bool
-	Results       []Result
+	// DirectLoadConfigFingerprint 仅绑定本次旁路完整检查通过的三个配置数值安全投影，不是原文件哈希。
+	DirectLoadConfigFingerprint string
+	CheckKind                   string
+	InputManifest               *importfiles.Manifest
+	PrecheckID                  string
+	Succeeded                   bool
+	Results                     []Result
 }
 
 // Probe 由 G2 合成夹具实现，用于为固定检查提供合成机器事实。
@@ -215,6 +220,9 @@ type Probe interface {
 // 但按实际依赖执行：数据库依赖工具环境，对象依赖连接，存储认证依赖端点连通性。
 // 独立检查继续收集事实；被阻断的项目保留 UNKNOWN 并用固定证据码说明未执行原因。
 func Run(ctx context.Context, request Request, probe Probe) (Report, error) {
+	if request.DirectLoad != nil {
+		return runDirectLoad(ctx, request, probe)
+	}
 	if request.NormalImport != nil {
 		return runNormalImport(ctx, request, probe)
 	}
@@ -327,6 +335,12 @@ func ChecksForOutputKind(kind OutputKind) []CheckID {
 // ValidateReportFor 按输出类型复核即将跨越 Agent 协议边界的检查报告。
 // 它拒绝缺项、乱序、自定义检查、无效证据码及伪造的整体成功结论，避免 HTTP 适配器把报告退化为任意 JSON。
 func ValidateReportFor(kind OutputKind, report Report) error {
+	if len(precheckcontract.DirectLoadChecks(report.CheckKind)) > 0 {
+		return ValidateDirectLoadReport(report)
+	}
+	if report.DirectLoadConfigFingerprint != "" {
+		return ErrInvalidRequest
+	}
 	if report.CheckKind != "" {
 		return ValidateNormalImportReport(report)
 	}
@@ -376,6 +390,9 @@ func validate(request Request, probe Probe) error {
 }
 
 func validateRequest(request Request) error {
+	if request.DirectLoad != nil {
+		return validateDirectLoadRequest(request)
+	}
 	if request.NormalImport != nil {
 		return validateNormalImportRequest(request)
 	}

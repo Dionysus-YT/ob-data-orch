@@ -1,0 +1,1307 @@
+{
+  "runId": "09dba420b48e4a94a1e1ab08d9775521",
+  "observedAt": "2026-10-20T04:09:49.212253+00:00",
+  "scope": "REAL_API_TEST_MYSQL_ORACLE_ODP_WINDOWS_AMD64",
+  "oracleRecords": [
+    {
+      "id": "NI-PARAM-nls_date",
+      "title": "Oracle NLS 独立结果验证",
+      "startedAt": "2026-10-20T04:05:04.751Z",
+      "draftId": "74d7d492-295a-4d07-a86b-151b9511351c",
+      "fingerprint": "cbd4eaa93ede25d3d5de72ef6800711e93df2b2f92aed65ebd26e6f1dadee622",
+      "parameterNames": [
+        "--nls-date-format"
+      ],
+      "precheckId": "2e5d3255-b5a0-4574-aef4-b0db5ce140a8",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "6e3264ac-6241-47c4-976c-32e9ff7861b3",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 82,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T04:05:30.491Z",
+      "content": {
+        "key": "DATE",
+        "actualRows": 1,
+        "contentMatched": true,
+        "structureMatched": true
+      },
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      }
+    },
+    {
+      "id": "NI-PARAM-nls_timestamp",
+      "title": "Oracle NLS 独立结果验证",
+      "startedAt": "2026-10-20T04:05:30.493Z",
+      "draftId": "8a392848-e271-4df7-a498-2a0a85067bda",
+      "fingerprint": "56bb820455f4a8ab84f2af675870c845e902fcf10830dd93d19b8a5bd8f3316c",
+      "parameterNames": [
+        "--nls-timestamp-format"
+      ],
+      "precheckId": "71e90300-ca41-49fa-aecf-976ecb0d2da1",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "993e6c37-83e5-4b6b-b0d1-e7e81c82006a",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 82,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T04:05:59.101Z",
+      "content": {
+        "key": "TIMESTAMP",
+        "actualRows": 1,
+        "contentMatched": true,
+        "structureMatched": true
+      },
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      }
+    },
+    {
+      "id": "NI-PARAM-nls_timezone",
+      "title": "Oracle NLS 独立结果验证",
+      "startedAt": "2026-10-20T04:05:59.102Z",
+      "draftId": "65882727-5d1f-498d-ab44-06912165fe76",
+      "fingerprint": "a82be7ccb3717a300f526fdb0909db2e12e8293c11157ffd9917f598a9193659",
+      "parameterNames": [
+        "--nls-timestamp-tz-format"
+      ],
+      "precheckId": "e7394c9b-1c53-455b-896e-c34f11c109e9",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "dee2a6b1-3980-49be-9a1a-9ecad7e0fc52",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 82,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T04:06:25.118Z",
+      "content": {
+        "key": "TZ",
+        "actualRows": 1,
+        "contentMatched": true,
+        "structureMatched": true
+      },
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      }
+    }
+  ],
+  "oracleCounts": {
+    "PASS": 3
+  },
+  "gates": {
+    "scope": "REAL_READONLY_PREFLIGHT",
+    "done": true,
+    "records": [
+      {
+        "id": "NI-GATE-control",
+        "names": [
+          "--ctl-path"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "3a395a1b-1e90-4153-8cb7-ca8f445f5db7",
+        "precheckId": "d087c30b-72b8-45da-b9da-d0eaec6d927a",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-type_exclusion",
+        "names": [
+          "--exclude-data-types"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "0d86e359-b924-453e-9122-cd3e306593ba",
+        "precheckId": "e9939c65-ec7f-4e3c-865a-9092d82efdf6",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-footer",
+        "names": [
+          "--skip-footer"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "c7676d04-72bf-4b01-9206-982af74de208",
+        "precheckId": "bc422176-e311-4288-b90a-1bd7ac6ae059",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-compress",
+        "names": [
+          "--compress"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "5e4c062f-457c-45bc-a694-9ff446c63c61",
+        "precheckId": "de93e6e8-55f0-4962-9b75-421c7636f497",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-compression_algo",
+        "names": [
+          "--compression-algo"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "031d96fa-a42f-403b-b740-5b5b30c97314",
+        "precheckId": "a53f718d-f7c5-4bf9-9a82-931095f6d7a1",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-compression_level",
+        "names": [
+          "--compression-level"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "39230012-b26a-48a1-9c79-3a1b2d21373d",
+        "precheckId": "55023d8d-7612-40f7-9d86-e8c64e951fbb",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_table_group",
+        "names": [
+          "--table-group"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "13884717-129e-4525-b6dd-5d63a651708c",
+        "precheckId": "bf1bc484-de05-407e-9bce-a7c2bd1f8693",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_view",
+        "names": [
+          "--view"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "7b77b07a-23a5-4900-8f3c-3a0c16eeafe5",
+        "precheckId": "c8af15eb-8fb9-4706-a0dd-bd0429e15e56",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_trigger",
+        "names": [
+          "--trigger"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "e46eab48-3fad-4d6b-b155-7f99bf785179",
+        "precheckId": "3959c0b5-29ff-4a25-925a-5fa89dc3cbdc",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_obj_user",
+        "names": [
+          "--obj-user"
+        ],
+        "outcome": "BLOCKED_PREFLIGHT_ONLY",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "3500cb23-ff69-4050-841c-abe88f7dc613",
+        "precheckId": "f37b56fc-32f8-468a-a0c5-39c2e48a5fea",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "code": "GLOBAL_OBJECT_SUBMISSION_OUTSIDE_FIXTURE_SCOPE",
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_role",
+        "names": [
+          "--role"
+        ],
+        "outcome": "BLOCKED_PREFLIGHT_ONLY",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "893c6f4b-ecc6-446f-931f-d467905d0f2a",
+        "precheckId": "cd3cabb6-3e3b-40a3-8a2f-1ee5cdb58ddc",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "code": "GLOBAL_OBJECT_SUBMISSION_OUTSIDE_FIXTURE_SCOPE",
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_sequence",
+        "names": [
+          "--sequence"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "b32f87ab-aad4-4a5c-91c5-6099d33e1e24",
+        "precheckId": "df32fc09-3a1b-47c4-999c-2132ec973ca0",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_synonym",
+        "names": [
+          "--synonym"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "d53ef973-b975-409a-9b59-54143c538921",
+        "precheckId": "c57ddf63-5bb9-4171-956d-790c268730d6",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_type",
+        "names": [
+          "--type"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "a824aba4-7b93-4e9d-beef-de373ad086e0",
+        "precheckId": "b7fd9f54-3467-4012-8601-029f8a6d0352",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_type_body",
+        "names": [
+          "--type-body"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "21001d05-09b7-4b5b-8f22-efaecb295b3c",
+        "precheckId": "34c1801b-d043-44f6-b0e0-305a1d0d35eb",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_package",
+        "names": [
+          "--package"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "49fbc95d-ae68-4ccb-8aee-32fac40885d5",
+        "precheckId": "41eee62e-0edb-417f-bff1-f6366d4921fc",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_package_body",
+        "names": [
+          "--package-body"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "06f67f0d-7dee-417d-9ab1-2df28faabc1c",
+        "precheckId": "310d242c-90c2-4f27-9d4c-3b5071ce7a8f",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_function",
+        "names": [
+          "--function"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "45833ba9-51f7-4f44-8a3b-b5f4a28ac5f9",
+        "precheckId": "bfda7912-6760-4599-8ebd-b9aadf81f4d8",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      },
+      {
+        "id": "NI-GATE-object_procedure",
+        "names": [
+          "--procedure"
+        ],
+        "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+        "toolExecutionValidated": false,
+        "createStatus": 201,
+        "draftId": "1e371b2e-3fae-4b5c-ae3c-1affef350284",
+        "precheckId": "08fb17c2-d418-4c3d-8562-1b03323f2eae",
+        "checkStatus": "FAILED",
+        "checks": [
+          {
+            "check": "DATABASE_CONNECTIVITY",
+            "status": "PASSED",
+            "evidenceCode": "DATABASE_CONNECTED"
+          },
+          {
+            "check": "WRITE_ACCESS",
+            "status": "UNKNOWN",
+            "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+          },
+          {
+            "check": "TOOL_ENVIRONMENT",
+            "status": "PASSED",
+            "evidenceCode": "TOOL_RUNTIME_READY"
+          },
+          {
+            "check": "NODE_RESOURCE",
+            "status": "PASSED",
+            "evidenceCode": "NODE_RESOURCE_READY"
+          },
+          {
+            "check": "INPUT_FILES",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          },
+          {
+            "check": "INPUT_MAPPING",
+            "status": "PASSED",
+            "evidenceCode": "IMPORT_VERIFIED"
+          }
+        ],
+        "bindingMatched": true,
+        "submitStatus": 422,
+        "cleanupStatus": 200,
+        "noTaskCreated": true
+      }
+    ],
+    "startedAt": "2026-10-20T04:06:26.272Z",
+    "current": {
+      "id": "NI-GATE-object_procedure",
+      "names": [
+        "--procedure"
+      ],
+      "outcome": "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED",
+      "toolExecutionValidated": false,
+      "createStatus": 201,
+      "draftId": "1e371b2e-3fae-4b5c-ae3c-1affef350284",
+      "precheckId": "08fb17c2-d418-4c3d-8562-1b03323f2eae",
+      "checkStatus": "FAILED",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "UNKNOWN",
+          "evidenceCode": "IMPORT_WRITE_DDL_UNSUPPORTED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "bindingMatched": true,
+      "submitStatus": 422,
+      "cleanupStatus": 200
+    },
+    "finishedAt": "2026-10-20T04:07:28.044Z"
+  },
+  "gateCounts": {
+    "BLOCKED_WITH_SUBMIT_REJECTION_VERIFIED": 17,
+    "BLOCKED_PREFLIGHT_ONLY": 2
+  },
+  "gateTasksCreated": 0,
+  "independentOracleBeforeMatched": true,
+  "diagnostic": {
+    "status": "ORACLE_DIAGNOSED",
+    "schemaOwnerMatched": true,
+    "sysContextSupported": true,
+    "sessionPrivilegesReadable": false,
+    "createTablePrivilege": false,
+    "directPrivilegesReadable": true,
+    "directCreateTablePrivilege": false
+  },
+  "fullParameterValidationPassed": false,
+  "closeout": {
+    "mysql": {
+      "status": "CLEANED",
+      "database": "odo_e2e_20261020_09dba420b48e",
+      "ownerVerified": true,
+      "databaseAbsent": true
+    },
+    "oracle": {
+      "status": "CLEANED",
+      "ownerVerified": true,
+      "tablesAbsent": true
+    },
+    "directory": {
+      "directoryAbsent": true,
+      "at": "2026-10-20T04:09:06.3729965Z",
+      "root": "E:\\workespace\\ob-data-orch\\ob-data\\nivt-normal-20261019-09dba420b48e"
+    },
+    "services": {
+      "staticMaterials": [
+        {
+          "matched": true,
+          "path": "var/dev/control-plane/data/control-plane-ca.pem"
+        },
+        {
+          "matched": true,
+          "path": "var/dev/control-plane/data/local-mvp-root-key.json"
+        },
+        {
+          "matched": true,
+          "path": "var/dev/control-plane/data/server-trust-key.json"
+        },
+        {
+          "matched": true,
+          "path": "var/dev/control-plane/data/settings.json"
+        },
+        {
+          "matched": true,
+          "path": "var/dev/agent/agent-config.json"
+        },
+        {
+          "matched": true,
+          "path": "var/dev/agent/data/agent-security/agent-identity-root-key.json"
+        }
+      ],
+      "binaries": [
+        {
+          "path": "var/dev/control-plane/control-plane.exe",
+          "builtAt": "2026-10-20T04:03:40.6722208Z",
+          "sha256": "0E6729BD1236C5BBDC2A48E688F72433E7F2069F41A2540FAA30EDE7FA96F19E"
+        },
+        {
+          "path": "var/dev/agent/agent.exe",
+          "builtAt": "2026-10-20T04:04:20.2306452Z",
+          "sha256": "4DAD30622863FF5C9C89F9CA98B0CE6B7924E326086527042A475C8DA0F1407B"
+        }
+      ],
+      "at": "2026-10-20T04:06:23.4704985Z"
+    },
+    "api": {
+      "at": "2026-10-20T04:09:05.412Z",
+      "records": [],
+      "health": 200,
+      "heartbeatStatus": "ONLINE",
+      "lastHeartbeatAt": "2026-10-20T04:08:55.5674349Z",
+      "heartbeatAgeMs": 9845,
+      "environmentCheckStatus": "PASSED",
+      "taskSummary": {
+        "scope": "ALL",
+        "running": 0,
+        "waiting": 0,
+        "reconciling": 0
+      },
+      "capacityStatus": "AVAILABLE",
+      "executionQuota": {
+        "totalGiB": 25.501632690429688,
+        "reservedGiB": 0,
+        "usedGiB": 0
+      },
+      "agentLogQueue": {
+        "pendingBatches": 0,
+        "pendingGaps": 0,
+        "pendingBytes": 0,
+        "lastUploadResult": "SUCCEEDED",
+        "lastUploadAt": "2026-10-20T04:06:24.4618391Z"
+      },
+      "acceptsNewTasks": true
+    }
+  },
+  "mysqlAndOracleSecretAuditsPassed": true
+}

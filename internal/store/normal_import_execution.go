@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
+	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
@@ -23,12 +24,19 @@ func executionTaskEnvelopeDigest(ctx context.Context, reader executionTaskReader
 	if err != nil {
 		return "", err
 	}
-	var kind, raw string
-	if err := reader.QueryRowContext(ctx, `SELECT task_type,snapshot_json FROM tasks WHERE task_id=?`, taskID).Scan(&kind, &raw); err != nil {
+	var kind, raw, mode string
+	if err := reader.QueryRowContext(ctx, `SELECT t.task_type,t.snapshot_json,COALESCE(ds.compatibility_mode,'') FROM tasks t LEFT JOIN data_sources ds ON ds.data_source_id=t.data_source_id WHERE t.task_id=?`, taskID).Scan(&kind, &raw, &mode); err != nil {
 		return "", err
 	}
 	if kind == "OBDUMPER_EXPORT" {
 		return base, nil
+	}
+	if kind == directload.TaskType {
+		input, ok := directLoadExecutionInput(kind, raw, tool, metadata, capability, mode, argv)
+		if !ok {
+			return "", ErrClaimIneligible
+		}
+		return directLoadTaskEnvelope(base, input)
 	}
 	input, ok := normalImportExecutionInput(kind, raw, tool, metadata, capability, argv)
 	if !ok {

@@ -8,7 +8,8 @@ test('其余现役页面保持可读、禁用边界与统一控件高度', async
   for (const [path, heading] of [
     ['/tasks', '任务中心'], ['/nodes', '执行节点'], ['/nodes/new', '注册执行节点'],
     ['/templates', '模板中心'], ['/settings/storage-credentials', '存储凭据'],
-    ['/logs', '日志中心'], ['/settings', '系统设置'], ['/settings/access-control', '权限配置'],
+    ['/logs', '日志中心'], ['/settings', '平台设置'], ['/settings/scheduling', '调度策略'],
+    ['/settings/security', '安全策略'], ['/settings/tools', '工具与兼容'], ['/settings/access-control', '权限配置'],
     ['/imports/normal/new', '新建普通导入任务'], ['/imports/direct/new', '新建旁路导入任务'],
   ]) {
     await page.goto(path!)

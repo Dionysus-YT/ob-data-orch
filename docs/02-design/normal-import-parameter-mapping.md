@@ -62,7 +62,7 @@
 | `--column-quote` | 列与解析 | CSV 字符串包围符，仅支持单字符，默认英文单引号。 | 高级配置，仅 CSV | S1 |
 | `--column-separator` | 列与解析 | CSV 列分隔符，默认逗号；V4.3.5 起支持多字符。 | 高级配置，仅 CSV | S1 |
 | `--column-splitter` | 列与解析 | CUT 列分隔字符串，区别于 CSV 分隔符。 | 高级配置，仅 CUT | S1 |
-| `--compat-mode` | 连接与会话 | 兼容性导入 MySQL 5.6/5.7/8.0 表定义并转换为 OceanBase MySQL 同义语句。 | 高级数据行为，仅包含 DDL 且目标为 MySQL 时显示 | S1 |
+| `--compat-mode` | 连接与会话 | 兼容性导入 MySQL 5.6/5.7/8.0 表定义并转换为 OceanBase MySQL 同义语句。4.3.5 接受 `mysql56`、`mysql57`、`mysql80`，拒绝 `mysql`。 | 高级数据行为，仅包含 DDL 且目标为 MySQL 时显示；开启后必须显式选择源版本，不预选 | S1 / 2026-10-20 固定工具错误与真实复验 |
 | `--compress` | 文件与匹配 | 标识输入是经 OBDUMPER 压缩导出的文件，支持 CSV、CUT、POS、SQL。 | 高级配置，条件显示 | S1/S3 |
 | `--compression-algo` | 文件与匹配 | 输入文件压缩算法：zstd、zlib、gzip、snappy，默认 zstd。 | 启用压缩后必填/继承默认 | S1/S3 |
 | `--compression-level` | 文件与匹配 | OBDUMPER 压缩等级；zstd 1～22，zlib -1～9，gzip/snappy 不支持。 | 压缩输入启用且算法为 zstd/zlib 时配置；保留导入语义 | S1/S3 |

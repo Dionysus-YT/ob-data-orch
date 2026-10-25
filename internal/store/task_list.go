@@ -35,10 +35,10 @@ func buildTaskListPredicate(input TaskListQuery) (string, []any, error) {
 	}
 	clauses := []string{
 		`EXISTS (SELECT 1 FROM auth_subjects subject WHERE subject.subject_id = ? AND subject.account_status = 'ACTIVE')`,
-		`(? = 1 OR t.creator_subject_id = ? OR EXISTS (SELECT 1 FROM subject_object_scopes task_scope
-            WHERE task_scope.subject_id = ? AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE' AND task_scope.object_id = t.data_source_id))`,
+		`((? = 1 AND ` + managedGlobalTaskRead() + `) OR (t.creator_subject_id = ? AND ` + managedTaskOwnerRead("t") + `) OR EXISTS (SELECT 1 FROM subject_object_scopes task_scope
+            WHERE task_scope.subject_id = ? AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE' AND ` + managedTaskOperatorRead("task_scope") + ` AND task_scope.object_id = t.data_source_id))`,
 	}
-	args := []any{input.SubjectID, input.GlobalRead, input.SubjectID, input.SubjectID}
+	args := []any{input.SubjectID, input.GlobalRead, input.SubjectID, input.SubjectID, input.SubjectID}
 	add := func(clause string, values ...any) {
 		clauses = append(clauses, clause)
 		args = append(args, values...)
@@ -82,7 +82,7 @@ func buildTaskListPredicate(input TaskListQuery) (string, []any, error) {
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
 		pattern := "%" + escapeLikePattern(keyword) + "%"
 		add(`(t.task_id LIKE ? ESCAPE '\' OR COALESCE(json_extract(t.snapshot_json, '$.database'), '') LIKE ? ESCAPE '\'
-            OR COALESCE(json_extract(t.snapshot_json, '$.table'), '') LIKE ? ESCAPE '\')`, pattern, pattern, pattern)
+            OR COALESCE(json_extract(t.snapshot_json, '$.config.table'),json_extract(t.snapshot_json, '$.table'), '') LIKE ? ESCAPE '\')`, pattern, pattern, pattern)
 	}
 	// 时间筛选使用 julianday 比较，避免 RFC 3339 小数秒省略导致的字典序偏差。
 	if !input.CreatedFrom.IsZero() {
@@ -96,6 +96,15 @@ func buildTaskListPredicate(input TaskListQuery) (string, []any, error) {
 	}
 	if !input.StartedTo.IsZero() {
 		add(`e.started_at IS NOT NULL AND julianday(e.started_at) < julianday(?)`, utcText(input.StartedTo))
+	}
+	if !input.FinishedFrom.IsZero() {
+		add(`e.state IN ('SUCCEEDED','FAILED','CANCELLED') AND e.finished_at IS NOT NULL AND julianday(e.finished_at) >= julianday(?)`, utcText(input.FinishedFrom))
+	}
+	if !input.FinishedTo.IsZero() {
+		add(`e.state IN ('SUCCEEDED','FAILED','CANCELLED') AND e.finished_at IS NOT NULL AND julianday(e.finished_at) < julianday(?)`, utcText(input.FinishedTo))
+	}
+	if !input.overviewRecentFrom.IsZero() {
+		add(`(`+taskListStateExpression+` IN ('WAITING_SCHEDULE','STARTING','RUNNING','CANCELLING') OR julianday(e.finished_at) >= julianday(?))`, utcText(input.overviewRecentFrom))
 	}
 	return strings.Join(clauses, "\n          AND "), args, nil
 }
@@ -131,6 +140,11 @@ func (s *Store) ListTaskSummaries(ctx context.Context, input TaskListQuery) ([]T
 	if s == nil || s.db == nil {
 		return nil, errors.New("SQLite store is nil")
 	}
+	return listTaskSummaries(ctx, s.db, input, false)
+}
+
+// listTaskSummaries 允许首页复用同一读取事务及安全投影；排序模式由内部调用固定选择。
+func listTaskSummaries(ctx context.Context, reader sqlQueryReader, input TaskListQuery, overviewOrder bool) ([]TaskListItem, error) {
 	if input.Limit < 1 || input.Limit > 100 || (input.BeforeSubmitted.IsZero() != (strings.TrimSpace(input.BeforeTaskID) == "")) {
 		return nil, errors.New("task list query is invalid")
 	}
@@ -145,10 +159,17 @@ func (s *Store) ListTaskSummaries(ctx context.Context, input TaskListQuery) ([]T
 	}
 	// 可写资格独立于读取范围：全局只读管理员不能借列表获得写操作入口。
 	selectArgs := []any{input.SubjectID, input.SubjectID}
-	rows, err := s.db.QueryContext(ctx, `
+	order := "t.submitted_at DESC, t.task_id DESC"
+	if overviewOrder {
+		order = `CASE ` + taskListStateExpression + ` WHEN 'FAILED' THEN 0 WHEN 'RUNNING' THEN 1 WHEN 'STARTING' THEN 1 WHEN 'CANCELLING' THEN 1 WHEN 'WAITING_SCHEDULE' THEN 2 ELSE 3 END, COALESCE(e.updated_at,t.submitted_at) DESC, t.task_id DESC`
+		if !input.OwnedOnly {
+			order = `e.finished_at DESC, t.task_id DESC`
+		}
+	}
+	rows, err := reader.QueryContext(ctx, `
         SELECT t.task_id, t.creator_subject_id, t.data_source_id, t.node_id, t.task_type,
                COALESCE(json_extract(t.snapshot_json, '$.config.database'),json_extract(t.snapshot_json, '$.database'), ''),
-               COALESCE(json_extract(t.snapshot_json, '$.table'), ''),
+               COALESCE(json_extract(t.snapshot_json, '$.config.table'),json_extract(t.snapshot_json, '$.table'), ''),
                COALESCE(json_extract(t.snapshot_json, '$.config.scope'),json_extract(t.snapshot_json, '$.scopeKind'), ''),
                t.snapshot_version,
                `+taskListStateExpression+`, COALESCE(e.reconciliation_required, 0),
@@ -160,12 +181,12 @@ func (s *Store) ListTaskSummaries(ctx context.Context, input TaskListQuery) ([]T
                COALESCE(t.derivation_kind, ''),
                CASE WHEN EXISTS (SELECT 1 FROM data_sources current_ds WHERE current_ds.data_source_id = t.data_source_id) THEN 0 ELSE 1 END,
                CASE WHEN EXISTS (SELECT 1 FROM execution_nodes current_node WHERE current_node.node_id = t.node_id) THEN 0 ELSE 1 END,
-               CASE WHEN t.creator_subject_id = ? OR EXISTS (SELECT 1 FROM subject_object_scopes op_scope
-                   WHERE op_scope.subject_id = ? AND op_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE' AND op_scope.object_id = t.data_source_id)
-                   THEN 1 ELSE 0 END
+               CASE WHEN (t.creator_subject_id = ? AND `+managedTaskOwnerRead("t")+`) OR EXISTS (SELECT 1 FROM subject_object_scopes op_scope
+                   WHERE op_scope.subject_id = ? AND op_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE' AND `+managedTaskOperatorRead("op_scope")+` AND op_scope.object_id = t.data_source_id)
+                   THEN 1 ELSE 0 END, COALESCE(e.progress_json,'')
         `+taskListFrom+`
         WHERE `+predicate+`
-        ORDER BY t.submitted_at DESC, t.task_id DESC
+        ORDER BY `+order+`
         LIMIT ?`, append(append(selectArgs, args...), input.Limit+1)...)
 	if err != nil {
 		return nil, fmt.Errorf("list authorized tasks: %w", err)
@@ -177,14 +198,16 @@ func (s *Store) ListTaskSummaries(ctx context.Context, input TaskListQuery) ([]T
 		var reconciliation, cancellation, checkpoint, sourceDeleted, nodeDeleted, operable int
 		var submittedAt, startedAt, finishedAt, updatedAt string
 		var dataSourceName, environment, nodeName, creatorName sql.NullString
+		var progressJSON string
 		if err := rows.Scan(&item.TaskID, &item.CreatorSubjectID, &item.DataSourceID, &item.NodeID,
 			&item.TaskType, &item.Database, &item.Table, &item.ScopeKind, &item.SnapshotVersion,
 			&item.State, &reconciliation, &submittedAt, &startedAt, &finishedAt, &updatedAt,
 			&dataSourceName, &environment, &nodeName, &creatorName,
-			&cancellation, &checkpoint, &item.DerivationKind, &sourceDeleted, &nodeDeleted, &operable); err != nil {
+			&cancellation, &checkpoint, &item.DerivationKind, &sourceDeleted, &nodeDeleted, &operable, &progressJSON); err != nil {
 			return nil, fmt.Errorf("scan authorized task: %w", err)
 		}
 		item.ReconciliationRequired = reconciliation == 1
+		item.Progress = projectTaskProgress(progressJSON, item.TaskType, item.ReconciliationRequired)
 		item.CancellationRequested = cancellation == 1
 		item.CheckpointPresent = checkpoint == 1
 		item.Operable = operable == 1

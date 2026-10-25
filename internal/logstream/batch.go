@@ -18,6 +18,17 @@ func SealBatch(batch Batch) (Batch, error) {
 	}
 	copyBatch := batch
 	copyBatch.Records = append([]Record(nil), batch.Records...)
+	// 新增的进度指针也必须独立复制，调用方不能在密封后改写已经参与摘要的事实。
+	for index := range copyBatch.Records {
+		if fact := copyBatch.Records[index].Progress; fact != nil {
+			cloned := *fact
+			if fact.BPS != nil {
+				amount := *fact.BPS
+				cloned.BPS = &amount
+			}
+			copyBatch.Records[index].Progress = &cloned
+		}
+	}
 	copyBatch.Digest = ""
 	payload, err := json.Marshal(copyBatch)
 	if err != nil {
@@ -170,6 +181,9 @@ func validateBatch(batch Batch, requireDigest bool) error {
 			return ErrInvalidInput
 		}
 		if !utf8.ValidString(record.Message) {
+			return ErrInvalidInput
+		}
+		if !validProgress(record) {
 			return ErrInvalidInput
 		}
 		if len(record.Message) > MaxRecordBytes {

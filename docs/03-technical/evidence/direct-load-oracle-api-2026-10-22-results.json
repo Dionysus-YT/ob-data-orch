@@ -1,0 +1,168 @@
+{
+  "scope": "WINDOWS_AMD64_ORACLE_COMPATIBLE_OBSERVER_DIRECT_API_VALIDATION",
+  "overall": "BLOCKED",
+  "at": "2026-10-22T07:26:33.033687+00:00",
+  "functionalE2EPassed": false,
+  "observerVersion": "4.4.2.3",
+  "toolVersion": "4.3.5-RELEASE",
+  "summary": {
+    "passed": 5,
+    "blocked": 1,
+    "failed": 0,
+    "realOracleTasks": 0,
+    "officialObloaderStarted": false
+  },
+  "records": [
+    {
+      "id": "ORACLE_SOURCE_CONNECTION",
+      "startedAt": "2026-10-22T07:18:03.550Z",
+      "testId": "5c18dd72-e12b-497e-97b4-fc0a1fd93cc0",
+      "outcome": "PASS",
+      "status": "SUCCEEDED",
+      "verificationSource": "AGENT_JDBC",
+      "finishedAt": "2026-10-22T07:18:05.859Z"
+    },
+    {
+      "id": "ORACLE_COMMAND_MAPPING",
+      "startedAt": "2026-10-22T07:18:09.004Z",
+      "outcome": "PASS",
+      "uppercaseUser": true,
+      "tenantRetained": true,
+      "clusterAbsent": true,
+      "finishedAt": "2026-10-22T07:18:09.017Z"
+    },
+    {
+      "id": "ORACLE_FILES_SINGLE",
+      "startedAt": "2026-10-22T07:18:09.054Z",
+      "outcome": "PASS",
+      "status": "SUCCEEDED",
+      "inputFiles": 1,
+      "finishedAt": "2026-10-22T07:18:11.369Z"
+    },
+    {
+      "id": "ORACLE_FILES_SHARDS",
+      "startedAt": "2026-10-22T07:18:11.371Z",
+      "outcome": "PASS",
+      "status": "SUCCEEDED",
+      "inputFiles": 2,
+      "finishedAt": "2026-10-22T07:18:12.932Z"
+    },
+    {
+      "id": "ORACLE_COMPLETE_PREFLIGHT",
+      "startedAt": "2026-10-22T07:18:16.072Z",
+      "outcome": "BLOCKED",
+      "status": "FAILED",
+      "unresolved": [
+        {
+          "check": "DIRECT_LOAD_VERSION",
+          "status": "UNKNOWN",
+          "evidenceCode": "DIRECT_LOAD_UNAVAILABLE"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "UNKNOWN",
+          "evidenceCode": "DIRECT_LOAD_UNAVAILABLE"
+        },
+        {
+          "check": "DIRECT_LOAD_STRUCTURE",
+          "status": "UNKNOWN",
+          "evidenceCode": "DIRECT_LOAD_UNAVAILABLE"
+        }
+      ],
+      "finishedAt": "2026-10-22T07:18:16.081Z"
+    },
+    {
+      "id": "ORACLE_UNPROVEN_SUBMISSION_REJECTED",
+      "startedAt": "2026-10-22T07:18:16.090Z",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-22T07:18:16.098Z"
+    }
+  ],
+  "independentVerification": {
+    "scope": "ORACLE_DIRECT_API_BLOCKER_VERIFICATION",
+    "overall": "ORACLE_API_E2E_BLOCKED",
+    "observerVersion": "4.4.2.3",
+    "records": 6,
+    "passed": 5,
+    "blocked": 1,
+    "failed": 0,
+    "realOracleTasks": 0,
+    "temporarySourceAbsent": true,
+    "originalSourceUnchanged": true,
+    "draftsRemaining": 0,
+    "targetRowsUnchanged": true,
+    "targetStructureUnchanged": true,
+    "fixtureOwnerVerified": true,
+    "fixtureTablesAbsent": true,
+    "inputAbsent": true,
+    "checks": {
+      "TOOL_ENVIRONMENT": "PASSED",
+      "NODE_RESOURCE": "PASSED",
+      "INPUT_FILES": "PASSED",
+      "DATABASE_CONNECTIVITY": "PASSED",
+      "RPC_CONNECTIVITY": "PASSED",
+      "DIRECT_LOAD_VERSION": "UNKNOWN",
+      "WRITE_ACCESS": "UNKNOWN",
+      "DIRECT_LOAD_STRUCTURE": "UNKNOWN",
+      "DIRECT_LOAD_CONFIG": "PASSED"
+    },
+    "unresolved": {
+      "DIRECT_LOAD_VERSION": "UNKNOWN",
+      "WRITE_ACCESS": "UNKNOWN",
+      "DIRECT_LOAD_STRUCTURE": "UNKNOWN"
+    },
+    "submissionRejected": true,
+    "latestAgent": {
+      "status": "ACTIVE",
+      "lastHeartbeat": "2026-10-22T07:20:10.7784179Z",
+      "capacityUsed": 0
+    },
+    "functionalE2EPassed": false,
+    "evidenceConsistent": true
+  },
+  "runtimeAfter": {
+    "health": 200,
+    "at": "2026-10-22T07:22:43.027Z",
+    "agent": {
+      "status": "ACTIVE",
+      "lastHeartbeat": "2026-10-22T07:22:40.727137Z",
+      "capacityUsed": 0,
+      "environmentStatus": "PASSED"
+    },
+    "nonTerminalExecutions": 0,
+    "controlPlaneBinaryUnchanged": true,
+    "agentBinaryUnchanged": true,
+    "fixedToolSHA256": "b43f88caafd2c62462cfdeff38a0fd7088b0195c5d064074f977bc0b363fec06"
+  },
+  "secretAudit": {
+    "files": 18,
+    "adminPlaintextOrUTF16Present": false,
+    "oraclePasswordOrRecoverableEncodingPresent": false,
+    "passed": true
+  },
+  "unauthenticatedBoundary": {
+    "passed": true,
+    "checks": 7
+  },
+  "fixtureNegativeFrames": [
+    {
+      "id": "EMPTY_FRAME",
+      "passed": true,
+      "exitCode": 1
+    },
+    {
+      "id": "CLEANUP_INVALID_SCOPE",
+      "passed": true,
+      "exitCode": 1
+    }
+  ],
+  "productionCodeChanged": false,
+  "productionBinariesChanged": false,
+  "requiredBeforeRealImport": [
+    "ORACLE_4_4_2_3_FIXED_TOOL_COMPATIBILITY_EVIDENCE",
+    "FIXED_ORACLE_WRITE_ACCESS_AND_STRUCTURE_PROBE_CONTRACT_AND_IMPLEMENTATION",
+    "FRESH_NINE_CHECK_PREFLIGHT_AND_REAL_API_IMPORT"
+  ]
+}

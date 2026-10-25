@@ -12,13 +12,15 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
   const snapshot = ref<TaskSnapshot | null>(null)
   const commandEvidence = ref<TaskCommandEvidence | null>(null)
   const loading = ref(true)
+  const refreshing = ref(false)
+  const refreshDone = ref(false)
   const failure = ref('')
   const executionFailure = ref('')
   const snapshotFailure = ref('')
   const commandFailure = ref('')
   const taskLogs = useTaskLogs(session, execution, restrict)
   let release = () => {}
-  let cycle: { binding: TaskDetailSession; pending: Map<string, Promise<void>>; mutations: number; refreshing?: Promise<void>; timer?: ReturnType<typeof setTimeout> } | undefined
+  let cycle: { binding: TaskDetailSession; pending: Map<string, Promise<void>>; mutations: number; manual?: boolean; refreshing?: Promise<void>; timer?: ReturnType<typeof setTimeout> } | undefined
 
   function openSession(id: string) {
     release()
@@ -28,6 +30,7 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     commandEvidence.value = null
     failure.value = executionFailure.value = snapshotFailure.value = commandFailure.value = ''
     loading.value = Boolean(id)
+    refreshing.value = refreshDone.value = false
     if (!id) {
       session.value = null
       cycle = undefined
@@ -94,11 +97,13 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     return read('command', (api, id) => api.getTaskCommandEvidence(id), item => { commandEvidence.value = item }, commandFailure, '命令证据暂时不可读取。')
   }
 
-  function refresh(): Promise<void> {
+  function refresh(manual = false): Promise<void> {
     if (taskID.value && !cycle?.binding.active()) openSession(taskID.value)
     const current = cycle
-    if (!current?.binding.active()) return Promise.resolve()
+    if (!current?.binding.active() || current.mutations) return Promise.resolve()
+    if (manual) { current.manual = true; refreshing.value = true; refreshDone.value = false }
     if (current.refreshing) return current.refreshing
+    refreshDone.value = false
     clearTimeout(current.timer)
     current.timer = undefined
     loading.value = overview.value === null
@@ -112,6 +117,9 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
       } finally {
         if (current.binding.active()) {
           loading.value = false
+          refreshing.value = false
+          refreshDone.value = Boolean(current.manual && !failure.value && !executionFailure.value && !snapshotFailure.value && !commandFailure.value && !taskLogs.logFailure.value)
+          current.manual = false
           current.refreshing = undefined
           // 失败概览保留手动重试；已载入的任务继续按原两秒周期核对事实。
           if (overview.value && !failure.value && needsRefresh()) current.timer = setTimeout(() => { void refresh() }, 2000)
@@ -137,7 +145,8 @@ export function useTaskDetail(taskID: Readonly<Ref<string>>, createApi: (signal:
     session.value = null
     overview.value = null; execution.value = null; snapshot.value = null; commandEvidence.value = null
     loading.value = false
+    refreshing.value = refreshDone.value = false
     failure.value = '任务不存在或当前身份无权查看。'
   }
-  return { session, overview, execution, snapshot, commandEvidence, loading, failure, executionFailure, snapshotFailure, commandFailure, refresh, loadExecution, loadSnapshot, loadCommandEvidence, beginMutation, endMutation, restrict, ...taskLogs }
+  return { session, overview, execution, snapshot, commandEvidence, loading, refreshing, refreshDone, failure, executionFailure, snapshotFailure, commandFailure, refresh, loadExecution, loadSnapshot, loadCommandEvidence, beginMutation, endMutation, restrict, ...taskLogs }
 }

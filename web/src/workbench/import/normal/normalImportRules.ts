@@ -90,6 +90,7 @@ export function projectNormalImport(form: NormalImportForm, facts: ImportReferen
     fileRegex: form.fileRegex, logPath: form.logPath, content: importContents.includes(form.content) ? form.content : '', format: traits.format,
     scope: form.scope, objects, excludeTables: form.scope === 'ALL' || objects.table ? form.excludeTables : '',
     parser, mapping, execution, compatMysql: traits.hasDdl && facts.source?.compatibilityMode === 'MYSQL' && form.compatMysql,
+    compatMysqlVersion: traits.hasDdl && facts.source?.compatibilityMode === 'MYSQL' && form.compatMysql ? form.compatMysqlVersion : '',
     replaceData: traits.structuredData && form.replaceData, replaceObject: traits.hasDdl && form.replaceObject,
     cleanup: traits.structuredData ? form.cleanup : 'NONE', taskName: form.taskName,
   }
@@ -100,6 +101,7 @@ export function validateNormalImport(form: NormalImportForm, facts: ImportRefere
   const add = (step: number, field: string, message: string) => issues.push({ step, field, message })
   const config = projectNormalImport(form, facts)
   const traits = importTraits(form)
+  if (config.compatMysql && !['mysql56', 'mysql57', 'mysql80'].includes(config.compatMysqlVersion)) add(normalImportSteps.execution, 'compatMysqlVersion', '请选择源 MySQL 版本：5.6、5.7 或 8.0。')
   if (!facts.source || !isNormalImportSource(facts.source)) add(normalImportSteps.source, 'dataSourceId', '请选择已启用、基础连接测试成功的 ODP 数据源。')
   if (!form.database.trim() || containsControl(form.database)) add(normalImportSteps.source, 'database', '请填写有效的目标数据库 / Schema。')
   if (!facts.node?.acceptsNewTasks) add(normalImportSteps.input, 'nodeId', '请选择当前可接收任务的执行节点；普通导入资格仍待任务预检查。')

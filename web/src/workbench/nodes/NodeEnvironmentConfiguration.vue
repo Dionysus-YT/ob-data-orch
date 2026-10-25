@@ -76,9 +76,9 @@ function capacityLabel(totalBytes: number | undefined): string {
         <div><dt>工具安装目录</dt><dd>{{ node.toolHome }}</dd></div>
         <div><dt>Java 位置</dt><dd>{{ node.javaPath }}</dd></div>
         <div>
-          <dt>导出目录</dt>
+          <dt>任务数据目录</dt>
           <dd>
-            <ul v-if="node.allowedRoots.length" class="node-path-list" aria-label="导出目录">
+            <ul v-if="node.allowedRoots.length" class="node-path-list" aria-label="任务数据目录">
               <li v-for="root in node.allowedRoots" :key="root">{{ root }}</li>
             </ul>
             <span v-else>尚未配置</span>

@@ -1,0 +1,574 @@
+{
+  "scope": "WINDOWS_AMD64_MYSQL_4_4_2_3_FIXED_OBLOADER_4_3_5_STANDALONE_REPAIR",
+  "overall": "SCOPED_API_E2E_PASSED_WITH_RECORDED_RPC_FAILURE",
+  "at": "2026-10-22T06:41:51.705009+00:00",
+  "mainBatch": {
+    "scope": "SCOPED_MYSQL_OBSERVER_API_E2E",
+    "runId": "21612f54a42347d09df343d78b088015",
+    "apiRecords": 14,
+    "apiPassed": true,
+    "realTasks": 7,
+    "targetResults": {
+      "dlvt_basic": {
+        "taskId": "05790e5f-ffe1-4455-9632-b54faf55abde",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      },
+      "dlvt_shards": {
+        "taskId": "bf22091c-2e8d-4d76-bb75-78cc81b8d475",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      },
+      "dlvt_separator": {
+        "taskId": "b70aeeae-9e8f-4037-b9fb-a277072548c0",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      },
+      "dlvt_incremental": {
+        "taskId": "15f4600d-d8e7-48b1-a242-b882ad9b03fd",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      },
+      "dlvt_truncate": {
+        "taskId": "d47e9a4b-8e9a-40b0-9acb-169baf565dc4",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      },
+      "dlvt_thread": {
+        "taskId": "e68ed7cb-6c8a-4240-8851-b12a003d01bb",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      },
+      "dlvt_parallel": {
+        "taskId": "c9351f0b-b14b-42da-b284-5796f6cc1c07",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": false,
+        "passed": true
+      }
+    },
+    "untouchedTablesUnchanged": true,
+    "allTablesPreserved": true,
+    "originalSharedSourceUnchanged": true,
+    "newTestSourceArchived": true,
+    "unsubmittedDraftsRemaining": 0,
+    "nonTerminalExecutions": 0,
+    "fixtureDatabaseAbsent": true,
+    "fixtureInputAbsent": true,
+    "latestAgent": {
+      "status": "ACTIVE",
+      "lastHeartbeat": "2026-10-22T03:24:41.5570137Z",
+      "capacityUsed": 0
+    },
+    "privateLogIsolationRequired": false,
+    "uncontrolledRuntimeFiles": null,
+    "controlPlaneSHA256": "30a6d21143385050143ae6729538cae824cf2ec86db4896070a635359b6ca7fd",
+    "agentSHA256": "aa63239e1265c64576127e47b0ab5d57ce89f660edf62e819e7b7a2139e120bc",
+    "passed": true
+  },
+  "finalStrictBatch": {
+    "scope": "SCOPED_MYSQL_OBSERVER_API_E2E",
+    "runId": "9fab01fbf58f46b0aeac8f2364f337cf",
+    "apiRecords": 8,
+    "apiPassed": true,
+    "realTasks": 1,
+    "targetResults": {
+      "dlvt_basic": {
+        "taskId": "79527a96-1fb6-492a-998c-44bedb6a2fb1",
+        "state": "SUCCEEDED",
+        "reconciliationRequired": false,
+        "result": "VERIFIED",
+        "directLoad": true,
+        "serverCommitObserved": true,
+        "checkpointPresent": false,
+        "exitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "fingerprintMatched": true,
+        "taskType": "OBLOADER_DIRECT_LOAD",
+        "rowsMatched": true,
+        "ddlUnchanged": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1,
+        "noExportCounts": true,
+        "summaryCommitRecorded": true,
+        "passed": true
+      }
+    },
+    "untouchedTablesUnchanged": true,
+    "allTablesPreserved": true,
+    "originalSharedSourceUnchanged": true,
+    "newTestSourceArchived": true,
+    "unsubmittedDraftsRemaining": 0,
+    "nonTerminalExecutions": 0,
+    "fixtureDatabaseAbsent": true,
+    "fixtureInputAbsent": true,
+    "latestAgent": {
+      "status": "ACTIVE",
+      "lastHeartbeat": "2026-10-22T03:49:11.8495725Z",
+      "capacityUsed": 0
+    },
+    "privateLogIsolationRequired": true,
+    "uncontrolledRuntimeFiles": [],
+    "controlPlaneSHA256": "90030263e0fea195d550460a2ee5fd4e600adb317692fc5d006160f6702ac8e9",
+    "agentSHA256": "17ca033b3b1e586305459d3eb18654a22fe558965d437f416d76839e0bf5864b",
+    "passed": true
+  },
+  "historicalBatches": [
+    {
+      "directory": "artifacts/direct-load-e2e-20261022-7ca0c4b6db2f",
+      "apiRecords": 2,
+      "passed": 1,
+      "failed": 1,
+      "apiPassed": false,
+      "fixtureCleaned": true,
+      "tasks": [
+        {
+          "taskId": "54cb768d-484d-4ec4-91dc-33694d3b4f9c",
+          "state": "SUCCEEDED"
+        }
+      ],
+      "cases": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BASIC",
+          "outcome": "FAIL",
+          "code": "DIRECT_EXECUTION_NOT_VERIFIED"
+        }
+      ]
+    },
+    {
+      "directory": "artifacts/direct-load-e2e-20261022-21612f54a423",
+      "apiRecords": 14,
+      "passed": 14,
+      "failed": 0,
+      "apiPassed": true,
+      "fixtureCleaned": true,
+      "tasks": [
+        {
+          "taskId": "05790e5f-ffe1-4455-9632-b54faf55abde",
+          "state": "SUCCEEDED"
+        },
+        {
+          "taskId": "bf22091c-2e8d-4d76-bb75-78cc81b8d475",
+          "state": "SUCCEEDED"
+        },
+        {
+          "taskId": "b70aeeae-9e8f-4037-b9fb-a277072548c0",
+          "state": "SUCCEEDED"
+        },
+        {
+          "taskId": "15f4600d-d8e7-48b1-a242-b882ad9b03fd",
+          "state": "SUCCEEDED"
+        },
+        {
+          "taskId": "d47e9a4b-8e9a-40b0-9acb-169baf565dc4",
+          "state": "SUCCEEDED"
+        },
+        {
+          "taskId": "e68ed7cb-6c8a-4240-8851-b12a003d01bb",
+          "state": "SUCCEEDED"
+        },
+        {
+          "taskId": "c9351f0b-b14b-42da-b284-5796f6cc1c07",
+          "state": "SUCCEEDED"
+        }
+      ],
+      "cases": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BASIC",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "SHARDS",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "SEPARATOR",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "INCREMENTAL",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "TRUNCATE",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "THREAD",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "PARALLEL",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BIT_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "BINARY_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "VIRTUAL_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "INDEXED_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "LOB_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "CONFIG_CHANGE_INVALIDATES_PROOF",
+          "outcome": "PASS",
+          "code": null
+        }
+      ]
+    },
+    {
+      "directory": "artifacts/direct-load-e2e-20261022-bf40955b9681",
+      "apiRecords": 8,
+      "passed": 8,
+      "failed": 0,
+      "apiPassed": true,
+      "fixtureCleaned": true,
+      "tasks": [
+        {
+          "taskId": "7b67cb75-a216-412b-b5bf-ca81bb110c95",
+          "state": "SUCCEEDED"
+        }
+      ],
+      "cases": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BASIC",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BIT_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "BINARY_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "VIRTUAL_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "INDEXED_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "LOB_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "CONFIG_CHANGE_INVALIDATES_PROOF",
+          "outcome": "PASS",
+          "code": null
+        }
+      ]
+    },
+    {
+      "directory": "artifacts/direct-load-e2e-20261022-73774530ff4a",
+      "apiRecords": 2,
+      "passed": 1,
+      "failed": 1,
+      "apiPassed": false,
+      "fixtureCleaned": true,
+      "tasks": [
+        {
+          "taskId": "41a6e397-2bff-4596-b8c1-011cf952b0aa",
+          "state": "FAILED"
+        }
+      ],
+      "cases": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BASIC",
+          "outcome": "FAIL",
+          "code": "DIRECT_EXECUTION_NOT_VERIFIED"
+        }
+      ]
+    },
+    {
+      "directory": "artifacts/direct-load-e2e-20261022-9fab01fbf58f",
+      "apiRecords": 8,
+      "passed": 8,
+      "failed": 0,
+      "apiPassed": true,
+      "fixtureCleaned": true,
+      "tasks": [
+        {
+          "taskId": "79527a96-1fb6-492a-998c-44bedb6a2fb1",
+          "state": "SUCCEEDED"
+        }
+      ],
+      "cases": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BASIC",
+          "outcome": "PASS",
+          "code": null
+        },
+        {
+          "id": "BIT_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "BINARY_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "VIRTUAL_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "INDEXED_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "LOB_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "code": "PRECHECK_REQUIRED"
+        },
+        {
+          "id": "CONFIG_CHANGE_INVALIDATES_PROOF",
+          "outcome": "PASS",
+          "code": null
+        }
+      ]
+    }
+  ],
+  "cumulativeRealAPITasks": {
+    "total": 11,
+    "states": {
+      "SUCCEEDED": 10,
+      "FAILED": 1
+    }
+  },
+  "runtime": {
+    "health": 200,
+    "configuration": {
+      "controlPlane": {
+        "realExecutionEnabled": true,
+        "normalImportExecutionEnabled": true,
+        "directLoadProbeEnabled": true,
+        "directLoadExecutionEnabled": true
+      },
+      "agent": {
+        "realExecutionEnabled": true,
+        "normalImportExecutionEnabled": true,
+        "directLoadProbeEnabled": true,
+        "directLoadExecutionEnabled": true
+      }
+    },
+    "at": "2026-10-22T06:39:47.030Z",
+    "agent": {
+      "status": "ACTIVE",
+      "lastHeartbeat": "2026-10-22T06:39:40.7434298Z",
+      "capacityUsed": 0,
+      "environmentStatus": "PASSED"
+    },
+    "nonTerminalExecutions": 0,
+    "controlPlaneSHA256": "90030263e0fea195d550460a2ee5fd4e600adb317692fc5d006160f6702ac8e9",
+    "agentSHA256": "17ca033b3b1e586305459d3eb18654a22fe558965d437f416d76839e0bf5864b",
+    "passed": true
+  },
+  "unauthenticatedChecks": {
+    "passed": true,
+    "checks": 7
+  },
+  "secretAudit": {
+    "scope": "REPAIR_AND_E2E_TEXT_EVIDENCE",
+    "files": 124,
+    "adminPlaintextOrUTF16Present": false,
+    "testSourcePlaintextOrRecoverableEncodingPresent": false,
+    "passed": true,
+    "at": "2026-10-22T06:39:33.092Z"
+  },
+  "currentOriginalSharedSourceUnchanged": true,
+  "knownFailure": {
+    "batch": "73774530ff4a",
+    "observed": "RPC_LOGIN_RESPONSE_TIMEOUT",
+    "rootCause": "UNDETERMINED",
+    "allTargetTablesUnchanged": true,
+    "historicalReconciliationFlagRetained": true
+  },
+  "validation": {
+    "goAllPackagesPassed": true,
+    "finalBoltAffectedPackagesPassed": true,
+    "goVetPassed": true,
+    "frontendUnitFiles": 13,
+    "frontendUnitTests": 76,
+    "browserUniqueCasesPassed": 20,
+    "frontendBuildPassed": true,
+    "lintPassed": true,
+    "architectureViolations": 0,
+    "architectureReviewSignals": {
+      "business": 16,
+      "wizards": 4
+    }
+  },
+  "notVerified": [
+    "ORACLE",
+    "OTHER_NEW_VERSIONS",
+    "REAL_ODP_F5",
+    "KYLIN_NATIVE",
+    "ALL_PARAMETER_VALUES",
+    "FULL_DLV_G3_G4",
+    "RPC_TIMEOUT_ROOT_CAUSE"
+  ]
+}

@@ -37,7 +37,7 @@ function setup(listTasks: TaskListApi['listTasks'], query: LocationQuery = {}) {
 
 describe('任务列表路由条件', () => {
   it('解析丢弃未知值，规范化输出稳定且默认值不入 URL', () => {
-    const state = parseTaskListRoute({ state: 'FAILED,DRAFT,RUNNING,FAILED', type: 'OBLOADER_DIRECT_LOAD', environment: 'LOCAL', limit: '30', createdFrom: '2026-13-40', keyword: '  orders ' })
+    const state = parseTaskListRoute({ state: 'FAILED,DRAFT,RUNNING,FAILED', type: 'FUTURE_IMPORT', environment: 'LOCAL', limit: '30', createdFrom: '2026-13-40', keyword: '  orders ' })
     expect(state.states).toEqual(['FAILED', 'RUNNING'])
     expect(state.types).toEqual([])
     expect(state.environment).toBe('')

@@ -27,6 +27,18 @@ func cloneNormalImport(config *importdomain.Config) *importdomain.Config {
 }
 
 func checkSetForGrant(grant agentwire.PrecheckGrant) bool {
+	if grant.Context.DirectLoad != nil {
+		expected := precheckcontract.DirectLoadChecks(grant.Context.CheckKind)
+		if len(expected) == 0 || len(expected) != len(grant.CheckSet) {
+			return false
+		}
+		for i, name := range expected {
+			if string(grant.CheckSet[i]) != name {
+				return false
+			}
+		}
+		return true
+	}
 	if grant.Context.NormalImport == nil {
 		return checkSetForKind(kindForGrant(grant), grant.CheckSet)
 	}
@@ -43,7 +55,7 @@ func checkSetForGrant(grant agentwire.PrecheckGrant) bool {
 }
 
 func validNormalImportExecutionContext(c agentwire.PrecheckExecutionContext) bool {
-	return agentpreflight.ValidNormalImportContext(c.NormalImport, c.CheckKind, c.CompatibilityMode, c.TargetPlatform, c.AllowedRoots) &&
+	return c.DirectLoad == nil && agentpreflight.ValidNormalImportContext(c.NormalImport, c.CheckKind, c.CompatibilityMode, c.TargetPlatform, c.AllowedRoots) &&
 		c.Database == c.NormalImport.Database && c.ContentKind == c.NormalImport.Content && c.OutputKind == "" && c.OutputPath == "" && c.LogPath == "" &&
 		c.StorageTarget == nil && !c.SkipCheckDir && !c.WeakRead && !c.EnableHiddenPk && !c.AddExtraMessage &&
 		len(c.Objects) == 0 && len(c.ObjectTypes) == 0 && len(c.IncludeColumnNames) == 0 && len(c.ExcludeColumnNames) == 0 && len(c.Partitions) == 0

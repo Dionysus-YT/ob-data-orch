@@ -1,18 +1,30 @@
 <script setup lang="ts">
-import { FileTextOutlined } from '@ant-design/icons-vue'
-import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Alert as AAlert, Button as AButton, ConfigProvider, Spin as ASpin, Tabs as ATabs, TabPane as ATabPane } from 'ant-design-vue'
+import { browserApi } from '@/api/browser'
+import { managementTheme } from '@/platform/theme'
+import { usePageEntryPosition } from '@/composables/usePageEntryPosition'
+import { useLogPresets } from '@/workbench/log-query/useLogPresets'
+import TaskLogWorkspace from '@/workbench/log-query/TaskLogWorkspace.vue'
+import AuditLogWorkspace from '@/workbench/audit-logs/AuditLogWorkspace.vue'
+import '@/workbench/log-query/logQuery.css'
+const route = useRoute(), router = useRouter(), root = ref<HTMLElement>(), access = useLogPresets(browserApi())
+usePageEntryPosition(root)
+const preset = computed(() => route.query.preset === 'audit' && access.allowed.value ? 'audit' : 'task')
+watch(() => route.fullPath, () => { void access.load() }, { immediate: true, flush: 'sync' })
+function selectPreset(key: string | number) { if (key === 'audit' && !access.allowed.value) return; void router.replace({ name: 'logs', query: key === 'audit' ? { preset: 'audit' } : {} }) }
 </script>
 <template>
-  <section class="page-heading"><div><h1>日志中心</h1><p>跨任务、节点、调度和审计的脱敏日志查询入口；不提供任意节点文件访问、原始未脱敏日志或日志分析平台能力。</p></div></section>
-  <section class="log-tabs" aria-label="日志查询预设"><AButton disabled class="active">任务日志</AButton><AButton disabled>节点 / Agent 日志</AButton><AButton disabled>调度日志</AButton><AButton disabled>审计日志</AButton></section>
-  <section class="filter-bar log-filter-bar" aria-label="日志筛选">
-    <label>时间范围 <AInput aria-label="时间范围" disabled value="最近 1 小时" /></label><label>任务 ID / 名称 <AInput aria-label="任务 ID / 名称" disabled placeholder="可选" /></label><label>节点 <ASelect default-value="全部" aria-label="节点" disabled><ASelectOption value="全部">全部</ASelectOption></ASelect></label><label>日志级别 <ASelect default-value="全部（含未标级别）" aria-label="日志级别" disabled><ASelectOption value="全部（含未标级别）">全部（含未标级别）</ASelectOption></ASelect></label><label>关键字 <AInput aria-label="关键字" disabled placeholder="脱敏文本包含查询" /></label>
-    <AButton disabled>更多条件</AButton><AButton disabled type="primary">查询</AButton>
-  </section>
-  <section class="scope-bar"><span>首次进入已预设“任务日志 + 最近 1 小时”，但不会自动执行宽范围查询。</span><span>原始来源、任务类型、状态、用户 / 操作人、事件与跟踪标识作为展开条件。</span></section>
-  <section class="content-card log-result-shell">
-    <div class="log-result-header"><div><strong>查询结果</strong><span>尚未查询</span></div><div><AButton disabled type="text">手动刷新</AButton><AButton disabled type="text">下载脱敏日志</AButton></div></div>
-    <div class="empty-state"><div class="empty-mark"><FileTextOutlined class="product-icon" aria-hidden="true" /></div><h2>等待日志查询</h2><p>查询功能接入后，结果会保留日志原始来源、来源时间、接收时间、原始级别与采集完整性；stdout 不会自动标为 INFO，stderr 也不会自动标为 ERROR。</p></div>
-  </section>
-  <p class="section-hint">采集延迟、日志缺口与无匹配分别表达，均不直接改变任务终态；页面、复制与下载采用同一脱敏规则。</p>
+  <ConfigProvider :theme="managementTheme">
+    <div ref="root" class="orch-ui log-query-workspace">
+      <header class="orch-page-header"><div class="orch-page-title"><h1>日志中心</h1><span v-if="!access.allowed.value" class="orch-context-label">任务日志</span></div></header>
+      <AAlert v-if="access.failure.value" class="orch-feedback" type="error" show-icon :message="access.failure.value"><template #action><AButton :loading="access.loading.value" @click="access.load">重试确认资格</AButton></template></AAlert>
+      <AAlert v-else-if="route.query.preset === 'audit' && !access.loading.value && !access.allowed.value" class="orch-feedback" type="info" show-icon message="审计日志需单独授予“审计访问”能力，系统管理员角色不会自动获得。" />
+      <ATabs v-if="access.allowed.value" :active-key="preset" @change="selectPreset"><ATabPane key="task" tab="任务日志" /><ATabPane key="audit" tab="审计日志" /></ATabs>
+      <ASpin v-if="route.query.preset === 'audit' && access.loading.value" aria-label="正在确认审计访问资格" />
+      <AuditLogWorkspace v-else-if="preset === 'audit'" :key="route.fullPath" @denied="access.revoke" />
+      <TaskLogWorkspace v-else />
+    </div>
+  </ConfigProvider>
 </template>

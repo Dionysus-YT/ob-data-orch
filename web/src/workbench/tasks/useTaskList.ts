@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import type { LocationQuery, LocationQueryRaw } from 'vue-router'
 import { browserApi, taskDetailErrorMessage, type ApiError, type BrowserApi, type TaskFilterOptions, type TaskListItem, type TaskListPageSize } from '@/api/browser'
-import { isActiveTaskState } from './taskStatePresentation'
+import { isActiveTaskState, taskDateTimeText } from './taskStatePresentation'
 import { emptyTaskListRouteState, parseTaskListRoute, taskListApiFilter, taskListConditionKey, taskListDateRangeError, taskListRouteQuery, type TaskListRouteState } from './taskListQuery'
 
 export type TaskListApi = Pick<BrowserApi, 'listTasks' | 'listTaskFilterOptions'>
@@ -106,7 +106,7 @@ export function useTaskList(routeQuery: Readonly<Ref<LocationQuery>>, replaceQue
       nextCursor.value = page.nextCursor || undefined
       restricted.value = false
       failure.value = ''
-      lastLoadedAt.value = new Date().toLocaleString('zh-CN')
+      lastLoadedAt.value = taskDateTimeText(new Date().toISOString())
       refreshCompleted.value = mode === 'manual'
       rememberCursor(key, cursorStack, pageIndex.value)
     } catch (error) {

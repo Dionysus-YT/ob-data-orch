@@ -2910,7 +2910,7 @@ func TestAgentPrecheckSecretSlotRevalidatesFrozenOwnerPermissionsBeforeDecrypt(t
 			}
 			if testCase.denied != nil {
 				if len(testCase.denied.calls) != 2 ||
-					testCase.denied.calls[0] != (precheckPermissionCall{Principal: "subject-1", Scope: identity.ScopeDataSourceRead, ObjectID: "source-1"}) ||
+					testCase.denied.calls[0] != (precheckPermissionCall{Principal: "subject-1", Scope: identity.ScopeDataSourceUse, ObjectID: "source-1"}) ||
 					testCase.denied.calls[1] != (precheckPermissionCall{Principal: "subject-1", Scope: identity.ScopeNodeUse, ObjectID: "node-1"}) {
 					t.Fatalf("permission revalidation calls = %#v", testCase.denied.calls)
 				}
@@ -3036,21 +3036,21 @@ func (diagnosticNodeAuthorizer) Authorize(_ context.Context, _ identity.Principa
 }
 
 func (sliceAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
-	if (scope == identity.ScopeDataSourceRead && objectID == "source-allowed") || (scope == identity.ScopeNodeUse && objectID == "node-1") {
+	if ((scope == identity.ScopeDataSourceRead || scope == identity.ScopeDataSourceUse) && objectID == "source-allowed") || (scope == identity.ScopeNodeUse && objectID == "node-1") {
 		return nil
 	}
 	return errors.New("synthetic slice scope denied")
 }
 
 func (a sourceAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
-	if objectID == a.allowedID && (scope == identity.ScopeDataSourceRead || (scope == identity.ScopeDataSourceWrite && a.allowWrite)) {
+	if objectID == a.allowedID && (scope == identity.ScopeDataSourceRead || scope == identity.ScopeDataSourceUse || (scope == identity.ScopeDataSourceWrite && a.allowWrite)) {
 		return nil
 	}
 	return errors.New("synthetic object scope denied")
 }
 
 func (connectionTestAuthorizer) Authorize(_ context.Context, _ identity.Principal, scope identity.Scope, objectID string) error {
-	if objectID == "source-allowed" && (scope == identity.ScopeDataSourceRead || scope == identity.ScopeDataSourceWrite) {
+	if objectID == "source-allowed" && (scope == identity.ScopeDataSourceRead || scope == identity.ScopeDataSourceUse || scope == identity.ScopeDataSourceWrite) {
 		return nil
 	}
 	if objectID == "node-1" && scope == identity.ScopeNodeUse {

@@ -1,6 +1,10 @@
 package executionargv
 
-import "ob-data-orch/internal/parammeta"
+import (
+	"strings"
+
+	"ob-data-orch/internal/parammeta"
+)
 
 // ValidNormalImport 只接受普通导入目录中的非秘密参数，不能执行任意 SQL 或旁路命令。
 func ValidNormalImport(argv []string) bool {
@@ -14,6 +18,18 @@ func ValidNormalImport(argv []string) bool {
 	seen := map[string]bool{}
 	for index := 0; index < len(argv); index++ {
 		name := argv[index]
+		// 只接受唯一生成器的严格布尔写法，不把任意 name=value 扩成新参数通道。
+		if strings.HasPrefix(name, "--strict=") {
+			value := strings.TrimPrefix(name, "--strict=")
+			if (value != "true" && value != "false") || seen["--strict"] {
+				return false
+			}
+			seen["--strict"] = true
+			continue
+		}
+		if name == "--strict" {
+			return false
+		}
 		definition, ok := catalog.Definition(name)
 		if !ok || seen[name] || definition.EmissionTarget == "SECURITY_FILE" || definition.Sensitivity == "SECRET" {
 			return false

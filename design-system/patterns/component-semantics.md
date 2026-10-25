@@ -36,3 +36,9 @@ Product Component 允许存在的条件：
 - 它组合 Ant 原生组件。
 - 它表达领域行为，例如服务端资格、脏表单保护、游标分页、证据层级、危险确认。
 - 它不重新绘制 Ant 的 hover、focus、disabled、validation、open、motion。
+
+### 已登记的领域图形例外
+
+`workbench/nodes/NodeExecutionQuota.vue` 的 SVG 环形分段表达已用、预留、可用额度。下方原生 `button[type="button"]` 仅为只读额度提供键盘聚焦和 Ant Tooltip 触发，不执行命令、修改值或承担通用 Button；保留语义名称和可见焦点。该文件不因此豁免其他原生输入、表格或动作按钮，新增点击行为须重新选择 Ant 组件。
+
+额度分段的 `quota-used`、`quota-reserved`、`quota-free` 来自 `nodeResourcePresentation.ts` 的领域键，模板动态生成类名；Monaco 查找区的 `find-widget`、`visible`、`replaceToggled` 由编辑器运行时生成。平台审计按限定文件识别这些引用，不能仅因模板中无完整字符串判定它们已失效。

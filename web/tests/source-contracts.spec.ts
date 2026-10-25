@@ -1,6 +1,34 @@
 import { expect, test } from '@playwright/test'
 import { DATA_SOURCE_UI_FIXTURES } from '../src/workbench/sources/dataSourceUiFixture'
 
+for (const viewport of [{ width:1920,height:1080 }, { width:1440,height:1024 }, { width:1280,height:720 }]) test(`直连数据源连接字段与默认端口 ${viewport.width}`, async ({page},info) => {
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.route('**/api/v1/**',route=>route.abort())
+  await page.setViewportSize(viewport)
+  await page.goto('/data-sources?uiFixture=data-sources')
+  await page.getByRole('button',{name:'新建数据源',exact:true}).click()
+  await page.getByRole('menuitem',{name:'OceanBase MySQL',exact:true}).click()
+  const drawer=page.getByRole('dialog',{name:'新建数据源',exact:true})
+  const change=async(label:string)=>{await drawer.locator('.ant-select').filter({has:page.locator('#source-connection-kind')}).click();await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText(label,{exact:true}).click()}
+  await drawer.locator('#source-tenant').fill('synthetic_tenant')
+  await drawer.locator('#source-cluster').fill('synthetic_cluster')
+  await change('直连 OBServer')
+  await expect(drawer.locator('#source-port')).toHaveValue('2881')
+  await expect(drawer.locator('#source-cluster')).toHaveCount(0)
+  await expect(drawer.locator('#source-tenant')).toHaveValue('synthetic_tenant')
+  await drawer.locator('#source-host').fill('synthetic.invalid')
+  await drawer.locator('#source-port').fill('12881')
+  await change('通过 ODP 连接')
+  await expect(drawer.locator('#source-port')).toHaveValue('12881')
+  await expect(drawer.locator('#source-cluster')).toHaveValue('')
+  await change('直连 OBServer')
+  await expect(drawer.getByRole('button',{name:'确定',exact:true})).toBeInViewport()
+  await expect(page.locator('.ant-select-dropdown:visible')).toHaveCount(0)
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+  await page.screenshot({path:info.outputPath(`direct-source-${viewport.width}.png`),animations:'disabled'})
+  expect(errors).toEqual([])
+})
+
 test('新建环境从默认提示中显式选择，预生产存量仍可编辑', async ({ page }) => {
   await page.route('**/api/v1/**', route => route.abort())
   await page.goto('/data-sources?uiFixture=data-sources')

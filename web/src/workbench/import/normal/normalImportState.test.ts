@@ -40,6 +40,23 @@ function deferred<T>() {
 }
 
 describe('普通导入唯一表单与活动参数', () => {
+  it('MySQL兼容必须明确源版本，版本变化进入配置并清除非活动版本', () => {
+    const state = parameters()
+    state.form.content = 'DDL_ONLY'
+    state.form.compatMysql = true
+    expect(state.issues.value.some(issue => issue.field === 'compatMysqlVersion')).toBe(true)
+    const signatures = new Set<string>()
+    for (const version of ['mysql56', 'mysql57', 'mysql80'] as const) {
+      state.form.compatMysqlVersion = version
+      expect(state.configuration.value.compatMysqlVersion).toBe(version)
+      expect(state.issues.value.some(issue => issue.field === 'compatMysqlVersion')).toBe(false)
+      signatures.add(state.configurationSignature.value)
+    }
+    expect(signatures.size).toBe(3)
+    state.form.compatMysql = false
+    expect(state.form.compatMysqlVersion).toBe('')
+    expect(state.configuration.value.compatMysqlVersion).toBe('')
+  })
   it('前端目录与独立命令定义一致，四项受管连接说明不作为任务覆盖', () => {
     const managed = ['sys-user', 'sys-password', 'character-set', 'session-config']
     expect(commandMetadata.definitions.map(item => item.longName.slice(2)).sort()).toEqual(normalImportParameterCatalog.map(item => item.name).filter(name => !managed.includes(name)).sort())
@@ -275,6 +292,22 @@ describe('普通导入唯一表单与活动参数', () => {
     expect(state.riskAcknowledged.value).toBe(false)
   })
 
+  it('账号角色定义需要风险确认，切换定义立即撤销旧确认', () => {
+    const state = parameters()
+    state.form.content = 'DDL_ONLY'
+    state.form.objects['obj-user'] = 'synthetic_dormant_user'
+    expect(state.riskDescriptions.value.join('')).toContain('账号或角色')
+    state.acknowledgeRisk(true)
+    expect(state.riskAcknowledged.value).toBe(true)
+    state.form.objects['obj-user'] = ''
+    state.selectedSource.value = { ...source, compatibilityMode: 'ORACLE' }
+    state.form.objects.role = 'synthetic_role'
+    expect(state.riskAcknowledged.value).toBe(false)
+    expect(state.riskDescriptions.value.join('')).toContain('账号或角色')
+    state.form.content = 'DATA_ONLY'
+    expect(state.riskDescriptions.value.join('')).not.toContain('账号或角色')
+  })
+
   it('内容、范围和数据源的破坏性清值必须确认，取消不改表单', () => {
     const state = parameters()
     state.form.content = 'DDL_AND_DATA'
@@ -356,5 +389,13 @@ describe('普通导入授权引用读取', () => {
     pending.resolve([source]); await read; await nextTick()
     expect(refs.sources.value).toEqual([])
     expect(refs.loadingSources.value).toBe(false)
+  })
+
+  it('按平台策略重排节点仍保留选择，不为空选择补首项', async () => {
+    const scope = effectScope(); scopes.push(scope); const form = configuredForm()
+    const api = { listDataSources: vi.fn().mockResolvedValue([source]), listExecutionNodes: vi.fn().mockResolvedValue([{ ...normalImportNode, id: 'synthetic-first' }, normalImportNode]) }
+    const refs = scope.run(() => useNormalImportReferences(form, api))!
+    await refs.loadNodes(); expect(api.listExecutionNodes).toHaveBeenCalledWith({ forTaskSelection: true }); expect(form.nodeId).toBe(normalImportNode.id)
+    form.nodeId = ''; await refs.loadNodes(); expect(form.nodeId).toBe('')
   })
 })

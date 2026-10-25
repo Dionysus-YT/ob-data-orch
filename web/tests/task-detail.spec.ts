@@ -81,7 +81,9 @@ test('任务详情同实例切换隔离迟到读取和日志，刷新不叠加�
   })
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect.poll(() => counts.A).toBe(1)
-  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toContainText('刷新中')
+  await page.getByRole('button', { name: '刷新', exact: true }).dispatchEvent('click')
   expect(counts.A).toBe(1)
   // 使用页面内来源任务链接，Vue Router 复用当前详情实例。
   await page.locator('.task-derivation-note').getByRole('link', { name: 'B', exact: true }).click()
@@ -132,6 +134,21 @@ test('任务详情同实例切换隔离迟到读取和日志，刷新不叠加�
   expect(counts.B).toBe(before)
   expect(await page.locator('vite-error-overlay').count()).toBe(0)
   expect(errors).toEqual([])
+})
+
+test('详情页签方向键与 Home End 保持焦点、选中项和路由一致，手动刷新反馈完成', async ({ page }, info) => {
+  await mockTask(page, () => 'SUCCEEDED')
+  await page.goto('/tasks/A')
+  const first = page.getByRole('tab', { name: '运行概览', exact: true })
+  await first.focus(); await page.keyboard.press('ArrowRight')
+  const snapshot = page.getByRole('tab', { name: '配置快照', exact: true })
+  await expect(snapshot).toBeFocused(); await expect(snapshot).toHaveAttribute('aria-selected', 'true'); await expect(page).toHaveURL(/tab=snapshot/)
+  await page.keyboard.press('End')
+  await expect(page.getByRole('tab', { name: '操作记录', exact: true })).toBeFocused(); await expect(page).toHaveURL(/tab=operations/)
+  await page.keyboard.press('Home'); await expect(first).toBeFocused(); await expect(first).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toContainText('已刷新')
+  await page.screenshot({ path: info.outputPath('task-detail-keyboard-refreshed.png'), fullPage: true })
 })
 
 test('A 初始概览迟到和卸载中的读取不覆盖 B 或重新建立后台生命周期', async ({ page }) => {
@@ -243,6 +260,8 @@ test('五个 Tab 使用同一事实，日志过滤错误定位、过期、操作
   await page.getByRole('tab', { name: '命令', exact: true }).click(); await expect(page.getByText('完整实际启动命令与启动目录未保存', { exact: true })).toBeVisible()
   await page.getByRole('tab', { name: '执行日志' }).click()
   await page.getByRole('textbox', { name: '日志关键字' }).fill('error'); await expect(page.locator('.task-log-record')).toHaveCount(1)
+	const centerLink = new URL((await page.getByRole('link', { name: '在日志中心查询与下载', exact: true }).getAttribute('href'))!, 'http://127.0.0.1:15174')
+	expect(centerLink.pathname).toBe('/logs'); expect(centerLink.searchParams.get('taskId')).toBe('A'); expect(centerLink.searchParams.get('from')).toBe('2025-12-31T23:59:00.000Z')
   await page.getByRole('button', { name: '跳转首条错误' }).click(); await expect(page.locator('[data-log-error="true"]')).toBeFocused()
   await page.getByRole('button', { name: '暂停自动滚动' }).click(); await expect(page.getByRole('button', { name: '恢复自动滚动' })).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('button', { name: '刷新日志' }).click(); await expect(page.getByText('日志已过保留期', { exact: true })).toBeVisible(); await expect(page.locator('.task-log-record')).toHaveCount(0)
@@ -252,3 +271,84 @@ test('五个 Tab 使用同一事实，日志过滤错误定位、过期、操作
   await page.getByRole('tab', { name: '配置快照' }).click(); await page.screenshot({ path: info.outputPath('task-detail-snapshot.png'), fullPage: true })
   expect(errors).toEqual([])
 })
+
+for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 1024 }, { width: 1280, height: 720 }]) {
+  test(`导出与普通导入任务中心、详情在 ${viewport.width} 下共用布局并隔离结果语义`, async ({ page }, info) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    await page.setViewportSize(viewport)
+    await mockTask(page, () => 'SUCCEEDED')
+    const exported = { ...overview('A', 'SUCCEEDED').presentation, displayName: '合成导出任务' }
+    const imported = { ...overview('B', 'SUCCEEDED').presentation, displayName: '合成普通导入任务', type: 'OBLOADER_NORMAL_IMPORT' }
+    const items = [exported, imported]
+    await page.route('**/api/v1/tasks/*', route => {
+      const id = new URL(route.request().url()).pathname.split('/')[4]!
+      const presentation = items.find(item => item.id === id)!
+      return route.fulfill({ json: { item: { id, type: presentation.type, dataSourceId: presentation.dataSourceId, nodeId: presentation.nodeId, precheckId: 'synthetic-precheck', submittedAt: time, presentation } } })
+    })
+    await page.route('**/api/v1/tasks/filter-options', route => route.fulfill({ json: { dataSources: [], nodes: [], creators: [], environments: [], creatorFilterAvailable: false } }))
+    await page.route('**/api/v1/tasks?*', route => route.fulfill({ json: { items, totalPages: 1 } }))
+    await page.route('**/api/v1/tasks/B/snapshot', route => route.fulfill({ json: { item: {
+      type: 'OBLOADER_NORMAL_IMPORT', snapshotVersion: 'normal-import-v1', dataSourceId: imported.dataSourceId, nodeId: imported.nodeId,
+      precheckId: 'synthetic-precheck', objectSummary: 'synthetic.orders', format: 'CSV', configFingerprint: 'synthetic-import', toolVersion: '4.3.5', metadataVersion: 'synthetic', capabilityVersion: 'synthetic',
+      groups: [
+        { key: 'source', label: '1 · 选择数据源', fields: [{ key: 'dataSourceId', label: '目标数据源', value: imported.dataSourceId, source: 'UNKNOWN' }] },
+        { key: 'input', label: '2 · 导入文件与格式', fields: [{ key: 'filePath', label: '输入路径', value: '已隐藏', source: 'UNKNOWN' }] },
+        { key: 'objects', label: '3 · 对象与映射', fields: [] },
+        { key: 'execution', label: '4 · 执行参数', fields: [] },
+        { key: 'review', label: '5 · 预检查与命令', fields: [] },
+      ],
+    } } }))
+    await page.goto('/tasks?scope=MINE')
+    await expect(page.getByRole('link', { name: exported.displayName, exact: true })).toBeVisible()
+    const surfaceStyle = await page.locator('.orch-management').evaluate(element => {
+      const style = getComputedStyle(element)
+      return { background: style.backgroundColor, border: style.border, radius: style.borderRadius, shadow: style.boxShadow }
+    })
+    await page.screenshot({ path: info.outputPath(`task-center-types-${viewport.width}.png`), fullPage: true })
+    let overviewBounds: { x: number; width: number } | undefined
+    for (const item of items) {
+      await page.getByRole('link', { name: item.displayName, exact: true }).click()
+      await expect(page.getByRole('heading', { name: item.displayName, exact: true })).toBeVisible()
+      await expect(page.locator('.task-object-meta').getByText(item.type === 'OBLOADER_NORMAL_IMPORT' ? '普通导入' : '导出', { exact: true })).toBeVisible()
+      await expect(page.getByRole('tab')).toHaveCount(5)
+      const surface = page.getByRole('region', { name: '任务详情工作面', exact: true })
+      expect(await surface.evaluate(element => {
+        const style = getComputedStyle(element)
+        return { background: style.backgroundColor, border: style.border, radius: style.borderRadius, shadow: style.boxShadow }
+      })).toEqual(surfaceStyle)
+      const bounds = await surface.boundingBox()
+      if (overviewBounds) expect({ x: bounds!.x, width: bounds!.width }).toEqual(overviewBounds)
+      else overviewBounds = { x: bounds!.x, width: bounds!.width }
+      await expect(page.locator('.ant-tabs-tabpane-active .ant-descriptions')).toHaveCount(3)
+      if (item.type === 'OBLOADER_NORMAL_IMPORT') {
+        await expect(surface.getByText('输入位置', { exact: true })).toBeVisible()
+        await expect(surface.getByText('已隐藏', { exact: true })).toBeVisible()
+        await expect(surface.getByText('导入完成证据已核验', { exact: true })).toBeVisible()
+        await expect(surface.getByText('load.ckpt', { exact: true })).toBeVisible()
+        await expect(surface.getByText('dump.ckpt', { exact: true })).toHaveCount(0)
+        await expect(surface.getByText('文件数', { exact: true })).toHaveCount(0)
+        await expect(surface.getByRole('button', { name: /展开文件清单/ })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '保存为模板', exact: true })).toBeVisible()
+      } else {
+        await expect(surface.getByText('输出位置', { exact: true })).toBeVisible()
+        await expect(surface.getByText('dump.ckpt', { exact: true })).toBeVisible()
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: info.outputPath(`task-detail-${item.type}-${viewport.width}.png`), fullPage: true })
+      await page.getByRole('tab', { name: '配置快照', exact: true }).click()
+      await expect(surface.getByText(item.type === 'OBLOADER_NORMAL_IMPORT' ? '2 · 导入文件与格式' : '2 · 导出对象与内容', { exact: true })).toBeVisible()
+      await page.screenshot({ path: info.outputPath(`task-snapshot-${item.type}-${viewport.width}.png`), fullPage: true })
+      await page.getByRole('tab', { name: '执行日志', exact: true }).click()
+      await page.getByRole('textbox', { name: '日志关键字' }).fill('persisted')
+      await expect(page.locator('.task-log-record')).toHaveCount(1)
+      await page.getByRole('tab', { name: '操作记录', exact: true }).click()
+      await expect(page.getByText('暂无操作记录', { exact: true })).toBeVisible()
+      await page.getByRole('link', { name: '返回任务中心', exact: true }).click()
+      await expect(page).toHaveURL(/\/tasks\?scope=MINE$/)
+    }
+    await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+}

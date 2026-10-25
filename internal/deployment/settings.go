@@ -34,6 +34,10 @@ type Settings struct {
 	RealExecutionEnabled bool   `json:"realExecutionEnabled"`
 	// NormalImportExecutionEnabled 只有显式配置才允许冻结并领取普通导入任务。
 	NormalImportExecutionEnabled bool `json:"normalImportExecutionEnabled,omitempty"`
+	// DirectLoadProbeEnabled 独立许可旁路固定只读探针，升级旧配置默认保持关闭。
+	DirectLoadProbeEnabled bool `json:"directLoadProbeEnabled,omitempty"`
+	// DirectLoadExecutionEnabled 只有总开关及旁路探针同时开启才允许旁路写入。
+	DirectLoadExecutionEnabled bool `json:"directLoadExecutionEnabled,omitempty"`
 	// LogRetentionDays 仅控制普通任务日志；零值继承 30 天，审计与任务历史不随之清理。
 	LogRetentionDays int `json:"logRetentionDays,omitempty"`
 }
@@ -128,6 +132,9 @@ func validatePublicURL(value string) (*url.URL, error) {
 }
 
 func validateSettings(settings Settings) error {
+	if settings.DirectLoadProbeEnabled && !settings.RealExecutionEnabled || settings.DirectLoadExecutionEnabled && (!settings.RealExecutionEnabled || !settings.DirectLoadProbeEnabled) {
+		return errors.New("旁路检查要求真实能力总开关，旁路执行还要求独立检查开关")
+	}
 	if _, err := logstream.RetentionDays(settings.LogRetentionDays); err != nil {
 		return errors.New("普通日志保留天数须为 7 至 365 天")
 	}

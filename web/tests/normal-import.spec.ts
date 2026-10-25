@@ -26,14 +26,14 @@ async function mockImport(page: Page) {
     if (url.pathname === '/api/v1/normal-import-prechecks/synthetic-check' && draft) return route.fulfill({ json: { id: 'synthetic-check', draftId: draft.id, draftRevision: draft.revision, configFingerprint: draft.configFingerprint, checkKind: 'NORMAL_IMPORT_PREFLIGHT', status: 'FAILED', integrityStatus: 'COMPLETE', validUntil: new Date(Date.now() + 60000).toISOString(), executionEnabled: false, inputManifest: null, results: ['DATABASE_CONNECTIVITY', 'WRITE_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'INPUT_FILES', 'INPUT_MAPPING'].map(check => ({ check, status: 'UNKNOWN', evidenceCode: check === 'DATABASE_CONNECTIVITY' ? 'DATABASE_CONNECTION_UNAVAILABLE' : check === 'TOOL_ENVIRONMENT' ? 'TOOL_RUNTIME_UNAVAILABLE' : check === 'NODE_RESOURCE' ? 'NODE_RESOURCE_UNAVAILABLE' : 'IMPORT_UNAVAILABLE' })) } })
     if (route.request().method() !== 'GET') return route.fulfill({ status: 403, json: {} })
     if (url.pathname === '/api/v1/data-sources' && !url.search) return route.fulfill({ json: { items: normalImportSources } })
-    if (url.pathname === '/api/v1/execution-nodes' && !url.search) return route.fulfill({ json: { items: [normalImportNode] } })
+    if (url.pathname === '/api/v1/execution-nodes' && url.search === '?candidateOrder=platform') return route.fulfill({ json: { items: [normalImportNode] } })
     return route.fulfill({ status: 404, json: {} })
   })
   return requests
 }
 
 function onlyNormalImportRequests(requests: string[]) {
-  return requests.every(request => /^(GET \/api\/v1\/(data-sources|execution-nodes|normal-import-drafts\/synthetic-draft|normal-import-prechecks\/synthetic-check)|POST \/api\/v1\/normal-import-drafts(?:\/synthetic-draft:(?:preview-command|precheck))?|PATCH \/api\/v1\/normal-import-drafts\/synthetic-draft)$/.test(request))
+  return requests.every(request => /^(GET \/api\/v1\/(data-sources|execution-nodes\?candidateOrder=platform|normal-import-drafts\/synthetic-draft|normal-import-prechecks\/synthetic-check)|POST \/api\/v1\/normal-import-drafts(?:\/synthetic-draft:(?:preview-command|precheck))?|PATCH \/api\/v1\/normal-import-drafts\/synthetic-draft)$/.test(request))
 }
 
 async function selectOption(page: Page, label: string, option: string) {
@@ -79,7 +79,7 @@ test('普通导入沿用导出的横向工作面，文件格式只提供 CSV、C
   await expect(selectedNode).toContainText('合成导入节点 · Windows · x86_64')
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(selectedNode).toContainText('合成导入节点 · Windows · x86_64')
-  await page.route('**/api/v1/execution-nodes', route => route.fulfill({ json: { items: [{ ...normalImportNode, displayName: '合成导入节点（已更名）' }] } }))
+  await page.route('**/api/v1/execution-nodes?candidateOrder=platform', route => route.fulfill({ json: { items: [{ ...normalImportNode, displayName: '合成导入节点（已更名）' }] } }))
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(selectedNode).toContainText('合成导入节点（已更名） · Windows · x86_64')
   await expect(selectedNode).not.toContainText(normalImportNode.id)
@@ -299,7 +299,7 @@ test('普通导入五步使用同一配置，格式暂存、风险失效与真�
   await expect(page.getByText('无法确认', { exact: true })).toHaveCount(6)
   const command = page.getByRole('region', { name: '完整脱敏命令', exact: true })
   await command.scrollIntoViewIfNeeded()
-  await expect(command.getByRole('heading', { name: '完整命令（脱敏）', exact: true })).toBeInViewport()
+  await expect(command.getByRole('heading', { name: '完整命令（敏感信息已脱敏）', exact: true })).toBeInViewport()
   const commandBounds = await command.boundingBox()
   const footerBounds = await page.locator('.wizard-footer').boundingBox()
   expect(commandBounds!.y + commandBounds!.height).toBeLessThanOrEqual(footerBounds!.y)
@@ -329,8 +329,8 @@ test('普通导入五步使用同一配置，格式暂存、风险失效与真�
 test('普通导入五步路由与参数定位独立于旁路向导', async ({ page }) => {
   const requests = await mockImport(page)
   await page.goto('/imports/direct/new')
-  await expect(page.getByRole('list', { name: '任务创建步骤', exact: true }).getByRole('listitem')).toHaveCount(6)
-  await expect(page.getByRole('heading', { name: '确认旁路导入适用条件', exact: true })).toBeVisible()
+  await expect(page.locator('.wizard-ant-step-rail .ant-steps-item')).toHaveCount(5)
+  await expect(page.locator('[aria-current="step"]')).toContainText('数据源与连接')
   await page.goto('/imports/normal/new?step=6')
   const rail = page.locator('.wizard-ant-step-rail')
   await expect(rail.locator('.ant-steps-item')).toHaveCount(5)
@@ -345,7 +345,7 @@ test('普通导入五步路由与参数定位独立于旁路向导', async ({ pa
   await page.getByRole('button', { name: /^导入文件与格式：请填写与执行节点平台匹配/ }).click()
   await expect(rail.locator('[aria-current="step"]')).toContainText('导入文件与格式')
   await expect(page.getByRole('radiogroup', { name: '导入内容', exact: true })).toBeVisible()
-  expect(requests.every(request => request === 'GET /api/v1/data-sources' || request === 'GET /api/v1/execution-nodes')).toBe(true)
+  expect(requests.every(request => ['GET /api/v1/data-sources', 'GET /api/v1/execution-nodes?candidateOrder=platform', 'GET /api/v1/direct-load-parameter-metadata'].includes(request))).toBe(true)
 })
 
 test('普通导入清值确认、全部参数定位、离开保护与刷新不伪造恢复', async ({ page }) => {
@@ -406,7 +406,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
       await expect(button).toBeInViewport()
       await button.click()
     }
-    await expect(page.getByRole('heading', { name: '预检查与完整命令', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '预检查与提交确认', exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByRole('button', { name: '提交并启动导入', exact: true }).scrollIntoViewIfNeeded()
     await expect(page.getByRole('button', { name: '提交并启动导入', exact: true })).toBeInViewport()
@@ -471,7 +471,7 @@ test('普通导入原生 200% 缩放下步骤、摘要与操作可达', async ({
     await expect(page.getByRole('button', { name: '查看任务摘要', exact: true })).toBeFocused()
     const command = page.getByRole('region', { name: '完整脱敏命令', exact: true })
     await command.scrollIntoViewIfNeeded()
-    await expect(command.getByRole('heading', { name: '完整命令（脱敏）', exact: true })).toBeInViewport()
+    await expect(command.getByRole('heading', { name: '完整命令（敏感信息已脱敏）', exact: true })).toBeInViewport()
     const commandBounds = await command.boundingBox()
     const footerBounds = await page.locator('.wizard-footer').boundingBox()
     expect(commandBounds!.y + commandBounds!.height).toBeLessThanOrEqual(footerBounds!.y)

@@ -227,7 +227,7 @@ func (authenticatedPrecheckAuthorizer) Authorize(_ context.Context, principal id
 	if principal.Type != identity.BrowserPrincipal || principal.ID != "subject-1" {
 		return errors.New("synthetic authorization denied")
 	}
-	if (scope == identity.ScopeDataSourceRead && objectID == "source-1") ||
+	if ((scope == identity.ScopeDataSourceRead || scope == identity.ScopeDataSourceUse) && objectID == "source-1") ||
 		((scope == identity.ScopeNodeUse || scope == identity.ScopeNodeManage) && objectID == "node-1") {
 		return nil
 	}

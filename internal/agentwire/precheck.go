@@ -11,6 +11,7 @@ import (
 	"ob-data-orch/internal/agentstate"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
@@ -43,6 +44,8 @@ type PrecheckGrant struct {
 // Objects 为冻结对象清单；ALL 范围为空清单，对象检查按数据库级投影执行。
 // EX-I6：对象存储输出通过 OutputKind + StorageTarget 表达受控 URI 与 --tmp-path；本地输出缺省。
 type PrecheckExecutionContext struct {
+	// DirectLoad 使用独立旁路配置，拒绝与其他业务上下文混合。
+	DirectLoad        *directload.Config
 	NormalImport      *importdomain.Config
 	CheckKind         string
 	CompatibilityMode string
@@ -236,11 +239,12 @@ type precheckCompletionRequest struct {
 }
 
 type precheckCompletionPayload struct {
-	InputManifest *importfiles.Manifest   `json:"inputManifest,omitempty"`
-	LeaseID       string                  `json:"leaseId"`
-	LeaseEpoch    int64                   `json:"leaseEpoch"`
-	BindingDigest string                  `json:"bindingDigest"`
-	Results       []precheckResultPayload `json:"results"`
+	DirectLoadConfigFingerprint string                  `json:"directLoadConfigFingerprint,omitempty"`
+	InputManifest               *importfiles.Manifest   `json:"inputManifest,omitempty"`
+	LeaseID                     string                  `json:"leaseId"`
+	LeaseEpoch                  int64                   `json:"leaseEpoch"`
+	BindingDigest               string                  `json:"bindingDigest"`
+	Results                     []precheckResultPayload `json:"results"`
 }
 
 type precheckResultPayload struct {
@@ -259,6 +263,7 @@ type precheckBindingPayload struct {
 }
 
 type precheckExecutionContextPayload struct {
+	DirectLoad          *directload.Config                    `json:"directLoad,omitempty"`
 	NormalImport        *importdomain.Config                  `json:"normalImport,omitempty"`
 	CheckKind           string                                `json:"checkKind,omitempty"`
 	CompatibilityMode   string                                `json:"compatibilityMode"`
@@ -701,11 +706,12 @@ func (c *httpsClient) completePrecheck(ctx context.Context, state *identityState
 		SentAt:          input.SentAt.UTC().Format(time.RFC3339Nano),
 		PayloadType:     "EXPORT_PREFLIGHT_COMPLETE",
 		Payload: precheckCompletionPayload{
-			InputManifest: input.Report.InputManifest,
-			LeaseID:       input.LeaseID,
-			LeaseEpoch:    input.LeaseEpoch,
-			BindingDigest: input.BindingDigest,
-			Results:       precheckResultPayloads(input.Report.Results),
+			DirectLoadConfigFingerprint: input.Report.DirectLoadConfigFingerprint,
+			InputManifest:               input.Report.InputManifest,
+			LeaseID:                     input.LeaseID,
+			LeaseEpoch:                  input.LeaseEpoch,
+			BindingDigest:               input.BindingDigest,
+			Results:                     precheckResultPayloads(input.Report.Results),
 		},
 	}
 	requestBody, err := json.Marshal(request)
@@ -749,7 +755,7 @@ func (p precheckBindingPayload) toBinding() agentstate.PrecheckBinding {
 
 func (p precheckExecutionContextPayload) toContext() PrecheckExecutionContext {
 	context := PrecheckExecutionContext{
-		NormalImport: p.NormalImport, CheckKind: p.CheckKind,
+		DirectLoad: p.DirectLoad, NormalImport: p.NormalImport, CheckKind: p.CheckKind,
 		CompatibilityMode: p.CompatibilityMode,
 		Database:          p.Database,
 		Objects:           append([]string(nil), p.Objects...),
@@ -826,6 +832,12 @@ func validPrecheckCompletion(input PrecheckCompletion) bool {
 
 // validLenientReport 复核报告的结构安全，不假设具体检查清单顺序。
 func validLenientReport(report agentpreflight.Report) bool {
+	if len(precheckcontract.DirectLoadChecks(report.CheckKind)) > 0 {
+		return agentpreflight.ValidateDirectLoadReport(report) == nil
+	}
+	if report.DirectLoadConfigFingerprint != "" {
+		return false
+	}
 	if report.CheckKind != "" {
 		return agentpreflight.ValidateNormalImportReport(report) == nil
 	}
@@ -864,6 +876,9 @@ func validPrecheckResultStatus(status agentpreflight.Status) bool {
 }
 
 func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
+	if grant.Context.DirectLoad != nil {
+		return validDirectLoadGrant(grant, nodeID)
+	}
 	if grant.Context.NormalImport != nil {
 		expected := precheckcontract.NormalImportChecks(grant.Context.CheckKind)
 		if len(expected) != len(grant.CheckSet) {
@@ -883,6 +898,9 @@ func validPrecheckGrant(grant PrecheckGrant, nodeID string) bool {
 }
 
 func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
+	if context.DirectLoad != nil {
+		return validDirectLoadContext(context)
+	}
 	if context.NormalImport != nil {
 		return context.OutputPath == "" && context.OutputKind == "" && context.StorageTarget == nil && !context.WeakRead && !context.EnableHiddenPk && !context.AddExtraMessage && agentpreflight.ValidNormalImportContext(context.NormalImport, context.CheckKind, context.CompatibilityMode, context.TargetPlatform, context.AllowedRoots)
 	}

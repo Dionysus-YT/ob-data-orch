@@ -10,8 +10,7 @@ const props = defineProps<{ actions: readonly Action[]; label: string; busy?: bo
 const emit = defineEmits<{ select: [action: Action] }>()
 const open = ref(false), menu = ref<HTMLElement>(), trigger = ref<{ $el: HTMLButtonElement }>()
 let frame: number | undefined, sequence = 0, disposed = false, openIntent = false
-function actionLabel(action: Action) { return action === 'SUBMIT' ? '提交执行' : action === 'DELETE' ? '删除草稿' : action === 'CREATE_EXPORT' ? '导出' : action === 'CREATE_NORMAL_IMPORT' ? '普通导入' : action === 'CREATE_DIRECT_LOAD' ? '旁路导入（尚未开放）' : taskActionLabels[action] }
-function disabled(action: Action) { return action === 'CREATE_DIRECT_LOAD' }
+function actionLabel(action: Action) { return action === 'SUBMIT' ? '提交执行' : action === 'DELETE' ? '删除草稿' : action === 'CREATE_EXPORT' ? '导出' : action === 'CREATE_NORMAL_IMPORT' ? '普通导入' : action === 'CREATE_DIRECT_LOAD' ? '旁路导入' : taskActionLabels[action] }
 function entries() { return Array.from(menu.value?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? []) }
 async function close(restore = true) { const current = ++sequence; openIntent = false; if (frame !== undefined) cancelAnimationFrame(frame); open.value = false; await nextTick(); if (!disposed && restore && current === sequence) trigger.value?.$el.focus() }
 function toggle() { if (props.busy) return; if (open.value) void close(); else { openIntent = true; open.value = true } }
@@ -37,7 +36,7 @@ function navigate(event: KeyboardEvent) {
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
   items[next]?.focus()
 }
-async function select(key: string | number) { const action = String(key) as Action; if (props.busy || !props.actions.includes(action) || disabled(action)) return; const current = sequence + 1; await close(); if (!disposed && current === sequence) emit('select', action) }
+async function select(key: string | number) { const action = String(key) as Action; if (props.busy || !props.actions.includes(action)) return; const current = sequence + 1; await close(); if (!disposed && current === sequence) emit('select', action) }
 watch(() => `${props.sessionKey ?? ''}|${props.label}|${props.actions.join(',')}`, () => { void close(false) }, { flush: 'sync' })
 onScopeDispose(() => { disposed = true; sequence++; if (frame !== undefined) cancelAnimationFrame(frame) })
 </script>
@@ -45,6 +44,6 @@ onScopeDispose(() => { disposed = true; sequence++; if (frame !== undefined) can
 <template>
   <ADropdown :open="open" :trigger="['click']" placement="bottomRight" :disabled="busy" :destroy-popup-on-hide="true" @open-change="changeOpen">
     <AButton ref="trigger" :type="creation ? 'primary' : 'text'" :size="creation ? undefined : 'small'" :aria-label="label" aria-haspopup="menu" :aria-expanded="open" :loading="busy" :disabled="busy" @click="toggle" @keydown.down.prevent="openFromKeyboard" @keydown.esc.stop.prevent="close()"><template v-if="!creation" #icon><EllipsisOutlined aria-hidden="true" /></template><template v-if="creation">{{ label }}<DownOutlined aria-hidden="true" /></template></AButton>
-    <template #overlay><div ref="menu" @keydown="navigate"><AMenu :aria-label="label" @click="({ key }) => select(key)" @keydown.esc.stop.prevent="close()"><AMenuItem v-for="action in actions" :key="action" :disabled="disabled(action)" :danger="action === 'CANCEL' || action === 'DELETE'">{{ actionLabel(action) }}</AMenuItem></AMenu></div></template>
+    <template #overlay><div ref="menu" @keydown="navigate"><AMenu :aria-label="label" @click="({ key }) => select(key)" @keydown.esc.stop.prevent="close()"><AMenuItem v-for="action in actions" :key="action" :danger="action === 'CANCEL' || action === 'DELETE'">{{ actionLabel(action) }}</AMenuItem></AMenu></div></template>
   </ADropdown>
 </template>

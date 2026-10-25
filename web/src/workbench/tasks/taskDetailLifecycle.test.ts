@@ -54,6 +54,19 @@ function setup(overrides: Partial<BrowserApi> = {}) {
 }
 
 describe('任务详情会话与读取隔离', () => {
+  it('手动刷新加入唯一在途链并反馈完成，任务切换隔离旧刷新结果', async () => {
+    const s = setup(); await settle()
+    const held = deferred<TaskExecution>()
+    vi.mocked(s.api.getTaskExecution).mockImplementationOnce(() => held.promise)
+    const first = s.state.refresh(true), second = s.state.refresh(true)
+    expect(first).toBe(second); expect(s.state.refreshing.value).toBe(true); expect(s.state.refreshDone.value).toBe(false)
+    held.resolve(execution('A')); await first
+    expect(s.state.refreshing.value).toBe(false); expect(s.state.refreshDone.value).toBe(true)
+    const late = deferred<TaskExecution>(); vi.mocked(s.api.getTaskExecution).mockImplementationOnce(() => late.promise)
+    const pending = s.state.refresh(true); await settle(); s.id.value = 'B'; await settle()
+    late.resolve(execution('old-A')); await pending
+    expect(s.state.execution.value?.executionId).toBe('B'); expect(s.state.refreshDone.value).toBe(false)
+  })
   it('旧任务写事务的结束不能释放新任务的暂停，只有当前句柄可刷新', async () => {
     const s = setup(); await settle()
     const finishA = s.state.beginMutation()

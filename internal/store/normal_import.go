@@ -100,6 +100,8 @@ func (s *Store) CreateNormalImportPrecheck(ctx context.Context, input PrecheckCr
 
 // NormalImportDraft 是普通导入独立的非敏感持久化记录，不使用导出配置模型。
 type NormalImportDraft struct {
+	// Replayed 只描述本次创建事务是否重放，不持久化为草稿或执行事实。
+	Replayed          bool      `json:"-"`
 	ID                string    `json:"id"`
 	OwnerSubjectID    string    `json:"-"`
 	DataSourceID      string    `json:"dataSourceId"`
@@ -109,6 +111,9 @@ type NormalImportDraft struct {
 	ConfigFingerprint string    `json:"configFingerprint,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
+	// 来源关系只由派生事务写入，后续编辑不清除；原配置重跑据此保持参数锁定。
+	SourceTaskID     string `json:"sourceTaskId,omitempty"`
+	SourceDerivation string `json:"sourceDerivation,omitempty"`
 }
 
 // NormalImportDraftWrite 绑定所有者、乐观锁、审计和创建幂等；不包含秘密明文。
@@ -128,6 +133,9 @@ func (s *Store) SaveNormalImportDraft(ctx context.Context, input NormalImportDra
 	config, err := importdomain.Decode(input.ConfigJSON)
 	if err != nil || config.DataSourceID != input.DataSourceID || config.NodeID != input.NodeID || validateSafeObjectJSON(input.ConfigJSON) != nil {
 		return NormalImportDraft{}, errors.New("普通导入草稿无效")
+	}
+	if (input.SourceTaskID == "") != (input.SourceDerivation == "") || input.SourceTaskID != "" && !importdomain.CanDeriveTaskDraft("FAILED", false, input.SourceDerivation) {
+		return NormalImportDraft{}, errors.New("普通导入派生来源无效")
 	}
 	result := input.NormalImportDraft
 	err = s.withWrite(ctx, func(tx *sql.Tx) error {
@@ -164,16 +172,45 @@ func (s *Store) SaveNormalImportDraft(ctx context.Context, input NormalImportDra
 			}
 		}
 		if input.ExpectedRevision == 0 {
-			_, err := tx.ExecContext(ctx, `INSERT INTO export_drafts(draft_id,owner_subject_id,data_source_id,node_id,revision,tool_version,metadata_version,capability_version,config_version,config_json,config_fingerprint,invalidation_json,created_at,updated_at,draft_kind) VALUES(?,?,?,NULLIF(?,''),1,?,?,?,?,?,NULLIF(?,''),'{}',?,?,'OBLOADER_NORMAL_IMPORT')`, input.ID, input.OwnerSubjectID, input.DataSourceID, input.NodeID, importdomain.ToolVersion, importdomain.MetadataVersion, importdomain.CapabilityVersion, importdomain.ConfigVersion, input.ConfigJSON, input.ConfigFingerprint, utcText(input.UpdatedAt), utcText(input.UpdatedAt))
+			if input.SourceTaskID != "" {
+				source, err := readTaskDerivationSourceTx(ctx, tx, input.SourceTaskID, input.OwnerSubjectID)
+				if err != nil {
+					return err
+				}
+				expected, err := NormalImportReusableConfig(source)
+				want, _ := json.Marshal(expected)
+				got, _ := json.Marshal(config)
+				if err != nil || !importdomain.CanDeriveTaskDraft(source.State, source.ReconciliationRequired, input.SourceDerivation) || string(want) != string(got) {
+					return ErrPrecheckInvalid
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO export_drafts(draft_id,owner_subject_id,data_source_id,node_id,revision,tool_version,metadata_version,capability_version,config_version,config_json,config_fingerprint,invalidation_json,created_at,updated_at,draft_kind,source_task_id,source_derivation) VALUES(?,?,?,NULLIF(?,''),1,?,?,?,?,?,NULLIF(?,''),'{}',?,?,'OBLOADER_NORMAL_IMPORT',NULLIF(?,''),NULLIF(?,''))`, input.ID, input.OwnerSubjectID, input.DataSourceID, input.NodeID, importdomain.ToolVersion, importdomain.MetadataVersion, importdomain.CapabilityVersion, importdomain.ConfigVersion, input.ConfigJSON, input.ConfigFingerprint, utcText(input.UpdatedAt), utcText(input.UpdatedAt), input.SourceTaskID, input.SourceDerivation)
 			if err != nil {
 				return err
 			}
 			result.Revision = 1
 			result.CreatedAt = input.UpdatedAt
+			if input.SourceTaskID != "" {
+				if err := insertAudit(ctx, tx, "SUBJECT", input.OwnerSubjectID, "TASK_DRAFT_DERIVED", "TASK", input.SourceTaskID, "SUCCEEDED", input.RequestID, input.UpdatedAt); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO request_idempotency(subject_id,operation,idempotency_key,request_digest,result_status,resource_kind,resource_id,response_json,created_at,expires_at) VALUES(?,'CREATE_NORMAL_IMPORT_DRAFT',?,?,201,'NORMAL_IMPORT_DRAFT',?,'{}',?,?)`, input.OwnerSubjectID, input.IdempotencyKey, input.RequestDigest, input.ID, utcText(input.UpdatedAt), utcText(input.UpdatedAt.Add(24*time.Hour))); err != nil {
 				return err
 			}
 		} else {
+			var previousRaw, derivation string
+			if err := tx.QueryRowContext(ctx, `SELECT config_json,COALESCE(source_derivation,'') FROM export_drafts WHERE draft_id=? AND owner_subject_id=? AND draft_kind='OBLOADER_NORMAL_IMPORT' AND deleted_at IS NULL`, input.ID, input.OwnerSubjectID).Scan(&previousRaw, &derivation); err != nil {
+				return ErrDataSourceNotFound
+			}
+			if derivation == "RERUN_FROM_SCRATCH" {
+				previous, err := importdomain.Decode(previousRaw)
+				before, _ := json.Marshal(previous)
+				after, _ := json.Marshal(config)
+				if err != nil || string(before) != string(after) {
+					return ErrPrecheckInvalid
+				}
+			}
 			res, err := tx.ExecContext(ctx, `UPDATE export_drafts SET data_source_id=?,node_id=NULLIF(?,''),revision=revision+1,config_json=?,config_fingerprint=NULLIF(?,''),invalidation_json='{"precheck":true}',updated_at=? WHERE draft_id=? AND owner_subject_id=? AND revision=? AND draft_kind='OBLOADER_NORMAL_IMPORT' AND deleted_at IS NULL`, input.DataSourceID, input.NodeID, input.ConfigJSON, input.ConfigFingerprint, utcText(input.UpdatedAt), input.ID, input.OwnerSubjectID, input.ExpectedRevision)
 			if err != nil {
 				return err
@@ -192,14 +229,16 @@ func (s *Store) SaveNormalImportDraft(ctx context.Context, input NormalImportDra
 	if err != nil {
 		return NormalImportDraft{}, err
 	}
-	return s.GetNormalImportDraft(ctx, result.ID, input.OwnerSubjectID)
+	item, err := s.GetNormalImportDraft(ctx, result.ID, input.OwnerSubjectID)
+	item.Replayed = result.ID != input.ID
+	return item, err
 }
 
 // GetNormalImportDraft 在同一查询中限定所有者与类型，无权对象保持不存在语义。
 func (s *Store) GetNormalImportDraft(ctx context.Context, id, owner string) (NormalImportDraft, error) {
 	var item NormalImportDraft
 	var created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT draft_id,owner_subject_id,data_source_id,COALESCE(node_id,''),revision,config_json,COALESCE(config_fingerprint,''),created_at,updated_at FROM export_drafts WHERE draft_id=? AND owner_subject_id=? AND draft_kind='OBLOADER_NORMAL_IMPORT' AND deleted_at IS NULL`, id, owner).Scan(&item.ID, &item.OwnerSubjectID, &item.DataSourceID, &item.NodeID, &item.Revision, &item.ConfigJSON, &item.ConfigFingerprint, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT draft_id,owner_subject_id,data_source_id,COALESCE(node_id,''),revision,config_json,COALESCE(config_fingerprint,''),created_at,updated_at,COALESCE(source_task_id,''),COALESCE(source_derivation,'') FROM export_drafts WHERE draft_id=? AND owner_subject_id=? AND draft_kind='OBLOADER_NORMAL_IMPORT' AND deleted_at IS NULL`, id, owner).Scan(&item.ID, &item.OwnerSubjectID, &item.DataSourceID, &item.NodeID, &item.Revision, &item.ConfigJSON, &item.ConfigFingerprint, &created, &updated, &item.SourceTaskID, &item.SourceDerivation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return NormalImportDraft{}, ErrDataSourceNotFound
 	}
@@ -238,7 +277,7 @@ func (s *Store) DeleteNormalImportDraft(ctx context.Context, id, owner string, r
 		return ErrRevisionConflict
 	}
 	return s.withWrite(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE export_drafts SET deleted_at=?,revision=revision+1,updated_at=? WHERE draft_id=? AND owner_subject_id=? AND revision=? AND draft_kind='OBLOADER_NORMAL_IMPORT' AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM precheck_runs p JOIN tasks t ON t.precheck_id=p.precheck_id WHERE p.draft_id=export_drafts.draft_id) AND NOT EXISTS(SELECT 1 FROM precheck_runs p WHERE p.draft_id=export_drafts.draft_id AND p.status='LEASED' AND p.lease_expires_at>?)`, utcText(now), utcText(now), id, owner, revision, utcText(now))
+		res, err := tx.ExecContext(ctx, `UPDATE export_drafts SET deleted_at=?,revision=revision+1,updated_at=? WHERE draft_id=? AND owner_subject_id=? AND revision=? AND draft_kind='OBLOADER_NORMAL_IMPORT' AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM precheck_runs p JOIN tasks t ON t.precheck_id=p.precheck_id WHERE p.draft_id=export_drafts.draft_id) AND NOT EXISTS(SELECT 1 FROM precheck_runs p WHERE p.draft_id=export_drafts.draft_id AND p.status='LEASED' AND (julianday(p.lease_expires_at) IS NULL OR julianday(p.lease_expires_at)>julianday(?)))`, utcText(now), utcText(now), id, owner, revision, utcText(now))
 		if err != nil {
 			return err
 		}

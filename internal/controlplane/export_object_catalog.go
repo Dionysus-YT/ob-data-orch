@@ -46,7 +46,7 @@ func (s *Server) startExportObjectCatalogQuery(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusUnauthorized, "CSRF_VALIDATION_FAILED", "请求安全校验失败", false)
 		return
 	}
-	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, dataSourceID) != nil {
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceUse, dataSourceID) != nil {
 		notFound(w, r)
 		return
 	}
@@ -93,13 +93,17 @@ func (s *Server) startExportObjectCatalogQuery(w http.ResponseWriter, r *http.Re
 		return
 	}
 	digest := sha256.Sum256(digestInput)
+	heartbeatTTL, policyAvailable := s.heartbeatTimeoutForRequest(w, r)
+	if !policyAvailable {
+		return
+	}
 	result, err := s.connectionTests.RequestDataSourceConnectionTest(r.Context(), store.DataSourceConnectionTestCreate{
 		ConnectionTestID: queryID, DataSourceID: dataSourceID, CreatorSubjectID: principal.ID,
 		ExpectedDataSourceRevision: revision, NodeID: request.NodeID, VerificationSource: "AGENT_JDBC",
 		OperationKind: "EXPORT_OBJECT_CATALOG", CatalogDatabase: request.Database,
 		CatalogObjectType: request.ObjectType, CatalogKeyword: request.Keyword,
 		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: hex.EncodeToString(digest[:]),
-		CreatedAt: now, HeartbeatFreshAfter: now.Add(-s.heartbeatTTL), ValidUntil: now.Add(s.connectionTestTTL),
+		CreatedAt: now, HeartbeatFreshAfter: now.Add(-heartbeatTTL), ValidUntil: now.Add(s.connectionTestTTL),
 	})
 	if errors.Is(err, store.ErrDataSourceNotFound) || errors.Is(err, store.ErrExecutionNodeNotFound) {
 		notFound(w, r)
@@ -152,7 +156,7 @@ func (s *Server) getExportObjectCatalogQuery(w http.ResponseWriter, r *http.Requ
 	}
 	run, err := s.connectionTests.GetDataSourceConnectionTestRun(r.Context(), queryID)
 	if err != nil || run.OperationKind != "EXPORT_OBJECT_CATALOG" || run.CreatorSubjectID != principal.ID ||
-		identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceRead, run.DataSourceID) != nil ||
+		identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceUse, run.DataSourceID) != nil ||
 		identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, run.NodeID) != nil {
 		notFound(w, r)
 		return

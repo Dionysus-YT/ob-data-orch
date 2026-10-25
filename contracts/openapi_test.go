@@ -8,11 +8,30 @@ import (
 	"testing"
 )
 
+// TestOpenAPICoversConfirmedOperations 精确登记已准入路径、方法与唯一操作标识，不接受额外入口。
 func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 	t.Parallel()
 	spec := loadOpenAPI(t)
 	expected := map[string][]string{
+		"/api/v1/logs/audit-access":                               {"get"},
+		"/api/v1/logs/audit":                                      {"get"},
+		"/api/v1/logs/audit-detail":                               {"get"},
+		"/api/v1/logs/audit:download":                             {"post"},
+		"/api/v1/logs/tasks":                                      {"get"},
+		"/api/v1/logs/task-context":                               {"get"},
+		"/api/v1/logs/tasks:download":                             {"post"},
+		"/api/v1/logs/task-context:copy":                          {"post"},
+		"/api/v1/settings/scheduling":                             {"get", "patch"},
+		"/api/v1/settings/scheduling/candidates":                  {"get", "patch"},
+		"/api/v1/settings/security":                               {"get"},
+		"/api/v1/settings/tools":                                  {"get"},
+		"/api/v1/settings/scheduling/timing":                      {"get", "patch"},
+		"/api/v1/settings/log-retention":                          {"get", "patch"},
+		"/api/v1/access-control/subjects":                         {"get"},
+		"/api/v1/access-control/subjects/{subjectId}":             {"get", "patch"},
+		"/api/v1/access-control/candidates":                       {"get"},
 		"/api/v1/session":                                         {"get"},
+		"/api/v1/overview":                                        {"get"},
 		"/api/v1/execution-nodes":                                 {"get", "post"},
 		"/api/v1/execution-nodes/{nodeId}":                        {"get", "patch", "delete"},
 		"/api/v1/execution-nodes/{nodeId}:delete":                 {"post"},
@@ -27,8 +46,20 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/data-sources/{dataSourceId}:disable":             {"post"},
 		"/api/v1/data-sources/{dataSourceId}:enable":              {"post"},
 		"/api/v1/export-config-templates":                         {"get", "post"},
+		"/api/v1/task-drafts":                                     {"get"},
+		"/api/v1/config-templates":                                {"get"},
+		"/api/v1/config-templates/{templateId}":                   {"patch", "delete"},
+		"/api/v1/config-templates/{templateId}:create-draft":      {"post"},
 		"/api/v1/export-config-templates/{templateId}":            {"get", "patch", "delete"},
 		"/api/v1/export-drafts":                                   {"get", "post"},
+		"/api/v1/direct-load-drafts":                              {"get", "post"},
+		"/api/v1/direct-load-drafts/{draftId}":                    {"get", "patch", "delete"},
+		"/api/v1/direct-load-drafts/{draftId}:discover-files":     {"post"},
+		"/api/v1/direct-load-drafts/{draftId}:precheck":           {"post"},
+		"/api/v1/direct-load-drafts/{draftId}:preview-command":    {"post"},
+		"/api/v1/direct-load-drafts/{draftId}:submit":             {"post"},
+		"/api/v1/direct-load-prechecks/{precheckId}":              {"get"},
+		"/api/v1/direct-load-parameter-metadata":                  {"get"},
 		"/api/v1/normal-import-drafts":                            {"get", "post"},
 		"/api/v1/normal-import-drafts/{draftId}":                  {"get", "patch", "delete"},
 		"/api/v1/normal-import-drafts/{draftId}:discover-files":   {"post"},
@@ -110,8 +141,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 87 {
-		t.Fatalf("operation count = %d, want 87", operationCount)
+	if operationCount != 126 {
+		t.Fatalf("操作数量 = %d，期望 126", operationCount)
 	}
 }
 
@@ -203,6 +234,27 @@ func TestOpenAPI导出提交只要求预检查并保留旧确认字段兼容(t *
 	}
 }
 
+func TestOpenAPI编辑草稿与完整执行配置隔离(t *testing.T) {
+	schemas := object(t, object(t, loadOpenAPI(t), "components"), "schemas")
+	write := object(t, schemas, "ExportDraftWrite")
+	if len(write["oneOf"].([]any)) != 3 {
+		t.Fatal("缺少独立编辑草稿分支")
+	}
+	properties := object(t, write, "properties")
+	if object(t, properties, "draftState")["enum"] == nil {
+		t.Fatal("缺少显式编辑状态")
+	}
+	editing := object(t, schemas, "EditingExportConfig")
+	if editing["additionalProperties"] != false {
+		t.Fatal("编辑草稿不能接收任意选项")
+	}
+	location := object(t, schemas, "ExportStorageLocationDraft")
+	assertRequiredProperties(t, location, "bucket", "path", "endpoint", "region")
+	if len(object(t, location, "properties")) != 4 || location["additionalProperties"] != false {
+		t.Fatal("未完成位置不能扩展秘密字段")
+	}
+}
+
 func TestOpenAPI导出V1重定版字段语义(t *testing.T) {
 	t.Parallel()
 	spec := loadOpenAPI(t)
@@ -261,8 +313,10 @@ func TestOpenAPI任务详情读取使用独立安全投影(t *testing.T) {
 	assertExactStringEnum(t, object(t, snapshotProperties, "format"), []string{"CSV", "CUT", "SQL", "POS", "PARQUET", "ORC", "AVRO", "DDL", "DDL_CSV", "DDL_CUT", "DDL_SQL"})
 	execution := object(t, schemas, "TaskExecutionRead")
 	properties := object(t, execution, "properties")
-	if object(t, properties, "stageEvidence")["const"] != "UNAVAILABLE" || object(t, properties, "progressEvidence")["const"] != "UNAVAILABLE" {
-		t.Fatal("task execution must explicitly keep unsupported stage and progress evidence unavailable")
+	assertExactStringEnum(t, object(t, properties, "stageEvidence"), []string{"UNAVAILABLE", "RELIABLE"})
+	assertExactStringEnum(t, object(t, properties, "progressEvidence"), []string{"UNAVAILABLE", "PERCENT"})
+	if object(t, properties, "progress")["$ref"] != "#/components/schemas/TaskProgressRead" {
+		t.Fatal("任务进度必须使用固定安全摘要")
 	}
 	for _, field := range []string{"exitCode", "elapsedMs", "errorCode", "errorSummary", "plannedActualMatch", "outputLocation"} {
 		if _, found := properties[field]; !found {
@@ -959,9 +1013,7 @@ func TestOpenAPIAgentPrecheckContracts(t *testing.T) {
 	if !reflect.DeepEqual(object(t, object(t, executionContext, "properties"), "compatibilityMode")["enum"], []any{"MYSQL", "ORACLE"}) {
 		t.Fatal("precheck execution context must constrain the OceanBase compatibility mode")
 	}
-	if fmt.Sprint(object(t, object(t, claimResponsePayload, "properties"), "executionContext")["$ref"]) != "#/components/schemas/AgentPrecheckExecutionContext" {
-		t.Fatal("precheck claim response must use the strict execution context schema")
-	}
+	assertExactReferenceBranches(t, object(t, object(t, claimResponsePayload, "properties"), "executionContext"), "oneOf", "#/components/schemas/AgentPrecheckExecutionContext", "direct-load.json#/$defs/PrecheckExecutionContext")
 
 	acknowledgedResponse := object(t, schemas, "AgentPrecheckLeaseAcknowledgedResponseEnvelope")
 	if object(t, object(t, acknowledgedResponse, "properties"), "status")["const"] != "PRECHECK_LEASE_ACKNOWLEDGED" {

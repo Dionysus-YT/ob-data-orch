@@ -97,7 +97,7 @@ func (p *NormalImportProbe) inspect(ctx context.Context, request agentpreflight.
 		}
 		roots = append(roots, native)
 	}
-	plan, planErr := importfiles.InspectMapping(ctx, config, *request.InputManifest, roots)
+	plan, planErr := importfiles.InspectMappingForPlatform(ctx, config, *request.InputManifest, roots, string(request.TargetPlatform))
 	includes, includeOK := normalImportColumnNames(config.Mapping, true)
 	excludes, excludeOK := normalImportColumnNames(config.Mapping, false)
 	if !includeOK || !excludeOK {
@@ -105,9 +105,15 @@ func (p *NormalImportProbe) inspect(ctx context.Context, request agentpreflight.
 		includes = nil
 		excludes = nil
 	}
+	var excludedTypes []string
 	if config.Mapping != nil && config.Mapping.ExcludeDataTypes != "" {
-		// 类型排除会改变目标列集合；没有逐列类型证据时不能沿用未排除的结构给出通过。
-		plan.Complete = false
+		for _, name := range strings.Split(config.Mapping.ExcludeDataTypes, ",") {
+			excludedTypes = append(excludedTypes, strings.ToUpper(strings.TrimSpace(name)))
+		}
+		if !jdbcprobe.ValidImportDataTypes(excludedTypes) {
+			plan.Complete = false
+			excludedTypes = nil
+		}
 	}
 	if ctx.Err() != nil {
 		return results
@@ -141,6 +147,10 @@ func (p *NormalImportProbe) inspect(ctx context.Context, request agentpreflight.
 	input := jdbcprobe.NormalImportRequest{Connection: jdbcprobe.Request{Host: connection.Host, Port: connection.Port, Username: connection.Username, Password: connection.Password}, CompatibilityMode: jdbcprobe.CompatibilityMode(request.CompatibilityMode), Database: config.Database, MappingComplete: planErr == nil && plan.Complete, DDLComplete: planErr == nil && plan.DDLComplete, HasDDL: config.HasDDL(), IncludeColumns: includes, ExcludeColumns: excludes, HasData: config.HasData()}
 	input.AutoMapping = config.Mapping != nil && config.Mapping.Kind == "AUTO"
 	input.ReplaceObject = config.ReplaceObject
+	input.ExcludeDataTypes = excludedTypes
+	for _, object := range plan.Objects {
+		input.Objects = append(input.Objects, jdbcprobe.ImportObject{Kind: object.Kind, Name: object.Name, Reference: object.Reference})
+	}
 	for _, table := range plan.Tables {
 		input.Tables = append(input.Tables, jdbcprobe.ImportTable{Name: table.Name, Columns: table.Columns, Names: table.Names, TargetColumns: table.TargetColumns, RequiredColumns: table.RequiredColumns, RequiredPrivileges: normalImportTablePrivileges(config, table), HasData: table.HasData, HasDefinition: table.HasDefinition})
 	}
@@ -200,6 +210,9 @@ func (p *NormalImportProbe) inspect(ctx context.Context, request agentpreflight.
 			code = "IMPORT_INPUT_FILES_CHANGED"
 		}
 		results["INPUT_MAPPING"] = agentpreflight.Result{Check: "INPUT_MAPPING", Status: agentpreflight.StatusUnknown, EvidenceCode: code}
+	}
+	if planErr == nil && plan.CSVWhitespaceLoss {
+		results["INPUT_MAPPING"] = agentpreflight.Result{Check: "INPUT_MAPPING", Status: agentpreflight.StatusFailed, EvidenceCode: "IMPORT_CSV_WHITESPACE_UNQUOTED"}
 	}
 	return results
 }

@@ -1,12 +1,12 @@
 import { onScopeDispose, ref } from 'vue'
-import { browserApi, taskDetailErrorMessage, type ApiError, type ExportConfigTemplateItem } from '@/api/browser'
+import { browserApi, taskDetailErrorMessage, type ApiError, type ConfigTemplateItem } from '@/api/browser'
 
-export type TemplateApi = Pick<ReturnType<typeof browserApi>, 'listExportConfigTemplates' | 'renameExportConfigTemplate' | 'deleteExportConfigTemplate' | 'listDataSources' | 'listExportNodeCandidates' | 'createDraftFromTemplate'>
+export type TemplateApi = Pick<ReturnType<typeof browserApi>, 'listConfigTemplates' | 'renameConfigTemplate' | 'deleteConfigTemplate' | 'listDataSources' | 'listExportNodeCandidates' | 'listExecutionNodes' | 'createTaskDraftFromTemplate'>
 
 export function useTemplateCatalog(createApi: (signal: AbortSignal) => TemplateApi = browserApi) {
   const controller = new AbortController()
   const api = createApi(controller.signal)
-  const templates = ref<ExportConfigTemplateItem[]>([])
+  const templates = ref<ConfigTemplateItem[]>([])
   const loading = ref(true)
   const loadFailure = ref('')
   const notice = ref('')
@@ -23,7 +23,7 @@ export function useTemplateCatalog(createApi: (signal: AbortSignal) => TemplateA
     loading.value = true
     loadFailure.value = ''
     try {
-      const result = await api.listExportConfigTemplates()
+      const result = await api.listConfigTemplates()
       if (!valid()) return
       templates.value = result
       accessDenied.value = false

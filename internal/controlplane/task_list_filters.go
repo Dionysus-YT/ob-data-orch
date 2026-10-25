@@ -20,7 +20,7 @@ var taskListStates = map[string]bool{
 }
 
 // taskListTypes 是当前已准入的任务类型；未准入的导入类型拒绝而非静默忽略。
-var taskListTypes = map[string]bool{"OBDUMPER_EXPORT": true, "OBLOADER_NORMAL_IMPORT": true}
+var taskListTypes = map[string]bool{"OBDUMPER_EXPORT": true, "OBLOADER_NORMAL_IMPORT": true, "OBLOADER_DIRECT_LOAD": true}
 
 var taskListEnvironments = map[string]bool{"DEVELOPMENT": true, "TEST": true, "STAGING": true, "PRODUCTION": true}
 
@@ -103,8 +103,15 @@ func parseTaskListFilters(values url.Values, query *store.TaskListQuery) error {
 	if query.StartedTo, err = instant("startedTo"); err != nil {
 		return err
 	}
+	if query.FinishedFrom, err = instant("finishedFrom"); err != nil {
+		return err
+	}
+	if query.FinishedTo, err = instant("finishedTo"); err != nil {
+		return err
+	}
 	if (!query.CreatedFrom.IsZero() && !query.CreatedTo.IsZero() && !query.CreatedFrom.Before(query.CreatedTo)) ||
-		(!query.StartedFrom.IsZero() && !query.StartedTo.IsZero() && !query.StartedFrom.Before(query.StartedTo)) {
+		(!query.StartedFrom.IsZero() && !query.StartedTo.IsZero() && !query.StartedFrom.Before(query.StartedTo)) ||
+		(!query.FinishedFrom.IsZero() && !query.FinishedTo.IsZero() && !query.FinishedFrom.Before(query.FinishedTo)) {
 		return fmt.Errorf("time range invalid")
 	}
 	if query.DataSourceID, err = single("dataSourceId", 256); err != nil || strings.ContainsAny(query.DataSourceID, "/\\") {
@@ -133,6 +140,7 @@ func taskListFilterDigestSubject(query store.TaskListQuery) string {
 		query.SubjectID, query.NodeID, query.OwnedOnly, query.GlobalRead, query.Keyword, query.Types, query.States,
 		optionalTaskTime(query.CreatedFrom), optionalTaskTime(query.CreatedTo), optionalTaskTime(query.StartedFrom),
 		optionalTaskTime(query.StartedTo), query.DataSourceID, query.Environment, query.CreatorID,
+		optionalTaskTime(query.FinishedFrom), optionalTaskTime(query.FinishedTo),
 	})
 	return "task-list-filter-v2|" + string(encoded)
 }
@@ -162,11 +170,37 @@ func taskListActions(item store.TaskListItem, realExecutionEnabled, templatesCon
 	if item.State != "WAITING_SCHEDULE" {
 		actions = append(actions, "VIEW_LOGS")
 	}
-	// 普通导入只复用取消生命周期，不取得导出的模板、派生或 dump.ckpt 操作。
+	// 旁路只复用配置或从头重检，不接入导出检查点、模板与运行中取消。
+	if item.TaskType == "OBLOADER_DIRECT_LOAD" {
+		if item.Operable && !item.ReconciliationRequired && item.SnapshotVersion == "direct-load-v1" {
+			switch item.State {
+			case "SUCCEEDED":
+				actions = append(actions, "REBUILD_FROM_CONFIG")
+			case "FAILED", "CANCELLED":
+				actions = append(actions, "REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH")
+			}
+		}
+		return actions
+	}
+	// 普通导入使用自己的快照与草稿复用链，检查点证据尚未接入，不取得 dump.ckpt 资格。
 	if item.TaskType == "OBLOADER_NORMAL_IMPORT" {
 		if item.Operable && realExecutionEnabled && !item.ReconciliationRequired && !item.CancellationRequested && (item.State == "WAITING_SCHEDULE" || item.State == "STARTING" || item.State == "RUNNING") {
 			actions = append(actions, "CANCEL")
 		}
+		if item.Operable && !item.ReconciliationRequired && item.SnapshotVersion == "normal-import-v1" {
+			switch item.State {
+			case "SUCCEEDED":
+				actions = append(actions, "REBUILD_FROM_CONFIG")
+				if templatesConfigured {
+					actions = append(actions, "SAVE_TEMPLATE")
+				}
+			case "FAILED", "CANCELLED":
+				actions = append(actions, "REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH")
+			}
+		}
+		return actions
+	}
+	if item.TaskType != "OBDUMPER_EXPORT" {
 		return actions
 	}
 	if !item.Operable {

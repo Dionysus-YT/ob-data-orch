@@ -72,7 +72,7 @@ test('节点表单校验、一次性注册码展示与关闭清理', async ({ pa
   await page.getByLabel('节点名称', { exact: true }).fill('合成执行节点')
   await page.getByLabel('OB Loader/Dumper 安装目录', { exact: true }).fill('E:\\synthetic-tools')
   await page.getByLabel('工具专用 Java 8 路径', { exact: true }).fill('C:\\synthetic-java\\bin\\java.exe')
-  await page.getByLabel('导出数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
+  await page.getByLabel('任务数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
   await page.getByRole('button', { name: '保存并继续 Agent 关联' }).click()
   await expect(page).toHaveURL(/\/nodes\/synthetic-node\?registration=created/)
   await expect(page.getByRole('heading', { name: '合成执行节点' })).toBeVisible()

@@ -63,7 +63,7 @@ async function fillNewNode(page: Page) {
   await page.getByLabel('节点名称', { exact: true }).fill('合成新节点')
   await page.getByLabel('OB Loader/Dumper 安装目录', { exact: true }).fill('E:/synthetic-tools')
   await page.getByLabel('工具专用 Java 8 路径', { exact: true }).fill('C:/synthetic-java/bin/java.exe')
-  await page.getByLabel('导出数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
+  await page.getByLabel('任务数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
 }
 
 async function selectNodeOption(page: Page, field: string, label: string) {
@@ -95,7 +95,7 @@ for (const target of [
     await fillNewNode(page)
     await drawer.getByLabel('OB Loader/Dumper 安装目录', { exact: true }).fill('/opt/synthetic-tools')
     await drawer.getByLabel('工具专用 Java 8 路径', { exact: true }).fill('/opt/synthetic-java/bin/java')
-    await drawer.getByLabel('导出数据目录白名单', { exact: true }).fill('/synthetic-exports')
+    await drawer.getByLabel('任务数据目录白名单', { exact: true }).fill('/synthetic-exports')
     await drawer.getByRole('button', { name: '保存并继续 Agent 关联' }).click()
     await expect(page).toHaveURL(/\/nodes\/C\?registration=created$/)
     expect(state.writes).toEqual([{
@@ -137,7 +137,7 @@ test('两种平台帮助随选择切换，保留已填路径且不显示具体�
   await expect(drawer.getByLabel('工具专用 Java 8 路径', { exact: true })).toHaveAttribute('placeholder', '/usr/lib/jvm/java-8/bin/java')
   await expect(drawer.getByLabel('OB Loader/Dumper 安装目录', { exact: true })).toHaveValue('E:/synthetic-tools')
   await expect(drawer.getByLabel('工具专用 Java 8 路径', { exact: true })).toHaveValue('C:/synthetic-java/bin/java.exe')
-  await expect(drawer.getByLabel('导出数据目录白名单', { exact: true })).toHaveValue('/E:/synthetic-exports')
+  await expect(drawer.getByLabel('任务数据目录白名单', { exact: true })).toHaveValue('/E:/synthetic-exports')
   expect((await drawer.locator('.ant-form-item-extra').allTextContents()).join(' ')).not.toMatch(/麒麟|Kylin|Ubuntu|CentOS/i)
   const architectureGroup = drawer.getByRole('group', { name: 'CPU 架构', exact: true })
   await expect(architectureGroup).toHaveAttribute('aria-describedby', 'node-architecture-hint')
@@ -233,7 +233,7 @@ test('服务端预算错误展开可选区并定位真实输入，失败保留�
   await drawer.getByRole('link', { name: /^执行内存预算：/ }).click()
   await expect(drawer.getByLabel('系统与 Agent 预留（GiB）')).toBeFocused()
   await expect(drawer.getByLabel('节点名称', { exact: true })).toHaveValue('合成新节点')
-  await expect(drawer.getByText('请输入导出数据目录白名单', { exact: true })).toHaveCount(0)
+  await expect(drawer.getByText('请输入任务数据目录白名单', { exact: true })).toHaveCount(0)
   await expect(page).toHaveURL(/\/nodes\/new$/)
 })
 

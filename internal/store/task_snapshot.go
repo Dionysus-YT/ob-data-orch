@@ -37,6 +37,9 @@ func (s *Store) GetAuthorizedTaskSnapshotGroups(ctx context.Context, taskID, sub
 	if err != nil {
 		return nil, err
 	}
+	if taskKind == "OBLOADER_DIRECT_LOAD" {
+		return directLoadTaskSnapshotGroups(raw, owner == subjectID, precheckID)
+	}
 	if taskKind == "OBLOADER_NORMAL_IMPORT" {
 		return normalImportTaskSnapshotGroups(raw, owner == subjectID, precheckID)
 	}

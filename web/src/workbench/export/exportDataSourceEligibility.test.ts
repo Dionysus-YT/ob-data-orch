@@ -14,5 +14,6 @@ describe('导出数据源候选', () => {
     expect(isExportEligibleDataSource({ ...baseSource, lastTestStatus: 'FAILED' })).toBe(false)
     expect(isExportEligibleDataSource({ ...baseSource, state: 'DISABLED', lastTestStatus: 'SUCCEEDED' })).toBe(false)
     expect(isExportEligibleDataSource(baseSource)).toBe(false)
+    expect(isExportEligibleDataSource({ ...baseSource, connectionKind: 'OBSERVER_DIRECT', lastTestStatus: 'SUCCEEDED' })).toBe(false)
   })
 })

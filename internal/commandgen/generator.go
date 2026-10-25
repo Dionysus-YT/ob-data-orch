@@ -167,7 +167,9 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		}
 	}
 	issues := g.validateRequestIdentity(request)
-	if g.tool == "OBLOADER" {
+	if g.tool == "OBLOADER" && g.capabilityVersion == directLoadCapability {
+		issues = append(issues, validateDirectLoadFields(request, g.byName)...)
+	} else if g.tool == "OBLOADER" {
 		issues = append(issues, validateNormalImportFields(request)...)
 	}
 	provided := make(map[string]FieldInput, len(request.Fields))
@@ -371,6 +373,10 @@ func displayParameterName(definition parammeta.Definition) string {
 // renderExecutionParameter 将支持紧凑写法的短参数和值合并为单个 argv 令牌。
 // 这是本机 4.3.5 已验证的写法，避免命令预览与实际参数序列出现两套拼装规则。
 func renderExecutionParameter(definition parammeta.Definition, value string) []string {
+	if definition.DefinitionID == "obloader.normal.strict" {
+		// 固定 4.3.5 的布尔选项只在同一令牌内接收显式值，不能生成独立的 true/false 实参。
+		return []string{definition.LongName + "=" + value}
+	}
 	if definition.ShortName != "" {
 		return []string{definition.ShortName + value}
 	}
@@ -397,7 +403,8 @@ func (g *Generator) validateRequestIdentity(request Request) []Issue {
 	} else if request.CapabilityVersion == "" {
 		issues = append(issues, Issue{Code: "CAPABILITY_VERSION_MISMATCH", Field: "capabilityVersion"})
 	}
-	if request.ConnectionKind != ConnectionODP {
+	// 旁路只开放本地 ODP 和 OBServer，其他历史能力保留原 ODP 约束。
+	if request.ConnectionKind != ConnectionODP && !(g.capabilityVersion == directLoadCapability && request.ConnectionKind == ConnectionObserverDirect) {
 		issues = append(issues, Issue{Code: "CONNECTION_KIND_NOT_IN_SLICE", Field: "connectionKind"})
 	}
 	if request.DataSourceFactVersion == "" {
@@ -452,9 +459,9 @@ func normalizeValue(definition parammeta.Definition, value Value, platform Platf
 				if !validControlledStorageURI(outputKind, value.String) {
 					return NormalizedValue{}, []string{"STORAGE_URI_INVALID"}
 				}
-			} else if capability == "import-odp-local-v1" && !inputpath.Valid(string(platform), value.String) {
+			} else if (capability == "import-odp-local-v1" || capability == directLoadCapability) && !inputpath.Valid(string(platform), value.String) {
 				return NormalizedValue{}, []string{"INPUT_PATH_NOT_ABSOLUTE"}
-			} else if capability != "import-odp-local-v1" && !validAbsolutePath(platform, value.String) {
+			} else if capability != "import-odp-local-v1" && capability != directLoadCapability && !validAbsolutePath(platform, value.String) {
 				return NormalizedValue{}, []string{"OUTPUT_PATH_NOT_ABSOLUTE"}
 			}
 		}

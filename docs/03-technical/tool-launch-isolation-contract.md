@@ -1,5 +1,7 @@
 # OBDUMPER 跨平台隔离启动入口契约
 
+> 2026-10-22 旁路日志隔离：Windows 固定 4.3.5 启动仍以已核验主 JAR 优先，排除当前工作目录。execution 私有 runtime 排他创建固定、逐字节校验的 `direct-load-log4j2.xml`，只向受控 stdout 输出；同一配置经 SOFA `logging.config.com.alipay.remoting` 供 Bolt 使用，runtime 仅在主包和 lib 后加入类路径用于该资源。官方 LoadClient 会覆盖全局 `logging.path`，不能只靠 JVM 默认目录防止 Bolt 写回输入目录；表客户端独立日志路径绑定私有 raw-logs。配置内容和资源名由平台固定，任务不能提供类、配置或路径。stdout 继续双层脱敏，私有文件沿用 execution 清理边界；普通导入/导出启动不变。
+
 > 2026-10-16 普通导入执行补充（替代下方 G2 状态）：独立开关和显式类型领取后只启动固定 `com.oceanbase.tools.loaddump.cmd.Obloader`。Windows 单独复刻 obloader.bat 的 fs.page/file.split/dry.run/rebalance.import 属性，不混入导出属性或旁路参数；共享的仅 JVM、安全材料与平台进程隔离。启动前复核冻结配置和文件，拒绝 sys/存储槽位；结果不采用输入计数，固定工具完成证据、受控退出及完整日志共同核对。`NormalImportProbe` v10 保持只读，`load.ckpt` 继续未接入。实际安装与验证见[执行证据](evidence/normal-import-execution-2026-10-16.md)。
 
 > 2026-10-16 普通导入 G2 边界：本契约现有执行入口仍只领取 `OBDUMPER_EXPORT`，普通导入不得复用它启动 OBDUMPER。普通导入工具项只检查固定安装布局；数据库、授权和映射由另一固定 Java 8 主类 `com.obdataorch.jdbcprobe.NormalImportProbe`（现行 v10）只读检查，仍仅加载已核验的 `oceanbase-client-2.4.14.jar`。v10 增加逐表基本权限、定义/数据用途及固定原因，拒绝旧帧、越界权限与额外内容，Go 与内嵌 JAR 配套更新；导出探针协议不变。运行须同时有显式本机开关、固定运行时及完整导入租约；使用一次业务槽位、私有工作区、有界 stdin/stdout、超时和清零，禁止传入文件 SQL、路径、自由 URL/主类/驱动。独立 OBLOADER Worker、成功证据、日志/结果与 `load.ckpt` 恢复尚未实现，当前不可据只读探针或冻结快照宣称可执行。见[普通导入技术契约](normal-import-contract.md)。

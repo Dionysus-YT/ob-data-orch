@@ -61,3 +61,5 @@
 平台布局唯一入口：`internal/agentlocalpreflight.ToolLauncherPath` 只允许 OBDUMPER/OBLOADER 固定选择器；Windows 取安装根 `bin/windows/*.bat`，Linux 取 `bin/*`。固定环境检查和旧 OBDUMPER 预检查共用，不把脚本目录当安装根。路径与错层负例见 `tool_layout_test.go`、`agentenvironment/inspection_test.go`；详见[最新验证记录](../../../../docs/03-technical/evidence/execution-node-detail-refactor-2026-10-12.md#核心详情精简与平台路径修正)。
 
 同日环境报错解释优化：`inspectionItemGuidance` 根据固定检查项/结果码生成原因与处理建议，未知码不回显、不猜成功；`inspectionBlockingSummary` 仅汇总必需项，`inspectionEmptyMessage` 区分等待、失败缺明细和旧检查缺明细。`nodeUnavailableReasonLabel` 只在当前异常清单与检查标识匹配时补充摘要，列表仍用简短安全提示；解释不改接收资格、状态机或请求。负例覆盖可选项、旧清单/过期事实、未知码及版本未查/超时区别。浏览器在真实页面用合成回执检查原因、建议、缺项、窄屏和 200% 展示；见[报错优化记录](../../../../docs/03-technical/evidence/execution-node-detail-refactor-2026-10-12.md#环境检查报错解释优化)。
+
+2026-10-19 节点目录语义：nodeFormRules 与 nodePlatformRules 统一字段名、错误和平台帮助，编辑器/详情显示“任务数据目录”，覆盖导出写入和普通导入读取；allowedRoots 及平台路径权限均不变。页签键盘导航提取为 composables/antTabKeyboard.ts，节点和任务详情只共享无状态交互，不共享业务事实。

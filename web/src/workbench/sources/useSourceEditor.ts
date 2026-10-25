@@ -43,7 +43,7 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
 
   function fill(value: DataSourceDetail) {
     source.value = value
-    Object.assign(form, blankSourceForm(), { displayName: value.displayName, environment: value.environment, compatibilityMode: value.compatibilityMode, host: value.host, port: value.port, clusterName: value.clusterName, tenantName: value.tenantName, username: value.username ?? '', defaultDatabase: value.defaultDatabase ?? '' })
+    Object.assign(form, blankSourceForm(), { displayName: value.displayName, environment: value.environment, connectionKind: value.connectionKind, compatibilityMode: value.compatibilityMode, host: value.host, port: value.port, clusterName: value.clusterName, tenantName: value.tenantName, username: value.username ?? '', defaultDatabase: value.defaultDatabase ?? '' })
     clearSys.value = false
     parserInput.value = ''
     errors.value = {}
@@ -77,8 +77,17 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
     if (!parsed) { failure.value = '无法解析连接串。请检查 mysql / obclient 地址、端口和用户@租户，可选 #集群。'; return }
     // 模式不匹配时拒绝整次回填，避免部分字段或秘密污染当前草稿。
     if (parsed.compatibilityMode !== form.compatibilityMode) { failure.value = `当前是 OceanBase ${form.compatibilityMode === 'MYSQL' ? 'MySQL' : 'Oracle'} 页面，请使用 ${form.compatibilityMode === 'MYSQL' ? 'mysql' : 'obclient'} 连接串。`; feedback.value = ''; return }
+    if (form.connectionKind === 'OBSERVER_DIRECT' && parsed.clusterName) { failure.value = '直连 OBServer 的连接串不使用 ODP 集群名，请核对连接方式。'; return }
     Object.assign(form, parsed, { defaultDatabase: parsed.defaultDatabase ?? '', password: parsed.password || form.password })
     parserInput.value = ''; errors.value = {}; failure.value = ''; feedbackType.value = 'success'; feedback.value = '连接串已解析到表单，尚未保存。'
+  }
+  function selectConnectionKind(kind: 'ODP' | 'OBSERVER_DIRECT') {
+    if (busy.value || kind === form.connectionKind || !['ODP', 'OBSERVER_DIRECT'].includes(kind)) return
+    const previousDefault = form.connectionKind === 'OBSERVER_DIRECT' ? 2881 : 2883
+    if (!form.port || form.port === previousDefault) form.port = kind === 'OBSERVER_DIRECT' ? 2881 : 2883
+    form.connectionKind = kind
+    if (kind === 'OBSERVER_DIRECT') form.clusterName = ''
+    errors.value = {}
   }
   async function save() {
     if (busy.value) return false
@@ -131,5 +140,5 @@ export function useSourceEditor(api: SourceGateway, initialId: string | null, on
   }
   onMounted(() => { void load(); void loadNodes() })
   onBeforeUnmount(() => { disposed = true; if (poll) clearTimeout(poll); form.password = ''; form.sysPassword = ''; parserInput.value = '' })
-  return { activeId, source, form, clearSys, parserInput, errors, failure, feedback, feedbackType, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, connectionDirty, busy, invalidated, testBlocked, load, loadNodes, onNodeDropdownVisibleChange, parseConnection, save, startTest }
+  return { activeId, source, form, clearSys, parserInput, errors, failure, feedback, feedbackType, loading, saving, testing, nodes, nodeLoading, nodeFailure, nodeId, test, isNew, dirty, connectionDirty, busy, invalidated, testBlocked, load, loadNodes, onNodeDropdownVisibleChange, parseConnection, selectConnectionKind, save, startTest }
 }

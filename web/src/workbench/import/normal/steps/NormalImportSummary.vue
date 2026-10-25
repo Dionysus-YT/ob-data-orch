@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, toRefs } from 'vue'
-import { Alert, Descriptions, DescriptionsItem } from 'ant-design-vue'
+import { Alert } from 'ant-design-vue'
 import { importEnvironmentLabel, importExecutionFields } from '../normalImportOptions'
 import type { NormalImportSummaryModel } from '../normalImportStepModels'
 
@@ -29,37 +29,50 @@ const mappingLabels: Record<string, string> = { POSITION: '按文件列顺序', 
 </script>
 
 <template>
-  <section class="normal-import-summary">
-    <h2>当前配置总览</h2>
-    <Alert type="info" show-icon :message="draftDescription" />
-    <Descriptions :column="1" size="small">
-      <DescriptionsItem label="任务名称">{{ form.taskName || '提交时可选填写，留空自动生成' }}</DescriptionsItem>
-      <DescriptionsItem label="数据源">{{ selectedSource?.displayName ?? '尚未选择或当前不可用' }}</DescriptionsItem>
-      <DescriptionsItem v-if="selectedSource" label="环境与兼容模式">{{ importEnvironmentLabel(selectedSource.environment) }} · {{ selectedSource.compatibilityMode }}</DescriptionsItem>
-      <DescriptionsItem label="目标数据库 / Schema">{{ form.database || '尚未填写' }}</DescriptionsItem>
-      <DescriptionsItem label="执行节点">{{ selectedNode?.displayName ?? '尚未选择或当前不可用' }}</DescriptionsItem>
-      <DescriptionsItem label="文件路径">{{ form.filePath || '尚未填写' }}</DescriptionsItem>
-      <DescriptionsItem label="文件后缀">{{ form.fileSuffix || '沿用官方默认' }}</DescriptionsItem>
-      <DescriptionsItem label="文件编码">{{ form.fileEncoding || '沿用官方默认 UTF-8' }}</DescriptionsItem>
-      <DescriptionsItem v-if="form.fileRegex" label="文件正则">{{ form.fileRegex }}</DescriptionsItem>
-      <DescriptionsItem label="日志目录">{{ form.logPath || '沿用 file-path 对应目录行为' }}</DescriptionsItem>
-      <DescriptionsItem label="导入内容">{{ contentLabel }}</DescriptionsItem>
-      <DescriptionsItem label="数据格式">{{ formatLabel }}</DescriptionsItem>
-      <DescriptionsItem label="对象范围">{{ objectSummary }}</DescriptionsItem>
-      <DescriptionsItem v-if="configuration.excludeTables" label="排除表">{{ configuration.excludeTables }}</DescriptionsItem>
-      <DescriptionsItem v-for="(value, key) in configuration.parser" :key="key" :label="parserLabels[key] || key">{{ value === true ? '启用' : value }}</DescriptionsItem>
-      <template v-if="configuration.mapping">
-        <DescriptionsItem label="列映射">{{ mappingLabels[configuration.mapping.kind] }}</DescriptionsItem>
-        <DescriptionsItem v-if="configuration.mapping.ctlPath" label="控制文件目录">{{ configuration.mapping.ctlPath }}</DescriptionsItem>
-        <DescriptionsItem v-if="configuration.mapping.includeColumns" label="包含列">{{ configuration.mapping.includeColumns }}</DescriptionsItem>
-        <DescriptionsItem v-if="configuration.mapping.excludeColumns" label="排除列">{{ configuration.mapping.excludeColumns }}</DescriptionsItem>
-        <DescriptionsItem v-if="configuration.mapping.excludeDataTypes" label="排除数据类型">{{ configuration.mapping.excludeDataTypes }}</DescriptionsItem>
-      </template>
-      <DescriptionsItem v-for="field in importExecutionFields.filter(item => configuration.execution[item.key])" :key="field.key" :label="field.label">{{ configuration.execution[field.key] }}</DescriptionsItem>
-      <DescriptionsItem v-if="configuration.compatMysql" label="MySQL DDL 兼容导入">启用</DescriptionsItem>
-      <DescriptionsItem label="其余可选参数">沿用官方默认；不主动写出默认参数</DescriptionsItem>
-      <DescriptionsItem label="任务预检查">{{ precheckDescription }}</DescriptionsItem>
-    </Descriptions>
+  <section class="wizard-summary">
+    <section class="wizard-summary-section">
+      <h3>任务信息</h3>
+      <dl class="wizard-summary-facts wizard-summary-facts-paired">
+        <div><dt>当前步骤</dt><dd>{{ model.titles[model.activeStep - 1] }}</dd></div>
+        <div><dt>预检查</dt><dd>{{ precheckDescription }}</dd></div>
+        <div><dt>数据源</dt><dd>{{ selectedSource?.displayName ?? '尚未选择或当前不可用' }}</dd></div>
+        <div><dt>执行节点</dt><dd>{{ selectedNode?.displayName ?? '尚未选择或当前不可用' }}</dd></div>
+      </dl>
+      <p class="wizard-summary-note">{{ draftDescription }}</p>
+    </section>
+    <section class="wizard-summary-section">
+      <h3>导入配置</h3>
+      <dl class="wizard-summary-facts">
+        <div><dt>任务名称</dt><dd>{{ form.taskName || '提交时可选填写，留空自动生成' }}</dd></div>
+        <div v-if="selectedSource"><dt>环境与兼容模式</dt><dd>{{ importEnvironmentLabel(selectedSource.environment) }} · {{ selectedSource.compatibilityMode }}</dd></div>
+        <div><dt>目标数据库 / Schema</dt><dd><code class="wizard-summary-path">{{ form.database || '尚未填写' }}</code></dd></div>
+        <div><dt>导入内容</dt><dd>{{ contentLabel }}</dd></div>
+        <div><dt>数据格式</dt><dd>{{ formatLabel }}</dd></div>
+        <div><dt>对象范围</dt><dd>{{ objectSummary }}</dd></div>
+        <div v-if="configuration.excludeTables"><dt>排除表</dt><dd><code class="wizard-summary-path">{{ configuration.excludeTables }}</code></dd></div>
+        <div v-for="(value, key) in configuration.parser" :key="key"><dt>{{ parserLabels[key] || key }}</dt><dd>{{ value === true ? '启用' : value }}</dd></div>
+        <template v-if="configuration.mapping">
+          <div><dt>列映射</dt><dd>{{ mappingLabels[configuration.mapping.kind] }}</dd></div>
+          <div v-if="configuration.mapping.ctlPath"><dt>控制文件目录</dt><dd><code class="wizard-summary-path">{{ configuration.mapping.ctlPath }}</code></dd></div>
+          <div v-if="configuration.mapping.includeColumns"><dt>包含列</dt><dd>{{ configuration.mapping.includeColumns }}</dd></div>
+          <div v-if="configuration.mapping.excludeColumns"><dt>排除列</dt><dd>{{ configuration.mapping.excludeColumns }}</dd></div>
+          <div v-if="configuration.mapping.excludeDataTypes"><dt>排除数据类型</dt><dd>{{ configuration.mapping.excludeDataTypes }}</dd></div>
+        </template>
+        <div v-if="configuration.compatMysql"><dt>MySQL DDL 兼容导入</dt><dd>{{ configuration.compatMysqlVersion || '尚未选择源版本' }}</dd></div>
+      </dl>
+    </section>
+    <section class="wizard-summary-section">
+      <h3>执行与文件</h3>
+      <dl class="wizard-summary-facts">
+        <div><dt>文件路径</dt><dd><code class="wizard-summary-path">{{ form.filePath || '尚未填写' }}</code></dd></div>
+        <div><dt>文件后缀</dt><dd>{{ form.fileSuffix || '沿用官方默认' }}</dd></div>
+        <div><dt>文件编码</dt><dd>{{ form.fileEncoding || '沿用官方默认 UTF-8' }}</dd></div>
+        <div v-if="form.fileRegex"><dt>文件正则</dt><dd><code class="wizard-summary-path">{{ form.fileRegex }}</code></dd></div>
+        <div><dt>日志目录</dt><dd><code v-if="form.logPath" class="wizard-summary-path">{{ form.logPath }}</code><span v-else>沿用 file-path 对应目录行为</span></dd></div>
+        <div v-for="field in importExecutionFields.filter(item => configuration.execution[item.key])" :key="field.key"><dt>{{ field.label }}</dt><dd>{{ configuration.execution[field.key] }}</dd></div>
+        <div><dt>其余可选参数</dt><dd>沿用官方默认；不主动写出默认参数</dd></div>
+      </dl>
+    </section>
     <Alert v-if="riskDescriptions.length" type="warning" show-icon message="当前配置的影响"><template #description><ul><li v-for="risk in riskDescriptions" :key="risk">{{ risk }}</li></ul></template></Alert>
   </section>
 </template>

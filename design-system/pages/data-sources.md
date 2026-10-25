@@ -3,7 +3,7 @@
 > Authority: **P1 — page-specific rule**
 > Status: **已定版 · 后续页面视觉与组件标准**
 > 定版日期：2026-09-14；依据：用户明确确认与 [DEC-047](../../docs/01-product/decisions.md#dec-047-数据源页面定版与后续页面标准)。
-> 初始定版源码：`94adccdd421f54ad22fba0b087448c7ad6379880`；现行规则包含下述已确认修订，最近更新 2026-09-18，路由 `/data-sources`。
+> 初始定版源码：`94adccdd421f54ad22fba0b087448c7ad6379880`；现行规则包含下述已确认修订，最近更新 2026-10-19，路由 `/data-sources`。
 > Scope: Data Sources management/list page and its create/edit drawer.
 > Read before implementation: [P0 MASTER](../MASTER.md) → this file → the P3 data-source, API, credential, validation, and lifecycle contracts. P3 business facts remain authoritative where this document refers to them.
 
@@ -59,7 +59,7 @@ The table is the principal workspace, not a card grid. It uses P0 dense-row, con
 | P0 | Availability | `已启用` / `已停用`，独立于连接测试，不能推导当前可连接或任务资格。 |
 | P0 | Actions | Per-row, server-returned lifecycle eligibility controls; see section 8. |
 | P1 | Compatibility | MySQL / Oracle 事实；工作区容器宽度不超过 1120px 时按共享样式并入名称次行，不按视口宽度猜测或伪造兼容模式。 |
-| P2 | No persistent column | ODP connection kind is fixed product context, and default database/username are secondary identity metadata. System credentials and test runtime facts belong in the drawer. **Runtime is not a data-source table column.** |
+| P2 | No persistent column | 连接方式在抽屉配置，支持通过 ODP 连接和直连 OBServer；默认数据库/用户名属于次级身份元信息。系统凭据和测试运行事实在抽屉展示，运行环境不作为数据源表格列。 |
 
 The initial sort order and any sortable headers are shown only when a P3/API contract declares supported server-side sort keys. A visual sort affordance without a matching server contract is prohibited. The table has an accessible caption describing its current result scope and active filters.
 
@@ -113,7 +113,7 @@ Drawer anatomy:
 
 1. **Header** — `新建数据源` / `编辑数据源`, close control; omit the separate configuration-state strip.
 2. **Type and parser** — fixed OceanBase mode, followed by an always-visible optional smart-parser textarea.
-3. **Connection address** — host/port and cluster/tenant use two columns in one muted surface group; MySQL alone adds the full-width default database field.
+3. **Connection address** — 连接方式单独占一行，主机/端口与集群/租户沿用同一浅色分组的双列布局；直连 OBServer 隐藏集群，MySQL 独有的默认数据库仍占整行。
 4. **Database account** — username/password use a second muted surface group. A compact `测试连接` control reveals node selection and refresh on one row, then the prerequisite/status hint and separate `开始测试` action on the next row, with results below. The unsaved-source prerequisite remains visible.
 5. **Metadata** — environment follows the account group; `默认` is an unselected hint, never a persisted value. New records choose 开发、生产 or 测试 in that order; existing 预生产 records remain readable and editable. Editing also shows the saved name below it. Creating requests the required name in a dialog after connection-field validation and before persistence. Project binding is outside the product contract and is omitted.
 6. **Advanced settings** — one collapsed disclosure for optional sys credentials.
@@ -128,11 +128,13 @@ Node selection and results remain inline in the same form when the test area is 
 | Group | Fields and behavior |
 |---|---|
 | Basic information | Display name (globally unique) and a required environment choice (开发 / 生产 / 测试 for new records; 预生产 remains valid for stored records). Do not add a description field until P3/API supports it. |
-| Connection configuration | Fixed ODP connection kind; compatibility mode; host; port; cluster; tenant; username; password; and default database only for MySQL mode. A connection-string parser, if retained, is a local fill helper: it populates structured fields, is never stored or transmitted as an alternative connection representation, and exposes parse errors locally. |
+| Connection configuration | 按 DEC-058 提供通过 ODP 连接 / 直连 OBServer，兼容模式、主机、SQL 端口、租户、用户名和密码；集群仅用于 ODP，默认数据库仅用于 MySQL。解析器只在本地填写结构化字段，保留选定连接方式；直连串包含集群时拒绝整次填写。 |
 | Credential handling | Password is required when creating. On edit, an empty password means preserve the stored secret; a non-empty value is a replacement and must never be echoed after save. System-account credentials are optional advanced paired inputs. The UI may show only P3-authorized configuration state, never secret content, length, ciphertext, or a secret-presence inference beyond the contract. |
 | Connection test | Select an eligible runtime node; expose its safe readiness/compatibility facts in the control/result context. Runtime selection is test context, not source metadata. No test is available before the source is saved. |
 
 The selected type is fixed within each create/edit drawer. Editing uses the saved record type. Parsing a connection string of the other mode rejects the entire fill and preserves the draft. MySQL alone exposes the default database. Fields rendered conditionally must be removed from submitted payloads when inapplicable.
+
+2026-10-22 DEC-058：切换连接方式时，SQL 端口仅在空值或原方式默认值时替换为 ODP 2883 / OBServer 2881，自定义端口保留；直连清除未保存集群，租户保留。编辑恢复登记方式和值，不能从端口猜测。基础连接测试支持两种方式，具体任务资格由各模块独立判断；本轮不改变列表几何、Shell 或全局 Token。
 
 ## 6. Validation, dirty state, save, and test
 
@@ -145,7 +147,7 @@ The selected type is fixed within each create/edit drawer. Editing uses the save
 
 ### 6.2 Dirty state and save
 
-- A drawer opens clean from the server snapshot. Dirty includes every editable unsaved value; a separate connection-dirty subset covers endpoint, compatibility, cluster, tenant, username, password, and other P3 connection-affecting values.
+- A drawer opens clean from the server snapshot. Dirty includes every editable unsaved value; a separate connection-dirty subset covers connection kind, endpoint, compatibility, cluster, tenant, username, password, and other P3 connection-affecting values.
 - While connection-dirty is true, `测试连接` is disabled with persistent text explaining that testing uses a saved configuration. If only non-connection values are dirty, testing the last saved configuration remains allowed and is explicitly labelled as such.
 - Closing, changing the record, or leaving the route while dirty opens a discard dialog. Default focus stays on `继续编辑`; discarding never auto-saves.
 - Save uses `If-Match` for an existing record. A revision conflict keeps the draft, reports the conflict, and offers an explicit refresh/review path; it must not merge or overwrite silently.
@@ -234,6 +236,8 @@ The main workspace is the final area to compress. Long table values use truncati
 定版确认视觉与页面交互方向，不等同于业务契约、可访问性矩阵或所有状态已验收。P3 仍是业务目标；行菜单按第 8 节仅保留编辑/删除，不得恢复历史归档入口。不得由视觉定版推导真实业务已实现，也不得将实现缺口复制成其他页面的业务标准。
 
 ## 12. Governance record
+
+- **2026-10-19 现役规范校准：** 主工作面 `.orch-management` 保留现有浅阴影；管理表头仍为 36px，向导预检查的 44px 不反向覆盖本页。环境色以现役 `tokens.ts` 与 Ant 主题为准并重新生成 CSS；Select 选项的静态环境标记与禁选“默认”提示按 [DESIGN §8](../DESIGN.md#8-product-css-variables) 的精确范围登记，不改变列表 Ant Tag、字段语义或环境枚举。
 
 - **2026-09-28 抽屉布局修订：** 按用户提供的视觉参考调整双列浅灰分组、字段顺序及紧凑测试入口；创建和编辑共享布局，保留现有项目字段边界与独立保存/测试语义。
 - **2026-09-18 用户修订：** 状态切换反馈收敛到行内开关；环境使用浅底分类 Tag；移除数据源列图标和遗留缩进。清除本页重复的历史截图说明，当前规则集中在相应章节。

@@ -4,13 +4,16 @@ import { taskListPageSizes, taskListStates, type TaskEnvironment, type TaskListF
 // 任务中心筛选的唯一路由表示。路由 query 是筛选与条数的唯一来源，组件不持有第二份副本。
 export interface TaskListRouteState {
   readonly keyword: string
-  readonly types: readonly ('OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT')[]
+  readonly types: readonly ('OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT' | 'OBLOADER_DIRECT_LOAD')[]
   readonly states: readonly TaskListState[]
   // 日期为浏览器本地日期 YYYY-MM-DD，提交时换算为半开区间的 RFC 3339 时刻。
   readonly createdFrom: string
   readonly createdTo: string
   readonly startedFrom: string
   readonly startedTo: string
+  // 首页下钻保留精确的 RFC 3339 终态时间，不转换为浏览器本地自然日。
+  readonly finishedFrom: string
+  readonly finishedTo: string
   readonly dataSourceId: string
   readonly environment: '' | TaskEnvironment
   readonly nodeId: string
@@ -20,7 +23,7 @@ export interface TaskListRouteState {
 }
 
 export const emptyTaskListRouteState: TaskListRouteState = {
-  keyword: '', types: [], states: [], createdFrom: '', createdTo: '', startedFrom: '', startedTo: '',
+  keyword: '', types: [], states: [], createdFrom: '', createdTo: '', startedFrom: '', startedTo: '', finishedFrom: '', finishedTo: '',
   dataSourceId: '', environment: '', nodeId: '', creatorId: '', scope: '', limit: 10,
 }
 
@@ -36,11 +39,15 @@ function validDate(value: string): string {
   return datePattern.test(value) && !Number.isNaN(new Date(`${value}T00:00:00`).valueOf()) ? value : ''
 }
 
+function validInstant(value: string): string {
+  return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : ''
+}
+
 /** 解析路由 query；无效或未知值直接丢弃，避免把旧链接中的异常条件传给服务端。 */
 export function parseTaskListRoute(query: LocationQuery): TaskListRouteState {
   const list = (key: string) => text(query, key).split(',').map(value => value.trim()).filter(Boolean)
   const states = [...new Set(list('state'))].filter((value): value is TaskListState => (taskListStates as readonly string[]).includes(value))
-  const types = [...new Set(list('type'))].filter((value): value is 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT' => value === 'OBDUMPER_EXPORT' || value === 'OBLOADER_NORMAL_IMPORT')
+  const types = [...new Set(list('type'))].filter((value): value is 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT' | 'OBLOADER_DIRECT_LOAD' => value === 'OBDUMPER_EXPORT' || value === 'OBLOADER_NORMAL_IMPORT' || value === 'OBLOADER_DIRECT_LOAD')
   const environment = text(query, 'environment')
   const scope = text(query, 'scope')
   const limit = Number(text(query, 'limit'))
@@ -51,6 +58,8 @@ export function parseTaskListRoute(query: LocationQuery): TaskListRouteState {
     createdTo: validDate(text(query, 'createdTo')),
     startedFrom: validDate(text(query, 'startedFrom')),
     startedTo: validDate(text(query, 'startedTo')),
+    finishedFrom: validInstant(text(query, 'finishedFrom')),
+    finishedTo: validInstant(text(query, 'finishedTo')),
     dataSourceId: text(query, 'dataSourceId'),
     environment: environments.includes(environment as TaskEnvironment) ? environment as TaskEnvironment : '',
     nodeId: text(query, 'nodeId'),
@@ -71,6 +80,8 @@ export function taskListRouteQuery(state: TaskListRouteState): LocationQueryRaw 
   set('createdTo', state.createdTo)
   set('startedFrom', state.startedFrom)
   set('startedTo', state.startedTo)
+  set('finishedFrom', state.finishedFrom)
+  set('finishedTo', state.finishedTo)
   set('dataSourceId', state.dataSourceId)
   set('environment', state.environment)
   set('nodeId', state.nodeId)
@@ -90,7 +101,7 @@ export function hasTaskListConditions(state: TaskListRouteState): boolean {
 }
 
 export function hasExpandedTaskListConditions(state: TaskListRouteState): boolean {
-  return Boolean(state.dataSourceId || state.environment || state.nodeId || state.creatorId || state.scope || state.startedFrom || state.startedTo)
+  return Boolean(state.dataSourceId || state.environment || state.nodeId || state.creatorId || state.scope || state.startedFrom || state.startedTo || state.finishedFrom || state.finishedTo)
 }
 
 // 本地日期起点换算为 UTC 时刻；结束日期包含当天，因此上界取次日零点。
@@ -113,6 +124,8 @@ export function taskListApiFilter(state: TaskListRouteState): TaskListFilter {
     createdTo: localDayStart(state.createdTo, 1),
     startedFrom: localDayStart(state.startedFrom),
     startedTo: localDayStart(state.startedTo, 1),
+    finishedFrom: state.finishedFrom || undefined,
+    finishedTo: state.finishedTo || undefined,
     dataSourceId: state.dataSourceId || undefined,
     environment: state.environment || undefined,
     creatorId: state.creatorId || undefined,
@@ -135,7 +148,7 @@ export function taskListConditionChips(state: TaskListRouteState, names: (kind: 
   const chips: TaskListConditionChip[] = []
   const range = (from: string, to: string) => from && to ? `${from} 至 ${to}` : from ? `${from} 起` : `至 ${to}`
   if (state.keyword) chips.push({ key: 'keyword', label: `关键字：${state.keyword}`, clear: { keyword: '' } })
-  if (state.types.length) chips.push({ key: 'type', label: `类型：${state.types.map(type => type === 'OBLOADER_NORMAL_IMPORT' ? '普通导入' : '导出').join('、')}`, clear: { types: [] } })
+  if (state.types.length) chips.push({ key: 'type', label: `类型：${state.types.map(type => type === 'OBLOADER_DIRECT_LOAD' ? '旁路导入' : type === 'OBLOADER_NORMAL_IMPORT' ? '普通导入' : '导出').join('、')}`, clear: { types: [] } })
   if (state.states.length) chips.push({ key: 'state', label: `状态：${state.states.map(value => stateNames[value]).join('、')}`, clear: { states: [] } })
   if (state.createdFrom || state.createdTo) chips.push({ key: 'created', label: `创建时间：${range(state.createdFrom, state.createdTo)}`, clear: { createdFrom: '', createdTo: '' } })
   if (state.dataSourceId) chips.push({ key: 'dataSource', label: `数据源：${names('dataSource', state.dataSourceId)}`, clear: { dataSourceId: '' } })
@@ -144,6 +157,10 @@ export function taskListConditionChips(state: TaskListRouteState, names: (kind: 
   if (state.creatorId) chips.push({ key: 'creator', label: `创建人：${names('creator', state.creatorId)}`, clear: { creatorId: '' } })
   if (state.scope) chips.push({ key: 'scope', label: state.scope === 'MINE' ? '范围：本人创建' : '范围：全部任务', clear: { scope: '' } })
   if (state.startedFrom || state.startedTo) chips.push({ key: 'started', label: `开始时间：${range(state.startedFrom, state.startedTo)}`, clear: { startedFrom: '', startedTo: '' } })
+  if (state.finishedFrom || state.finishedTo) {
+    const utc = (value: string) => value ? `${new Date(value).toISOString().slice(0, 19).replace('T', ' ')}` : '不限'
+    chips.push({ key: 'finished', label: `终态时间（UTC，含起点、不含终点）：${utc(state.finishedFrom)} 至 ${utc(state.finishedTo)}`, clear: { finishedFrom: '', finishedTo: '' } })
+  }
   return chips
 }
 
@@ -151,5 +168,6 @@ export function taskListConditionChips(state: TaskListRouteState, names: (kind: 
 export function taskListDateRangeError(state: TaskListRouteState): string {
   if (state.createdFrom && state.createdTo && state.createdFrom > state.createdTo) return '创建时间的开始日期晚于结束日期。'
   if (state.startedFrom && state.startedTo && state.startedFrom > state.startedTo) return '开始时间的开始日期晚于结束日期。'
+  if (state.finishedFrom && state.finishedTo && Date.parse(state.finishedFrom) >= Date.parse(state.finishedTo)) return '终态时间的起点必须早于终点。'
   return ''
 }

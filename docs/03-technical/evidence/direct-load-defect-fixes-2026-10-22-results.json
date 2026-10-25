@@ -1,0 +1,279 @@
+{
+  "scope": "DIRECT_LOAD_THREE_DEFECT_FIXES_WINDOWS_FIXED_TOOL_MYSQL_ORACLE_DIRECT",
+  "date": "2026-10-22",
+  "passed": true,
+  "checks": {
+    "frontendTestFiles": 48,
+    "frontendTests": 587,
+    "browserTests": 22,
+    "visualEvidenceSupplement": 4,
+    "goFullPassed": true,
+    "finalStoreControlplanePassed": true,
+    "contractsPassed": true,
+    "vetPassed": true,
+    "typecheckPassed": true,
+    "lintPassed": true,
+    "buildPassed": true,
+    "businessViolations": 0,
+    "wizardViolations": 0,
+    "businessReviewSignals": 16,
+    "wizardReviewSignals": 4
+  },
+  "batches": [
+    {
+      "mode": "MYSQL",
+      "apiPassed": true,
+      "records": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS"
+        },
+        {
+          "id": "BASIC",
+          "outcome": "PASS",
+          "precheckStatus": "SUCCEEDED",
+          "structureReason": "DIRECT_LOAD_VERIFIED",
+          "submissionReplayed": true,
+          "submittedTaskRecovered": true,
+          "crossKeyRejected": true,
+          "changedBodyRejected": true
+        },
+        {
+          "id": "BIT_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_BIT_BLOCKED"
+        },
+        {
+          "id": "BINARY_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_BINARY_BLOCKED"
+        },
+        {
+          "id": "VIRTUAL_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_VIRTUAL_BLOCKED"
+        },
+        {
+          "id": "INDEXED_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_REPLACE_INDEX_BLOCKED"
+        },
+        {
+          "id": "LOB_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_REPLACE_INDEX_BLOCKED"
+        },
+        {
+          "id": "CONFIG_CHANGE_INVALIDATES_PROOF",
+          "outcome": "PASS",
+          "precheckStatus": "SUCCEEDED",
+          "structureReason": "DIRECT_LOAD_VERIFIED"
+        }
+      ],
+      "realTasks": 1,
+      "independentPassed": true,
+      "targets": {
+        "dlvt_basic": {
+          "state": "SUCCEEDED",
+          "reconciliationRequired": false,
+          "result": "VERIFIED",
+          "directLoad": true,
+          "serverCommitObserved": true,
+          "checkpointPresent": false,
+          "exitCode": 0,
+          "plannedActualMatch": "MATCHED",
+          "fingerprintMatched": true,
+          "taskType": "OBLOADER_DIRECT_LOAD",
+          "rowsMatched": true,
+          "ddlUnchanged": true,
+          "processStartedEvents": 1,
+          "resultEvents": 1,
+          "noExportCounts": true,
+          "summaryCommitRecorded": true,
+          "passed": true
+        }
+      },
+      "cleanup": {
+        "originalSharedSourceUnchanged": true,
+        "newTestSourceArchived": true,
+        "unsubmittedDraftsRemaining": 0,
+        "untouchedTablesUnchanged": true,
+        "fixtureDatabaseAbsent": true,
+        "fixtureInputAbsent": true,
+        "nonTerminalExecutions": 0,
+        "uncontrolledRuntimeFiles": []
+      }
+    },
+    {
+      "mode": "ORACLE",
+      "apiPassed": true,
+      "records": [
+        {
+          "id": "SOURCE_CONNECTION_TEST",
+          "outcome": "PASS"
+        },
+        {
+          "id": "BASIC",
+          "outcome": "PASS",
+          "precheckStatus": "SUCCEEDED",
+          "structureReason": "DIRECT_LOAD_VERIFIED",
+          "submissionReplayed": true,
+          "submittedTaskRecovered": true,
+          "crossKeyRejected": true,
+          "changedBodyRejected": true
+        },
+        {
+          "id": "RAW_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_BINARY_BLOCKED"
+        },
+        {
+          "id": "INDEXED_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_REPLACE_INDEX_BLOCKED"
+        },
+        {
+          "id": "LOB_REPLACE_BLOCKED",
+          "outcome": "PASS",
+          "precheckStatus": "FAILED",
+          "structureReason": "DIRECT_LOAD_REPLACE_INDEX_BLOCKED"
+        },
+        {
+          "id": "CONFIG_CHANGE_INVALIDATES_PROOF",
+          "outcome": "PASS",
+          "precheckStatus": "SUCCEEDED",
+          "structureReason": "DIRECT_LOAD_VERIFIED"
+        }
+      ],
+      "realTasks": 1,
+      "independentPassed": true,
+      "targets": {
+        "BASIC": {
+          "state": "SUCCEEDED",
+          "reconciliationRequired": false,
+          "resultVerified": true,
+          "directLoad": true,
+          "serverCommitObserved": true,
+          "checkpointAbsent": true,
+          "exitCode": 0,
+          "plannedActualMatched": true,
+          "fingerprintMatched": true,
+          "taskTypeMatched": true,
+          "sourceMatched": true,
+          "rowsMatched": true,
+          "structureMatched": true,
+          "fullDDLObserved": true,
+          "oneStartEvent": true,
+          "oneResultEvent": true,
+          "commandAndSnapshotMatched": true,
+          "noExportResultCounts": true,
+          "passed": true
+        }
+      },
+      "cleanup": {
+        "originalSharedSourceUnchanged": true,
+        "newTestSourceArchived": true,
+        "unsubmittedDraftsRemaining": 0,
+        "untouchedTablesUnchanged": true,
+        "fixtureTablesAbsent": true,
+        "inputAbsent": true,
+        "nonTerminalExecutions": 0,
+        "uncontrolledRuntimeFiles": []
+      }
+    }
+  ],
+  "submissionGuards": {
+    "passed": true,
+    "batches": [
+      {
+        "mode": "MYSQL",
+        "taskCount": 1,
+        "onlyOriginalTask": true,
+        "originalReceiptCount": 1,
+        "originalKeyReplayed": true,
+        "originalTaskRecovered": true,
+        "changedKeyRejected": true,
+        "changedBodyRejected": true,
+        "replaceCommandPresent": true,
+        "passed": true
+      },
+      {
+        "mode": "ORACLE",
+        "taskCount": 1,
+        "onlyOriginalTask": true,
+        "originalReceiptCount": 1,
+        "originalKeyReplayed": true,
+        "originalTaskRecovered": true,
+        "changedKeyRejected": true,
+        "changedBodyRejected": true,
+        "replaceCommandPresent": true,
+        "passed": true
+      }
+    ]
+  },
+  "runtime": {
+    "at": "2026-10-22T09:01:31.399072+00:00",
+    "flags": {
+      "controlPlane": {
+        "realExecutionEnabled": true,
+        "normalImportExecutionEnabled": true,
+        "directLoadProbeEnabled": true,
+        "directLoadExecutionEnabled": true
+      },
+      "agent": {
+        "realExecutionEnabled": true,
+        "normalImportExecutionEnabled": true,
+        "directLoadProbeEnabled": true,
+        "directLoadExecutionEnabled": true
+      }
+    },
+    "flagsPreserved": true,
+    "agent": {
+      "status": "ACTIVE",
+      "heartbeatAgeSeconds": 16.67,
+      "capacityUsed": 0,
+      "environmentStatus": "PASSED"
+    },
+    "nonTerminalExecutions": 0,
+    "componentInputAbsent": true,
+    "hashes": {
+      "controlPlane": "02ceecdfb31f5c438b2d4dc847773e890ca3a4021aa1e966b04e8306e8aa4daa",
+      "agent": "34defc3c6369b8ff3a25d8b79f668bf31e3024bc7768bfdd54d45a93ef59f737",
+      "jdbcProbe": "f5713698cb97c859ce271ff7281ad43870744f56e67236b164e38c783ed4b64e"
+    },
+    "backupIntegrityOK": true,
+    "passed": true,
+    "httpsHealthStatus": 200
+  },
+  "secretAudit": {
+    "at": "2026-10-22T08:59:50.243Z",
+    "files": 42,
+    "adminPlaintextOrUTF16Present": false,
+    "sources": [
+      {
+        "mode": "MYSQL",
+        "plaintextOrRecoverableEncodingPresent": false
+      },
+      {
+        "mode": "ORACLE",
+        "plaintextOrRecoverableEncodingPresent": false
+      }
+    ],
+    "passed": true
+  },
+  "limitations": [
+    "EMPTY_TABLE_REPLACE_POSITIVE_ONLY",
+    "NO_UNIQUE_CONFLICT_RESOLUTION_CLAIM",
+    "ORACLE_CURRENT_USER_SCHEMA_ONLY",
+    "WINDOWS_AMD64_FIXED_OBLOADER_4.3.5_OBSERVER_4.4.2.3",
+    "HISTORICAL_RPC_TIMEOUT_ROOT_CAUSE_UNRESOLVED",
+    "NO_ODP_F5_CROSS_SCHEMA_ALL_PARAMETERS_OR_FULL_DLV_G3_G4_CLAIM"
+  ]
+}

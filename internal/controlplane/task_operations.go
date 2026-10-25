@@ -19,9 +19,10 @@ type taskRelationResponse struct {
 
 // taskListProjection 为列表和详情复用同一展示与资格规则，避免详情按状态猜测权限。
 func (s *Server) taskListProjection(item store.TaskListItem, subjectID string) taskListResponse {
+	stage, progress := taskProgressEvidence(item.Progress)
 	return taskListResponse{
 		ID: item.TaskID, Type: item.TaskType, DataSourceID: item.DataSourceID, ObjectSummary: taskObjectSummary(item.Database, item.Table), State: item.State,
-		StageEvidence: "UNAVAILABLE", ProgressEvidence: "UNAVAILABLE", ReconciliationRequired: item.ReconciliationRequired, NodeID: item.NodeID,
+		StageEvidence: stage, ProgressEvidence: progress, Progress: item.Progress, ReconciliationRequired: item.ReconciliationRequired, NodeID: item.NodeID,
 		OwnedByCurrentUser: item.CreatorSubjectID == subjectID, SubmittedAt: item.SubmittedAt.Format(time.RFC3339Nano), StartedAt: optionalTaskTime(item.StartedAt), FinishedAt: optionalTaskTime(item.FinishedAt), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano),
 		DisplayName: taskDisplayName(item.Database, item.Table, item.ScopeKind), DataSourceName: item.DataSourceName, DataSourceDeleted: item.DataSourceDeleted, Environment: item.Environment,
 		NodeName: item.NodeName, NodeDeleted: item.NodeDeleted, CreatorName: item.CreatorName, CancelRequested: item.CancellationRequested || item.State == "CANCELLING", AvailableActions: taskListActions(item, s.realExecutionEnabled, s.templates != nil),

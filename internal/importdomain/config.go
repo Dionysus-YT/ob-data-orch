@@ -47,10 +47,12 @@ type Config struct {
 	Mapping       *Mapping          `json:"mapping,omitempty"`
 	Execution     Execution         `json:"execution"`
 	CompatMysql   bool              `json:"compatMysql,omitempty"`
-	ReplaceData   bool              `json:"replaceData,omitempty"`
-	ReplaceObject bool              `json:"replaceObject,omitempty"`
-	Cleanup       string            `json:"cleanup"`
-	TaskName      string            `json:"taskName,omitempty"`
+	// CompatMysqlVersion 必须显式指定原定义所属版本；旧开关不能猜测 5.6、5.7 或 8.0。
+	CompatMysqlVersion string `json:"compatMysqlVersion,omitempty"`
+	ReplaceData        bool   `json:"replaceData,omitempty"`
+	ReplaceObject      bool   `json:"replaceObject,omitempty"`
+	Cleanup            string `json:"cleanup"`
+	TaskName           string `json:"taskName,omitempty"`
 }
 
 // Parser 只承载当前活动格式，不能持久化隐藏格式或未经核对的解析开关。
@@ -191,6 +193,14 @@ func Normalize(input Config, mode, platform string, complete bool) (Config, []Is
 		c.CompatMysql = false
 		c.Parser.DateFormat = ""
 		c.Parser.DefaultDate = ""
+	}
+	if !c.CompatMysql {
+		c.CompatMysqlVersion = ""
+	} else {
+		requires("compatMysqlVersion", c.CompatMysqlVersion)
+		if !oneOf(c.CompatMysqlVersion, "", "mysql56", "mysql57", "mysql80") {
+			add("compatMysqlVersion", "UNSUPPORTED_VALUE")
+		}
 	}
 	if !oneOf(c.Cleanup, "", "NONE", "TRUNCATE", "DELETE") {
 		add("cleanup", "UNSUPPORTED_CLEANUP")
@@ -342,7 +352,7 @@ func (c Config) HasDDL() bool { return oneOf(c.Content, "DDL_ONLY", "DDL_AND_DAT
 
 // HighRisk 指明必须绑定冻结指纹确认的写入或结构影响。
 func (c Config) HighRisk() bool {
-	return c.ReplaceData || c.ReplaceObject || oneOf(c.Cleanup, "TRUNCATE", "DELETE")
+	return c.ReplaceData || c.ReplaceObject || oneOf(c.Cleanup, "TRUNCATE", "DELETE") || c.HasDDL() && (c.Objects["obj-user"] != "" || c.Objects["role"] != "")
 }
 func oneOf(value string, values ...string) bool {
 	for _, item := range values {

@@ -134,7 +134,7 @@ func (s *Server) normalImportEntry(w http.ResponseWriter, r *http.Request, p ide
 }
 
 func (s *Server) authorizedNormalImport(ctx context.Context, p identity.Principal, source, node string) bool {
-	return identity.Can(ctx, s.authorizer, p, identity.ScopeDataSourceRead, source) == nil && (node == "" || identity.Can(ctx, s.authorizer, p, identity.ScopeNodeUse, node) == nil)
+	return identity.Can(ctx, s.authorizer, p, identity.ScopeDataSourceUse, source) == nil && (node == "" || identity.Can(ctx, s.authorizer, p, identity.ScopeNodeUse, node) == nil)
 }
 
 func (s *Server) loadNormalImport(w http.ResponseWriter, r *http.Request, p identity.Principal, id string) (store.NormalImportDraft, bool) {
@@ -238,6 +238,11 @@ func (s *Server) saveNormalImport(w http.ResponseWriter, r *http.Request, p iden
 		return
 	}
 	item, err := s.normalImports.SaveNormalImportDraft(r.Context(), store.NormalImportDraftWrite{NormalImportDraft: store.NormalImportDraft{ID: id, OwnerSubjectID: p.ID, DataSourceID: config.DataSourceID, NodeID: config.NodeID, ConfigJSON: string(raw), ConfigFingerprint: fingerprint, UpdatedAt: time.Now().UTC()}, ExpectedRevision: revision, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: normalImportDigest(string(raw))})
+	if errors.Is(err, store.ErrPrecheckInvalid) {
+		// 仓储拒绝冻结重跑配置的改写属于业务约束，不能误报成可重试的服务故障。
+		writeError(w, 422, "NORMAL_IMPORT_CONFIG_LOCKED", "从头重新执行必须保留原配置；如需修改参数，请基于原配置新建", false)
+		return
+	}
 	if errors.Is(err, store.ErrRevisionConflict) {
 		writeError(w, 412, "DRAFT_REVISION_CONFLICT", "草稿已变更，请重新读取", false)
 		return
@@ -264,7 +269,7 @@ func (s *Server) writeNormalImportIssues(w http.ResponseWriter, issues []importd
 
 func (s *Server) normalImportResponse(item store.NormalImportDraft) map[string]any {
 	config, _ := importdomain.Decode(item.ConfigJSON)
-	return map[string]any{"id": item.ID, "revision": item.Revision, "configVersion": importdomain.ConfigVersion, "config": config, "configFingerprint": item.ConfigFingerprint, "metadataVersion": importdomain.MetadataVersion, "capabilityVersion": importdomain.CapabilityVersion, "executionEnabled": s.normalImportExecutionEnabled, "updatedAt": item.UpdatedAt}
+	return map[string]any{"id": item.ID, "revision": item.Revision, "configVersion": importdomain.ConfigVersion, "config": config, "configFingerprint": item.ConfigFingerprint, "metadataVersion": importdomain.MetadataVersion, "capabilityVersion": importdomain.CapabilityVersion, "executionEnabled": s.normalImportExecutionEnabled, "updatedAt": item.UpdatedAt, "sourceTaskId": item.SourceTaskID, "sourceDerivation": item.SourceDerivation}
 }
 func (s *Server) writeNormalImport(w http.ResponseWriter, item store.NormalImportDraft) {
 	w.Header().Set("ETag", fmt.Sprintf(`"rev-%d"`, item.Revision))
@@ -276,6 +281,9 @@ func normalImportDigest(value string) string {
 }
 
 func (s *Server) generateNormalImport(ctx context.Context, c importdomain.Config) (commandgen.Result, store.DataSourceSummary, ExecutionNodeFact, error) {
+	if err := s.authorizeExpertConfiguration(ctx, c.HighRisk()); err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
+	}
 	if s.normalImportGenerator == nil || s.credentials == nil || s.nodes == nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("普通导入依赖未配置")
 	}

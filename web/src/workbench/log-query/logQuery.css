@@ -1,0 +1,19 @@
+.log-query-workspace { min-inline-size: 0; }
+.log-query-filters { display: grid; grid-template-columns: minmax(350px, 2fr) minmax(160px, 1fr) minmax(160px, 1fr); gap: 0 var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4); }
+.log-query-picker { inline-size: 100%; }
+.log-query-submit { align-self: center; margin-block-end: var(--ob-foundation-space-4); }
+.log-query-meta { flex-wrap: wrap; gap: var(--ob-foundation-space-3); }
+.log-query-summary { padding-inline: var(--ob-foundation-space-4); color: var(--ob-color-secondary); overflow-wrap: anywhere; }
+.log-query-task { display: block; min-inline-size: 0; overflow-wrap: anywhere; }
+.log-query-time { font-size: var(--ob-component-table-metadata-size); white-space: nowrap; }
+.log-query-secondary { display: block; color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); overflow-wrap: anywhere; }
+.log-query-message { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.log-query-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--ob-foundation-space-3); }
+.log-query-footer nav { display: flex; align-items: center; gap: var(--ob-foundation-space-2); margin-inline-start: auto; }
+.log-query-footnote { margin-block-start: var(--ob-foundation-space-4); color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
+.log-context-list { list-style: none; margin-block: var(--ob-foundation-space-4); padding: 0; }
+.log-context-list li { padding: var(--ob-foundation-space-3); border-block-end: 1px solid var(--ob-color-border); }
+.log-context-list pre { margin-block: var(--ob-foundation-space-2) 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-context-selected { background: var(--ob-color-primary-soft); }
+@media (max-width: 1100px) { .log-query-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .log-query-range { grid-column: 1 / -1; } }
+@media (max-width: 680px) { .log-query-filters { grid-template-columns: minmax(0, 1fr); } }

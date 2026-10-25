@@ -41,7 +41,7 @@ func Fields(c Config) []commandgen.FieldInput {
 		flag(f.name, f.value, commandgen.SourceUser)
 	}
 	if c.CompatMysql {
-		stringValue("compat-mode", "mysql")
+		stringValue("compat-mode", c.CompatMysqlVersion)
 	}
 	if c.Mapping != nil {
 		stringValue("ctl-path", c.Mapping.CtlPath)

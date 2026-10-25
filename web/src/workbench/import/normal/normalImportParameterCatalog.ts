@@ -61,7 +61,7 @@ const details: Record<string, ParameterDetail> = {
   'include-column-names': { label: '包含列', description: '按文件列顺序指定目标列名，精确匹配大小写；本页与排除列择一配置。' },
   'exclude-column-names': { label: '排除列', description: '指定不写入的目标列；本页与包含列择一配置，不改变输入文件。' },
   'exclude-data-types': { label: '排除数据类型', description: '排除指定类型的列数据；实际类型与目标结构须由后续预检查核对。' },
-  'compat-mode': { label: 'MySQL DDL 兼容导入', description: '在包含对象定义时处理 MySQL 定义兼容性，仅 MySQL 兼容模式适用。' },
+  'compat-mode': { label: 'MySQL DDL 兼容导入', description: '按显式选择的源 MySQL 5.6、5.7 或 8.0 版本处理定义兼容性；仅目标为 MySQL 且包含定义时适用。' },
   'replace-data': { label: '替换重复数据', description: '替换与主键或非空唯一键冲突的数据；需要包含数据，实际影响仍须检查。' },
   'replace-object': { label: '替换已有对象定义', description: '以输入定义替换已有目标对象，可能影响现有结构；仅包含对象定义时适用。' },
   'truncate-table': { label: '清空表', description: '导入数据前清空目标表，影响原有全部数据；与删除表数据互斥。' },

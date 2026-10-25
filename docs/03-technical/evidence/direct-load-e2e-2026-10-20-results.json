@@ -1,0 +1,435 @@
+{
+  "scope": "DIRECT_LOAD_REAL_E2E_ATTEMPT",
+  "overall": "BLOCKED",
+  "at": "2026-10-20T13:05:22.639329+00:00",
+  "testSummary": {
+    "frontendVitestFiles": 48,
+    "frontendVitestPassed": 577,
+    "syntheticBrowserCasesPassed": 17,
+    "goFullRegression": "PASS_BEFORE_ODP_FIX",
+    "goAfterODPFix": "SIX_PACKAGES_PASS",
+    "javaSynthetic": "PASS",
+    "liveUnauthenticatedHTTPChecksPassed": 7,
+    "realFixedJdbcProbeRuns": 2,
+    "realDirectLoadTasksSubmitted": 0,
+    "officialObloaderStarted": false,
+    "ownedFixtureTableCount": 15,
+    "fixtureCleanupVerified": true
+  },
+  "environmentProbe": {
+    "status": "PROBED",
+    "mode": "MYSQL",
+    "observerVersion": "4.4.2.3",
+    "odpVersion": "",
+    "ports": {
+      "2882": "TCP_REACHABLE",
+      "2885": "TCP_REACHABLE"
+    },
+    "views": {
+      "GV$OB_MEMSTORE": "READABLE",
+      "DBA_OB_MAJOR_COMPACTION": "READABLE",
+      "DBA_OB_LS_LOCATIONS": "READABLE",
+      "__all_virtual_proxy_schema": "READABLE"
+    },
+    "odpVersionStatus": "SQL_REJECTED",
+    "odpVersionErrorCode": 1064,
+    "sameHostDefaultODP": {
+      "status": "SQL_UNAVAILABLE",
+      "errorCode": 1045
+    }
+  },
+  "fixedJdbcFacts": {
+    "databaseAccess": "ACCESSIBLE",
+    "observerVersion": "4.4.2.3",
+    "odpVersion": "",
+    "scope": "REAL_FIXED_PROBE_ONLY",
+    "status": "PROBED",
+    "tableFacts": {
+      "exists": true,
+      "empty": true,
+      "hasBIT": false,
+      "hasBinary": false,
+      "hasVirtualGenerated": false,
+      "hasIndex": true,
+      "hasLOB": false,
+      "hasUniqueIndex": true
+    },
+    "writeAccess": "ACCESSIBLE"
+  },
+  "runtime": {
+    "nonterminalExecutions": 0,
+    "directTasksObserved": 0,
+    "settings.json": {
+      "realExecutionEnabled": true,
+      "normalImportExecutionEnabled": true,
+      "directLoadProbeEnabled": false,
+      "directLoadExecutionEnabled": false
+    },
+    "agent-config.json": {
+      "realExecutionEnabled": true,
+      "normalImportExecutionEnabled": true,
+      "directLoadProbeEnabled": false,
+      "directLoadExecutionEnabled": false
+    }
+  },
+  "hashes": {
+    "internal\\jdbcprobe\\java\\com\\obdataorch\\jdbcprobe\\DirectLoadProbe.java": "9c7b4f5906062ca41218c77d261e88b2d5709d52e14dd48784d9051969802c03",
+    "internal\\jdbcprobe\\assets\\ob-data-orch-jdbc-probe.jar": "9f8a633ddaac3fea531e8df5686f0a91ba48c1b26cff4fcd2ac97d66235cc213",
+    "var\\dev\\control-plane\\control-plane.exe": "3d51065754f84bcf1d91edc6efcd8697ec42c9095379b23681f97d3eb95c2505",
+    "var\\dev\\agent\\agent.exe": "fb4c8c317a64732c3d414beccf981e5f46df6b907dd6ed62cc29edfbc12233fb",
+    "officialToolMainJar": "b43f88caafd2c62462cfdeff38a0fd7088b0195c5d064074f977bc0b363fec06"
+  },
+  "dlvCases": [
+    {
+      "id": "DLV-P0-01",
+      "title": "参数集合是否完整",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-02",
+      "title": "三模块字段状态是否一致",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-03",
+      "title": "专属参数是否被孤立",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-04",
+      "title": "普通导入参数是否误入旁路",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-05",
+      "title": "部署范围外配置拒绝",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-06",
+      "title": "私有 ODP 场景参数",
+      "realStatus": "PARTIAL_REAL",
+      "note": "仅取得 SQL 连接、版本或 TCP 事实，未证明旁路导入成功。"
+    },
+    {
+      "id": "DLV-P0-07",
+      "title": "私有 OBServer 场景参数",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-08",
+      "title": "RPC 可编辑默认端口不授予通过",
+      "realStatus": "PARTIAL_REAL",
+      "note": "仅取得 SQL 连接、版本或 TCP 事实，未证明旁路导入成功。"
+    },
+    {
+      "id": "DLV-P0-09",
+      "title": "RPC 安全查询",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-10",
+      "title": "OBServer 精确版本边界",
+      "realStatus": "PARTIAL_REAL",
+      "note": "仅取得 SQL 连接、版本或 TCP 事实，未证明旁路导入成功。"
+    },
+    {
+      "id": "DLV-P0-11",
+      "title": "ODP 版本组合",
+      "realStatus": "BLOCKED",
+      "note": "ODP 版本未取得；当前 SQL 返回 1064，同主机默认 ODP SQL 端口返回 1045。"
+    },
+    {
+      "id": "DLV-P0-12",
+      "title": "工具版本",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-13",
+      "title": "本地单文件 CSV",
+      "realStatus": "BLOCKED",
+      "note": "认证业务入口与可验证 ODP 连接尚未就绪，零真实工具任务。"
+    },
+    {
+      "id": "DLV-P0-14",
+      "title": "本地目录同表分片",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-15",
+      "title": "目录包含多表文件",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-16",
+      "title": "`--all`/星号/表列表",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-17",
+      "title": "零匹配与无法判断",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-18",
+      "title": "external-data",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-19",
+      "title": "CSV column-separator",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-20",
+      "title": "本地格式与连接场景门禁",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-21",
+      "title": "空表全量模式",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-22",
+      "title": "非空表增量模式",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-23",
+      "title": "全量 replace-data",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-24",
+      "title": "增量无索引/LOB replace",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-25",
+      "title": "增量索引/LOB replace",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-26",
+      "title": "唯一索引冲突",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-27",
+      "title": "BIT 类型",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-28",
+      "title": "其他二进制类型",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-29",
+      "title": "虚拟生成列",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-30",
+      "title": "truncate 与 yes 派生",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-31",
+      "title": "thread/parallel 语义",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-32",
+      "title": "未显式设置默认",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-33",
+      "title": "不支持 retry/checkpoint",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P0-34",
+      "title": "从头重新执行",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P1-01",
+      "title": "CUT 旁路",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-02",
+      "title": "POS 旁路",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-03",
+      "title": "SQL 本地旁路适用性",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-04",
+      "title": "ORC/Parquet/Avro 本地旁路适用性",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-05",
+      "title": "CSV 高级解析",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-06",
+      "title": "自动列映射/列名单/控制文件",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-07",
+      "title": "压缩输入",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-08",
+      "title": "远程存储与 tmp-path",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-09",
+      "title": "batch/block/rw",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-10",
+      "title": "slow/pause/max-tps/wait",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-11",
+      "title": "mem/log/character-set",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P1-12",
+      "title": "取消阶段语义",
+      "realStatus": "NOT_OPEN_OR_NOT_RUN",
+      "note": "按当前产品门禁未开放或未执行真实调查，不计通过。"
+    },
+    {
+      "id": "DLV-P2-01",
+      "title": "三个 direct_path_load 配置默认",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-02",
+      "title": "task_timeout_ms",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-03",
+      "title": "heartbeat timeout/interval",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-04",
+      "title": "配置指纹",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-05",
+      "title": "`--delete-from-table`",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-06",
+      "title": "`--strict`",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-07",
+      "title": "`--logical-database`",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-08",
+      "title": "help-only 参数",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-09",
+      "title": "废弃参数",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    },
+    {
+      "id": "DLV-P2-10",
+      "title": "DDL/对象/错误参数过滤",
+      "realStatus": "NOT_RUN_REAL",
+      "note": "未执行真实旁路任务；源码/合成回归不能替代。"
+    }
+  ],
+  "realStatusCounts": {
+    "NOT_RUN_REAL": 39,
+    "PARTIAL_REAL": 3,
+    "BLOCKED": 2,
+    "NOT_OPEN_OR_NOT_RUN": 12
+  },
+  "limits": [
+    "正常认证业务入口被浏览器来源校验拦截；没有绕过身份或 CSRF。",
+    "现有 ODP 连接与精确版本未核实。",
+    "DB 4.4.2.3 与当前工具精确版本契约的组合仍待核验，不能断言工具不支持。",
+    "未更改运行服务、部署配置、源记录或账号授权；固定探针修复尚未安装到服务。",
+    "未执行真实写入、提交结果、重跑、恢复、取消、Oracle 或 Linux 原生验证。"
+  ],
+  "finalHealth": 200,
+  "realSourceSecretAudit": "PASS"
+}

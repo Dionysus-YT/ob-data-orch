@@ -25,7 +25,7 @@ Footer
 
 - Drawer surface 为白色。
 - 普通右贴 Drawer 不使用圆角。
-- 阴影只用于浮层存在感，不用于普通页面分区。
+- Drawer 使用现有浮层阴影；普通页面内部分区保持平面，已登记主工作面的浅阴影边界见 [DESIGN §6](../DESIGN.md#6-density-surface-and-motion)。
 - 不重绘 mask、motion、focus state、close icon 和 button feedback。
 
 ## 禁止

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/importdomain"
 )
@@ -43,8 +44,8 @@ func validateNormalImportSubmission(input TaskSubmission) bool {
 
 // validateTaskPrecheckKind 阻止跨类型提交及以文件发现替代完整预检查，并核对持久化清单。
 func validateTaskPrecheckKind(ctx context.Context, tx *sql.Tx, input TaskSubmission, binding PrecheckBinding) error {
-	var kind, draftKind, raw, manifest, owner string
-	if err := tx.QueryRowContext(ctx, `SELECT p.check_kind,d.draft_kind,d.config_json,COALESCE(p.input_manifest_json,''),d.owner_subject_id FROM precheck_runs p JOIN export_drafts d ON d.draft_id=p.draft_id WHERE p.precheck_id=?`, input.PrecheckID).Scan(&kind, &draftKind, &raw, &manifest, &owner); err != nil {
+	var kind, draftKind, raw, manifest, owner, sourceID, derivation string
+	if err := tx.QueryRowContext(ctx, `SELECT p.check_kind,d.draft_kind,d.config_json,COALESCE(p.input_manifest_json,''),d.owner_subject_id,COALESCE(d.source_task_id,''),COALESCE(d.source_derivation,'') FROM precheck_runs p JOIN export_drafts d ON d.draft_id=p.draft_id WHERE p.precheck_id=?`, input.PrecheckID).Scan(&kind, &draftKind, &raw, &manifest, &owner, &sourceID, &derivation); err != nil {
 		return ErrPrecheckInvalid
 	}
 	if taskType(input) == "OBDUMPER_EXPORT" {
@@ -53,7 +54,10 @@ func validateTaskPrecheckKind(ctx context.Context, tx *sql.Tx, input TaskSubmiss
 		}
 		return nil
 	}
-	if kind != "NORMAL_IMPORT_PREFLIGHT" || draftKind != importdomain.TaskType || owner != input.CreatorSubjectID {
+	if taskType(input) == directload.TaskType {
+		return validateDirectLoadTaskPrecheck(ctx, tx, input, binding, kind, draftKind, raw, manifest, owner, sourceID, derivation)
+	}
+	if kind != "NORMAL_IMPORT_PREFLIGHT" || draftKind != importdomain.TaskType || owner != input.CreatorSubjectID || input.ParentTaskID != sourceID || input.DerivationKind != derivation {
 		return ErrPrecheckInvalid
 	}
 	snapshot, ok := normalImportSnapshot(input.SnapshotJSON)

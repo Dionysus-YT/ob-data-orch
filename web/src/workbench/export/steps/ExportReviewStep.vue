@@ -5,12 +5,13 @@ import { Alert as AAlert, Spin as ASpin, Button as AButton, Table as ATable, Bad
 import { precheckCheckLabel, precheckFixAction, precheckResultDetail, precheckResultLabel, precheckResultBlocksSubmission, precheckResultBlocked, type PrecheckRow } from '../exportPrecheckPresentation'
 
 const props = defineProps<{ model: ExportReviewStepModel }>()
-const { fieldPrefix, activePrecheck, draftDirty, draftLoadFailure, loadCreatedDraft, currentDraft, displayedDraftConfig, storageOutput, precheckWaitingForResults, precheckGroups, precheckOverview, commandPreview, copyCommand, previewingCommand, commandPreviewFailure, loadCommandPreview, copyFailure, submissionFailure, moveToStep } = toRefs(props.model)
+const { fieldPrefix, activePrecheck, draftDirty, draftLoadFailure, loadCreatedDraft, currentDraft, displayedDraftConfig, storageOutput, precheckWaitingForResults, precheckGroups, precheckOverview, precheckExpired, commandPreview, copyCommand, previewingCommand, commandPreviewFailure, loadCommandPreview, copyFailure, submissionFailure, moveToStep } = toRefs(props.model)
 type PrecheckTableRow = PrecheckRow & { groupTitle: string; label: string; fixAction: ReturnType<typeof precheckFixAction> }
 const parameterChecks = computed(() => Boolean(displayedDraftConfig.value?.filterConfig?.weakRead || displayedDraftConfig.value?.filterConfig?.enableHiddenPk || displayedDraftConfig.value?.ddlBehavior?.addExtraMessage))
 // 表格只展开现有展示分组，不复制报告状态或推断检查依赖。
 const tableRows = computed<PrecheckTableRow[]>(() => precheckGroups.value.flatMap(group => group.rows.map(row => ({ ...row, groupTitle: group.title, label: precheckCheckLabel(row.check, storageOutput.value, displayedDraftConfig.value?.objectScope.scopeKind, parameterChecks.value), fixAction: precheckFixAction(row) }))))
 const hasTemporalFormats = computed(() => Object.values(displayedDraftConfig.value?.dataFormat?.timestampFormats ?? {}).some(value => typeof value === 'string' && value.length > 0))
+const resultsStale = computed(() => precheckExpired.value || ['INVALIDATED', 'EXPIRED'].includes(activePrecheck.value?.status ?? ''))
 const columns: TableColumnsType<PrecheckTableRow> = [
   { title: '预检查项', key: 'check', width: 180 },
   { title: '状态', key: 'status', width: 155 },
@@ -33,16 +34,16 @@ const columns: TableColumnsType<PrecheckTableRow> = [
         </template>
       </AAlert>
       <AAlert v-if="displayedDraftConfig?.objectScope.scopeKind === 'QUERY_RESULT'" type="info" show-icon message="结果集预检查只确认连接" description="对象访问项是数据库级连接投影；不会执行查询 SQL，也不能证明被引用对象、语法和权限有效。这些由 OBDUMPER 执行时确认。" />
-      <ATable class="export-precheck-table" :columns="columns" :data-source="tableRows" row-key="check" :pagination="false" :scroll="{ x: 740 }" size="small">
+      <ATable class="wizard-precheck-table" :columns="columns" :data-source="tableRows" row-key="check" :pagination="false" :scroll="{ x: 740 }" size="small">
         <template #bodyCell="{ column, record: row }">
-          <div v-if="column.key === 'check'" class="export-precheck-identity">
+          <div v-if="column.key === 'check'" class="wizard-precheck-identity">
             <strong>{{ row.label }}</strong>
-            <small class="export-precheck-category">{{ row.groupTitle }}</small>
+            <small class="wizard-precheck-category">{{ row.groupTitle }}</small>
           </div>
-          <ABadge v-else-if="column.key === 'status'" :status="!row.result ? 'default' : row.result.status === 'PASSED' ? 'success' : row.result.status === 'FAILED' ? 'error' : 'warning'" :text="!row.result && activePrecheck?.status === 'FAILED' ? '未返回结果' : precheckResultLabel(row.result, precheckWaitingForResults)" />
-          <div v-else-if="column.key === 'result'" class="export-precheck-result">
+          <ABadge v-else-if="column.key === 'status'" :status="resultsStale ? 'warning' : precheckWaitingForResults ? 'processing' : !row.result ? 'default' : row.result.status === 'PASSED' ? 'success' : row.result.status === 'FAILED' ? 'error' : 'warning'" :text="resultsStale ? '已失效' : !row.result && activePrecheck?.status === 'FAILED' ? '未返回结果' : precheckResultLabel(row.result, precheckWaitingForResults)" />
+          <div v-else-if="column.key === 'result'" class="wizard-precheck-result">
             <span>{{ precheckResultDetail(row.result, storageOutput, displayedDraftConfig?.objectScope.scopeKind) || '—' }}</span>
-            <small v-if="precheckResultBlocksSubmission(row.result)" class="export-precheck-reason">{{ precheckResultBlocked(row.result) ? '依赖原因码' : '原因码' }}：<code>{{ row.result?.evidenceCode }}</code></small>
+            <small v-if="precheckResultBlocksSubmission(row.result)" class="wizard-precheck-reason">{{ precheckResultBlocked(row.result) ? '依赖原因码' : '原因码' }}：<code>{{ row.result?.evidenceCode }}</code></small>
           </div>
           <template v-else-if="column.key === 'action'">
             <AButton v-if="precheckResultBlocksSubmission(row.result)" type="link" size="small" @click="moveToStep(row.fixAction.step)">{{ row.fixAction.label }}</AButton>
@@ -51,12 +52,12 @@ const columns: TableColumnsType<PrecheckTableRow> = [
         </template>
       </ATable>
     </section>
-    <section class="command-empty export-review-command" :aria-labelledby="`${fieldPrefix}-command-heading`">
-      <div class="export-command-heading">
+    <section class="wizard-command" :aria-labelledby="`${fieldPrefix}-command-heading`">
+      <div class="wizard-section-heading">
         <h3 :id="`${fieldPrefix}-command-heading`">完整命令（敏感信息已脱敏）</h3>
         <AButton :disabled="!commandPreview" @click="copyCommand">复制脱敏命令</AButton>
       </div>
-      <ASpin v-if="previewingCommand" tip="正在生成命令预览…"><span class="export-loading-space" /></ASpin>
+      <ASpin v-if="previewingCommand" tip="正在生成命令预览…"><span class="wizard-loading-space" /></ASpin>
       <pre v-else-if="commandPreview"><code>{{ commandPreview.command }}</code></pre>
       <p v-else>命令预览尚未准备好。</p>
       <p v-if="commandPreview">密码占位已脱敏，复制的命令仅供核对，不能直接执行。</p>

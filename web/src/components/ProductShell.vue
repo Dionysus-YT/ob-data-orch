@@ -9,15 +9,16 @@ import {
   HddFilled,
   HomeFilled,
   ImportOutlined,
-  KeyOutlined,
   ProfileFilled,
-  SettingFilled,
   ThunderboltFilled,
 } from '@ant-design/icons-vue'
 import ProductHeader from './ProductHeader.vue'
+import ProductSystemNavigation from './ProductSystemNavigation.vue'
+import { provideLogoutGuard } from '@/composables/useLogoutGuard'
 import { Button, Modal, Tooltip } from 'ant-design-vue'
 
 const route = useRoute()
+provideLogoutGuard()
 const helpOpen = ref(false)
 const navigationOpen = ref(false)
 const navigationElement = ref<HTMLElement>()
@@ -29,7 +30,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateNavigationMode)
 // 折叠导航在打开后将焦点移至当前位置，关闭后返回触发按钮，避免键盘用户跳过菜单。
 watch(navigationOpen, async (open) => {
   await nextTick()
-  if (open) (navigationElement.value?.querySelector<HTMLElement>('[aria-current="page"]') ?? navigationElement.value?.querySelector<HTMLElement>('a'))?.focus()
+  if (open) {
+    // 当前子项被收起时聚焦所属父级，避免把焦点交给不可见链接。
+    const candidates = ['[aria-current="page"]', '.nav-section-current', 'a'].map(selector => navigationElement.value?.querySelector<HTMLElement>(selector))
+    candidates.find(element => element?.getClientRects().length)?.focus()
+  }
   else navigationToggle.value?.focus()
 })
 // 页面切换后关闭窄屏导航；草稿离开保护仍交由现有路由守卫处理。
@@ -39,7 +44,6 @@ const navGroups = [
   { label: '运行概览', items: [{ label: '首页', to: '/', icon: HomeFilled }] },
   { label: '任务配置', items: [{ label: '数据源管理', to: '/data-sources', icon: DatabaseFilled }, { label: '导出任务', to: '/exports/new', icon: ExportOutlined }, { label: '普通导入', to: '/imports/normal/new', icon: ImportOutlined }, { label: '旁路导入', to: '/imports/direct/new', icon: ThunderboltFilled }, { label: '模板中心', to: '/templates', icon: ProfileFilled }] },
   { label: '运行与支持', items: [{ label: '任务中心', to: '/tasks', icon: ContainerFilled }, { label: '执行节点', to: '/nodes', icon: HddFilled }, { label: '日志中心', to: '/logs', icon: FileTextFilled }] },
-  { label: '平台设置', items: [{ label: '系统设置', to: '/settings', icon: SettingFilled }, { label: '存储凭据', to: '/settings/storage-credentials', icon: KeyOutlined }] },
 ]
 
 const wideContent = computed(() => route.meta.contentWidth === 'wide')
@@ -63,6 +67,7 @@ const activeNavigation = computed(() => navGroups.flatMap((group) => group.items
             </RouterLink>
           </Tooltip>
         </section>
+        <ProductSystemNavigation :collapsed="collapsedNavigation" />
       </nav>
     </aside>
     <div class="page-frame">

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CloseOutlined, SearchOutlined } from '@ant-design/icons-vue'
-import { Button as AButton, DatePicker, FormItem as AFormItem, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Tag as ATag } from 'ant-design-vue'
+import { Alert as AAlert, Button as AButton, DatePicker, FormItem as AFormItem, Input as AInput, Select as ASelect, SelectOption as ASelectOption, Tag as ATag } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -22,8 +22,9 @@ const datePresets = computed(() => [
   { label: '本月', value: [presetToday.value.startOf('month'), presetToday.value] },
 ])
 function refreshDatePresets(open: boolean) { if (open) presetToday.value = dayjs().startOf('day') }
-const createdRangeError = computed(() => props.dateRangeError ? taskListDateRangeError({ ...props.filters, startedFrom: '', startedTo: '' }) : '')
-const startedRangeError = computed(() => props.dateRangeError ? taskListDateRangeError({ ...props.filters, createdFrom: '', createdTo: '' }) : '')
+const createdRangeError = computed(() => props.dateRangeError ? taskListDateRangeError({ ...props.filters, startedFrom: '', startedTo: '', finishedFrom: '', finishedTo: '' }) : '')
+const startedRangeError = computed(() => props.dateRangeError ? taskListDateRangeError({ ...props.filters, createdFrom: '', createdTo: '', finishedFrom: '', finishedTo: '' }) : '')
+const finishedRangeError = computed(() => props.dateRangeError ? taskListDateRangeError({ ...props.filters, createdFrom: '', createdTo: '', startedFrom: '', startedTo: '' }) : '')
 const dateRangeValue = (from: string, to: string): [string, string] | undefined => from || to ? [from, to] : undefined
 function updateDateRange(kind: 'created' | 'started', dates: unknown) {
   const values = Array.isArray(dates) ? dates : []
@@ -78,7 +79,7 @@ function clearAll() {
           <ASelectOption value="">全部类型</ASelectOption>
           <ASelectOption value="OBDUMPER_EXPORT">导出</ASelectOption>
           <ASelectOption value="OBLOADER_NORMAL_IMPORT">普通导入</ASelectOption>
-          <ASelectOption value="OBLOADER_DIRECT_LOAD" disabled>旁路导入（尚未开放）</ASelectOption>
+          <ASelectOption value="OBLOADER_DIRECT_LOAD">旁路导入</ASelectOption>
         </ASelect>
       </label>
       <label class="task-filter task-filter-state"><span class="orch-sr-only">任务状态</span>
@@ -126,6 +127,7 @@ function clearAll() {
       <!-- Tag 原生关闭图标不可聚焦，移除入口使用带可访问名称的按钮。 -->
       <ATag v-for="chip in chips" :key="chip.key" class="task-filter-chip">{{ chip.label }}<AButton type="text" size="small" class="task-filter-chip-remove" :aria-label="`移除筛选 ${chip.label}`" :disabled="disabled" @click="emit('update', chip.clear)"><template #icon><CloseOutlined aria-hidden="true" /></template></AButton></ATag>
     </div>
+    <AAlert v-if="finishedRangeError" type="error" show-icon :message="finishedRangeError" description="请移除终态时间条件后重新筛选，或从首页重新进入对应时间范围。" />
   </div>
 </template>
 

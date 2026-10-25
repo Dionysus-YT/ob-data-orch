@@ -62,7 +62,7 @@ test('普通导入保存恢复、第五步统一文件检查、脱敏命令和�
   await expect(page.getByRole('region', { name: '完整脱敏命令', exact: true }).locator('pre')).toContainText('-p ******')
   await expect(page.getByRole('button', { name: '复制脱敏命令', exact: true })).toBeEnabled()
   await expect(page.getByText('无法确认', { exact: true })).toHaveCount(2)
-  await expect(page.getByText('已通过', { exact: true })).toHaveCount(4)
+  await expect(page.getByText('通过', { exact: true })).toHaveCount(4)
   await expect(page.getByRole('button', { name: '提交并启动导入', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: '查看任务摘要', exact: true }).click()
   await expect(page.getByText('提交时可选填写，留空自动生成', { exact: true })).toBeVisible()
@@ -111,6 +111,7 @@ test('普通导入恢复失败保留明确错误并阻断旧草稿写入', async
 
 for (const taskName of ['', '合成自定义导入名称']) {
   test(`普通导入自动准备后提交弹窗${taskName ? '使用自定义名称' : '允许留空自动命名'}`, async ({ page }, info) => {
+    await page.setViewportSize(taskName ? { width: 1920, height: 1080 } : { width: 712, height: 464 })
     let revision = 1, commands = 0, checks = 0
     let submitted: Record<string, unknown> | undefined
     let config: NormalImportConfig = { dataSourceId: normalImportSources[0]!.id, nodeId: normalImportNode.id, database: 'synthetic_database', filePath: 'E:\\synthetic-import', content: 'DATA_ONLY', format: 'CSV', scope: 'ALL', objects: {}, parser: {}, execution: {}, cleanup: 'NONE', mapping: { kind: 'POSITION' } }
@@ -133,12 +134,19 @@ for (const taskName of ['', '合成自定义导入名称']) {
       return route.fulfill({ status: 404, json: {} })
     })
     await page.goto('/imports/normal/new?draft=submit-draft&step=5')
-    await expect(page.getByText('已通过', { exact: true })).toHaveCount(6)
+    await expect(page.getByText('通过', { exact: true })).toHaveCount(6)
     await expect(page.getByRole('region', { name: '完整脱敏命令', exact: true }).locator('pre')).toContainText('obloader')
     await expect(page.getByRole('button', { name: '生成命令预览', exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: '提交并启动导入', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '确认提交普通导入任务', exact: true })
     await expect(dialog).toBeVisible(); expect(submitted).toBeUndefined()
+    const cancel = dialog.getByRole('button', { name: '返回检查', exact: true })
+    await expect(cancel).toBeFocused()
+    // 打开后不主动滚动或聚焦补救，安全返回必须完整位于当前视口。
+    await expect.poll(() => cancel.evaluate(element => {
+      const box = element.getBoundingClientRect()
+      return box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth
+    })).toBe(true)
     const input = dialog.getByRole('textbox', { name: '任务名称（可选）', exact: true })
     await expect(input).toHaveValue(''); await input.fill(taskName ? `  ${taskName}  ` : '')
     await expect(dialog).toContainText('留空按目标数据库、文件格式、UTC 时间与任务标识自动生成')
@@ -182,15 +190,15 @@ test('普通导入自动检查工具前置阻断，手动重检区分未启用�
   })
   await page.goto('/imports/normal/new?draft=synthetic-tool-draft&step=5')
   const table = page.getByRole('region', { name: '普通导入任务预检查', exact: true })
-  await expect(table.getByText('未执行', { exact: true })).toHaveCount(3)
+  await expect(table.getByText('前置阻断，未执行', { exact: true })).toHaveCount(3)
   await expect(table.getByText('未通过', { exact: true })).toHaveCount(1)
   await expect(table.getByText('Java、OBLOADER 或本机依赖布局不符合要求，请在执行节点中检查环境。', { exact: true })).toBeVisible()
   await page.screenshot({ path: info.outputPath('normal-import-tool-blocked.png'), fullPage: true })
   expect(checksStarted).toBe(1)
   await page.getByRole('button', { name: '重新预检查', exact: true }).click()
   await expect(table.getByText('未启用', { exact: true })).toHaveCount(1)
-  await expect(table.getByText('未执行', { exact: true })).toHaveCount(2)
-  await expect(table.getByText('已通过', { exact: true })).toHaveCount(3)
+  await expect(table.getByText('前置阻断，未执行', { exact: true })).toHaveCount(2)
+  await expect(table.getByText('通过', { exact: true })).toHaveCount(3)
   await expect(table.getByText('当前节点尚未启用普通导入数据库连接检查，请更新 Agent 并核对本机只读 JDBC 检查配置。', { exact: true })).toBeVisible()
   await expect(table.getByText('未通过', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提交并启动导入', exact: true })).toBeDisabled()
@@ -237,7 +245,7 @@ test('普通导入低堆阻断提交，调整配置后重新检查清除旧失�
   await page.getByText('高级设置 · 资源、会话与数据行为', { exact: true }).click()
   await page.getByRole('textbox', { name: 'JVM 内存', exact: true }).fill('1G')
   await page.getByRole('button', { name: '查看预检查与命令', exact: true }).click()
-  await expect(table.getByText('已通过', { exact: true })).toHaveCount(6)
+  await expect(table.getByText('通过', { exact: true })).toHaveCount(6)
   await expect(table).not.toContainText('JVM 堆至少 700 MiB')
   await expect(page.getByRole('button', { name: '提交并启动导入', exact: true })).toBeEnabled()
   expect(checksStarted).toBe(2); expect(submitted).toBe(false); expect(errors).toEqual([])
@@ -280,7 +288,7 @@ test('普通导入逐项解释权限拒绝、定义未识别和元信息读取�
   await expect(table.getByText('无法确认', { exact: true })).toHaveCount(2)
   await expect(table).toContainText('读取当前账号的授权信息失败'); await expect(table).toContainText('读取目标表列元信息失败')
   await page.getByRole('button', { name: '重新预检查', exact: true }).click()
-  await expect(table.getByText('已通过', { exact: true })).toHaveCount(6)
+  await expect(table.getByText('通过', { exact: true })).toHaveCount(6)
   await expect(table.getByText('无法确认', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提交并启动导入', exact: true })).toBeDisabled()
   expect(errors).toEqual([])

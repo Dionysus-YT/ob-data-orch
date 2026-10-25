@@ -1,5 +1,6 @@
 import type { TaskListAction, TaskListItem } from '@/api/browser'
 import { isKnownTaskState, taskStateBadge, taskStateText, taskTypeText } from './taskStatePresentation'
+import { taskProgressPresentation } from './taskProgressPresentation'
 
 export function taskStateLabel(task: Pick<TaskListItem, 'state'>): string {
   return taskStateText(task.state)
@@ -14,10 +15,9 @@ export function taskStateBadgeStatus(task: Pick<TaskListItem, 'state' | 'reconci
   return taskStateBadge(task.state, taskNeedsReconciliation(task))
 }
 
-// 契约当前把阶段证据固定为 UNAVAILABLE；没有可靠阶段映射时不写“暂无可靠阶段”这类占位，页面留空。
-// 将来接入可靠阶段时在此处映射，调用方无需改动。
-export function taskStageLabel(): string {
-  return ''
+// 阶段只消费服务端固定事实；没有证据时不增加占位次行。
+export function taskStageLabel(task?: Pick<TaskListItem, 'progress' | 'state' | 'reconciliationRequired' | 'type'>): string {
+  return task ? taskProgressPresentation(task.progress, task.state, task.reconciliationRequired, task.type).phase : ''
 }
 
 export function taskTypeLabel(type: TaskListItem['type']): string {

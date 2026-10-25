@@ -1,30 +1,17 @@
-import { ref, computed, watch, nextTick, onScopeDispose } from 'vue'
+import { ref, computed, watch, onScopeDispose } from 'vue'
 import { type ExportDraft, type CommandPreview, type Precheck, exportDraftErrorMessage } from '@/api/browser'
 import { groupPrecheckRows, precheckBlockingSummary, precheckChecksForOutput, precheckResultBlocksSubmission } from './exportPrecheckPresentation'
 import type { ExportForm } from './exportForm'
 import type { ExportReferences } from './useExportReferences'
 import type { ExportRuntime } from './exportRuntime'
 import type { ExportParameters } from './useExportParameters'
+import { useExportDraftPersistence } from './useExportDraftPersistence'
 
 // useExportDraftLifecycle 管理草稿、命令预览、预检查和提交事务。
-export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences, 'sources' | 'nodes' | 'selectedSourceRevision'> & Pick<ExportRuntime, 'activeStep' | 'route' | 'api' | 'moveToStep' | 'router'> & Pick<ExportParameters, 'draftInput'> & { hydrateDraft(draft: ExportDraft): void }) {
+export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences, 'sources' | 'nodes' | 'selectedSourceRevision'> & Pick<ExportRuntime, 'activeStep' | 'route' | 'api' | 'moveToStep' | 'router'> & Pick<ExportParameters, 'draftInput'> & Partial<Pick<ExportParameters, 'saveDraftInput'>> & { hydrateDraft(draft: ExportDraft): void }) {
   const {
-    fields, selectedDataSourceID, selectedNodeID, hydratingDerivedDraft, sources, nodes,
-    selectedSourceRevision, activeStep, route, api, moveToStep, router, draftInput,
+    hydratingDerivedDraft, selectedDataSourceID, selectedNodeID, sources, nodes, activeStep, route, api, router,
   } = deps
-  const draftFailure = ref('')
-  const draftNotice = ref('')
-  const operationNotice = ref('')
-
-  const creatingDraft = ref(false)
-  const createdDraftID = ref('')
-
-  const currentDraft = ref<ExportDraft | null>(null)
-  const draftDirty = ref(false)
-
-  const loadingDraft = ref(false)
-  const draftLoadFailure = ref('')
-
   const commandPreview = ref<CommandPreview | null>(null)
   const previewingCommand = ref(false)
 
@@ -41,15 +28,12 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   const submitConfirmationOpen = ref(false)
 
   // 保存请求期间若表单继续变化，旧响应只能更新草稿版本，不能解锁预检查或提交。
-  let formVersion = 0
   let disposed = false
-  let draftReadEpoch = 0
   let previewEpoch = 0
   let precheckStartEpoch = 0
   let autoPrecheckVersion = -1
   let precheckExpiryTimer: ReturnType<typeof setTimeout> | undefined
   const precheckExpired = ref(false)
-  let lastRecovery: { draftID: string; derived: boolean } | undefined
   onScopeDispose(() => {
     disposed = true
     stopPrecheckPolling()
@@ -60,6 +44,22 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   const copyNotice = ref('')
   const copyFailure = ref('')
   let copyEpoch = 0
+  let submissionEpoch = 0, autoPreviewVersion = -1
+  const submittedTaskID = ref('')
+  const persistence = useExportDraftPersistence({ ...deps, resetReview,
+    busy: computed(() => submitting.value || startingPrecheck.value || precheckRunning.value || previewingCommand.value),
+  })
+  const { currentDraft, createdDraftID, creatingDraft, loadingDraft, draftFailure, draftLoadFailure, draftNotice, operationNotice, draftDirty, formVersion, createDraft, loadDerivedDraft, loadCreatedDraft, clearDraftState, invalidateDraftState } = persistence
+
+  function resetReview() {
+    previewEpoch++; precheckStartEpoch++; copyEpoch++; submissionEpoch++
+    autoPrecheckVersion = autoPreviewVersion = -1
+    previewingCommand.value = startingPrecheck.value = submitting.value = false
+    stopPrecheckPolling()
+    commandPreview.value = null; activePrecheck.value = null; precheckID.value = ''
+    commandPreviewFailure.value = copyNotice.value = copyFailure.value = precheckFailure.value = submissionFailure.value = ''
+    submitConfirmationOpen.value = false; submittedTaskID.value = ''
+  }
 
   const displayedDraftConfig = computed(() => currentDraft.value?.config)
   const draftScopeSummary = computed(() => {
@@ -76,6 +76,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
     const config = displayedDraftConfig.value
     if (!config) return ''
     const content = config.contentSelection.contentKind
+    if (!content) return '未选择'
     if (config.objectScope.scopeKind === 'QUERY_RESULT') return `按结果集导出 · ${config.dataFormat?.formatKind ?? 'CSV'}`
     if (content === 'DDL_ONLY') return '仅 DDL'
     if (content === 'DDL_AND_DATA') return `DDL + 数据 · ${config.dataFormat?.formatKind ?? 'CSV'}`
@@ -84,6 +85,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   })
 
   const draftDeliverySummary = computed(() => {
+    if (!displayedDraftConfig.value?.contentSelection.contentKind) return '未选择导出内容'
     const format = displayedDraftConfig.value?.dataFormat
     if (!format) return '仅结构，无数据文件格式'
     const options = format.csvOptions
@@ -127,7 +129,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   const precheckReadyForSubmission = computed(() => {
     const draft = currentDraft.value
     const precheck = activePrecheck.value
-    return Boolean(draft && precheck && commandPreview.value
+    return Boolean(draft && draft.draftState !== 'EDITING' && precheck && commandPreview.value
       && !draftDirty.value && !precheckExpired.value && !precheckFailure.value && !loadingDraft.value
       && precheck.status === 'SUCCEEDED' && precheck.integrityStatus === 'COMPLETE'
       && precheck.draftId === draft.id && precheck.draftRevision === draft.revision
@@ -136,11 +138,12 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
       && precheckRows.value.every(row => row.result?.status === 'PASSED'))
   })
   const canSubmit = computed(() => precheckReadyForSubmission.value && !submitting.value && !startingPrecheck.value && !precheckRunning.value)
-  const canStartPrecheck = computed(() => Boolean(currentDraft.value && commandPreview.value && !draftDirty.value
+  const canStartPrecheck = computed(() => Boolean(currentDraft.value && currentDraft.value.draftState !== 'EDITING' && commandPreview.value && !draftDirty.value
     && !loadingDraft.value && !creatingDraft.value && !startingPrecheck.value && !precheckRunning.value && !submitting.value))
 
   const precheckOverview = computed<{ type: 'info' | 'success' | 'warning' | 'error'; message: string; description: string }>(() => {
-    if (draftDirty.value) return { type: 'warning', message: '配置已变化，原检查结果已失效', description: '请返回第四步保存当前配置；再次进入本页时会自动检查。' }
+    if (draftDirty.value) return { type: 'warning', message: '配置已变化，原检查结果已失效', description: '请保存当前配置；补齐必填项后将自动准备预检查。' }
+    if (currentDraft.value?.draftState === 'EDITING') return { type: 'info', message: '草稿尚未完成配置', description: '已保存当前输入；补齐前四步后才能生成命令并预检查。' }
     if (draftLoadFailure.value) return { type: 'error', message: '无法读取草稿', description: draftLoadFailure.value }
     if (!currentDraft.value) return { type: 'info', message: loadingDraft.value ? '正在读取草稿' : '尚未准备好预检查', description: '请完成前四步并保存配置；草稿和命令准备就绪后自动检查。' }
     if (commandPreviewFailure.value) return { type: 'error', message: '无法准备预检查', description: commandPreviewFailure.value }
@@ -155,7 +158,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
     return { type: 'info', message: '等待自动预检查', description: '准备就绪后自动开始；检查结束后可手动重新检查。' }
   })
 
-  const derivedDraftBindingLocked = computed(() => currentDraft.value !== null && typeof route.query.draft === 'string' && route.query.draft === currentDraft.value.id)
+  const derivedDraftBindingLocked = computed(() => !!currentDraft.value?.sourceTaskId && typeof route.query.draft === 'string' && route.query.draft === currentDraft.value.id)
 
   let precheckPollTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -163,12 +166,20 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
 
   let precheckPollVersion = 0
 
+  // 保存仅持久化输入；进入第五步才准备命令，每个版本自动尝试一次，失败保留显式重试。
+  watch([activeStep, currentDraft, draftDirty, creatingDraft, loadingDraft, previewingCommand, hydratingDerivedDraft], () => {
+    const draft = currentDraft.value
+    if (disposed || activeStep.value !== 5 || !draft || draft.draftState === 'EDITING' || draftDirty.value || creatingDraft.value || loadingDraft.value || previewingCommand.value || hydratingDerivedDraft.value || commandPreview.value || autoPreviewVersion === formVersion.value) return
+    autoPreviewVersion = formVersion.value
+    void loadCommandPreview(draft)
+  }, { immediate: true, flush: 'post' })
+
   // 自动检查只为当前表单版本尝试一次；失败、重进页面或轮询更新不会形成重复探测。
   // 保存和回填完成前不发起事务，手动重试继续复用同一入口和防重边界。
   watch([activeStep, currentDraft, commandPreview, draftDirty, creatingDraft, loadingDraft, previewingCommand, hydratingDerivedDraft], () => {
     if (disposed || activeStep.value !== 5 || hydratingDerivedDraft.value || previewingCommand.value || !canStartPrecheck.value
-      || activePrecheck.value || precheckID.value || autoPrecheckVersion === formVersion) return
-    autoPrecheckVersion = formVersion
+      || activePrecheck.value || precheckID.value || autoPrecheckVersion === formVersion.value) return
+    autoPrecheckVersion = formVersion.value
     void startPrecheck()
   }, { immediate: true, flush: 'post' })
 
@@ -182,59 +193,6 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
     precheckExpired.value = result?.status === 'SUCCEEDED' && (!Number.isFinite(remaining) || remaining <= 0)
     if (!disposed && result?.status === 'SUCCEEDED' && !precheckExpired.value) {
       precheckExpiryTimer = setTimeout(refreshPrecheckExpiry, Math.min(remaining, 2_147_483_647))
-    }
-  }
-
-  watch([selectedSourceRevision, ...Object.values(fields)], () => {
-    if (hydratingDerivedDraft.value) return
-    // 任一配置变化都会清除旧预览和预检查；已有草稿保留标识，待保存时更新。
-    invalidateDraftState()
-  }, { deep: true, flush: 'sync' })
-
-  // 数据源与节点绑定不可更新；新绑定必须创建新草稿。
-  watch([selectedDataSourceID, selectedNodeID], () => {
-    if (hydratingDerivedDraft.value) return
-    const draft = currentDraft.value
-    if (draft && (draft.dataSourceId !== selectedDataSourceID.value || draft.nodeId !== selectedNodeID.value)) clearDraftState()
-  }, { flush: 'sync' })
-
-  // 派生入口与同会话保存恢复共用回填；只有派生入口要求 query.draft 仍匹配。
-  async function loadDerivedDraft(draftID: string, derived = true) {
-    if (disposed) return
-    clearDraftState()
-    lastRecovery = { draftID, derived }
-    const epoch = ++draftReadEpoch
-    const requestedVersion = formVersion
-    loadingDraft.value = true
-    draftLoadFailure.value = ''
-    try {
-      const draft = await api.getExportDraft(draftID)
-      if (disposed || epoch !== draftReadEpoch) return
-      if (formVersion !== requestedVersion) {
-        draftNotice.value = '读取草稿期间配置已有变化，未覆盖当前输入。'
-        return
-      }
-      if (derived && (typeof route.query.draft !== 'string' || route.query.draft !== draftID)) return
-      hydratingDerivedDraft.value = true
-      try {
-        deps.hydrateDraft(draft)
-        // Vue 默认在下一轮刷新 watcher；保持 hydration 标记直到本轮 watcher 全部跳过。
-        await nextTick()
-      } finally {
-        hydratingDerivedDraft.value = false
-      }
-      if (disposed || epoch !== draftReadEpoch) return
-      createdDraftID.value = draftID
-      currentDraft.value = draft
-      draftDirty.value = false
-      draftNotice.value = derived && draft.sourceTaskId
-        ? '已加载来源任务派生的草稿；基于原配置新建可以修改参数，从头重新执行不允许修改参数（提交时由服务端复验）。'
-        : '已从服务端恢复最近保存的导出草稿；命令重新生成，预检查需要重新执行。'
-      await loadCommandPreview(draft)
-    } catch (error) {
-      if (!disposed && epoch === draftReadEpoch) draftLoadFailure.value = exportDraftErrorMessage(error, '无法读取导出草稿。')
-    } finally {
-      if (!disposed && epoch === draftReadEpoch) loadingDraft.value = false
     }
   }
 
@@ -254,131 +212,8 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
     }
   }
 
-  async function createDraft(advance = true) {
-    const input = draftInput.value
-    if (disposed || !input || creatingDraft.value || submitting.value) return
-    creatingDraft.value = true
-    // EX-I8：已加载的派生草稿在步骤 5 保存时走更新路径，保留来源任务标记；
-    // 全新草稿仍走创建路径。
-    const existing = currentDraft.value
-    if (existing) invalidateDraftState()
-    else clearDraftState()
-    const savedVersion = formVersion
-    try {
-      if (existing) {
-        const updated = await api.updateExportDraft({ ...existing, dataSourceId: input.dataSourceId, nodeId: input.nodeId, config: input.config })
-        if (disposed) return
-        if (updated.dataSourceId !== selectedDataSourceID.value || updated.nodeId !== selectedNodeID.value) {
-          clearDraftState()
-          draftNotice.value = '保存期间更换了数据源或执行节点；请为当前绑定创建新草稿。'
-          return
-        }
-        createdDraftID.value = updated.id
-        currentDraft.value = updated
-        draftDirty.value = formVersion !== savedVersion
-        draftNotice.value = draftDirty.value ? '保存期间配置又有变化；请再次保存当前配置。' : ''
-        if (draftDirty.value) return
-        operationNotice.value = '草稿已保存。'
-        if (advance) moveToStep(5)
-        await loadCommandPreview(updated)
-        return
-      }
-      const draftID = await api.createExportDraft(input)
-      if (disposed) return
-      if (input.dataSourceId !== selectedDataSourceID.value || input.nodeId !== selectedNodeID.value) {
-        clearDraftState()
-        draftNotice.value = '保存期间更换了数据源或执行节点；请为当前绑定创建新草稿。'
-        return
-      }
-      createdDraftID.value = draftID
-      if (formVersion === savedVersion) operationNotice.value = '导出草稿已创建。'
-      draftNotice.value = ''
-      await loadCreatedDraft(draftID, savedVersion)
-      if (advance && currentDraft.value && !draftDirty.value) moveToStep(5)
-    } catch (error) {
-      if (disposed) return
-      draftFailure.value = exportDraftErrorMessage(error, '无法创建导出草稿，请检查当前配置后重试。')
-    } finally {
-      if (!disposed) creatingDraft.value = false
-    }
-  }
-
-  function clearDraftState() {
-    lastRecovery = undefined
-    draftReadEpoch++
-    previewEpoch++
-    precheckStartEpoch++
-    autoPrecheckVersion = -1
-    loadingDraft.value = false
-    previewingCommand.value = false
-    startingPrecheck.value = false
-    stopPrecheckPolling()
-    createdDraftID.value = ''
-    currentDraft.value = null
-    draftDirty.value = false
-    draftFailure.value = ''
-    draftLoadFailure.value = ''
-    draftNotice.value = ''
-    operationNotice.value = ''
-    commandPreview.value = null
-    commandPreviewFailure.value = ''
-    copyEpoch++
-    copyNotice.value = copyFailure.value = ''
-    activePrecheck.value = null
-    precheckID.value = ''
-    precheckFailure.value = ''
-    submissionFailure.value = ''
-    submitConfirmationOpen.value = false
-  }
-
-  // invalidateDraftState 清除旧预览与预检查，同时保留草稿标识；后续保存更新同一草稿，
-  // 派生草稿因此不会丢失来源关系，普通草稿也不会在每次编辑后生成孤立副本。
-  function invalidateDraftState() {
-    formVersion += 1
-    const draft = currentDraft.value
-    clearDraftState()
-    if (!draft) return
-    createdDraftID.value = draft.id
-    currentDraft.value = draft
-    draftDirty.value = true
-    draftNotice.value = '当前配置有未保存更改；保存后需重新生成命令预览与预检查。'
-  }
-
-  async function loadCreatedDraft(draftID = createdDraftID.value, savedVersion?: number) {
-    if (disposed) return
-    if (!draftID) {
-      if (lastRecovery) await loadDerivedDraft(lastRecovery.draftID, lastRecovery.derived)
-      return
-    }
-    const epoch = ++draftReadEpoch
-    loadingDraft.value = true
-    draftLoadFailure.value = ''
-    commandPreview.value = null
-    commandPreviewFailure.value = ''
-    try {
-      const draft = await api.getExportDraft(draftID)
-      if (disposed || epoch !== draftReadEpoch || createdDraftID.value !== draftID) return
-      if (draft.dataSourceId !== selectedDataSourceID.value || draft.nodeId !== selectedNodeID.value) {
-        clearDraftState()
-        draftNotice.value = '读取草稿期间更换了数据源或执行节点；请为当前绑定创建新草稿。'
-        return
-      }
-      currentDraft.value = draft
-      draftDirty.value = savedVersion !== undefined && formVersion !== savedVersion
-      draftNotice.value = draftDirty.value ? '保存期间配置又有变化；请再次保存当前配置。' : ''
-      if (draftDirty.value) return
-      await loadCommandPreview(draft)
-    } catch (error) {
-      if (disposed || epoch !== draftReadEpoch || createdDraftID.value !== draftID) return
-      currentDraft.value = null
-      draftLoadFailure.value = exportDraftErrorMessage(error, '无法读取刚创建的导出草稿，请重试。')
-    } finally {
-      if (!disposed && epoch === draftReadEpoch && createdDraftID.value === draftID) loadingDraft.value = false
-    }
-  }
-
   async function loadCommandPreview(draft = currentDraft.value) {
-    if (disposed || !draft || draftDirty.value) return
+    if (disposed || !draft || draft.draftState === 'EDITING' || draftDirty.value) return
     const epoch = ++previewEpoch
     previewingCommand.value = true
     commandPreview.value = null
@@ -398,10 +233,10 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
 
   async function startPrecheck() {
     if (disposed || !canStartPrecheck.value || !currentDraft.value) return
-    autoPrecheckVersion = formVersion
+    autoPrecheckVersion = formVersion.value
     const epoch = ++precheckStartEpoch
-    const version = formVersion
-    const isCurrent = () => !disposed && epoch === precheckStartEpoch && version === formVersion && !draftDirty.value
+    const version = formVersion.value
+    const isCurrent = () => !disposed && epoch === precheckStartEpoch && version === formVersion.value && !draftDirty.value
     startingPrecheck.value = true
     precheckFailure.value = ''
     try {
@@ -453,17 +288,19 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
 
   async function confirmSubmitTask() {
     if (disposed || !currentDraft.value || !activePrecheck.value || !canSubmit.value) return
+    const request = ++submissionEpoch, version = formVersion.value
     submitting.value = true
     submissionFailure.value = ''
     try {
       const taskID = await api.submitExportDraft(currentDraft.value, activePrecheck.value.id)
-      if (disposed) return
+      if (disposed || request !== submissionEpoch || version !== formVersion.value) return
       submitConfirmationOpen.value = false
+      submittedTaskID.value = taskID
       await router.push(`/tasks/${encodeURIComponent(taskID)}`)
     } catch (error) {
-      if (!disposed) submissionFailure.value = exportDraftErrorMessage(error, '任务未能提交；请重新读取预检查后重试。')
+      if (!disposed && request === submissionEpoch) submissionFailure.value = exportDraftErrorMessage(error, '任务未能提交；请重新读取预检查后重试。')
     } finally {
-      if (!disposed) submitting.value = false
+      if (!disposed && request === submissionEpoch) submitting.value = false
     }
   }
 
@@ -516,6 +353,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   }
 
   return {
+    ...persistence, submittedTaskID,
     draftFailure, draftNotice, operationNotice, creatingDraft, createdDraftID, currentDraft, draftDirty, loadingDraft,
     draftLoadFailure, commandPreview, previewingCommand, commandPreviewFailure, activePrecheck, precheckID,
     startingPrecheck, precheckFailure, submitting, submissionFailure, submitConfirmationOpen,

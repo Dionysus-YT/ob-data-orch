@@ -1,4 +1,5 @@
 import type { NormalImportCheck } from '@/api/normalImport'
+import { importPrecheckItems } from './normalImportOptions'
 
 type CheckResult = NormalImportCheck['results'][number]
 
@@ -35,6 +36,7 @@ const reasons: Record<string, string> = {
   IMPORT_AUTO_COLUMNS_UNSUPPORTED: '自动列映射涉及目标结构之外的源列，当前检查器尚不能可靠确认此组合。',
   IMPORT_INPUT_FILES_CHANGED: '文件在发现后发生变化，或无法重新读取并复核摘要，请核对输入后重新预检查。',
   IMPORT_COLUMN_COUNT_MISMATCH: '首条数据记录的列数与当前映射后的目标列数不一致。',
+  IMPORT_CSV_WHITESPACE_UNQUOTED: 'CSV 存在未用字符串包围符引用的首尾空白，当前工具会移除这些空白。请先将需要保留空白的字段正确加引号；只有明确需要删除空白时才启用“去除左右空格”并重新检查。',
   IMPORT_COLUMN_NAME_MISMATCH: '输入列名或显式列名单包含目标表中不存在的列。',
   IMPORT_REQUIRED_COLUMN_MISSING: '当前映射遗漏了没有默认值、非自增的必填目标列。',
 }
@@ -46,13 +48,32 @@ const unconfiguredChecks: Record<string, string> = {
 
 // 只呈现固定证据码的安全说明；失效、等待和前置阻断优先于旧的单项通过结果。
 export function normalImportPrecheckPresentation(check: NormalImportCheck | null, result: CheckResult | undefined, expired: boolean) {
-  if (!check || !result) return { status: 'default', text: '尚未执行', detail: '' }
+  if (!check) return { status: 'default', text: '未开始', detail: '' }
   if (expired || ['INVALIDATED', 'EXPIRED'].includes(check.status)) return { status: 'warning', text: '已失效', detail: '检查已过期或绑定事实已变化，请重新检查。' }
-  if (['PENDING', 'LEASED'].includes(check.status)) return { status: 'processing', text: '等待检查', detail: '等待 Agent 返回当前配置的检查结果。' }
-  if (result.status === 'PASSED') return { status: 'success', text: '已通过', detail: '' }
+  if (['PENDING', 'LEASED'].includes(check.status)) return { status: 'processing', text: '等待检查结果', detail: '等待 Agent 返回当前配置的检查结果。' }
+  if (!result) return { status: 'warning', text: '未返回结果', detail: '未取得本项结果，请重新检查。' }
+  if (result.status === 'PASSED') return { status: 'success', text: '通过', detail: '' }
   if (result.status === 'FAILED') return { status: 'error', text: '未通过', detail: reasons[result.evidenceCode] ?? '检查未通过，请核对对应配置后重新检查。' }
-  if (result.evidenceCode === 'PRECHECK_BLOCKED_BY_TOOL') return { status: 'warning', text: '未执行', detail: '执行工具检查未通过，当前检查尚未执行；请先检查执行节点的工具环境。' }
-  if (result.evidenceCode === 'PRECHECK_BLOCKED_BY_DATABASE') return { status: 'warning', text: '未执行', detail: '目标数据库连接检查未通过，当前检查尚未执行。' }
+  if (result.evidenceCode === 'PRECHECK_BLOCKED_BY_TOOL') return { status: 'warning', text: '前置阻断，未执行', detail: '执行工具检查未通过，当前检查尚未执行；请先检查执行节点的工具环境。' }
+  if (result.evidenceCode === 'PRECHECK_BLOCKED_BY_DATABASE') return { status: 'warning', text: '前置阻断，未执行', detail: '目标数据库连接检查未通过，当前检查尚未执行。' }
   if (result.evidenceCode === 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED') return { status: 'warning', text: '未启用', detail: unconfiguredChecks[result.check] ?? '当前节点尚未启用普通导入的这项检查，请核对 Agent 版本与配置。' }
   return { status: 'warning', text: '无法确认', detail: reasons[result.evidenceCode] ?? '未能取得有效检查证据，请重试或核对节点状态。' }
+}
+
+// 只按普通导入的固定六项汇总，不使用导出清单或客户端推测检查依赖。
+export function normalImportBlockingSummary(check: NormalImportCheck) {
+  const results = importPrecheckItems.map(item => check.results.find(result => result.check === item.check))
+  const blocked = (result: CheckResult | undefined) => result?.status === 'UNKNOWN' && ['PRECHECK_BLOCKED_BY_TOOL', 'PRECHECK_BLOCKED_BY_DATABASE'].includes(result.evidenceCode)
+  const failed = results.filter(result => result?.status === 'FAILED').length
+  const blockedCount = results.filter(blocked).length
+  const unknown = results.filter(result => !result || result.status === 'UNKNOWN' && !blocked(result)).length
+  return [failed && `${failed} 项未通过`, blockedCount && `${blockedCount} 项因前置条件未执行`, unknown && `${unknown} 项无法确认`].filter(Boolean).join('，')
+}
+
+export function normalImportPrecheckFixAction(check: string, result: CheckResult | undefined) {
+  if (result?.evidenceCode === 'PRECHECK_BLOCKED_BY_TOOL' || check === 'TOOL_ENVIRONMENT') return { step: 2, label: '检查执行节点' }
+  if (result?.evidenceCode === 'PRECHECK_BLOCKED_BY_DATABASE' || ['DATABASE_CONNECTIVITY', 'WRITE_ACCESS'].includes(check)) return { step: 1, label: '检查数据源' }
+  if (check === 'NODE_RESOURCE') return { step: 4, label: '修改执行参数' }
+  if (check === 'INPUT_MAPPING') return { step: 3, label: '修改对象与映射' }
+  return { step: 2, label: '修改输入文件' }
 }

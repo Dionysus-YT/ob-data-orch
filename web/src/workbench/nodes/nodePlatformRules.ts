@@ -39,7 +39,7 @@ export function nodePlatformHelp(platform: ExecutionNodePlatform) {
     javaPathPlaceholder: 'C:\\Program Files\\Java\\jdk8\\bin\\java.exe',
     javaPathHint: '填写目标机器上 Java 8 的 bin\\java.exe 绝对路径；包含空格也直接填写，无需加引号。',
     rootPlaceholder: '/E:/ob-data/exports',
-    rootHint: '每行一个绝对目录，使用 /E:/exports 形式和正斜杠；Agent 运行账号须有写入权限。',
+    rootHint: '每行一个绝对目录，使用 /E:/exports 形式和正斜杠；导出输出与普通导入输入均须位于允许目录内；Agent 账户须分别具备所需的写入或读取权限。',
     agentInstallHint: '解压与 x86_64 架构匹配的 Agent 包，右键「启动.cmd」选择「以管理员身份运行」，菜单选择「1 启动」。',
   }
   return {
@@ -49,7 +49,7 @@ export function nodePlatformHelp(platform: ExecutionNodePlatform) {
     javaPathPlaceholder: '/usr/lib/jvm/java-8/bin/java',
     javaPathHint: `选择与 ${cpuArchitecture} 架构一致的 Java 8，填写以 / 开头的 bin/java 完整路径；Agent 运行账号须有执行权限。`,
     rootPlaceholder: '/var/lib/ob-data-orch/exports',
-    rootHint: '每行一个以 / 开头的绝对目录，路径区分大小写；Agent 运行账号须有写入权限。',
+    rootHint: '每行一个以 / 开头的绝对目录，路径区分大小写；导出输出与普通导入输入均须位于允许目录内；Agent 账户须分别具备所需的写入或读取权限。',
     agentInstallHint: `解压与 ${cpuArchitecture} 架构匹配的 Agent 包，在解压目录用 root 或 sudo 权限运行 start.sh，菜单选择「1 启动」。`,
   }
 }

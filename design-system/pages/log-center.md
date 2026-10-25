@@ -1,0 +1,17 @@
+# 日志中心 P1
+
+2026-10-25 任务日志首批。全局视觉沿用 [MASTER](../MASTER.md) 与已定版[数据源页](data-sources.md)，使用现有 Management / Table Archetype，不新增 Shell、Token 或日志专属 Archetype。业务和限制以[日志模块](../../docs/02-design/log-center-module.md)、[日志契约](../../docs/03-technical/log-collection-evidence-contract.md)为准。
+
+- 页头为日志中心与任务日志上下文。单一白色工作面承载时间（明确 UTC）、精确任务 ID、实际来源和关键字；首次不自动宽查，任务带入时重新授权并自动查。
+- 原生 Ant Form / RangePicker / Input / Select；字段错误归对应 Form.Item。默认最近 1 小时，手动设定时间后保持绝对范围；刷新默认相对范围时滚动最近 1 小时。
+- 实际快照、活动条件和已加载/已扫描数量不能冒充总量或采集完整性。Ant Table 展示接收时间、任务/真实通道、脱敏消息、同源上下文操作；当前来源未提供可靠级别或来源时间，不推断。
+- 表格消息最多渲染 1000 字符的摘要，保留换行、只作字面高亮。完整消息在同源抽屉；长文本及 ID 可换行，表格横滚限定在工作面内，分页在右下角。
+- 原生 Ant Drawer 展示同一 stream/epoch 前后各最多 50 个序号，按序正排，当前行标明来源序号。保留焦点陷阱、ESC 与关闭后回焦；失败清楚说明并支持当前会话重试。
+- 下载范围使用原生 Ant Modal 确认：当前筛选整个快照或指定任务的全部保留日志，显示快照、条件、未知总量、保留/缺口及脱敏声明。操作结果短时 Ant Message，持续风险/失败 Ant Alert。
+- loading 保留上次结果；改条件提示尚未应用并停用旧结果上的上下文/下载。撤权、失效游标撤下旧事实；重置、路由变化、卸载清理旧提示和异步会话。
+
+实际入口：[LogCenterView](../../web/src/views/LogCenterView.vue)，状态与事务所有者：[维护索引](../../web/src/workbench/log-query/README.md)。未接入来源不提供空预设；单任务实时流继续由任务详情持有。
+
+## 审计首批实现边界（2026-10-25）
+
+单页面增加审计预设，资格由显式能力确认后显示；任务和审计工作面各自持有表单与会话。审计表格沿用管理列表、原位过滤和右下角游标分页；详情为右侧 Ant Drawer 的固定安全字段，下载用 Ant Modal。没有候选对象目录、历史环境或原始差异浏览，不引入新 Shell、Token 或 Archetype。业务与安全收缩见[审计契约](../../docs/03-technical/log-center-audit-query-contract.md)。

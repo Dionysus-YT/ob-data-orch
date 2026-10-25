@@ -31,7 +31,7 @@ func Test节点物理内存成对投影且保留零可用量(t *testing.T) {
 			node := store.ExecutionNode{NodeID: "synthetic-node", Platform: "WINDOWS_AMD64", Agent: &store.ExecutionNodeAgent{
 				LastHeartbeatAt: &now, EnvironmentFacts: store.AgentEnvironmentFacts{ObservedAt: now, MemoryTotalBytes: tc.total, MemoryAvailableBytes: tc.available},
 			}}
-			response := server.newExecutionNodeListResponse(node)
+			response := server.newExecutionNodeListResponse(node, server.heartbeatTTL)
 			if response.AgentFacts == nil {
 				t.Fatal("已观测节点未投影机器摘要")
 			}

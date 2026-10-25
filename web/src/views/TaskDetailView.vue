@@ -6,22 +6,26 @@ import { useRoute, useRouter } from 'vue-router'
 import type { TaskListAction } from '@/api/browser'
 import { TypographyParagraph as ATypographyParagraph } from 'ant-design-vue'
 import { useOperationMessage } from '@/composables/useOperationMessage'
+import { navigateAntTabs } from '@/composables/antTabKeyboard'
 import { environmentTagTheme } from '@/platform/theme'
 import TaskActionDialogs from '@/workbench/tasks/TaskActionDialogs.vue'
 import TaskActionMenu from '@/workbench/tasks/TaskActionMenu.vue'
+import TaskProgress from '@/workbench/tasks/TaskProgress.vue'
+import { taskProgressPresentation } from '@/workbench/tasks/taskProgressPresentation'
 import { formatBytes } from '@/workbench/tasks/taskDetailPresentation'
-import { taskDetailPrimary, taskLogIsError, taskLogSource, taskOperationLabel, taskOperationResult, taskResultText, taskSnapshotGroups } from '@/workbench/tasks/taskDetailRules'
+import { taskDetailLocation, taskDetailPrimary, taskLogIsError, taskLogSource, taskOperationLabel, taskOperationResult, taskResultText, taskSnapshotGroups } from '@/workbench/tasks/taskDetailRules'
 import { taskFailureSummary } from '@/workbench/tasks/taskFailurePresentation'
 import { taskActionLabels, taskHistoricalName, taskMoreActions } from '@/workbench/tasks/taskListPresentation'
-import { taskDateTimeText as dateTime, taskDurationText, taskEnvironmentLabel, taskStateBadge, taskStateText } from '@/workbench/tasks/taskStatePresentation'
+import { taskDateTimeText as dateTime, taskDurationText, taskEnvironmentLabel, taskStateBadge, taskStateText, taskTypeText } from '@/workbench/tasks/taskStatePresentation'
 import { useTaskDetail } from '@/workbench/tasks/useTaskDetail'
 import { useTaskListActions } from '@/workbench/tasks/useTaskListActions'
 import { useTaskOperations } from '@/workbench/tasks/useTaskOperations'
+import { taskLogCenterRoute } from '@/workbench/tasks/taskLogCenterRoute'
 
 const route = useRoute()
 const router = useRouter()
 const detail = useTaskDetail(computed(() => typeof route.params.id === 'string' ? route.params.id : ''))
-const { session, overview, execution, snapshot, commandEvidence, logs, loading, failure, executionFailure, snapshotFailure, commandFailure, logFailure, logsExpired, logStreamStatus } = detail
+const { session, overview, execution, snapshot, commandEvidence, logs, loading, refreshing, refreshDone, failure, executionFailure, snapshotFailure, commandFailure, logFailure, logsExpired, logStreamStatus } = detail
 const actions = useTaskListActions({ navigate: location => router.push(location), beginMutation: detail.beginMutation, endMutation: detail.endMutation })
 const actionModel = reactive(actions)
 const { MessageContext } = useOperationMessage(actions.notice)
@@ -36,8 +40,12 @@ const snapshotGroups = computed(() => snapshot.value ? taskSnapshotGroups(snapsh
 const derivationLabel = computed(() => ({ REBUILD_FROM_CONFIG: '基于原配置新建', RERUN_FROM_SCRATCH: '从头重新执行', CHECKPOINT_RESUME: '从检查点继续' } as Record<string, string>)[overview.value?.derivationKind ?? ''] ?? '')
 const safeFailure = computed(() => execution.value?.errorSummary || taskFailureSummary(state.value, logs.value))
 const output = computed(() => execution.value?.outputLocation)
+const normalImport = computed(() => overview.value?.type === 'OBLOADER_NORMAL_IMPORT')
+const directLoad = computed(() => overview.value?.type === 'OBLOADER_DIRECT_LOAD')
+const location = computed(() => taskDetailLocation(overview.value?.type, snapshot.value ?? undefined, output.value))
 const remoteResult = computed(() => Boolean(output.value && ['OSS', 'S3', 'COS', 'OBS'].includes(output.value.kind)))
 const result = computed(() => execution.value?.resultSummary)
+const progress = computed(() => taskProgressPresentation(execution.value?.progress, state.value, execution.value?.reconciliationRequired, overview.value?.type))
 const filesExpanded = ref(false)
 const keyword = ref('')
 const source = ref<string>()
@@ -72,7 +80,7 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
       <div class="task-object-heading">
         <h1>{{ title }}</h1>
         <div v-if="overview" class="task-object-meta">
-          <ATypographyText :copyable="{ text: overview.id }" class="task-object-id">{{ overview.id }}</ATypographyText><span>导出</span>
+          <ATypographyText :copyable="{ text: overview.id }" class="task-object-id">{{ overview.id }}</ATypographyText><span>{{ taskTypeText(overview.type) }}</span>
           <ConfigProvider v-if="task?.environment" :theme="environmentTagTheme(task.environment)"><ATag :bordered="false">{{ taskEnvironmentLabel(task.environment) }}</ATag></ConfigProvider>
           <ABadge :status="taskStateBadge(state, execution?.reconciliationRequired)" :text="taskStateText(state)" />
           <ATag v-if="execution?.reconciliationRequired" color="warning">状态核对中</ATag>
@@ -82,7 +90,7 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
       </div>
       <div class="task-object-actions">
         <RouterLink v-slot="{ href, navigate }" :to="returnTo" custom><AButton type="text" :href="href" @click="navigate">返回任务中心</AButton></RouterLink>
-        <AButton type="text" :disabled="loading" aria-label="刷新" @click="detail.refresh()"><template #icon><ReloadOutlined /></template>刷新</AButton>
+        <AButton type="text" :loading="refreshing" :disabled="loading || refreshing || Boolean(actionModel.busyTaskId)" :aria-busy="refreshing" aria-label="刷新" @click="detail.refresh(true)"><template #icon><ReloadOutlined /></template>{{ refreshing ? '刷新中…' : refreshDone ? '已刷新' : '刷新' }}</AButton>
         <AButton v-if="primary" :type="primary === 'CANCEL' ? 'default' : 'primary'" :danger="primary === 'CANCEL'" :loading="Boolean(actionModel.busyTaskId)" :disabled="Boolean(actionModel.busyTaskId)" @click="request(primary)">{{ taskActionLabels[primary] }}</AButton>
         <TaskActionMenu v-if="more.length" :actions="more" label="更多操作" :session-key="overview?.id" :busy="Boolean(actionModel.busyTaskId)" @select="request" />
       </div>
@@ -95,24 +103,32 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
       <AAlert v-else-if="execution?.reconciliationRequired" class="orch-feedback" type="warning" message="状态核对中" :description="`最后可信状态：${taskStateText(state)}；最后核对：${dateTime(execution.updatedAt)}。`" show-icon />
       <AAlert v-else-if="state === 'CANCELLING'" class="orch-feedback" type="info" message="正在取消任务" :description="`取消截止时间：${dateTime(execution?.cancelDeadline)}。取消不回滚已经写入的文件或数据。`" show-icon />
       <AAlert v-if="actionModel.failure && !actionModel.confirmation" class="orch-feedback" type="error" message="操作未完成" :description="actionModel.failure" show-icon />
-      <section class="task-detail-surface">
-        <ATabs :active-key="activeTab" @change="setTab">
+      <section class="orch-management task-detail-surface" aria-label="任务详情工作面">
+        <ATabs :active-key="activeTab" @change="setTab" @keydown="navigateAntTabs">
           <ATabPane key="overview" tab="运行概览">
             <AAlert v-if="executionFailure" type="error" message="无法读取执行事实" :description="executionFailure" show-icon><template #action><AButton @click="detail.loadExecution()">重试</AButton></template></AAlert>
             <template v-else>
               <ADescriptions title="执行" :column="{ xs: 1, sm: 2, xl: 3 }" size="small">
-                <ADescriptionsItem label="任务状态">{{ taskStateText(state) }}</ADescriptionsItem><ADescriptionsItem label="当前阶段">—</ADescriptionsItem><ADescriptionsItem label="进度证据">工具未提供可靠进度</ADescriptionsItem>
-                <ADescriptionsItem label="提交时间">{{ dateTime(overview.submittedAt) }}</ADescriptionsItem><ADescriptionsItem label="开始时间">{{ dateTime(execution?.startedAt) }}</ADescriptionsItem><ADescriptionsItem label="结束时间">{{ dateTime(execution?.finishedAt) }}</ADescriptionsItem>
-                <ADescriptionsItem label="耗时">{{ taskDurationText(execution?.startedAt, execution?.finishedAt) || '—' }}</ADescriptionsItem><ADescriptionsItem label="最后核对">{{ dateTime(execution?.updatedAt) }}</ADescriptionsItem><ADescriptionsItem label="执行编号"><code>{{ execution?.executionId || '—' }}</code></ADescriptionsItem>
+                <ADescriptionsItem key="state" label="任务状态">{{ taskStateText(state) }}</ADescriptionsItem><ADescriptionsItem key="stage" label="当前阶段">{{ progress.phase || '—' }}</ADescriptionsItem><ADescriptionsItem key="progress" label="执行进度"><TaskProgress :progress="execution?.progress" :state="state" :reconciliation="execution?.reconciliationRequired" :type="overview.type" /></ADescriptionsItem>
+                <ADescriptionsItem v-if="state === 'WAITING_SCHEDULE' && execution?.schedulingWaitReason" key="scheduling-wait" label="等待原因">{{ execution.schedulingWaitReason === 'PLATFORM_CONCURRENCY_LIMIT' ? '平台并发上限暂时阻止新增执行' : '调度策略暂不可用' }}；恢复领取仍需满足节点、预算及预检查条件。</ADescriptionsItem>
+                <ADescriptionsItem key="submitted" label="提交时间">{{ dateTime(overview.submittedAt) }}</ADescriptionsItem><ADescriptionsItem key="started" label="开始时间">{{ dateTime(execution?.startedAt) }}</ADescriptionsItem><ADescriptionsItem key="finished" label="结束时间">{{ dateTime(execution?.finishedAt) }}</ADescriptionsItem>
+                <ADescriptionsItem key="duration" label="耗时">{{ taskDurationText(execution?.startedAt, execution?.finishedAt) || '—' }}</ADescriptionsItem><ADescriptionsItem key="updated" label="最后核对">{{ dateTime(execution?.updatedAt) }}</ADescriptionsItem><ADescriptionsItem key="execution" label="执行编号"><code>{{ execution?.executionId || '—' }}</code></ADescriptionsItem>
               </ADescriptions>
               <ADescriptions title="对象与位置" :column="{ xs: 1, sm: 2, xl: 3 }" size="small">
-                <ADescriptionsItem label="数据源">{{ task ? taskHistoricalName(task.dataSourceName, task.dataSourceId, task.dataSourceDeleted) : overview.dataSourceId }}</ADescriptionsItem><ADescriptionsItem label="执行节点">{{ task ? taskHistoricalName(task.nodeName, task.nodeId, task.nodeDeleted) : overview.nodeId }}</ADescriptionsItem><ADescriptionsItem label="导出对象">{{ task?.objectSummary || snapshot?.objectSummary || '—' }}</ADescriptionsItem>
-                <ADescriptionsItem label="输出类型">{{ output?.kind || '—' }}</ADescriptionsItem><ADescriptionsItem label="输出位置" :span="2"><code>{{ output?.redaction === 'KIND_ONLY' ? '仅创建者可见' : output?.value || '—' }}</code></ADescriptionsItem>
+                <ADescriptionsItem :label="location.dataSourceLabel">{{ task ? taskHistoricalName(task.dataSourceName, task.dataSourceId, task.dataSourceDeleted) : overview.dataSourceId }}</ADescriptionsItem><ADescriptionsItem label="执行节点">{{ task ? taskHistoricalName(task.nodeName, task.nodeId, task.nodeDeleted) : overview.nodeId }}</ADescriptionsItem><ADescriptionsItem :label="location.objectLabel">{{ task?.objectSummary || snapshot?.objectSummary || '—' }}</ADescriptionsItem>
+                <!-- 末项由 Ant 按当前列数补齐，避免固定 span 在窄屏或断点切换时越界。 -->
+                <ADescriptionsItem :label="location.kindLabel">{{ location.kind }}</ADescriptionsItem><ADescriptionsItem :label="location.locationLabel"><code>{{ location.value }}</code></ADescriptionsItem>
               </ADescriptions>
               <ADescriptions title="结果" :column="{ xs: 1, sm: 2, xl: 3 }" size="small">
-                <ADescriptionsItem label="结果结论">{{ taskResultText(result, remoteResult) }}</ADescriptionsItem><ADescriptionsItem label="文件数">{{ result && !remoteResult ? result.fileCount : '—' }}</ADescriptionsItem><ADescriptionsItem label="字节数">{{ result && !remoteResult ? formatBytes(result.totalBytes) : '—' }}</ADescriptionsItem><ADescriptionsItem label="dump.ckpt">{{ result ? result.checkpointPresent ? '存在' : '不存在' : '—' }}</ADescriptionsItem><ADescriptionsItem label="观察时间">{{ dateTime(result?.observedAt) }}</ADescriptionsItem>
+                <ADescriptionsItem label="结果结论">{{ taskResultText(result, remoteResult, overview.type) }}</ADescriptionsItem>
+                <template v-if="normalImport"><ADescriptionsItem label="退出码">{{ execution?.exitCode ?? '—' }}</ADescriptionsItem><ADescriptionsItem label="load.ckpt">尚无可靠证据</ADescriptionsItem></template>
+                <template v-else-if="directLoad"><ADescriptionsItem label="退出码">{{ execution?.exitCode ?? '—' }}</ADescriptionsItem><ADescriptionsItem label="恢复能力">旁路不支持检查点恢复</ADescriptionsItem></template>
+                <template v-else><ADescriptionsItem label="文件数">{{ result && !remoteResult ? result.fileCount : '—' }}</ADescriptionsItem><ADescriptionsItem label="字节数">{{ result && !remoteResult ? formatBytes(result.totalBytes) : '—' }}</ADescriptionsItem><ADescriptionsItem label="dump.ckpt">{{ result ? result.checkpointPresent ? '存在' : '不存在' : '—' }}</ADescriptionsItem></template>
+                <ADescriptionsItem label="观察时间">{{ dateTime(result?.observedAt) }}</ADescriptionsItem>
               </ADescriptions>
-              <template v-if="result?.files.length && !remoteResult"><AButton type="link" :aria-expanded="filesExpanded" @click="filesExpanded = !filesExpanded">{{ filesExpanded ? '收起文件清单' : `展开文件清单（${result.files.length}）` }}</AButton><ul v-if="filesExpanded" class="task-result-files"><li v-for="file in result.files" :key="file.path"><code>{{ file.path }}</code><span>{{ formatBytes(file.size) }}</span></li></ul></template>
+              <p v-if="normalImport" class="task-section-note">完成证据不代表目标数据库内容已逐行核验；检查点恢复尚未开放。</p>
+              <p v-else-if="directLoad" class="task-section-note">旁路结果须结合独立提交与工具完成证据核验；不会生成导出文件或 load.ckpt。</p>
+              <template v-if="!normalImport && !directLoad && result?.files.length && !remoteResult"><AButton type="link" :aria-expanded="filesExpanded" @click="filesExpanded = !filesExpanded">{{ filesExpanded ? '收起文件清单' : `展开文件清单（${result.files.length}）` }}</AButton><ul v-if="filesExpanded" class="task-result-files"><li v-for="file in result.files" :key="file.path"><code>{{ file.path }}</code><span>{{ formatBytes(file.size) }}</span></li></ul></template>
             </template>
           </ATabPane>
           <ATabPane key="snapshot" tab="配置快照">
@@ -130,6 +146,7 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
             <AAlert type="info" message="完整实际启动命令与启动目录未保存" description="当前只展示 Agent 上报的摘要核对事实，不能由计划命令反推实际命令。" show-icon />
           </ATabPane>
           <ATabPane key="logs" tab="执行日志">
+            <p v-if="overview"><RouterLink :to="taskLogCenterRoute(overview.id, overview.submittedAt)">在日志中心查询与下载</RouterLink></p>
             <div class="task-log-toolbar"><AInput v-model:value="keyword" allow-clear placeholder="过滤已加载日志" aria-label="日志关键字" class="task-log-keyword" /><ASelect v-model:value="source" :options="sourceOptions" allow-clear placeholder="全部来源" aria-label="日志来源" class="task-log-source" /><AButton :disabled="firstError < 0" @click="showError">跳转首条错误</AButton><AButton :aria-pressed="paused" @click="paused = !paused">{{ paused ? '恢复自动滚动' : '暂停自动滚动' }}</AButton><AButton @click="latest">跳到最新</AButton><AButton @click="detail.loadLogs()">刷新日志</AButton><ABadge :status="logStreamStatus === 'connected' ? 'processing' : logStreamStatus === 'interrupted' ? 'warning' : 'default'" :text="logStreamStatus === 'connected' ? '实时连接已连接' : logStreamStatus === 'interrupted' ? '实时连接中断' : '实时连接未开启'" /></div>
             <AAlert v-if="logsExpired" type="info" message="日志已过保留期" description="普通执行日志已清理；任务快照、结果和操作记录仍可查看。" show-icon />
             <AAlert v-else-if="logFailure" type="error" message="无法读取执行日志" :description="logFailure" show-icon />
@@ -152,14 +169,15 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
 
 <style scoped>
 .task-detail-workspace, .task-object-heading { min-width: 0; }
-.task-object-header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--ob-foundation-space-4); }
+.task-object-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: var(--ob-foundation-space-4); }
+.task-object-heading { flex: 1 1 320px; }
 .task-object-heading h1 { margin: 0; font-size: var(--ob-product-typography-title-size); line-height: var(--ob-product-typography-title-line-height); overflow-wrap: anywhere; }
 .task-object-meta, .task-object-actions, .task-log-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
 .task-object-meta { margin-top: var(--ob-foundation-space-2); color: var(--ob-color-secondary); }
 .task-object-meta :deep(.ant-tag) { margin: 0; }
-.task-object-id { font-family: var(--ob-foundation-font-mono); font-size: var(--ob-component-table-metadata-size); }
+.task-object-id { min-width: 0; overflow-wrap: anywhere; font-family: var(--ob-foundation-font-mono); font-size: var(--ob-component-table-metadata-size); }
 .task-object-actions { justify-content: flex-end; flex: none; }
-.task-detail-surface { min-width: 0; padding: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-6); background: var(--ob-color-surface); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-table-radius); }
+.task-detail-surface { padding: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-6); }
 .task-detail-surface :deep(.ant-descriptions) { margin-bottom: var(--ob-foundation-space-6); }
 .task-detail-surface :deep(.ant-descriptions-item-content) { overflow-wrap: anywhere; min-width: 0; }
 .task-section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-3); }
@@ -180,6 +198,6 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
 .task-result-files li, .task-operation-heading { display: flex; justify-content: space-between; align-items: baseline; gap: var(--ob-foundation-space-3); }
 .task-result-files code { overflow-wrap: anywhere; }
 .task-operations { padding-top: var(--ob-foundation-space-3); }
-@media (max-width: 1100px) { .task-object-header { flex-direction: column; } .task-object-actions { justify-content: flex-start; } }
+@media (max-width: 1100px) { .task-object-header { flex-direction: column; } .task-object-heading { flex: none; width: 100%; } .task-object-actions { justify-content: flex-start; } }
 @media (max-width: 620px) { .task-detail-surface { padding-inline: var(--ob-foundation-space-3); } .task-log-record { grid-template-columns: 1fr; gap: var(--ob-foundation-space-1); } .task-log-keyword { width: 100%; } }
 </style>

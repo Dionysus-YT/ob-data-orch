@@ -51,7 +51,7 @@ export interface NodeActivityItem {
 export interface NodeActivity { readonly events: readonly NodeActivityItem[]; readonly operations: readonly NodeActivityItem[]; readonly checkSource: 'SUBJECT' | 'AGENT' | 'SYSTEM' | 'UNKNOWN' }
 export interface NodeRecentTasks {
   readonly scope: 'READABLE' | 'ALL'
-  readonly items: readonly { readonly id: string; readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT'; readonly state: string; readonly reconciliationRequired: boolean; readonly submittedAt: string; readonly startedAt?: string; readonly finishedAt?: string }[]
+  readonly items: readonly { readonly id: string; readonly type: 'OBDUMPER_EXPORT' | 'OBLOADER_NORMAL_IMPORT' | 'OBLOADER_DIRECT_LOAD'; readonly state: string; readonly reconciliationRequired: boolean; readonly submittedAt: string; readonly startedAt?: string; readonly finishedAt?: string }[]
 }
 
 const fieldLabels: Readonly<Record<string, string>> = {
@@ -160,7 +160,7 @@ export function parseNodeRecentTasks(value: unknown): NodeRecentTasks | undefine
       const item = record(value)
       const state = text(item, 'state')
       const type = text(item, 'type')
-      if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT') invalid('存在当前页面尚未支持的任务类型。')
+      if (type !== 'OBDUMPER_EXPORT' && type !== 'OBLOADER_NORMAL_IMPORT' && type !== 'OBLOADER_DIRECT_LOAD') invalid('存在当前页面尚未支持的任务类型。')
       if (!['WAITING_SCHEDULE', 'STARTING', 'RUNNING', 'CANCELLING', 'SUCCEEDED', 'FAILED', 'CANCELLED'].includes(state)) invalid('存在当前页面尚未支持的任务状态。')
       return { id: id(item, 'id'), type, state, reconciliationRequired: bool(item, 'reconciliationRequired'), submittedAt: time(item, 'submittedAt'), startedAt: item.startedAt === undefined ? undefined : time(item, 'startedAt'), finishedAt: item.finishedAt === undefined ? undefined : time(item, 'finishedAt') }
     })

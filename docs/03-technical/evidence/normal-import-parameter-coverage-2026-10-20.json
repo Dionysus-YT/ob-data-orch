@@ -1,0 +1,740 @@
+{
+  "metadataVersion": "obloader-4.3.5-normal-v1",
+  "definitionCount": 72,
+  "hasRealScenario": 22,
+  "failedScenarioOnly": 1,
+  "notExercised": 49,
+  "fullParameterValidationPassed": false,
+  "meaning": "HAS_REAL_SCENARIO 仅表示至少一个通过场景中实际发射或消费；不代表全部取值、格式、互斥、权限或平台矩阵已验证。",
+  "parameters": [
+    {
+      "name": "--host",
+      "category": "CONNECTION",
+      "sourcePolicy": "DATA_SOURCE",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--user",
+      "category": "CONNECTION",
+      "sourcePolicy": "DATA_SOURCE",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--database",
+      "category": "CONNECTION",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--port",
+      "category": "CONNECTION",
+      "sourcePolicy": "DATA_SOURCE",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--password",
+      "category": "CONNECTION",
+      "sourcePolicy": "SECURITY",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05"
+      ]
+    },
+    {
+      "name": "--no-sys",
+      "category": "CONNECTION",
+      "sourcePolicy": "SECURITY",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--yes",
+      "category": "CONNECTION",
+      "sourcePolicy": "SECURITY",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--file-path",
+      "category": "INPUT",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--log-path",
+      "category": "INPUT",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--ctl-path",
+      "category": "INPUT",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--file-suffix",
+      "category": "INPUT",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--file-encoding",
+      "category": "INPUT",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--file-regular-expression",
+      "category": "INPUT",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--all",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--table",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--table-group",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--view",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--trigger",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--obj-user",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--role",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--sequence",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--synonym",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--type",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--type-body",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--package",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--package-body",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--function",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--procedure",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--exclude-table",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--include-column-names",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--exclude-column-names",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--exclude-data-types",
+      "category": "OBJECTS",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--ddl",
+      "category": "FORMAT",
+      "sourcePolicy": "FORMAT",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-04"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-05"
+      ]
+    },
+    {
+      "name": "--csv",
+      "category": "FORMAT",
+      "sourcePolicy": "FORMAT",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-13"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05"
+      ]
+    },
+    {
+      "name": "--cut",
+      "category": "FORMAT",
+      "sourcePolicy": "FORMAT",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02"
+      ],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--sql",
+      "category": "FORMAT",
+      "sourcePolicy": "FORMAT",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-03",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--column-quote",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-13"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05"
+      ]
+    },
+    {
+      "name": "--column-separator",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-13"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05"
+      ]
+    },
+    {
+      "name": "--column-splitter",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02"
+      ],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--line-separator",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02"
+      ],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--escape-character",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--null-string",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--empty-string",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--compression-algo",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--compression-level",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--date-format",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--default-date",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--skip-header",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-13"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05"
+      ]
+    },
+    {
+      "name": "--skip-footer",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--ignore-escape",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--trail-delimiter",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--with-trim",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--compress",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--auto-column-mapping",
+      "category": "PARSER",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--max-discards",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--max-errors",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--thread",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--batch",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--block-size",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--max-tps",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--max-wait-timeout",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--strict",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "FAILED_SCENARIO_ONLY",
+      "passedCaseIds": [],
+      "failedCaseIds": [
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--rw",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--mem",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "HAS_REAL_SCENARIO",
+      "passedCaseIds": [
+        "NI-E2E-02",
+        "NI-E2E-03",
+        "NI-E2E-04",
+        "NI-E2E-13",
+        "NI-E2E-20"
+      ],
+      "failedCaseIds": [
+        "NI-E2E-01",
+        "NI-E2E-05",
+        "NI-E2E-14"
+      ]
+    },
+    {
+      "name": "--nls-date-format",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--nls-timestamp-format",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--nls-timestamp-tz-format",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--compat-mode",
+      "category": "EXECUTION",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--replace-data",
+      "category": "BEHAVIOR",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--replace-object",
+      "category": "BEHAVIOR",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--truncate-table",
+      "category": "BEHAVIOR",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    },
+    {
+      "name": "--delete-from-table",
+      "category": "BEHAVIOR",
+      "sourcePolicy": "USER",
+      "status": "NOT_EXERCISED",
+      "passedCaseIds": [],
+      "failedCaseIds": []
+    }
+  ]
+}

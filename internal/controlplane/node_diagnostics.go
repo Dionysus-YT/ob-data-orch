@@ -113,8 +113,8 @@ func nodeAgentDiagnostics(node store.ExecutionNode) *nodeAgentDiagnosticsRespons
 	return response
 }
 
-func (s *Server) newAuthorizedExecutionNodeDetailResponse(ctx context.Context, principal identity.Principal, node store.ExecutionNode) executionNodeDetailResponse {
-	response := s.newExecutionNodeDetailResponse(node)
+func (s *Server) newAuthorizedExecutionNodeDetailResponse(ctx context.Context, principal identity.Principal, node store.ExecutionNode, heartbeatTTL time.Duration) executionNodeDetailResponse {
+	response := s.newExecutionNodeDetailResponse(node, heartbeatTTL)
 	s.enrichNodeDetail(ctx, principal, node, &response)
 	return response
 }

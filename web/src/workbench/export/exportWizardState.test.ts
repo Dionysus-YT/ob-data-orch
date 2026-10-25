@@ -28,8 +28,9 @@ async function setup(overrides: Partial<BrowserApi> = {}) {
   const source = { ...DATA_SOURCE_UI_FIXTURES[0]! }
   const step = ref(2)
   const api = { ...overrides } as BrowserApi
+  const route = reactive({ query: {} as Record<string, string> })
   const runtime = {
-    api, route: reactive({ query: {} }), router: { push: vi.fn() }, activeStep: computed(() => step.value), moveToStep: vi.fn(),
+    api, route, router: { push: vi.fn(), replace: vi.fn(async (target: { query: Record<string, string> }) => { route.query = target.query }) }, activeStep: computed(() => step.value), moveToStep: vi.fn(),
   } as unknown as ExportRuntime
   const state = scope.run(() => {
     const form = createExportForm()
@@ -40,6 +41,7 @@ async function setup(overrides: Partial<BrowserApi> = {}) {
     return { form, references, parameters, catalog, lifecycle }
   })!
   state.form.hydratingDerivedDraft.value = true
+  state.form.contentKind.value = 'DATA_ONLY'
   state.references.sources.value = [source]
   state.references.nodes.value = [{ id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64' }]
   state.form.selectedDataSourceID.value = source.id
@@ -67,6 +69,77 @@ async function setup(overrides: Partial<BrowserApi> = {}) {
 }
 
 describe('导出向导单一状态与参数边界', () => {
+  it('仅手动选择节点也是未保存输入，回到空表单后不误报丢失配置', async () => {
+    const s = await setup()
+    s.form.hydratingDerivedDraft.value = true
+    s.form.resetForm()
+    await nextTick()
+    s.form.hydratingDerivedDraft.value = false
+    s.lifecycle.clearDraftState()
+    expect(s.lifecycle.hasInputs.value).toBe(false)
+    s.form.selectedNodeID.value = 'synthetic-node'
+    expect(s.lifecycle.hasInputs.value).toBe(true)
+    expect(s.lifecycle.draftDirty.value).toBe(true)
+    s.form.selectedNodeID.value = ''
+    expect(s.lifecycle.draftDirty.value).toBe(false)
+  })
+  it('更换来源先确认，取消不清输入或检查，确认后沿用既有清值规则', async () => {
+    const s = await setup(), other = { ...s.source, id: 'synthetic-other-source', displayName: '合成备用数据源' }
+    s.references.sources.value.push(other)
+    s.saved()
+    s.parameters.selectSource(other.id)
+    s.parameters.selectSource('synthetic-missing-source')
+    expect(s.parameters.pendingSourceId.value).toBe(other.id)
+    expect(s.form.selectedDataSourceID.value).toBe(s.source.id)
+    expect(s.form.database.value).toBe('synthetic_database')
+    expect(s.lifecycle.activePrecheck.value).not.toBeNull()
+    s.parameters.cancelSourceChange()
+    expect(s.parameters.pendingSourceId.value).toBeNull()
+    expect(s.form.selectedObjectsByType.TABLE).toEqual(['synthetic_table'])
+    s.parameters.selectSource(other.id)
+    s.parameters.confirmSourceChange()
+    await nextTick()
+    expect(s.form.selectedDataSourceID.value).toBe(other.id)
+    expect(s.form.database.value).toBe('')
+    expect(s.form.contentKind.value).toBe('')
+    expect(s.form.selectedObjectsByType.TABLE).toEqual([])
+    expect(s.lifecycle.activePrecheck.value).toBeNull()
+  })
+
+  it('来源候选失效与草稿回填撤销旧确认，不能确认到失效候选或旧会话', async () => {
+    const s = await setup(), other = { ...s.source, id: 'synthetic-other-source' }
+    s.references.sources.value.push(other)
+    s.parameters.selectSource(other.id)
+    s.references.sources.value = [s.source]
+    s.parameters.confirmSourceChange()
+    expect(s.form.selectedDataSourceID.value).toBe(s.source.id)
+    s.references.sources.value.push(other)
+    s.parameters.selectSource(other.id)
+    s.form.hydratingDerivedDraft.value = true
+    expect(s.parameters.pendingSourceId.value).toBeNull()
+    s.parameters.confirmSourceChange()
+    expect(s.form.selectedDataSourceID.value).toBe(s.source.id)
+  })
+
+  it('新表单和重置不默认选择导出内容，未选择只能保存编辑草稿', async () => {
+    const initial = createExportForm()
+    expect(initial.contentKind.value).toBe('')
+    initial.contentKind.value = 'DDL_ONLY'
+    initial.resetForm()
+    expect(initial.contentKind.value).toBe('')
+    const s = await setup()
+    s.form.contentKind.value = ''
+    await nextTick()
+    expect(s.parameters.exportMode.value).toBe('')
+    expect(s.parameters.dataOptionsActive.value).toBe(false)
+    expect(s.parameters.extraMessageSupported.value).toBe(false)
+    expect(s.parameters.draftInput.value).toBeUndefined()
+    expect(s.parameters.saveDraftInput.value).toMatchObject({ draftState: 'EDITING', config: { contentSelection: { contentKind: '' } } })
+    s.form.selectedDataSourceID.value = ''
+    await nextTick()
+    expect(s.form.contentKind.value).toBe('')
+  })
+
   it('专家参数可保存和回填，失去内容或 sys 资格时清除', async () => {
     const s = await setup()
     s.references.sources.value = [{ ...s.source, sysCredentialState: 'AVAILABLE' }]
@@ -545,6 +618,22 @@ describe('引用数据与目录请求生命周期', () => {
     expect(s.lifecycle.activePrecheck.value).toBe(precheck)
   })
 
+  it('候选重排不改变已选节点或检查，新建空选择不自动填首项', async () => {
+    const nodes: ExecutionNodeCandidate[] = [{ id: 'synthetic-other', displayName: '合成在线节点', platform: 'WINDOWS_AMD64' }, { id: 'synthetic-node', displayName: '合成原节点', platform: 'WINDOWS_AMD64' }]
+    const s = await setup({ listExportNodeCandidates: vi.fn().mockResolvedValue(nodes) }); s.saved()
+    const precheck = s.lifecycle.activePrecheck.value
+    await s.references.loadNodeCandidates(); expect(s.form.selectedNodeID.value).toBe('synthetic-node'); expect(s.lifecycle.activePrecheck.value).toBe(precheck)
+    s.form.selectedNodeID.value = ''; await s.references.loadNodeCandidates(); expect(s.form.selectedNodeID.value).toBe('')
+  })
+
+  it('候选策略读取失败撤下旧选项，保留绑定并在复读成功后恢复', async () => {
+    const node: ExecutionNodeCandidate = { id: 'synthetic-node', displayName: '合成原节点', platform: 'WINDOWS_AMD64' }
+    const read = vi.fn().mockResolvedValueOnce([node]).mockRejectedValueOnce({ status: 503, code: 'EXECUTION_NODE_QUERY_UNAVAILABLE' }).mockResolvedValueOnce([node])
+    const s = await setup({ listExportNodeCandidates: read }); await s.references.loadNodeCandidates(); await s.references.loadNodeCandidates(); await nextTick()
+    expect(s.references.nodes.value).toEqual([]); expect(s.references.selectedNode.value).toBeUndefined(); expect(s.form.selectedNodeID.value).toBe('synthetic-node'); expect(s.references.nodeLoadFailure.value).toBeTruthy()
+    await s.references.loadNodeCandidates(); expect(s.references.selectedNode.value?.id).toBe('synthetic-node')
+  })
+
   it('原节点删除后清除绑定，后续展开不自动改派到唯一新节点', async () => {
     const read = vi.fn(async (): Promise<ExecutionNodeCandidate[]> => [{ id: 'synthetic-replacement', displayName: '合成节点', platform: 'WINDOWS_AMD64' }])
     const s = await setup({ listExportNodeCandidates: read })
@@ -608,6 +697,55 @@ describe('引用数据与目录请求生命周期', () => {
 
 
 describe('导出操作反馈的事实与会话', () => {
+  it('仅选数据源即可保存并恢复；补齐后更新同一草稿且保存不触发预检查', async () => {
+    let stored: ExportDraft
+    const preview = vi.fn(), precheck = vi.fn()
+    const s = await setup({ createExportDraft: async input => { stored = { ...input, id: 'synthetic-draft', revision: 1, configFingerprint: 'synthetic-fingerprint' }; return stored.id }, getExportDraft: async () => structuredClone(stored), updateExportDraft: async draft => { stored = { ...draft, revision: draft.revision + 1 }; return stored }, previewExportCommand: preview, startPrecheck: precheck })
+    s.form.selectedNodeID.value = ''
+    s.form.database.value = ''
+    s.form.filePath.value = ''
+    await nextTick()
+    await s.lifecycle.createDraft(false)
+    expect(s.lifecycle.currentDraft.value?.draftState).toBe('EDITING')
+    expect(s.lifecycle.draftDirty.value).toBe(false)
+    expect(s.runtime.route.query.draft).toBe('synthetic-draft')
+    expect(s.lifecycle.operationNotice.value).toBe('草稿已保存。')
+    await s.lifecycle.loadDerivedDraft('synthetic-draft')
+    expect(s.form.selectedNodeID.value).toBe('')
+    expect(s.form.database.value).toBe('')
+    expect(s.lifecycle.derivedDraftBindingLocked.value).toBe(false)
+    s.form.selectedNodeID.value = 'synthetic-node'
+    s.form.database.value = 'synthetic_database'
+    s.form.scopeKind.value = 'ALL'
+    s.form.filePath.value = '/E:/synthetic-output'
+    await nextTick()
+    await s.lifecycle.createDraft(false)
+    expect(s.lifecycle.currentDraft.value).toMatchObject({ id: 'synthetic-draft', revision: 2, draftState: 'READY' })
+    expect(s.lifecycle.draftDirty.value).toBe(false)
+    expect(preview).not.toHaveBeenCalled()
+    expect(precheck).not.toHaveBeenCalled()
+  })
+
+  it('读取 A → B → A 时拒绝第一次 A 的迟到成功', async () => {
+    const first = deferred<ExportDraft>(), second = deferred<ExportDraft>(), third = deferred<ExportDraft>()
+    const read = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockReturnValueOnce(third.promise)
+    const s = await setup({ getExportDraft: read })
+    const a1 = s.lifecycle.loadDerivedDraft('a', false), b = s.lifecycle.loadDerivedDraft('b', false), a2 = s.lifecycle.loadDerivedDraft('a', false)
+    third.resolve({ ...s.draft, id: 'a', revision: 3 }); await a2
+    first.resolve({ ...s.draft, id: 'a', revision: 1 }); second.resolve({ ...s.draft, id: 'b', revision: 2 }); await Promise.all([a1, b])
+    expect(s.lifecycle.currentDraft.value).toMatchObject({ id: 'a', revision: 3 })
+    expect(s.lifecycle.draftLoadFailure.value).toBe('')
+  })
+
+  it('创建回读身份错误不能标记保存成功或绑定 URL', async () => {
+    const s = await setup({ createExportDraft: async () => 'requested', getExportDraft: async () => ({ ...s.draft, id: 'foreign' }) })
+    await s.lifecycle.createDraft(false)
+    expect(s.lifecycle.currentDraft.value).toBeNull()
+    expect(s.lifecycle.operationNotice.value).toBe('')
+    expect(s.runtime.router.replace).not.toHaveBeenCalled()
+    expect(s.lifecycle.draftFailure.value).not.toBe('')
+  })
+
   it('有效保存只确认一次，预览或预检查结论仍属于持久结果', async () => {
     const s = await setup({
       updateExportDraft: async draft => ({ ...draft, revision: 2 }),

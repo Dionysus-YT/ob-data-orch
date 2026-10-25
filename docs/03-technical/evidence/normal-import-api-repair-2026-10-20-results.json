@@ -1,0 +1,517 @@
+{
+  "runId": "68b747da7ad9400d906e337fe1acf5d3",
+  "scope": "REAL_API_REPAIR_AND_DIALECT_VARIANTS",
+  "records": [
+    {
+      "id": "NI-PARAM-cut_native",
+      "title": "CUT LF 输入与 Windows 换行规则不符时阻断",
+      "startedAt": "2026-10-20T01:34:30.238Z",
+      "draftId": "01189cc9-5c62-4dc8-95d0-d2c3e3d9c023",
+      "fingerprint": "ec125e5229687eecf70a9d5266a1d9dd671fea348970b6ead5a110ae9fc4e3bb",
+      "parameterNames": [
+        "--cut"
+      ],
+      "precheckId": "0063a654-e841-411b-ac6b-322bd66842ff",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "UNKNOWN",
+          "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:34:35.574Z",
+      "noTaskCreated": true
+    },
+    {
+      "id": "NI-PARAM-cut_explicit_crlf",
+      "title": "CUT LF 输入与 Windows 换行规则不符时阻断",
+      "startedAt": "2026-10-20T01:34:35.576Z",
+      "draftId": "97145846-221d-4e44-909e-d053454a8c28",
+      "fingerprint": "20cebbde523ffcc6e8f6b67b9bc21c3d1918d9962cf48f4e59be4fb1f36d174e",
+      "parameterNames": [
+        "--cut"
+      ],
+      "precheckId": "f3738881-222e-4a7e-9598-ada1e273534d",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "UNKNOWN",
+          "evidenceCode": "IMPORT_INPUT_MAPPING_UNSUPPORTED"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:34:39.418Z",
+      "noTaskCreated": true
+    },
+    {
+      "id": "NI-PARAM-ignore",
+      "title": "参数真实作用 --ignore-escape",
+      "startedAt": "2026-10-20T01:34:39.420Z",
+      "draftId": "cf51aca2-55ef-4a5c-8164-5748502f8ffd",
+      "fingerprint": "21d9c4c3635e66df250a9a096a37dd0423a0c9e108b7f0f648096bf6a2d281e9",
+      "parameterNames": [
+        "--ignore-escape"
+      ],
+      "precheckId": "de0fc73f-518c-4d9c-9ada-e75ef4792fc3",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "b14fa97a-d6f6-4a58-a36e-f129a4629a51",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 80,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:35:04.165Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "id": "NI-PARAM-ignore",
+        "names": [
+          "--ignore-escape"
+        ],
+        "exists": true,
+        "actualRows": 1,
+        "expectedRows": 1,
+        "beforeMatched": false,
+        "contentMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-PARAM-trail",
+      "title": "参数真实作用 --trail-delimiter",
+      "startedAt": "2026-10-20T01:35:04.167Z",
+      "draftId": "0e279c0d-cf82-48a8-a428-5a6c294ebcf0",
+      "fingerprint": "77fb3ccb1ef3d2961d4d9ddd724987a873e6974e2045ea6b2c23e63727ff56f8",
+      "parameterNames": [
+        "--trail-delimiter"
+      ],
+      "precheckId": "42fde43a-9bcf-4b6c-8b99-d7c716f44fbd",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "30d524d5-9f02-43e5-8398-1fc2f6b6a9fb",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 80,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:35:30.895Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "id": "NI-PARAM-trail",
+        "names": [
+          "--trail-delimiter"
+        ],
+        "exists": true,
+        "actualRows": 1,
+        "expectedRows": 1,
+        "beforeMatched": false,
+        "contentMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-PARAM-compat",
+      "title": "参数真实作用 --compat-mode",
+      "startedAt": "2026-10-20T01:35:30.896Z",
+      "draftId": "ae8cf3b9-d469-414a-8b72-87ecde20bce6",
+      "fingerprint": "ad78c826df834b53ad0497ac9fb5f1a3095a47a197d009fed0484f57dd32b642",
+      "parameterNames": [
+        "--compat-mode"
+      ],
+      "precheckId": "66716ccf-ed3a-4ffe-a72b-642f232dbc67",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "f1697f3e-68b3-4c94-86fe-f6b7e26915ca",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 42,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:35:49.722Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "id": "NI-PARAM-compat",
+        "names": [
+          "--compat-mode"
+        ],
+        "exists": true,
+        "actualRows": 0,
+        "expectedRows": 0,
+        "beforeMatched": false,
+        "contentMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-PARAM-compat_fivesix",
+      "title": "参数真实作用 --compat-mode",
+      "startedAt": "2026-10-20T01:35:49.724Z",
+      "draftId": "33e89aab-4699-4225-b5a9-55c319ed217c",
+      "fingerprint": "e88be433c8be516538431b94b53a8b448bd760bb5f52db40da37d55d743e6c26",
+      "parameterNames": [
+        "--compat-mode"
+      ],
+      "precheckId": "5c3d8dfa-bfac-4300-a5b8-9f9c33341a73",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "unconfirmedRiskRejected": true,
+      "taskId": "a3b1e2fa-ccb7-4c5e-b39f-14a7fc928aef",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 44,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:36:15.200Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "id": "NI-PARAM-compat",
+        "names": [
+          "--compat-mode"
+        ],
+        "exists": true,
+        "actualRows": 0,
+        "expectedRows": 0,
+        "beforeMatched": false,
+        "contentMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-PARAM-compat_fiveseven",
+      "title": "参数真实作用 --compat-mode",
+      "startedAt": "2026-10-20T01:36:15.202Z",
+      "draftId": "78bcd843-8d98-4d64-a970-03984f6e6a10",
+      "fingerprint": "dfdbfe2f880e51cf987edc85a3ba96105c6ea21fe642973ddab637f31ad269fe",
+      "parameterNames": [
+        "--compat-mode"
+      ],
+      "precheckId": "f893b3df-160b-4bea-9fda-991e39be09da",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "unconfirmedRiskRejected": true,
+      "taskId": "ddae9b43-839d-4264-98c1-0fbd82bfba40",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 45,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:36:39.075Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "reconciliationRequired": false,
+        "snapshotMatched": true,
+        "exactValueMatched": true,
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "id": "NI-PARAM-compat",
+        "names": [
+          "--compat-mode"
+        ],
+        "exists": true,
+        "actualRows": 0,
+        "expectedRows": 0,
+        "beforeMatched": false,
+        "contentMatched": true,
+        "structureMatched": true
+      }
+    }
+  ],
+  "counts": {
+    "PASS": 7
+  },
+  "secretAuditPassed": true
+}

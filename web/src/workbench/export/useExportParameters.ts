@@ -1,12 +1,12 @@
 import { type ExportContentKind } from '@/api/browser'
 import { computed, ref, watch } from 'vue'
-import { isTableOnlySelection, BLOCK_SIZE_PATTERN, isValidEscapeCharacter, queryResultInputMessage, validateExportDraftInput } from './exportDraftInput'
+import { isTableOnlySelection, BLOCK_SIZE_PATTERN, isValidEscapeCharacter, queryResultInputMessage, validateExportDraftInput, buildEditingExportDraftInput, type ExportDraftFormValues } from './exportDraftInput'
 import { blockSizeChoicesMB } from './exportPresentation'
 import type { ExportForm } from './exportForm'
 import type { ExportReferences } from './useExportReferences'
 
 // useExportParameters 管理参数资格、互斥、清值和草稿输入。
-export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 'selectedSource' | 'storageCredentials' | 'selectedNode' | 'selectedSourceRevision'>) {
+export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 'selectedSource' | 'eligibleSources' | 'storageCredentials' | 'selectedNode' | 'selectedSourceRevision'>) {
   const {
     weakRead, sequencePolicy, preserveZeroDatetime,
     scopeKind, contentKind, querySql, queryResultLimit, formatKind, excludeTablesText, where, partition,
@@ -23,10 +23,10 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     nlsTimestampTzFormat, hydratingDerivedDraft, clearSelectedObjects, selectedSource, storageCredentials,
     storageCredentialID, selectedNode, selectedSourceRevision,
   } = deps
-  type ExportMode = ExportContentKind | 'QUERY_RESULT'
+  type ExportMode = ExportContentKind | 'QUERY_RESULT' | ''
 
   const exportMode = computed<ExportMode>({
-    get: () => scopeKind.value === 'QUERY_RESULT' ? 'QUERY_RESULT' : contentKind.value,
+    get: () => !contentKind.value ? '' : scopeKind.value === 'QUERY_RESULT' ? 'QUERY_RESULT' : contentKind.value,
     set: (mode) => {
       const wasQuery = scopeKind.value === 'QUERY_RESULT'
       if (mode === 'QUERY_RESULT') {
@@ -56,21 +56,36 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     },
   })
 
-  const dataOptionsActive = computed(() => contentKind.value !== 'DDL_ONLY')
+  const dataOptionsActive = computed(() => contentKind.value === 'DATA_ONLY' || contentKind.value === 'DDL_AND_DATA')
 
   // 表级选项根据完整已选集合判断；浏览分类不能改变已配置参数的资格。
   const tableOnlySelection = computed(() => isTableOnlySelection({ objectType: objectType.value, objectSelections: allSelectedObjects.value.map((item) => ({ objectType: item.type, name: item.name })) }))
-  const excludeTablesSupported = computed(() => (scopeKind.value === 'ALL' && dataOptionsActive.value) || (scopeKind.value === 'SPECIFIED' && tableOnlySelection.value))
+  const excludeTablesSupported = computed(() => !!contentKind.value && ((scopeKind.value === 'ALL' && dataOptionsActive.value) || (scopeKind.value === 'SPECIFIED' && tableOnlySelection.value)))
 
-  const whereSupported = computed(() => scopeKind.value === 'SPECIFIED' && tableOnlySelection.value)
+  const whereSupported = computed(() => !!contentKind.value && scopeKind.value === 'SPECIFIED' && tableOnlySelection.value)
   const partitionSupported = computed(() => dataOptionsActive.value && whereSupported.value)
 
-  const compactSchemaSupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || tableOnlySelection.value))
+  const compactSchemaSupported = computed(() => !!contentKind.value && contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || tableOnlySelection.value))
   const weakReadSupported = computed(() => dataOptionsActive.value && scopeKind.value !== 'QUERY_RESULT' && !querySql.value)
   const hiddenPkSupported = computed(() => weakReadSupported.value && (scopeKind.value === 'ALL' || tableOnlySelection.value))
-  const extraMessageSupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || applicableSelectedObjects.value.some((item) => item.type === 'TABLE')))
-  const sequencePolicySupported = computed(() => contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || applicableSelectedObjects.value.some((item) => item.type === 'SEQUENCE')))
+  const extraMessageSupported = computed(() => !!contentKind.value && contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || applicableSelectedObjects.value.some((item) => item.type === 'TABLE')))
+  const sequencePolicySupported = computed(() => !!contentKind.value && contentKind.value !== 'DATA_ONLY' && (scopeKind.value === 'ALL' || applicableSelectedObjects.value.some((item) => item.type === 'SEQUENCE')))
   const formatChangeNotice = ref('')
+
+  const pendingSourceId = ref<string | null>(null)
+  function selectSource(id: string) {
+    if (id === selectedDataSourceID.value || pendingSourceId.value !== null || !deps.eligibleSources.value.some(source => source.id === id)) return
+    // 仅在旧来源关联输入会被清除时确认；确认前不改变绑定、草稿或预检查。
+    if (selectedDataSourceID.value && (database.value || contentKind.value || querySql.value || allSelectedObjects.value.length || excludeTablesText.value)) pendingSourceId.value = id
+    else selectedDataSourceID.value = id
+  }
+  function cancelSourceChange() { pendingSourceId.value = null }
+  function confirmSourceChange() {
+    const id = pendingSourceId.value
+    cancelSourceChange()
+    if (id !== null && deps.eligibleSources.value.some(source => source.id === id)) selectedDataSourceID.value = id
+  }
+  watch([selectedDataSourceID, selectedSourceRevision, hydratingDerivedDraft], cancelSourceChange, { flush: 'sync' })
 
   function changeSplitUnit(unit: 'MB' | 'ROW') {
     splitUnit.value = unit
@@ -116,8 +131,8 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
   })
 
   // 值格式只随 CSV/CUT 数据活动；NLS 会话格式按 Oracle 数据内容独立活动。
-  const timestampFormatsSupported = computed(() => ['MYSQL', 'ORACLE'].includes(selectedSource.value?.compatibilityMode ?? '') && contentKind.value !== 'DDL_ONLY' && (formatKind.value === 'CSV' || formatKind.value === 'CUT'))
-  const oracleSessionFormatsSupported = computed(() => selectedSource.value?.compatibilityMode === 'ORACLE' && contentKind.value !== 'DDL_ONLY')
+  const timestampFormatsSupported = computed(() => ['MYSQL', 'ORACLE'].includes(selectedSource.value?.compatibilityMode ?? '') && dataOptionsActive.value && (formatKind.value === 'CSV' || formatKind.value === 'CUT'))
+  const oracleSessionFormatsSupported = computed(() => selectedSource.value?.compatibilityMode === 'ORACLE' && dataOptionsActive.value)
 
   // EX-I6 存储专用预检查（2026-08-14）：对象存储草稿可以发起预检查；
   // 检查清单切换为存储形态，端点连通性与凭据有效性两项未授权探测保持 UNKNOWN，
@@ -138,12 +153,10 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     return ''
   })
 
-  const contentInputMessage = computed(() => {
-    return ''
-  })
+  const contentInputMessage = computed(() => contentKind.value ? '' : '请选择导出内容。')
 
   const excludeTables = computed(() => excludeTablesText.value.split(',').map((name) => name.trim()).filter((name) => name.length > 0))
-  const draftValidation = computed(() => validateExportDraftInput({
+  const draftValues = computed<ExportDraftFormValues>(() => ({
     dataSourceId: selectedDataSourceID.value,
     nodeId: selectedNodeID.value,
     platform: selectedNode.value?.platform ?? '',
@@ -224,10 +237,13 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     preserveZeroDatetime: preserveZeroDatetime.value,
   }))
 
-  const ordinaryFormat = computed(() => contentKind.value === 'DDL_ONLY' || ['CSV', 'CUT', 'SQL'].includes(formatKind.value))
-  const draftInput = computed(() => ordinaryFormat.value && draftValidation.value.valid && !contentInputMessage.value && !objectInputMessage.value && !objectOptionsMessage.value && !formatOptionsMessage.value ? draftValidation.value.input : undefined)
+  const draftValidation = computed(() => validateExportDraftInput(draftValues.value))
 
-  const draftValidationMessage = computed(() => !ordinaryFormat.value ? '当前格式仅保留历史任务读取；普通新建入口只开放 CSV、CUT 和 SQL。' : draftValidation.value.valid ? contentInputMessage.value || objectInputMessage.value || objectOptionsMessage.value || formatOptionsMessage.value : draftValidation.value.message)
+  const ordinaryFormat = computed(() => !!contentKind.value && (contentKind.value === 'DDL_ONLY' || ['CSV', 'CUT', 'SQL'].includes(formatKind.value)))
+  const draftInput = computed(() => ordinaryFormat.value && draftValidation.value.valid && !contentInputMessage.value && !objectInputMessage.value && !objectOptionsMessage.value && !formatOptionsMessage.value ? draftValidation.value.input : undefined)
+  const saveDraftInput = computed(() => draftInput.value ?? buildEditingExportDraftInput(draftValues.value))
+
+  const draftValidationMessage = computed(() => contentInputMessage.value || (!ordinaryFormat.value ? '当前格式仅保留历史任务读取；普通新建入口只开放 CSV、CUT 和 SQL。' : draftValidation.value.valid ? objectInputMessage.value || objectOptionsMessage.value || formatOptionsMessage.value : draftValidation.value.message))
 
   // clearGatedParameters 只清除失去当前内容、对象或 sys 资格的专家参数。
   function clearGatedParameters() {
@@ -279,7 +295,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
   watch(selectedSource, (source, previousSource) => {
     if (hydratingDerivedDraft.value) return
     if (source?.id === previousSource?.id) return
-    // 服务端不允许更新已保存草稿的数据源绑定；更换后下一次保存必须创建新草稿。
+    // 更换来源清除依赖配置，导出内容重新由用户选择；编辑草稿的引用更新仍由持久化能力处理。
     database.value = ''
     querySql.value = ''
     queryResultLimit.value = ''
@@ -287,7 +303,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     objectType.value = 'TABLE'
     clearSelectedObjects()
     excludeTablesText.value = ''
-    contentKind.value = 'DATA_ONLY'
+    contentKind.value = ''
     clearGatedParameters()
     clearTimestampFormats()
   })
@@ -384,8 +400,8 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
   watch(contentKind, (kind) => {
     if (hydratingDerivedDraft.value) return
     clearGatedParameters()
-    if (kind === 'DDL_ONLY') {
-      // 仅 DDL 时清除数据专属选项，避免残留值进入下一个草稿。
+    if (!kind || kind === 'DDL_ONLY') {
+      // 未选择内容或仅 DDL 时清除数据专属选项，避免隐藏残留进入草稿。
       skipHeader.value = false
       columnSeparator.value = ''
       columnQuote.value = ''
@@ -426,7 +442,7 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     // 结构与数据组合仅允许已映射的文本格式；旧草稿的其他格式收敛为 CSV。
     if (kind === 'DDL_AND_DATA' && !['CSV', 'CUT', 'SQL'].includes(formatKind.value)) formatKind.value = 'CSV'
     // 仅数据内容不携带前置 DROP、保留 Schema 与紧凑 Schema，切换时清除残留。
-    if (kind === 'DATA_ONLY') {
+    if (!kind || kind === 'DATA_ONLY') {
       dropObject.value = false
       retainSchema.value = false
       compactSchema.value = false
@@ -481,8 +497,9 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
     splitThreshold, migrateLegacyQuery, configuredCount, objectAdvancedCount, formatAdvancedCount,
     executionAdvancedCount, objectOptionsMessage, formatOptionsMessage, timestampFormatsSupported,
     storageOutput, matchingStorageCredentials, selectedStorageCredential, objectInputMessage,
-    contentInputMessage, excludeTables, draftValidation, ordinaryFormat, draftInput,
+    contentInputMessage, excludeTables, draftValidation, ordinaryFormat, draftInput, saveDraftInput,
     draftValidationMessage, clearGatedParameters, clearTimestampFormats, clearUnverifiedTimestampFormats,
+    pendingSourceId, selectSource, confirmSourceChange, cancelSourceChange,
   }
 }
 

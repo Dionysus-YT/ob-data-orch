@@ -82,6 +82,7 @@ func (store *PersistentStore) Append(ctx context.Context, executionID string, ba
 	}
 	now := time.Now().UTC()
 	entry := IndexedBatch{
+		Progress:       batchProgress(sealed),
 		BatchID:        internalID("log-batch", executionID, sealed.StreamID, fmt.Sprint(sealed.SourceEpoch), fmt.Sprint(sealed.FirstSeq), sealed.Digest),
 		ExecutionID:    executionID,
 		StreamID:       internalID("log-stream", executionID, sealed.StreamID, fmt.Sprint(sealed.SourceEpoch)),
@@ -118,6 +119,7 @@ func (store *PersistentStore) AppendGap(ctx context.Context, executionID string,
 	now := time.Now().UTC()
 	digest := gapDigest(gap)
 	entry := IndexedBatch{
+		Progress:      []ProgressRecord{{Sequence: gap.FirstSeq}},
 		BatchID:       internalID("log-gap", executionID, gap.StreamID, fmt.Sprint(gap.SourceEpoch), fmt.Sprint(gap.FirstSeq), fmt.Sprint(gap.LastSeq), gap.ReasonCode, digest),
 		ExecutionID:   executionID,
 		StreamID:      internalID("log-stream", executionID, gap.StreamID, fmt.Sprint(gap.SourceEpoch)),
@@ -708,8 +710,9 @@ func verifyIndexedBatch(batch IndexedBatch, records []Record) error {
 }
 
 func storedSourceKind(value string, parser ...string) (SourceKind, error) {
-	// SQLite 的 STDOUT/STDERR 是物理来源；工具身份由版本化解析器与正文来源共同核验。
-	if len(parser) == 1 && parser[0] == "obloader-4.3.5-v1" {
+	// SQLite 的 STDOUT/STDERR 是物理来源；仅两个已知独立解析器可恢复 OBLOADER 身份。
+	// 未知名称不得靠前缀或版本相似性升级为工具来源，缺口正文仍须逐项匹配。
+	if len(parser) == 1 && (parser[0] == "obloader-4.3.5-v1" || parser[0] == "obloader-direct-4.3.5-v1") {
 		if value == "STDOUT" {
 			return SourceLoaderStdout, nil
 		}

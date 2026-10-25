@@ -45,6 +45,10 @@ func bundledExecutionSettings(lookup func(string) (string, bool)) (func(string) 
 	}
 	return func(key string) (string, bool) {
 		switch key {
+		case "OB_DATA_ORCH_ENABLE_DIRECT_LOAD_PROBE":
+			return strconv.FormatBool(bundle.RealExecutionEnabled && bundle.DirectLoadProbeEnabled), true
+		case "OB_DATA_ORCH_ENABLE_DIRECT_LOAD_EXECUTION":
+			return strconv.FormatBool(bundle.RealExecutionEnabled && bundle.DirectLoadProbeEnabled && bundle.DirectLoadExecutionEnabled), true
 		case "OB_DATA_ORCH_ENABLE_NORMAL_IMPORT_EXECUTION":
 			return strconv.FormatBool(bundle.RealExecutionEnabled && bundle.NormalImportExecutionEnabled), true
 		case "OB_DATA_ORCH_ENABLE_REAL_EXECUTION", "OB_DATA_ORCH_ENABLE_AGENT_JDBC_CONNECTION_TEST", "OB_DATA_ORCH_ENABLE_AGENT_EXPORT_PREFLIGHT", "OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE":
@@ -63,6 +67,8 @@ type registrationCodePayload struct {
 }
 
 type bundledAgentConfig struct {
+	DirectLoadProbeEnabled       bool   `json:"directLoadProbeEnabled,omitempty"`
+	DirectLoadExecutionEnabled   bool   `json:"directLoadExecutionEnabled,omitempty"`
 	NormalImportExecutionEnabled bool   `json:"normalImportExecutionEnabled,omitempty"`
 	RealExecutionEnabled         bool   `json:"realExecutionEnabled,omitempty"`
 	FormatVersion                string `json:"formatVersion"`

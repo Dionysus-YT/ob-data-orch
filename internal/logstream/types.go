@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"ob-data-orch/internal/toolprogress"
 )
 
 const (
@@ -33,7 +35,7 @@ const (
 	SourceStdout SourceKind = "OBDUMPER_STDOUT"
 	SourceStderr SourceKind = "OBDUMPER_STDERR"
 	SourceFile   SourceKind = "OBDUMPER_FILE"
-	// SourceLoaderStdout 和 SourceLoaderStderr 是普通导入真实管道来源，不混入导出日志。
+	// SourceLoaderStdout 和 SourceLoaderStderr 是 OBLOADER 真实管道来源，普通/旁路由各自解析器隔离。
 	SourceLoaderStdout SourceKind = "OBLOADER_STDOUT"
 	SourceLoaderStderr SourceKind = "OBLOADER_STDERR"
 )
@@ -57,6 +59,8 @@ type Record struct {
 	PolicyVersion string
 	ParserVersion string
 	ReceivedAt    time.Time
+	// Progress 由 Agent 在第一层脱敏后提取，参与批次摘要；缺省保持旧批次序列化不变。
+	Progress *toolprogress.Fact `json:",omitempty"`
 }
 
 // GapNotice 表示无法补传的连续来源序号范围。
@@ -101,6 +105,8 @@ type PageCursor struct {
 // IndexedBatch 是 SQLite 索引定位 JSONL 批次所需的非正文元数据。
 // Message 始终留在分段文件，不能加入本结构或 SQLite 索引实现。
 type IndexedBatch struct {
+	// Progress 仅随已落盘批次提交一个执行摘要，不为每条日志创建 SQLite 正文记录。
+	Progress           []ProgressRecord
 	BatchID            string
 	ExecutionID        string
 	StreamID           string

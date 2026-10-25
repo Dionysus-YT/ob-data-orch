@@ -56,6 +56,9 @@ func normalImportTaskSnapshotGroups(raw string, owner bool, precheckID string) (
 	}
 	add(3, "execution", "显式执行参数", encoded(c.Execution))
 	add(3, "cleanup", "导入前处理", c.Cleanup)
+	if c.CompatMysql {
+		add(3, "compatMysqlVersion", "源 MySQL 兼容版本", c.CompatMysqlVersion)
+	}
 	for _, field := range []struct {
 		key, label string
 		enabled    bool

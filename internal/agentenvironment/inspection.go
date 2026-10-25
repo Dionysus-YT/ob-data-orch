@@ -201,9 +201,27 @@ func inspectDirectory(item *nodefacts.InspectionItem) {
 	}
 }
 
+// ReadDirectLoadConfiguration 只读固化工具目录的固定文件，并丢弃秘密及未知字段原文。
+// 返回值仅含三个数值的投影指纹，不能作为原文件哈希或配置编辑能力。
+func ReadDirectLoadConfiguration(toolHome string) *nodefacts.DirectLoadConfiguration {
+	if !filepath.IsAbs(toolHome) {
+		return &nodefacts.DirectLoadConfiguration{Status: "UNAVAILABLE"}
+	}
+	for current := filepath.Join(toolHome, "conf"); ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return &nodefacts.DirectLoadConfiguration{Status: "UNAVAILABLE"}
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	return readDirectLoadConfiguration(filepath.Join(toolHome, "conf", "session.config.json"))
+}
+
 func readDirectLoadConfiguration(path string) *nodefacts.DirectLoadConfiguration {
 	result := &nodefacts.DirectLoadConfiguration{Status: "UNAVAILABLE"}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		result.Status = "MISSING"
 		return result
@@ -220,11 +238,19 @@ func readDirectLoadConfiguration(path string) *nodefacts.DirectLoadConfiguration
 		return result
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) || info.Size() != opened.Size() || !info.ModTime().Equal(opened.ModTime()) {
+		return &nodefacts.DirectLoadConfiguration{Status: "INVALID"}
+	}
 	content, err := io.ReadAll(io.LimitReader(file, 64<<10+1))
 	defer credential.Zero(content)
 	if err != nil || len(content) > 64<<10 {
 		result.Status = "INVALID"
 		return result
+	}
+	after, err := os.Lstat(path)
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(info, after) || info.Size() != after.Size() || info.Size() != int64(len(content)) || !info.ModTime().Equal(after.ModTime()) {
+		return &nodefacts.DirectLoadConfiguration{Status: "INVALID"}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.UseNumber()

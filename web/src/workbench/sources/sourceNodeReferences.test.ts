@@ -42,6 +42,20 @@ async function setup() {
 }
 
 describe('数据源节点引用读取', () => {
+  it('连接方式切换更新默认SQL端口、清除代理集群并使旧连接结论失效', async () => {
+    const { editor } = await setup()
+    editor.form.port = 2883
+    editor.selectConnectionKind('OBSERVER_DIRECT')
+    expect(editor.form).toMatchObject({ connectionKind: 'OBSERVER_DIRECT', port: 2881, clusterName: '' })
+    expect(editor.dirty.value).toBe(true)
+    expect(editor.connectionDirty.value).toBe(true)
+    editor.form.port = 12881
+    editor.selectConnectionKind('ODP')
+    expect(editor.form.port).toBe(12881)
+    editor.testing.value = true
+    editor.selectConnectionKind('OBSERVER_DIRECT')
+    expect(editor.form.connectionKind).toBe('ODP')
+  })
   it('更新同一标识的名称，旧响应及旧失败不能覆盖新候选', async () => {
     const { editor, api } = await setup()
     editor.nodeId.value = node.id

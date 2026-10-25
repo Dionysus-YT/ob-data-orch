@@ -441,9 +441,9 @@ func runProbeLimitedWithTimeout(ctx context.Context, runtime Runtime, input []by
 	return runFixedProbe(ctx, runtime, input, maximum, timeout, probeMainClass)
 }
 
-// runFixedProbe 只接受仓库内两个固定探针主类，调用方不能提供任意入口或 Shell。
+// runFixedProbe 只接受仓库内三个固定探针主类，调用方不能提供任意入口或 Shell。
 func runFixedProbe(ctx context.Context, runtime Runtime, input []byte, maximum int, timeout time.Duration, mainClass string) ([]byte, error) {
-	if mainClass != probeMainClass && mainClass != normalImportMainClass {
+	if mainClass != probeMainClass && mainClass != normalImportMainClass && mainClass != directLoadMainClass {
 		return nil, ErrInvalidRequest
 	}
 	bounded, cancel := context.WithTimeout(ctx, timeout)

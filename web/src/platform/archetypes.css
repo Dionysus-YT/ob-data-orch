@@ -1,5 +1,15 @@
 /* P0 Page Archetype：页面布局、业务分区与证据呈现。 */
 
+/* 三类任务的数据源选择复用同一组布局；各自仍持有筛选状态和候选资格。 */
+.wizard-source-filter { display: flex; flex-wrap: wrap; gap: var(--ob-foundation-space-3); margin-block: 0; }
+.wizard-source-filter > :first-child { flex: 1 1 240px; min-inline-size: 0; }
+.wizard-source-filter > :last-child { inline-size: 180px; }
+.wizard-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--ob-foundation-space-2); inline-size: 100%; margin-block: var(--ob-foundation-space-4); }
+.wizard-source-choice { display: flex; align-items: flex-start; min-inline-size: 0; margin-inline-end: 0; padding: var(--ob-foundation-space-3); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); background: var(--ob-color-surface); }
+.wizard-source-facts { display: grid; gap: var(--ob-foundation-space-1); min-inline-size: 0; overflow-wrap: anywhere; }
+.wizard-source-facts > span { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+@media (max-width: 800px) { .wizard-source-filter > :last-child { flex: 1 1 180px; } }
+
 * {
   box-sizing: border-box;
 }
@@ -299,42 +309,19 @@
   color: var(--ob-color-form-secondary);
   font-size: var(--ob-component-field-helper-size);
 }
-.settings-tabs {
-  display: flex;
-  gap: var(--ob-foundation-space-6);
-  margin: -4px 0 var(--ob-foundation-space-4);
-  border-bottom: 1px solid var(--ob-color-border);
-}
-.settings-tabs .active {
-  border-color: var(--ob-color-primary);
-  color: var(--ob-color-primary);
-  font-weight: var(--ob-product-typography-weight);
-}
-.settings-layout {
+.settings-sections {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: var(--ob-foundation-space-4);
+  gap: var(--ob-foundation-space-6);
 }
+.settings-sections > section + section {
+  padding-top: var(--ob-foundation-space-6);
+  border-top: 1px solid var(--ob-color-border);
+}
+.settings-sections > section { scroll-margin-top: calc(var(--ob-product-shell-header-height) + var(--ob-foundation-space-6)); }
 .settings-main h2 {
   margin: 0 0 var(--ob-foundation-space-3);
   color: var(--ob-color-form-text);
   font-size: var(--ob-product-typography-section-size);
-}
-.settings-aside h2 {
-  margin: 0 0 var(--ob-foundation-space-3);
-  color: var(--ob-color-form-text);
-  font-size: var(--ob-product-typography-section-size);
-}
-.settings-main .empty-state {
-  margin: var(--ob-foundation-space-4) auto;
-}
-.settings-aside p {
-  padding: var(--ob-foundation-space-3) 0;
-  margin: 0;
-  border-top: 1px solid var(--ob-color-border);
-  color: var(--ob-color-form-secondary);
-  font-size: var(--ob-component-field-label-size);
-  line-height: 1.7;
 }
 .section-hint {
   margin: var(--ob-foundation-space-3) 0 0;
@@ -629,9 +616,6 @@
 .page-content {
   padding: var(--ob-foundation-space-6) var(--ob-foundation-space-4) 70px;
 }
-.settings-layout {
-  grid-template-columns: 1fr;
-}
 .scope-bar {
   flex-direction: column;
   gap: var(--ob-foundation-space-1);
@@ -736,13 +720,6 @@ to {
   border-radius: var(--ob-component-table-radius);
   background: var(--ob-color-surface);
   box-shadow: var(--ob-foundation-surface-shadow);
-}
-.settings-aside {
-  padding: var(--ob-foundation-space-6);
-  border: 1px solid var(--ob-color-border);
-  border-radius: var(--ob-component-table-radius);
-  background: var(--ob-color-surface);
-  box-shadow: none;
 }
 .scope-bar {
   display: flex;
@@ -931,7 +908,7 @@ to {
   font-size: var(--ob-component-field-label-size);
   line-height: 22px;
 }
-.command-empty pre {
+.command-empty pre, .wizard-command pre {
   margin: 0;
   padding: var(--ob-foundation-space-4);
   font: var(--ob-component-field-helper-size)/1.7 var(--ob-foundation-font-mono);
@@ -963,9 +940,6 @@ to {
 }
 :is(.wizard-footer) {
   position: static;
-}
-.settings-layout {
-  grid-template-columns: minmax(0, 1fr);
 }
 .module-sections {
   grid-template-columns: minmax(0, 1fr);
@@ -1020,3 +994,98 @@ body {
   overscroll-behavior-x: contain;
   overflow-x: auto;
 }
+
+/* 三类向导共用事实、检查和只读命令的呈现；业务状态由各模块独立持有。 */
+.wizard-summary {
+  display: grid;
+  gap: var(--ob-foundation-space-4);
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow-wrap: anywhere;
+}
+.wizard-summary-section {
+  min-inline-size: 0;
+  padding-block-end: var(--ob-foundation-space-4);
+  border-block-end: 1px solid var(--ob-color-border);
+}
+.wizard-summary-section h3 {
+  margin: 0 0 var(--ob-foundation-space-3);
+  color: var(--ob-color-text);
+  font-size: var(--ob-product-typography-section-size);
+  font-weight: var(--ob-product-typography-weight);
+  line-height: 24px;
+}
+.wizard-summary-note {
+  margin: 0;
+  color: var(--ob-color-secondary);
+  font-size: var(--ob-component-field-helper-size);
+  line-height: var(--ob-component-field-helper-line-height);
+}
+.wizard-summary-scope {
+  margin: 0;
+}
+.wizard-summary-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ob-foundation-space-3) var(--ob-foundation-space-6);
+  margin: 0;
+}
+.wizard-summary-facts-paired {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.wizard-summary-facts > div {
+  min-inline-size: 0;
+}
+.wizard-summary-facts dt {
+  margin-block-end: var(--ob-foundation-space-1);
+  color: var(--ob-color-secondary);
+  font-size: var(--ob-component-field-label-size);
+  line-height: var(--ob-component-field-label-line-height);
+}
+.wizard-summary-facts dd {
+  margin: 0;
+  font-size: var(--ob-component-control-font-size);
+  line-height: var(--ob-component-control-line-height);
+}
+.wizard-summary-expand {
+  padding-inline: 0;
+}
+.wizard-summary-risk {
+  margin-block-start: var(--ob-foundation-space-4);
+}
+.wizard-summary-path {
+  font-family: var(--ob-foundation-font-mono);
+  font-size: var(--ob-component-control-font-size);
+  white-space: pre-wrap;
+}
+.wizard-summary-file-rules {
+  display: grid;
+  gap: var(--ob-foundation-space-1);
+  margin: 0;
+  padding-inline-start: var(--ob-foundation-space-4);
+}
+@media (max-width: 575px) {
+  .wizard-summary-facts-paired {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+.orch-task-builder .wizard-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-2); }
+.orch-task-builder .wizard-section-heading > h3:first-child { margin: 0; }
+.orch-task-builder .wizard-precheck-table { margin-block-start: var(--ob-foundation-space-4); min-inline-size: 0; }
+.orch-task-builder .wizard-precheck-identity, .orch-task-builder .wizard-precheck-result { display: grid; gap: var(--ob-foundation-space-1); min-inline-size: 0; overflow-wrap: anywhere; }
+.orch-task-builder .wizard-precheck-category, .orch-task-builder .wizard-precheck-reason { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+.orch-task-builder .wizard-precheck-reason code { display: inline; margin: 0; }
+.orch-task-builder .wizard-command { display: grid; gap: var(--ob-foundation-space-3); margin-block-start: var(--ob-foundation-space-4); min-inline-size: 0; scroll-margin-block-end: calc(var(--ob-component-control-height) * 3 + var(--ob-foundation-space-6) * 2); }
+.orch-task-builder .wizard-command h3 { font-size: var(--ob-component-control-font-size); }
+.orch-task-builder .wizard-command pre { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
+.orch-task-builder .wizard-command pre code { font: inherit; }
+.orch-task-builder .wizard-command p { margin: 0; color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
+.orch-task-builder .wizard-loading-space { display: block; min-block-size: var(--ob-foundation-space-8); }
+.export-builder .ant-form-item { scroll-margin-block: calc(var(--ob-product-shell-header-height) + var(--ob-foundation-space-6)) calc(var(--ob-component-control-height) * 3 + var(--ob-foundation-space-6)); }
+.wizard-submit-facts { min-inline-size: 0; overflow-wrap: anywhere; }
+.wizard-submit-facts code { font-family: var(--ob-foundation-font-mono); white-space: pre-wrap; }

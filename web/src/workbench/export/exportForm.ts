@@ -1,4 +1,4 @@
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, isRef } from 'vue'
 import { type ExportScopeKind, type ExportObjectType, type ExportContentKind, type ExportDataFormatKind, type ExportOutputKind, type CsvQuoteMode, type CompressionAlgo } from '@/api/browser'
 import { objectCategories } from './exportPresentation'
 
@@ -16,7 +16,7 @@ export function createExportForm() {
   const objectNames = computed({ get: () => selectedObjectsByType[objectType.value], set: (names: string[]) => { selectedObjectsByType[objectType.value] = names.filter(Boolean) } })
   const excludeTablesText = ref('')
 
-  const contentKind = ref<ExportContentKind>('DATA_ONLY')
+  const contentKind = ref<ExportContentKind | ''>('')
 
   // EX-I4：数据格式单选；默认 CSV 保持既有行为，切换时清空不适用格式的选项。
   const formatKind = ref<ExportDataFormatKind>('CSV')
@@ -132,7 +132,7 @@ export function createExportForm() {
   const preserveZeroDatetime = ref(false)
   const allSelectedObjects = computed(() => objectCategories.flatMap((category) => selectedObjectsByType[category.type].map((name, index) => ({ type: category.type, name: name.trim(), index })).filter((item) => item.name)))
 
-  const applicableSelectedObjects = computed(() => contentKind.value === 'DATA_ONLY' ? allSelectedObjects.value.filter((item) => item.type === 'TABLE') : allSelectedObjects.value)
+  const applicableSelectedObjects = computed(() => !contentKind.value ? [] : contentKind.value === 'DATA_ONLY' ? allSelectedObjects.value.filter((item) => item.type === 'TABLE') : allSelectedObjects.value)
   const enteredObjectCount = computed(() => applicableSelectedObjects.value.length)
 
   function clearSelectedObjects() { for (const category of objectCategories) selectedObjectsByType[category.type] = [] }
@@ -152,9 +152,19 @@ export function createExportForm() {
     timeValueFormat, datetimeValueFormat, timestampValueFormat, timestampTzValueFormat,
     timestampLtzValueFormat, nlsDateFormat, nlsTimestampFormat, nlsTimestampTzFormat, preserveZeroDatetime,
   }
+  const initial = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, JSON.parse(JSON.stringify(isRef(value) ? value.value : value))]))
+  // 只在切换草稿会话时恢复初值，步骤导航不重建或复制业务表单。
+  function resetForm() {
+    for (const [key, field] of Object.entries(fields)) {
+      const value = JSON.parse(JSON.stringify(initial[key]))
+      if (isRef(field)) field.value = value
+      else Object.assign(field, value)
+    }
+    splitUnit.value = 'MB'
+  }
   return {
     ...fields, fields, objectNames, allSelectedObjects, applicableSelectedObjects, enteredObjectCount,
-    clearSelectedObjects, hydratingDerivedDraft, splitUnit,
+    clearSelectedObjects, hydratingDerivedDraft, splitUnit, resetForm,
   }
 }
 

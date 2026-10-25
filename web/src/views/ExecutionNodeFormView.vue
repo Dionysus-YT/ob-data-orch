@@ -5,6 +5,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
 import { useAntDrawerDialog } from '@/composables/useAntDrawerDialog'
 import { useOperationMessage } from '@/composables/useOperationMessage'
+import { useLogoutGuard } from '@/composables/useLogoutGuard'
 import { product } from '@/platform/tokens'
 import type { NodeFormField } from '@/workbench/nodes/nodeFormRules'
 import { useNodeForm } from '@/workbench/nodes/useNodeForm'
@@ -66,6 +67,7 @@ function finishNavigation(leave: boolean) {
 }
 onBeforeRouteLeave(guardNavigation)
 onBeforeRouteUpdate(guardNavigation)
+useLogoutGuard(guardNavigation)
 onBeforeUnmount(() => { finishNavigation(false); emit('saving', false) })
 
 async function saveForm() {
@@ -139,11 +141,11 @@ async function focusField(field: NodeFormField, id: string) {
             </div>
           </section>
           <section class="node-editor-section" aria-labelledby="node-roots-title">
-            <h3 id="node-roots-title">导出数据目录</h3>
-            <AFormItem label="导出数据目录白名单" name="allowedRootsText" html-for="node-allowed-roots" required :validate-status="formErrors.allowedRoots ? 'error' : undefined">
+            <h3 id="node-roots-title">任务数据目录</h3>
+            <AFormItem label="任务数据目录白名单" name="allowedRootsText" html-for="node-allowed-roots" required :validate-status="formErrors.allowedRoots ? 'error' : undefined">
               <ATextarea id="node-allowed-roots" v-model:value="form.allowedRootsText" class="node-path" :aria-invalid="Boolean(formErrors.allowedRoots)" :aria-describedby="formErrors.allowedRoots ? 'node-roots-error node-roots-hint' : 'node-roots-hint'" :rows="3" :placeholder="platformHelp.rootPlaceholder" @input="clearError('allowedRoots')" @blur="validateField('allowedRoots')" />
               <template v-if="formErrors.allowedRoots" #help><span id="node-roots-error">{{ formErrors.allowedRoots }}</span></template>
-              <template #extra><span id="node-roots-hint">{{ platformHelp.rootHint }}仅允许导出写入这些目录。</span></template>
+              <template #extra><span id="node-roots-hint">{{ platformHelp.rootHint }}</span></template>
             </AFormItem>
           </section>
           <ACollapse v-model:active-key="advancedPanels" ghost class="node-budget-disclosure">

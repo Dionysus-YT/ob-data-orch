@@ -54,10 +54,18 @@ OB Data Orch
 ├─ 运行概览：首页
 ├─ 任务配置：数据源管理、导出任务、普通导入、旁路导入、模板中心
 ├─ 运行与支持：任务中心、执行节点、日志中心
-└─ 平台设置：系统设置、存储凭据、访问控制
+└─ 系统管理（可展开的父级导航）
+   ├─ 平台设置
+   ├─ 调度策略
+   ├─ 安全策略
+   ├─ 工具与兼容
+   ├─ 权限配置
+   └─ 存储凭据
 ```
 
-Global Navigation 只负责产品模块切换。Task Step Rail、日志预设、对象筛选、设置分区和行选择均为 Contextual UI，不得升级为全局导航。
+Global Navigation 只负责产品模块切换。Task Step Rail、日志预设、对象筛选、模块内字段分组和行选择均为 Contextual UI，不得升级为全局导航。
+
+系统管理按 [DEC-061](../docs/01-product/decisions.md#dec-061-系统管理父子导航与模块边界) 和 [DEC-062](../docs/01-product/decisions.md#dec-062-系统设置拆分为四个独立配置域) 组织六个独立模块；父级只展开/收起，不承载聚合页面或混合保存。平台设置管理展示默认、任务命名及任务/普通日志保留；调度策略管理平台调度约束；安全策略管理安全基线和审计保留；工具与兼容管理工具和元数据基线。权限配置管理已有认证主体授权，存储凭据管理对象存储材料。完整导航使用缩进子项；48px 图标轨通过“系统管理”打开 Ant 子菜单，保留当前子项与键盘访问。
 
 ## 4. Product Shell
 
@@ -88,12 +96,14 @@ Global Navigation 只负责产品模块切换。Task Step Rail、日志预设、
 
 | Archetype | Skeleton | Header / Toolbar | Secondary content | Drawer / Inspector / Footer | 使用场景 |
 | --- | --- | --- | --- | --- | --- |
-| Overview | 运营摘要面 → 单一趋势 → 节点/任务/Attention/Activity | 授权范围、freshness、Refresh utility | 有限下钻列表 | 默认无 Inspector；无固定 Footer | 首页 |
-| Management / Table | Header → FilterToolbar → Dense Table → pagination/state | Create + Search/Filter/Refresh | 行级 metadata 与 eligibility | 编辑/测试 Drawer；危险 Dialog | 数据源、模板、节点、凭据 |
+| Overview | 通栏状态带 → Attention（含摘要）→ 我的任务 / Runtime 节点 → 单一趋势 | 授权范围、freshness、Refresh utility | 有限下钻列表 | 默认无 Inspector；无固定 Footer | 首页 |
+| Management / Table | Header → FilterToolbar → Dense Table → pagination/state | Create + Search/Filter/Refresh | 行级 metadata 与 eligibility | 编辑/测试 Drawer；危险 Dialog | 数据源、模板、节点、凭据、权限配置 |
 | Task Builder | Task header → Step Rail → current-step workspace | saved/dirty state、Save Draft、当前步骤动作 | 当前选择的派生事实 | 条件 Inspector、Summary Drawer、Fixed Footer | 导出、普通导入、旁路导入 |
 | Task Operations | Header → FilterToolbar → scope bar → Task Table | Create / More、筛选与刷新 | 状态、阶段、可靠进度 | 默认无 Inspector；状态化行操作 | 任务中心 |
 | Diagnostic / Detail | 稳定对象头 → 事实分区 → 证据/日志/记录 | permitted action + Back | failure/reconciliation banner | 单对象日志内联；跨对象转日志中心 | 任务/节点详情 |
-| Settings | Header → compact section nav → one section workspace | Edit/Save current section | 生效值、来源、时间、差异/影响 | 高影响确认 Dialog；无 Inspector | 系统设置、访问控制 |
+| Settings | Header → one module workspace → optional field groups | Edit/Save current module，读写未接入时无保存入口 | 生效值、来源、时间、差异/影响；未接入时只说明边界 | 高影响确认 Dialog；无 Inspector | 平台设置、调度策略、安全策略、工具与兼容 |
+
+四个设置配置域的职责、入口及当前只读边界见 [system-settings.md](pages/system-settings.md)。
 
 Reference Page 对应关系：
 
@@ -111,7 +121,8 @@ Reference Page 对应关系：
 
 Overview 回答：需要关注什么、发生了什么变化、什么失败或被阻断、Runtime 是否健康、我的任务正在发生什么。
 
-- 使用共享运营摘要面，不形成 independent KPI card system。
+- 任务指标与节点接收结论共享一条通栏状态带，不形成 independent KPI card system。
+- 受控摘要文本位于 Attention 标题行，失败与阻断事实紧随状态带，不另设独立摘要分区。
 - 视觉优先级：Failure / Blocked > Runtime Health > Running Tasks > Recent Activity > Trend。
 - 只保留一张有明确事实口径的趋势；不做资源曲线、预测、健康分、拓扑或多图表 Dashboard。
 - 节点、我的任务、失败与异常均为有限列表，只提供查看和下钻。
@@ -182,7 +193,45 @@ long technical identifier
 
 截图不等同于 DOM、键盘或无障碍验证。
 
+### 视觉验收门槛
+
+自 2026-10-19 起，所有含前端界面的模块在宣称开发完成前，必须通过以下八项视觉与交互验收。后续影响页面呈现、共享组件或同类交互的变更，按受影响范围重新验收；纯后端或文档变更可说明本门槛不适用，不免除其余工程与业务门禁。
+
+- [ ] 同类型页面遵循统一布局和对齐规则
+- [ ] 同类控件使用统一尺寸、样式和状态
+- [ ] 表格、表单、抽屉、弹窗的视觉规则一致
+- [ ] 同类操作具有一致的动效和反馈
+- [ ] 不同模块之间没有明显的视觉密度落差
+- [ ] 1920×1080 实际截图检查通过
+- [ ] 1440×1024、1280×720 响应式检查通过
+- [ ] 未发现无依据的模块私有样式或重复实现
+
+### 验收证据与判定
+
+- **比较基准：** 以现行 P0、对应 Pattern / P1 和数据源定版复用规则为准；选择同一 Archetype 的参考页对比。不同业务结构比较共同设计元素，允许已登记例外，不强行统一页面结构。
+- **实际页面：** 启动待验收实现，用浏览器实际检查三档视口并保存代表截图；1920×1080 是主要视觉对比尺寸。截图必须对应本次待验收版本，历史截图只作比较基线，设计稿、DOM 尺寸或自动化断言不能单独替代截图目视检查。共享视觉变更同时复查数据源标准页及受影响的参考页。
+- **关键状态：** 除默认页面外，检查实际存在的加载、禁用、空态、异常、字段校验、保存成功/失败、危险确认、取消/关闭和未保存输入处理；实际打开、关闭 Drawer / Modal，核对动效、反馈与焦点恢复。无对应组件或操作时说明不适用理由，不为验收新增业务能力；继续满足上方既有键盘、200% 缩放等验证矩阵。
+- **记录方式：** 沿用模块现有验收记录，逐项记录结论、比较页面、实现版本、浏览器版本、视口、检查状态和截图/交互证据路径。有未提交改动时同时保留本轮差异或工作树标识，不能仅用 HEAD 代表实际验收内容。明确区分代码静态检查、浏览器实际验证和截图视觉检查。
+- **样式与复用：** 对本次模块及受影响共享实现的相关审计 REVIEW 补充人工结论、依据与处置；已登记例外按限定范围验收。`tokens:check`、`audit:platform`、构建或功能测试通过，均不能代替这八项验收。
+- **完成判定：** 各项使用“通过、不通过、未验证、无法验证、不适用”记录；有前端页面时三档视口检查必须实测。只有所有适用项通过，才可声明模块视觉验收通过及前端交付完成；未验证、无法验证或不通过项不得勾选。可分别报告已实现、合成验证通过和待验收范围，不把视觉验收外推为真实执行、部署或上线通过。验证沿用既有合成夹具、隔离环境和真实准入边界。
+
 ## 11. Change Control
+
+2026-10-23 按用户采纳的拆分评估及 [DEC-062](../docs/01-product/decisions.md#dec-062-系统设置拆分为四个独立配置域)，系统管理新增平台设置、调度策略、安全策略、工具与兼容四个独立配置域，取代系统设置四个横向分区。Settings Archetype 使用独立工作面及可选字段分组，权限配置明确归属已有 Management / Table。当前只完成页面/导航职责拆分，配置事实未接入时保持未知且不提供修改，工具先展示受控目标基线；不增加配置 API、存储表或发布能力。六个子项沿用原 Shell 几何、Ant 控件和 Token。
+
+2026-10-23 按用户明确要求，将原“平台设置”的平铺入口调整为“系统管理”可展开父级，下设系统设置、权限配置、存储凭据。权限配置从系统设置安全分区移出，三个模块保持独立页面；原路由兼容，折叠图标轨使用 Ant 子菜单。此项只修订全局导航层级，不改变 Shell 几何、Archetype、Token、权限或业务能力，详见 [DEC-061](../docs/01-product/decisions.md#dec-061-系统管理父子导航与模块边界)。
+
+2026-10-23 按用户选定的 [DEC-060](../docs/01-product/decisions.md#dec-060-首页关注优先结构) 修订 Overview Archetype 骨架：通栏状态带（四项任务指标 + 节点不可接收数）→ 含受控摘要的 Attention → 我的任务与执行节点并排 → 降低高度的唯一趋势。视觉优先级规则不变，只是骨架顺序与其对齐；不修改 Shell、Token、组件语义表或其他 Archetype。
+
+2026-10-20 按用户采纳的 [DEC-056](../docs/01-product/decisions.md#dec-056-旁路五步配置与入口集中确认)，旁路收敛为“数据源与连接、导入目标、文件与格式、执行参数、预检查与提交”五步。入口阅读确认改为首步有效继续时的集中弹窗，最终快照风险确认不变；三类模块的数据源选择复用同一筛选与单选列表布局。前四步仅表达本地配置完整度，第五步表达九项当前预检查进度；取代下条六步序号，不修改 Shell、Archetype、Token 或真实执行准入。随后按 [DEC-057](../docs/01-product/decisions.md#dec-057-旁路导入限定本地部署) 限定本地部署：只展示私有 ODP / OBServer、可编辑默认 RPC 2885 / 2882 与 CSV；活动目录为 102 项，不显示其他部署专属入口或说明。
+
+2026-10-19 按用户旁路审查整改要求，三类向导统一使用顶部水平步骤进度栏；旁路仍为独立六步，前五步输入完整度与第六步有效检查进度分开统计，工具执行与准入不变。摘要、表内操作、事实展示及安全确认沿用现有共同规则，详见 [Task Builder Pattern](patterns/task-builder.md#2026-10-17--2026-10-19-三类向导一致性整改)。此项取代此前旁路竖向进度栏的呈现差异，不修改 Product Shell、Archetype 或 Token。
+
+2026-10-19 退出登录交互修订：复用当前编辑会话的离开守卫，确认先于注销；注销失败保留输入与原生卸载保护，服务端确认后放行登录页跳转，避免重复提示。规则见 [Action Hierarchy Pattern](patterns/action-hierarchy.md#未保存输入与退出登录)，Shell 几何、Archetype 和 Token 不变。
+
+2026-10-19 用户补充全模块[视觉验收门槛](#视觉验收门槛)：新增八项完成条件，要求当前版本三档浏览器检查、截图视觉对比和关键交互证据；未实测不能宣称通过。清单与判定规则仅在本文件维护，任务地图和前端平台基线仅链接到此入口。
+
+2026-10-19 按用户“按现有情况更新规范”的要求，明确主工作面的现有浅阴影、管理表格与预检查表的不同密度，登记限定的图标/环境选项和节点额度图形例外，并区分平台审计的硬违规与选择器待复核信号。详见 [DESIGN v4.1](DESIGN.md)、[Tables Pattern](patterns/tables.md)与[规范校准记录](../docs/03-technical/evidence/platform-design-baseline-2026-10-19.md)。保持现有视觉方向、Shell、Archetype、业务状态与执行门禁；未引用 CSS 不因本次登记而成为推荐模式。
 
 2026-10-12 全平台操作结果与持续状态的反馈调整已记录于 [Status and Feedback Pattern](patterns/status-feedback.md#全平台反馈规则)，按用户确认统一 Message / Alert / Form.Item，Shell、Archetype 与 Token 保留原权威。
 

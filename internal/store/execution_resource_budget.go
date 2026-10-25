@@ -37,7 +37,27 @@ func encodeBudgetPolicy(policy *executionbudget.Policy) (string, error) {
 // ListNodeBudgetUsages 从持久执行分配聚合预算，待核对的运行分配退入预留而非释放。
 // 升级前没有预算记录且没有进程结束证据的执行标为未知，阻止后续过量分配。
 func (s *Store) ListNodeBudgetUsages(ctx context.Context) (map[string]NodeBudgetUsage, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.node_id,
+	return listNodeBudgetUsages(ctx, s.db)
+}
+
+// listNodeBudgetUsages 只读取持久分配，允许首页与节点事实使用同一只读事务。
+func listNodeBudgetUsages(ctx context.Context, reader sqlQueryReader) (map[string]NodeBudgetUsage, error) {
+	return queryNodeBudgetUsages(ctx, reader, nil)
+}
+
+// queryNodeBudgetUsages 允许首页只读取已授权节点的预算，隐藏节点的坏数据不能改变可见分区状态。
+func queryNodeBudgetUsages(ctx context.Context, reader sqlQueryReader, nodeIDs *[]string) (map[string]NodeBudgetUsage, error) {
+	filter := ""
+	args := []any{}
+	if nodeIDs != nil {
+		encoded, err := json.Marshal(*nodeIDs)
+		if err != nil {
+			return nil, err
+		}
+		filter = " AND e.node_id IN (SELECT value FROM json_each(?))"
+		args = append(args, string(encoded))
+	}
+	rows, err := reader.QueryContext(ctx, `SELECT e.node_id,
         SUM(CASE WHEN a.execution_id IS NOT NULL AND e.reconciliation_required = 0 AND EXISTS
             (SELECT 1 FROM execution_events started WHERE started.execution_id = e.execution_id AND started.event_type = 'PROCESS_STARTED' AND started.accepted = 1)
             THEN a.budget_bytes ELSE 0 END),
@@ -46,8 +66,8 @@ func (s *Store) ListNodeBudgetUsages(ctx context.Context) (map[string]NodeBudget
             THEN a.budget_bytes ELSE 0 END),
         SUM(CASE WHEN a.execution_id IS NULL THEN 1 ELSE 0 END)
         FROM task_executions e LEFT JOIN execution_resource_allocations a ON a.execution_id = e.execution_id
-        WHERE (a.execution_id IS NOT NULL OR e.state IN ('STARTING','RUNNING','CANCELLING') OR e.reconciliation_required = 1) AND `+budgetStillHeld+`
-        GROUP BY e.node_id`)
+        WHERE (a.execution_id IS NOT NULL OR e.state IN ('STARTING','RUNNING','CANCELLING') OR e.reconciliation_required = 1) AND `+budgetStillHeld+filter+`
+        GROUP BY e.node_id`, args...)
 	if err != nil {
 		return nil, err
 	}

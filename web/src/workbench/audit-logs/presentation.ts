@@ -1,0 +1,3 @@
+export const auditObjectLabels: Record<string, string> = { TASK: '任务', TASK_EXECUTION: '任务执行', DATA_SOURCE: '数据源', EXECUTION_NODE: '执行节点', AGENT: 'Agent', EXPORT_DRAFT: '导出草稿', SUBJECT: '认证主体', PLATFORM_SETTING: '平台配置', STORAGE_CREDENTIAL: '存储凭据', LOG_QUERY: '日志访问' }
+export const auditResultLabels = { SUCCEEDED: '成功', FAILED: '失败', DENIED: '拒绝' } as const
+export const auditFieldLabels: Record<string, string> = { changed: '发生变更', confirmed: '已确认影响', redacted: '已脱敏', environmentInspectionAuthorized: '授权环境检查', storageConnectivityProbeAllowed: '允许存储连通检查', revision: '修订', records: '访问结果条数', count: '数量' }

@@ -1,0 +1,757 @@
+{
+  "schemaVersion": 1,
+  "subject": "权限配置首批",
+  "date": "2026-10-23",
+  "result": "LOCAL_SYNTHETIC_PASS",
+  "recordedAt": "2026-10-23T07:56:11.283984+00:00",
+  "head": "0c5953cdbf406c01ee89ac9018af90a123d67b64",
+  "sourceFingerprint": "d2beb9c7201d00cb5f10c2cfa8c7b6ef819b8517622163e09614bba279253fbe",
+  "workingTreeFingerprint": "4011226a330ebde8aa504a79aef06e82d5a73ad3af18a37a2185c18ad3ea8877",
+  "fingerprintMethod": "SHA256 of selected source manifests; working tree adds git diff HEAD binary and porcelain status. The paired evidence files are excluded to avoid self-reference.",
+  "sources": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "eb77430b11f463aa78f44de39e855b6a50799e1594722d5fd35ad3c36a584157"
+    },
+    {
+      "path": "cmd/control-plane/main.go",
+      "sha256": "5106fe820202edc2a4310b0eea6aa6311de962e2b79d8f874a04fa8253201a2e"
+    },
+    {
+      "path": "contracts/README.md",
+      "sha256": "3d2ade666450efe893c4df0e97e4b329dd320f182b0956a89af5dab026fe147a"
+    },
+    {
+      "path": "contracts/access_control_test.go",
+      "sha256": "a32366777ae9526a5ba740353fd5daad3c69d5ba1565f65bde459979057a26f8"
+    },
+    {
+      "path": "contracts/openapi.json",
+      "sha256": "bce731f38b1a13a68061758fb1aea7fda4db1eda9ad1389bbdc4626f00b6a3f5"
+    },
+    {
+      "path": "contracts/openapi_test.go",
+      "sha256": "7f85effffc5d06ca359015adb357a9a6072a9529890b4e36c24829e1add91113"
+    },
+    {
+      "path": "design-system/DESIGN.md",
+      "sha256": "aeda4ff31233298f4061d92dab27fe29b741b8e232fd892af5c9a8c441e12254"
+    },
+    {
+      "path": "design-system/MASTER.md",
+      "sha256": "042dfeb3970bf43fd65c16993db38a41209e4829665a0c3890840e01c6aea8f3"
+    },
+    {
+      "path": "design-system/pages/data-sources.md",
+      "sha256": "af4395b97c8769853e9ccb1cfd7af643dac48e5761525b4dc7aef49e2b5565d8"
+    },
+    {
+      "path": "design-system/patterns/drawers.md",
+      "sha256": "c0088ee5ea666b03a2391148b8ba778b89143bfb520819822896d64806c521e6"
+    },
+    {
+      "path": "design-system/patterns/tables.md",
+      "sha256": "1586c5189a0cd1643267a1c92d93ae0cfdd68c81fddd8029c1512bab7ddf20da"
+    },
+    {
+      "path": "docs/03-technical/README.md",
+      "sha256": "d990df75125c4de5521fcdcec707dca97d37d551fdaf5696e556aa2d896f2236"
+    },
+    {
+      "path": "docs/03-technical/access-control-contract.md",
+      "sha256": "02701749a069fcf43a523722efe5f7048f73e88da1872dbc4f7a65941a3496c4"
+    },
+    {
+      "path": "docs/03-technical/api-sqlite-data-contract.md",
+      "sha256": "66f4034432d0c0497969f4960e3b0fad8964b27813a14804504f58cf7fd79247"
+    },
+    {
+      "path": "docs/03-technical/credential-access-security-contract.md",
+      "sha256": "2341bcd555203ea28c23e843719b1c1c2d1a5412235318bb82bacd0969ee60bb"
+    },
+    {
+      "path": "docs/03-technical/development-task-map.md",
+      "sha256": "293292cde425c974242d5fa1e8db5a21df5121f2a4fd768c1bc1f3ff62556cf1"
+    },
+    {
+      "path": "docs/README.md",
+      "sha256": "0f13cbd16ab7eb8f3b5f87f6891951183fa1e7996426ee35dc622afa62ab9367"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "fb48135168bf281141d3d0950d08ff5ac28077d3b4490df1d343a2f7229180d8"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "66db7cfa01866eb864e367e804b69ebad9b716cb1c73b1d5558c081987c658bf"
+    },
+    {
+      "path": "internal/accesscontrol/policy.go",
+      "sha256": "efe30669600a91f62e8895e3dd5e9768bf21f36a4a6966c147a0ef6ad5623335"
+    },
+    {
+      "path": "internal/accesscontrol/policy_test.go",
+      "sha256": "b42022db8bddcf69d53684810fe7f16c9380e2b3f921eeb29f24877efd23713c"
+    },
+    {
+      "path": "internal/accesscontrol/types.go",
+      "sha256": "d5af3750bcd85e0a4711a49ece672d5aca1aa349d1fa4d5ca097e9da9d063d2a"
+    },
+    {
+      "path": "internal/controlplane/access_control.go",
+      "sha256": "46f41a80b86ba7faf1f706d176b600855b6b9187a6abcabfa514947597670042"
+    },
+    {
+      "path": "internal/controlplane/access_control_test.go",
+      "sha256": "20e69c80ee66f9718e010c9f68228bfe79eb8561ab331f9cd4357f321f354b79"
+    },
+    {
+      "path": "internal/controlplane/browser_authorization.go",
+      "sha256": "011490775bc6b16bdc8c430751ba1d0e98aa278d4be6adb9ac907580ac4fae80"
+    },
+    {
+      "path": "internal/controlplane/browser_authorization_test.go",
+      "sha256": "9c2a66a6ef148f69c7d6ae00ac9afd2468a278655d4af4fbf6311af41c2620b7"
+    },
+    {
+      "path": "internal/controlplane/direct_load.go",
+      "sha256": "9b88dfc227833ec462c07b348eaad3326a7191e4502a33e55b41927db19774f2"
+    },
+    {
+      "path": "internal/controlplane/execution.go",
+      "sha256": "1418067b5575b23140e2ec0f5e3b4611c72aaea6eb0b0ae8c5252ea5a4ce907d"
+    },
+    {
+      "path": "internal/controlplane/export_object_catalog.go",
+      "sha256": "69a51bf16cd7bf535470080dc60698f4002fba0863d2e048645edfa608276e6d"
+    },
+    {
+      "path": "internal/controlplane/normal_import.go",
+      "sha256": "8b16335801c00add5a19b9d719e171c9a4f48bd71dc55897b2c001ab2bbaa516"
+    },
+    {
+      "path": "internal/controlplane/overview.go",
+      "sha256": "9efd2f212f869a2dbc236d5be907eef80b56e992a4d1f84f13d197d6f76b3c75"
+    },
+    {
+      "path": "internal/controlplane/server.go",
+      "sha256": "5a6750bb2df316a91c968ba624ed3f37697a79eebf4ac1a324d03fa5b086698e"
+    },
+    {
+      "path": "internal/controlplane/server_test.go",
+      "sha256": "09374350f7e9aab097c72e150d8a22e97732c9c9b83705cbedba915947462c7b"
+    },
+    {
+      "path": "internal/deployment/browser.go",
+      "sha256": "606d650bb4e402047e672478f8295eff7eee28f61e372e0003886095eeaa2a2c"
+    },
+    {
+      "path": "internal/identity/identity.go",
+      "sha256": "43854c14a27599d910706f6cc1a0f6943e9b8f0030c39e18689300a60c23ceac"
+    },
+    {
+      "path": "internal/integration/agent_precheck_tls_test.go",
+      "sha256": "adac8a24156ed53c56f70f1c1934782b862325c67f399c11c858faf5a70a5ac8"
+    },
+    {
+      "path": "internal/integration/dev04_test.go",
+      "sha256": "adfa691f7c8418db057dec7ad3d55b1221eaabfb7a8a59d44dad064e122575c7"
+    },
+    {
+      "path": "internal/localmvp/local.go",
+      "sha256": "390fbd64585cda06ef999a612952d1f78bb62cffcd03016996ebae8f8fdc9c7f"
+    },
+    {
+      "path": "internal/migrate/runner_test.go",
+      "sha256": "3e37c81c7fd6f3a134fa9d40e6bc56c07a040631fe4d0d8bc15934cb2f846177"
+    },
+    {
+      "path": "internal/migrate/subject_permissions_test.go",
+      "sha256": "fb5bf164fc53db9c346610fecdbb6900185905d65ca328ec9f1940851ce37652"
+    },
+    {
+      "path": "internal/overview/overview.go",
+      "sha256": "c24496efdf7a4b4e9b54b33ca20b485a67135de4a00a1473a1bdb4ca3088e218"
+    },
+    {
+      "path": "internal/overview/overview_test.go",
+      "sha256": "eaf15dd04dec89b2100cfeabb69b2133b6099d488579442a815e931c77bf6b43"
+    },
+    {
+      "path": "internal/store/access_control.go",
+      "sha256": "643ee0870ffe884880a964e19c8d9739f302ceb79da91284047a2a38f4888c12"
+    },
+    {
+      "path": "internal/store/access_control_test.go",
+      "sha256": "9704672f3c57245291704232e09499e3888b349410156889bae0c69f94eab5dc"
+    },
+    {
+      "path": "internal/store/node_execution_observations.go",
+      "sha256": "5ea336b5a86b5106bed8108f9bb9600a0b347d8c4bb12e3a75e62c470d75b6c0"
+    },
+    {
+      "path": "internal/store/overview.go",
+      "sha256": "6d29d64ba6193aeda1a03908ac5135a4c733fad66da96b593a7f04481703e6b7"
+    },
+    {
+      "path": "internal/store/permission_authorization.go",
+      "sha256": "44c9b7e96bb0761f65dc81b0801ae2c70f7cb0b09651bb6e27f346be62c05af9"
+    },
+    {
+      "path": "internal/store/permission_change.go",
+      "sha256": "20bcac05e3702838486e8fdb856999af6e13f7a04e915b3a3d5a4b29c1227cb6"
+    },
+    {
+      "path": "internal/store/permission_runtime.go",
+      "sha256": "9390aad6ea777aa30e828391f1cc6c0d78e5b7f4f2e34b29353528212e8062bf"
+    },
+    {
+      "path": "internal/store/permission_runtime_test.go",
+      "sha256": "6d2ba469b6045603c9eba6294ad1cd39b82cc37cabf92aaa25da3b1feef72a97"
+    },
+    {
+      "path": "internal/store/permission_templates.go",
+      "sha256": "ae3f9276049e319d7c5568653abf15d5de462eb3d7902369b4798c57d0619f88"
+    },
+    {
+      "path": "internal/store/store.go",
+      "sha256": "2c82d1f6839bfafa91263dcb1e181b177b43e31bb3611a0d18e96a1cad85a485"
+    },
+    {
+      "path": "internal/store/task_list.go",
+      "sha256": "ad1fff48f40038c9845fba5cc64150707788ee777d83d19979789776b94aeecb"
+    },
+    {
+      "path": "internal/store/types.go",
+      "sha256": "f597baac563d4cbdab03b64756efd195a28d8c6ca888fba7b9ab38ffa0216530"
+    },
+    {
+      "path": "migrations/0035_subject_permissions.sql",
+      "sha256": "b1aec6bb822c316e2eca3f0bab1d8a7f9dbc70519b6354bc747730592bf1022f"
+    },
+    {
+      "path": "migrations/README.md",
+      "sha256": "3b2109013ed0f8a677144a11133ebac7f2748d73f7e53d3ded90ff101b43a744"
+    },
+    {
+      "path": "web/package-lock.json",
+      "sha256": "321832466066d16743736e88a2b9a8515ff938335fa9517ab87418eb59beec2e"
+    },
+    {
+      "path": "web/package.json",
+      "sha256": "97a65750626f0a4fa456f9f4092f8cce05500b5f0a063ab2ff153c4e8a59a419"
+    },
+    {
+      "path": "web/src/api/accessControl.test.ts",
+      "sha256": "746043ab351bc7c2162b1f73ffe324f857ccccf46d273798b81d469a8b02ae70"
+    },
+    {
+      "path": "web/src/api/accessControl.ts",
+      "sha256": "32b741d7f8b05e4dc69f960ec4112746e5af1701681a32d9eaeaee27bac7ad95"
+    },
+    {
+      "path": "web/src/api/browser.ts",
+      "sha256": "4cb47bb46e58ba880e20ddfea1f7e5caf5dec6663d547e25e5f51c644297b4a5"
+    },
+    {
+      "path": "web/src/platform/archetypes.css",
+      "sha256": "4ce7a182abd5592f5721a1d1c6066f85306713a86ff18c602ed65e4ce339a315"
+    },
+    {
+      "path": "web/src/platform/components.css",
+      "sha256": "e9d294703847539c78fee072dc3f6f441858e13a032d2ea613345fd249932d0e"
+    },
+    {
+      "path": "web/src/platform/sources.css",
+      "sha256": "7b4349c55582e3732aca3dfeda3d3bb0c94041888abfa7f2bc37d1251ad29c6e"
+    },
+    {
+      "path": "web/src/platform/theme.ts",
+      "sha256": "ac345dc64d220e0ec641ffddd23d81c585067eaaab2ba51a919d1649550df3d2"
+    },
+    {
+      "path": "web/src/platform/tokens.ts",
+      "sha256": "ffc1e9fa84411bf301678d246241aa10feba7b14425be3acdc47521c9a74963c"
+    },
+    {
+      "path": "web/src/views/AccessControlView.vue",
+      "sha256": "45f2457ed48dd55726b72881d187b48807df9727230512b39af4359dd67b5e0f"
+    },
+    {
+      "path": "web/src/views/SystemSettingsView.vue",
+      "sha256": "1d44b8d6b03eb21be196c5c69b831c7e8148ebea1f68d61cea9218c4b73f97f3"
+    },
+    {
+      "path": "web/src/workbench/access-control/PermissionEditor.vue",
+      "sha256": "10c78d6ac62ada7ceed4cdeeefa8a93d5ee076cfdaeed6e6ec09aa3838f709b4"
+    },
+    {
+      "path": "web/src/workbench/access-control/PermissionScopePicker.vue",
+      "sha256": "85041deccc6ecb5a7b0925ae2347df1f3dba12e0069cd7bd2522262e91b91b7b"
+    },
+    {
+      "path": "web/src/workbench/access-control/PermissionWorkspace.vue",
+      "sha256": "c9c7c097c6b5a8917915848f767b9f595818b160695966090d1bca110c0f1365"
+    },
+    {
+      "path": "web/src/workbench/access-control/README.md",
+      "sha256": "f78d77684641a244b64abebfee8c0b91c0acc4501fcaa8c42214935d81d77f91"
+    },
+    {
+      "path": "web/src/workbench/access-control/permissionLifecycle.test.ts",
+      "sha256": "ce96428e80ddd27d705b742c8e5152f4cb6281237a3578b5b887bd1febb41849"
+    },
+    {
+      "path": "web/src/workbench/access-control/permissionRules.ts",
+      "sha256": "d810416f75e85239fad2fddfe3131c5f2f54d34b88d0a6c12d8fc409849368b1"
+    },
+    {
+      "path": "web/src/workbench/access-control/usePermissionCandidates.ts",
+      "sha256": "6ac05a528db6bb99fabad5acc38dc046c0a2bef7178463061c2588ec02266df9"
+    },
+    {
+      "path": "web/src/workbench/access-control/usePermissionEditor.ts",
+      "sha256": "110a0a0acf703a550e5eb8a42c1ea94717a98ce89fc2455d46e0a8d6e123a95e"
+    },
+    {
+      "path": "web/src/workbench/access-control/usePermissionList.ts",
+      "sha256": "94434304a1d8de78153d394a94337cfeae1c533bc1edee73f92c9ef72219e269"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewAttention.vue",
+      "sha256": "f7babb049f1d7000f8bbe37e0323693d8b665e708b6b5c6ee09dfd8821608595"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewMyTasks.vue",
+      "sha256": "07542c25ba2278f0a09cc7c2d0db60868412152f97c0835d2dfde44c1c2f85ae"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewNodes.vue",
+      "sha256": "0d20a50471d1aacd2ca61378224acaa6f6f04afe7dba67e245911bf4dfe61333"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewSummary.vue",
+      "sha256": "a62fb82d304147911f2514fb979491357b6a3a016f8ec28c4e3dac0eb5a0f4dc"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewTrend.vue",
+      "sha256": "39793f302f1129bd7181ef9ae2339d085450a6df629abceab4ee53df5e5c6931"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewWorkspace.vue",
+      "sha256": "6bb1a7b465b4bd62d226eded92543cc8af635424bad28e10d9ffc4031f7750e8"
+    },
+    {
+      "path": "web/src/workbench/overview/README.md",
+      "sha256": "a04e008dff07df48c71d22b0336d35b37d4e0f4359a6f28871314649243aee67"
+    },
+    {
+      "path": "web/src/workbench/overview/overview.css",
+      "sha256": "523a6492d04a861888fa8a53fc6c1dcc3e74928dbaa10f587ac76f4f70366916"
+    },
+    {
+      "path": "web/src/workbench/overview/overviewLifecycle.test.ts",
+      "sha256": "e6585a72b6fdbc0f42e015f4c34eec097bd35e71074a456c2dd5a2ae9c745f77"
+    },
+    {
+      "path": "web/src/workbench/overview/overviewNavigation.test.ts",
+      "sha256": "b8a85e412924150ef57efa87a12b099f6148c4660f934705711ff62b0f7bdaa7"
+    },
+    {
+      "path": "web/src/workbench/overview/overviewPresentation.ts",
+      "sha256": "d21c95034b7d0c38545d1eea2a776d5376804ca23fb7290055d7dc85b28014d2"
+    },
+    {
+      "path": "web/src/workbench/overview/useOverview.ts",
+      "sha256": "338974708cc207f34186a2470f1e632744b04b9651545a394ed239f1bd84d06a"
+    },
+    {
+      "path": "web/tests/access-control.spec.ts",
+      "sha256": "567203b78035f7914db62abc8c5626cd201f58c4d585aea39c1aea1b0d8cc1fa"
+    },
+    {
+      "path": "web/tests/fixtures/access-control.ts",
+      "sha256": "8a64a0317cce3fe44a57c1e950a75b0fa9263550bd00d7ef1b6365f638e69f9f"
+    },
+    {
+      "path": "web/tests/overview.spec.ts",
+      "sha256": "57a8cf0b3b3357d379728f2e7bc6ca0d0b043a8d1c3b3ab36b6be4010648ac9a"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Go full regression",
+      "command": "go test ./cmd/... ./contracts/... ./internal/... ./migrations/...",
+      "result": "PASS"
+    },
+    {
+      "name": "Final affected Go regression after expert classification fix",
+      "command": "go test ./internal/store ./internal/controlplane ./internal/integration ./internal/migrate ./contracts -count=1",
+      "result": "PASS"
+    },
+    {
+      "name": "Go vet",
+      "command": "go vet ./cmd/... ./contracts/... ./internal/... ./migrations/...",
+      "result": "PASS"
+    },
+    {
+      "name": "Frontend unit suite",
+      "command": "npm run test",
+      "result": "PASS",
+      "files": 53,
+      "tests": 627
+    },
+    {
+      "name": "Permission unit cases",
+      "result": "PASS",
+      "tests": 20
+    },
+    {
+      "name": "Frontend typecheck, lint, build",
+      "result": "PASS"
+    },
+    {
+      "name": "Business architecture",
+      "result": "PASS",
+      "violations": 0,
+      "reviewSignals": 19,
+      "ruleTests": 11
+    },
+    {
+      "name": "Platform styles",
+      "result": "PASS",
+      "violations": 0,
+      "reviewSignals": 111,
+      "runtimeReferences": 7
+    },
+    {
+      "name": "Tokens",
+      "command": "npm run tokens:check",
+      "result": "PASS"
+    },
+    {
+      "name": "Secret scan and whitespace",
+      "result": "PASS"
+    }
+  ],
+  "browser": {
+    "primary": {
+      "startTime": "2026-10-23T07:23:55.155Z",
+      "duration": 138804.03999999998,
+      "expected": 17,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "layoutSupplement": {
+      "startTime": "2026-10-23T07:34:12.152Z",
+      "duration": 57204.822,
+      "expected": 5,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "supplementIsRerunSubset": true,
+    "metadata": [
+      {
+        "name": "browser-version",
+        "value": "156.0.8078.48"
+      },
+      {
+        "name": "browser-version",
+        "value": "156.0.8078.48"
+      },
+      {
+        "name": "browser-version",
+        "value": "156.0.8078.48"
+      },
+      {
+        "name": "native-zoom",
+        "value": "{\"before\":{\"width\":1424,\"ratio\":1},\"after\":{\"width\":712,\"ratio\":2},\"browser\":\"153.0.8010.12\"}"
+      },
+      {
+        "name": "browser-version",
+        "value": "156.0.8078.48"
+      },
+      {
+        "name": "browser-version",
+        "value": "156.0.8078.48"
+      },
+      {
+        "name": "browser-version",
+        "value": "156.0.8078.48"
+      }
+    ],
+    "screenshots": [
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-保存-conflict-保留草稿且不显示成功-chrome/permissions-conflict.png",
+        "sha256": "86e316bb6ae49aa32f6d8f5b0e04a6edc8fae0e2a1c66bbe87e6476ea41d4103"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-保存-write-error-保留草稿且不显示成功-chrome/permissions-write-error.png",
+        "sha256": "bd584c16a9b0aa56d9d38ffc1c18c94624e0f7ae8cdd7830c1742b0dcb289b4b"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-原生-200-缩放中保存、取消和确认保持可见并可键盘操作-chrome/permissions-native-200-percent.png",
+        "sha256": "34cb344282fd3cf8af1a99e3c3b2a08be6f8793bb3031a4961646ec1e5a8462d"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-editor-1280.png",
+        "sha256": "0ecf61543b3fd980b0e8f634bdf92f4f08cd8a62b68bae328696fab79a34376f"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-list-1280.png",
+        "sha256": "a2f0b6b7501cf0e99ab69f9b04482a0beee10b9936b7e430cf9dd3c16956b1e6"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-review-1280.png",
+        "sha256": "f4764ae8fbb74a21b564eefc38605ce93dee18c009f80b068d0e30582953edb5"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-scopes-1280.png",
+        "sha256": "f8cdea80d21e09ad094c3f6120a7a1cc77e37b1d845b04e7a08b45f9e214ec88"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-editor-1440.png",
+        "sha256": "33d593c23065168469775da0ec86aa4fe8ad9efbda81e034ca6d86832f29a675"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-list-1440.png",
+        "sha256": "5f0ccaa5545414da1beb46e80f2448c593aa4f0c07fe55f77d84aeb84d0a17af"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-review-1440.png",
+        "sha256": "ee51d7dd7939c604287b27c77bdb0f025f01e210d48f8fc58b37c5b7b7e2762c"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-scopes-1440.png",
+        "sha256": "d2443af7c872c844b88a19b006e347bf414ae3bf320c3bc4dc0e3fcb3af0a548"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-editor-1920.png",
+        "sha256": "e1bafbe34e5eb3cb8280f2497e95bfbeaa743636e759439dc474392a691ba06d"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-list-1920.png",
+        "sha256": "933ce30846853bb79465027ad59f4acbc1e1d1f14155088c59512133bf4fef6a"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-review-1920.png",
+        "sha256": "f1f8bf99788354c67963f73dc8dc218cc26b2939f5a49cc13d46e5b916b23386"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-scopes-1920.png",
+        "sha256": "2c8934e7a9db6b18116aff069bab3bab19092afb130f732074a3549cebb66d62"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限目录-denied-状态-chrome/permissions-denied.png",
+        "sha256": "fe0a39dd3896d2433293ad94fd95b02132ea5cb80165ffb10f96e1824ecd31c0"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限目录-empty-状态-chrome/permissions-empty.png",
+        "sha256": "d90781721372c237daefa6eda95abff29a620d19d793b19b74d0a68a60c963c4"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限目录-error-状态-chrome/permissions-error.png",
+        "sha256": "1c43306b4ef34083c58c1af1eea4f185527853297522324f0fce9ead8369fbd4"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-权限目录-long-状态-chrome/permissions-long.png",
+        "sha256": "ed607a575d1f09123ab17146b8b90d1df73ced9faed90898676de2094d613e39"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/access-control-自身只读、停用只能撤销、字段校验、未保存确认与角色依赖清理-chrome/permissions-validation-and-draft.png",
+        "sha256": "4db960587eed6bdb3a965a1e110993905dd75726554d57716cc241e431eaafd7"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/overview-首页-1280×720-显示授权事实并完成范围、系列和刷新交互-chrome/overview-1280.png",
+        "sha256": "b799aa473c204ea4033ff98128aaea8851b3276fba57c12c0aafcae6ee4e7505"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/overview-首页-1440×1024-显示授权事实并完成范围、系列和刷新交互-chrome/overview-1440.png",
+        "sha256": "5855a20480340b4aef9c129888453a0aff31011b8fe002179baef7cdf7ceeab3"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/overview-首页-1920×1080-显示授权事实并完成范围、系列和刷新交互-chrome/overview-1920.png",
+        "sha256": "b1ef46c8ff92a5b87e79f20114702d18e57e87a7a0286c6dfc7a03c171ca6a1d"
+      },
+      {
+        "batch": "release-browser",
+        "path": "artifacts/access-control-20261023/release-browser/overview-首页任务范围受限与读取失败分开表达，不显示可信零值-chrome/overview-task-restricted.png",
+        "sha256": "8d296f2a45803e089e992a6d4e59d5f232c51ad3d1cadb0f000df11d57edfdea"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-editor-1280.png",
+        "sha256": "0c59076ca190ef3b1a562836c5cfa533da16e62752c51ed63fe025a99f1013d6"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-list-1280.png",
+        "sha256": "5e1ea93b9759787bb1eb593f02abdc9e3d76d357cc63bba6265d439e4ed0b2d6"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-review-1280.png",
+        "sha256": "78b571b527faa7b5d0823278fa365d61252c8b4259d73a012cb59375dd001e85"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1280×720-chrome/permissions-scopes-1280.png",
+        "sha256": "8974989b77034519e0355ca98bdd370fdad95b26c60c8e74be9f2aec1296b672"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-editor-1440.png",
+        "sha256": "552d441f58c7a23f907a55e8be9705789dec56c706c3b4b8409250049538d9f7"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-list-1440.png",
+        "sha256": "7cc51db42b8e6415c40f573231848508b876ee0780c725385669c8ef4ecc3b96"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-review-1440.png",
+        "sha256": "f84d3ad0d6574c38d2ef56dd97b51c146b2753dbe6528b458efc56c0ce40c6fb"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1440×1024-chrome/permissions-scopes-1440.png",
+        "sha256": "d863e02c4fd14fb1352fdb654531d337c5a2beb3f0d98329d76715563f749d6f"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-editor-1920.png",
+        "sha256": "37c7135f1d8860e45040cf60545eac89a86c3188971d648ae71ce3bc42842934"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-list-1920.png",
+        "sha256": "ec10d4549127b16f13343b1967b10cbac7b8c58ff8ffb7f84ef7f88f649cab16"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-review-1920.png",
+        "sha256": "8356d9c1aefcdb6efce39036f0fedaa634c5f34e786538f28553a088a03cabf1"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限列表、抽屉与风险确认-1920×1080-chrome/permissions-scopes-1920.png",
+        "sha256": "a20b09b504be9d3aab496dd154058a8e543cae7c814c90d2df88baf1f3030398"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/access-control-权限目录-long-状态-chrome/permissions-long.png",
+        "sha256": "017c3ece69398d45fd626b6bd2e4c2fc4055e534b1919fff138d76704ceb331a"
+      },
+      {
+        "batch": "layout-final",
+        "path": "artifacts/access-control-20261023/layout-final/overview-首页任务范围受限与读取失败分开表达，不显示可信零值-chrome/overview-task-restricted.png",
+        "sha256": "48d26bf708269ac69800038879f468384d09e6af39ea23bc33fa9a3c63643c52"
+      }
+    ],
+    "latestListLongAndRestrictedScreenshots": "layout-final",
+    "fallbackReason": "Browser plugin not available"
+  },
+  "visualGates": [
+    {
+      "name": "同类型页面布局与对齐",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "同类控件尺寸样式与状态",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "表格表单抽屉弹窗一致",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "动效与反馈一致",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "模块间密度",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "1920x1080 实际截图",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "1440x1024 与 1280x720 响应式",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    },
+    {
+      "name": "私有样式与重复实现复核",
+      "result": "PASS",
+      "kind": "ACTUAL_BROWSER_AND_MANUAL_SCREENSHOT_REVIEW"
+    }
+  ],
+  "build": {
+    "platform": "windows/amd64",
+    "recordedAt": "2026-10-23T07:49:59.5844911Z",
+    "cgo": "0",
+    "trimpath": true,
+    "sha256": "D4E413EDEDFCCD7881D18FADDE91D76868D31727A439CBE4F40758AC1CB39F01"
+  },
+  "authorization": {
+    "source": "existing identity.Provider and auth_subjects projection",
+    "fixedAdminPreserved": true,
+    "externalIdentityIntegrated": false
+  },
+  "notPerformed": [
+    "service installation or restart",
+    "runtime SQLite upgrade",
+    "real multiuser authentication",
+    "real credentials or database/storage probes",
+    "official Loader/Dumper execution",
+    "native Kylin validation"
+  ],
+  "remainingGates": [
+    "new independent capability grants",
+    "new NODE_OPERATE grants",
+    "template creation for other subjects",
+    "complete cross-identity business-page action eligibility",
+    "audit/scheduling log consumers",
+    "AC-ROLE-01 product contract alignment"
+  ],
+  "knownDiagnostics": [
+    "Vite ResizeObserver loop diagnostics",
+    "Vite chunk size warning above 500 kB",
+    "initial native browser cleanup timeouts resolved in final 17-case batch"
+  ],
+  "temporaryFiles": "isolated build binaries and owned browser profiles removed; screenshots and reports retained",
+  "narrativeSha256": "94300d376cf66b76439a64ec0a159db32f9d857d8cc00ea6cf2ef7c1058c76a1"
+}

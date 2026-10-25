@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"ob-data-orch/internal/directloadfiles"
 	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
@@ -84,6 +85,22 @@ func validateSubmissionPrecheckProof(ctx context.Context, tx *sql.Tx, binding Pr
 	}
 	results := decodePrecheckResults(resultJSON)
 	expected := fixedPrecheckChecks
+	if executionContext.DirectLoad != nil {
+		if executionContext.CheckKind != "DIRECT_LOAD_PREFLIGHT" || !matchesDirectLoadShape(results, executionContext.CheckKind) || !matchesPrecheckResource(executionContext.ResourceRequirement, results, nil) {
+			return ErrPrecheckInvalid
+		}
+		var manifestJSON string
+		var manifest importfiles.Manifest
+		if tx.QueryRowContext(ctx, `SELECT COALESCE(input_manifest_json,'') FROM precheck_runs WHERE precheck_id=?`, binding.PrecheckID).Scan(&manifestJSON) != nil || json.Unmarshal([]byte(manifestJSON), &manifest) != nil || !directloadfiles.Valid(manifest, *executionContext.DirectLoad) {
+			return ErrPrecheckInvalid
+		}
+		for _, result := range results {
+			if result.Status != "PASSED" {
+				return ErrPrecheckInvalid
+			}
+		}
+		return nil
+	}
 	if executionContext.NormalImport != nil {
 		if executionContext.CheckKind != "NORMAL_IMPORT_PREFLIGHT" {
 			return ErrPrecheckInvalid

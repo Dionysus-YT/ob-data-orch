@@ -38,7 +38,6 @@ export function useExportReferences(deps: Pick<ExportForm, 'selectedDataSourceID
   const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedNodeID.value))
 
   let disposed = false
-  let nodeCandidatesLoaded = false
   const epochs = { sources: 0, nodes: 0, credentials: 0 }
   onScopeDispose(() => { disposed = true })
 
@@ -68,15 +67,15 @@ export function useExportReferences(deps: Pick<ExportForm, 'selectedDataSourceID
     try {
       const items = await api.listExportNodeCandidates()
       if (disposed || epoch !== epochs.nodes) return
-      const initialLoad = !nodeCandidatesLoaded
-      nodeCandidatesLoaded = true
       nodes.value = items
       if (!nodes.value.some((node) => node.id === selectedNodeID.value)) {
-        // 初次未选择时沿用单候选预选；已有节点失效时清除绑定，不能自动改派到新注册节点。
-        selectedNodeID.value = initialLoad && !selectedNodeID.value && nodes.value.length === 1 ? nodes.value[0]!.id : ''
+        // 新建配置始终由用户选择；已有节点失效时只清除绑定，不自动改派。
+        selectedNodeID.value = ''
       }
     } catch (error) {
       if (disposed || epoch !== epochs.nodes) return
+      // 本次策略或权限读取失败时撤下旧候选；保留绑定标识供重试，不把旧顺序冒充当前结果。
+      nodes.value = []
       nodeLoadFailure.value = exportDraftErrorMessage(error, '无法加载可选执行节点，请稍后重试。')
     } finally {
       if (!disposed && epoch === epochs.nodes) loadingNodes.value = false

@@ -88,7 +88,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
     const keyword = candidateObjectKeyword.value.trim().toLocaleLowerCase()
     return keyword ? candidateObjectNames.value.filter((name) => name.toLocaleLowerCase().includes(keyword)) : candidateObjectNames.value
   })
-  const visibleObjectCategories = computed(() => contentKind.value === 'DATA_ONLY' ? objectCategories.filter((category) => category.type === 'TABLE') : objectCategories)
+  const visibleObjectCategories = computed(() => !contentKind.value ? [] : contentKind.value === 'DATA_ONLY' ? objectCategories.filter((category) => category.type === 'TABLE') : objectCategories)
 
   const candidateTotalCount = computed(() => visibleObjectCategories.value.reduce((total, category) => total + catalogByType[category.type].baseNames.length, 0))
 
@@ -162,7 +162,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
     const source = selectedSource.value
     const nodeID = selectedNodeID.value
     const schema = database.value.trim()
-    if (activeStep.value !== 2 || scopeKind.value !== 'SPECIFIED' || !source || !nodeID || !schema) return
+    if (activeStep.value !== 2 || !contentKind.value || scopeKind.value !== 'SPECIFIED' || !source || !nodeID || !schema) return
     batchCatalogLoading = true
     const epoch = batchCatalogEpoch
     const typeEpochs = { ...catalogEpoch }
@@ -352,7 +352,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
     const nodeID = selectedNodeID.value
     const schema = database.value.trim()
     if (new TextEncoder().encode(keyword).length > 100) { catalog.failure = '名称关键字最多 100 字节，请缩短后重试。'; return }
-    if (activeStep.value !== 2 || scopeKind.value !== 'SPECIFIED' || !source || !nodeID || !schema) return
+    if (activeStep.value !== 2 || !contentKind.value || scopeKind.value !== 'SPECIFIED' || !source || !nodeID || !schema) return
     catalog.loading = true
     catalog.failure = ''
     let succeeded = false
@@ -401,7 +401,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
 
   function scheduleCatalogLoad() {
     if (catalogLoadTimer) clearTimeout(catalogLoadTimer)
-    if (activeStep.value !== 2 || scopeKind.value !== 'SPECIFIED' || !selectedSource.value || !selectedNodeID.value || !database.value.trim()) return
+    if (activeStep.value !== 2 || !contentKind.value || scopeKind.value !== 'SPECIFIED' || !selectedSource.value || !selectedNodeID.value || !database.value.trim()) return
     catalogLoadTimer = setTimeout(() => {
       catalogLoadTimer = undefined
       void loadAllCatalogs()
@@ -417,7 +417,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
     scheduleCatalogLoad()
   }, { flush: 'sync' })
 
-  watch([activeStep, scopeKind], scheduleCatalogLoad, { flush: 'post' })
+  watch([activeStep, scopeKind, contentKind], scheduleCatalogLoad, { flush: 'post' })
 
   watch(candidateObjectKeyword, (keyword) => {
     const catalog = catalogByType[objectType.value]

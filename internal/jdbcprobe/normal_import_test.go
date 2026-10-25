@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func Test普通导入V10仅携带固定连接逐表权限与结构字段(t *testing.T) {
+func Test普通导入V11仅携带固定连接逐表权限与结构字段(t *testing.T) {
 	request := NormalImportRequest{Connection: Request{Host: "synthetic.invalid", Port: 2883, Username: []byte("synthetic-user"), Password: []byte("synthetic-secret")}, CompatibilityMode: CompatibilityModeMySQL, Database: "synthetic_db", MappingComplete: true, HasData: true, HasDDL: true, DDLComplete: true, Tables: []ImportTable{{Name: "synthetic_table", Columns: 2, RequiredPrivileges: ImportPrivilegeInsert | ImportPrivilegeCreate, HasData: true, HasDefinition: true, Names: []string{"id", "note"}, TargetColumns: []string{"id", "note"}, RequiredColumns: []string{"id"}}}}
 	data, err := encodeNormalImportRequest(request)
 	if err != nil {
@@ -36,7 +36,7 @@ func Test普通导入V10仅携带固定连接逐表权限与结构字段(t *test
 		defer zero(value)
 		return string(value)
 	}
-	if readInt() != 10 || readText() != "synthetic.invalid" || readInt() != 2883 {
+	if readInt() != 11 || readText() != "synthetic.invalid" || readInt() != 2883 {
 		t.Fatal("固定连接头不符合预期")
 	}
 	readText()

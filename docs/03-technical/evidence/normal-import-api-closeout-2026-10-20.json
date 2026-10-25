@@ -1,0 +1,143 @@
+{
+  "runId": "68b747da7ad9400d906e337fe1acf5d3",
+  "api": {
+    "at": "2026-10-20T01:37:07.730Z",
+    "records": [
+      {
+        "id": "NI-PARAM-cut_native",
+        "draftId": "01189cc9-5c62-4dc8-95d0-d2c3e3d9c023",
+        "status": "ALREADY_REMOVED"
+      },
+      {
+        "id": "NI-PARAM-cut_explicit_crlf",
+        "draftId": "97145846-221d-4e44-909e-d053454a8c28",
+        "status": "ALREADY_REMOVED"
+      },
+      {
+        "id": "NI-E2E-01",
+        "draftId": "6fe8c884-3b14-40ca-944d-c0676f66b7d0",
+        "status": "REMOVED"
+      },
+      {
+        "id": "NI-E2E-05",
+        "draftId": "6485b8e7-3df2-4de8-b8a9-bee7a4cc854f",
+        "status": "REMOVED"
+      },
+      {
+        "id": "NI-E2E-06",
+        "draftId": "1e170fb6-2bb4-438a-bcbd-0d26edd7d4a3",
+        "status": "REMOVED"
+      },
+      {
+        "id": "NI-E2E-07",
+        "draftId": "bd505b9d-27fc-425b-b47a-11eaba13c072",
+        "status": "REMOVED"
+      },
+      {
+        "id": "NI-E2E-08",
+        "draftId": "6bc18290-e1e8-41ee-893a-64c7f602d7a1",
+        "status": "REMOVED"
+      },
+      {
+        "id": "NI-E2E-11",
+        "draftId": "82250863-a5b7-4a85-87e1-ee4ec8e46b42",
+        "status": "REMOVED"
+      },
+      {
+        "id": "NI-E2E-12",
+        "draftId": "5ff3181d-4b25-4d84-b051-81a1beb32cbb",
+        "status": "REMOVED"
+      }
+    ],
+    "health": 200,
+    "heartbeatStatus": "ONLINE",
+    "lastHeartbeatAt": "2026-10-20T01:37:06.2627895Z",
+    "heartbeatAgeMs": 1468,
+    "environmentCheckStatus": "PASSED",
+    "taskSummary": {
+      "scope": "ALL",
+      "running": 0,
+      "waiting": 0,
+      "reconciling": 0
+    },
+    "capacityStatus": "AVAILABLE",
+    "executionQuota": {
+      "totalGiB": 25.501632690429688,
+      "reservedGiB": 0,
+      "usedGiB": 0
+    },
+    "agentLogQueue": {
+      "pendingBatches": 0,
+      "pendingGaps": 0,
+      "pendingBytes": 0,
+      "lastUploadResult": "SUCCEEDED",
+      "lastUploadAt": "2026-10-20T01:36:38.4786143Z"
+    },
+    "acceptsNewTasks": true
+  },
+  "database": {
+    "status": "CLEANED",
+    "database": "odo_e2e_20261019_68b747da7ad9",
+    "ownerVerified": true,
+    "databaseAbsent": true
+  },
+  "directory": {
+    "directoryAbsent": true,
+    "reparsePointsFound": 0,
+    "at": "2026-10-20T01:38:29.3549754Z",
+    "status": "CLEANED",
+    "root": "E:\\workespace\\ob-data-orch\\ob-data\\nivt-normal-20261019-68b747da7ad9"
+  },
+  "services": {
+    "at": "2026-10-20T01:38:23.5799792Z",
+    "materials": [
+      {
+        "path": "var/dev/control-plane/data/control-plane-ca.pem",
+        "matched": true
+      },
+      {
+        "path": "var/dev/control-plane/data/local-mvp-root-key.json",
+        "matched": true
+      },
+      {
+        "path": "var/dev/control-plane/data/server-trust-key.json",
+        "matched": true
+      },
+      {
+        "path": "var/dev/control-plane/data/settings.json",
+        "matched": true
+      },
+      {
+        "path": "var/dev/agent/agent-config.json",
+        "matched": true
+      },
+      {
+        "path": "var/dev/agent/data/agent-security/agent-identity-root-key.json",
+        "matched": true
+      },
+      {
+        "path": "var/dev/agent/data/agent-security/agent-identity.json",
+        "matched": false
+      }
+    ],
+    "binaries": [
+      {
+        "path": "var/dev/control-plane/control-plane.exe",
+        "sha256": "0E6729BD1236C5BBDC2A48E688F72433E7F2069F41A2540FAA30EDE7FA96F19E",
+        "builtAt": "2026-10-20T01:31:45.8980097Z"
+      },
+      {
+        "path": "var/dev/agent/agent.exe",
+        "sha256": "2C4DD0670108A7CFEEC201EA9C5FE0E417E1D45F6DD2262F6CF6E1829E03E871",
+        "builtAt": "2026-10-20T01:32:59.8844755Z"
+      }
+    ],
+    "identityCiphertextMayChangeOnAuthenticatedConfigurationSync": true
+  },
+  "allTaskCount": 42,
+  "allTasksTerminal": true,
+  "sameAgentIdentityAcrossRestart": true,
+  "identitySecretsReadOrDecryptedForCloseout": false,
+  "identityCiphertextExplanation": "运行时配置同步会更新加密状态；身份连续性依据旧新任务相同 agent_id、同节点认证心跳及原根密钥保留确认，不要求动态密文文件字节不变。",
+  "secretAuditPassed": true
+}

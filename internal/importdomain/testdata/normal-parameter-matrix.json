@@ -1,0 +1,781 @@
+{
+  "metadataVersion": "obloader-4.3.5-normal-v1",
+  "parameters": [
+    {
+      "name": "--host",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--user",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--database",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--port",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--password",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--no-sys",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--yes",
+      "mode": "MYSQL",
+      "patch": {
+        "cleanup": "DELETE"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--file-path",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--log-path",
+      "mode": "MYSQL",
+      "patch": {
+        "logPath": "E:\\synthetic-import\\logs"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--ctl-path",
+      "mode": "MYSQL",
+      "patch": {
+        "mapping": {
+          "kind": "CONTROL",
+          "ctlPath": "E:\\synthetic-import\\input.ctl"
+        }
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "CONTROL_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--file-suffix",
+      "mode": "MYSQL",
+      "patch": {
+        "fileSuffix": ".custom"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--file-encoding",
+      "mode": "MYSQL",
+      "patch": {
+        "fileEncoding": "UTF-8"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--file-regular-expression",
+      "mode": "MYSQL",
+      "patch": {
+        "fileRegex": "^nivt_.*\\.csv$"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--all",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--table",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "table": "nivt_table"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--table-group",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "table-group": "nivt_table_group"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--view",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "view": "nivt_view"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--trigger",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "trigger": "nivt_trigger"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--obj-user",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "obj-user": "nivt_obj_user"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--role",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "role": "nivt_role"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--sequence",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "sequence": "nivt_sequence"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--synonym",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "synonym": "nivt_synonym"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--type",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "type": "nivt_type"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--type-body",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "type-body": "nivt_type_body"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--package",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "package": "nivt_package"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--package-body",
+      "mode": "ORACLE",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "package-body": "nivt_package_body"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--function",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "function": "nivt_function"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--procedure",
+      "mode": "MYSQL",
+      "patch": {
+        "scope": "SPECIFIC",
+        "objects": {
+          "procedure": "nivt_procedure"
+        },
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPLEX_DDL_PERMISSION_OR_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--exclude-table",
+      "mode": "MYSQL",
+      "patch": {
+        "excludeTables": "nivt_excluded"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--include-column-names",
+      "mode": "MYSQL",
+      "patch": {
+        "mapping": {
+          "kind": "EXPLICIT",
+          "includeColumns": "id,label"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--exclude-column-names",
+      "mode": "MYSQL",
+      "patch": {
+        "mapping": {
+          "kind": "EXPLICIT",
+          "excludeColumns": "optional_note"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--exclude-data-types",
+      "mode": "MYSQL",
+      "patch": {
+        "mapping": {
+          "kind": "POSITION",
+          "excludeDataTypes": "BLOB"
+        }
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "TYPE_EXCLUSION_UNSUPPORTED"
+    },
+    {
+      "name": "--ddl",
+      "mode": "MYSQL",
+      "patch": {
+        "content": "DDL_ONLY"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--csv",
+      "mode": "MYSQL",
+      "patch": {},
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--cut",
+      "mode": "MYSQL",
+      "patch": {
+        "format": "CUT",
+        "parser": {
+          "columnSplitter": "|"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--sql",
+      "mode": "MYSQL",
+      "patch": {
+        "format": "SQL"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--column-quote",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "columnQuote": "\""
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--column-separator",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "columnSeparator": "||"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--column-splitter",
+      "mode": "MYSQL",
+      "patch": {
+        "format": "CUT",
+        "parser": {
+          "columnSplitter": "|"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--line-separator",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "lineSeparator": "\\r\\n"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--escape-character",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "escapeCharacter": "\\"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--null-string",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "nullString": "NIL"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--empty-string",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "emptyString": "EMPTY"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--compression-algo",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "compress": true,
+          "compressionAlgo": "zstd"
+        }
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPRESSED_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--compression-level",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "compress": true,
+          "compressionAlgo": "zstd",
+          "compressionLevel": "3"
+        }
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPRESSED_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--date-format",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "dateFormat": "yyyy-MM-dd"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--default-date",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "dateFormat": "yyyy-MM-dd",
+          "defaultDate": "2000-01-01"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--skip-header",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "skipHeader": true
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--skip-footer",
+      "mode": "MYSQL",
+      "patch": {
+        "format": "CUT",
+        "parser": {
+          "columnSplitter": "|",
+          "skipFooter": true
+        }
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "FOOTER_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--ignore-escape",
+      "mode": "MYSQL",
+      "patch": {
+        "format": "CUT",
+        "parser": {
+          "columnSplitter": "|",
+          "ignoreEscape": true
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--trail-delimiter",
+      "mode": "MYSQL",
+      "patch": {
+        "format": "CUT",
+        "parser": {
+          "columnSplitter": "|",
+          "trailDelimiter": true
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--with-trim",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "withTrim": true
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--compress",
+      "mode": "MYSQL",
+      "patch": {
+        "parser": {
+          "compress": true
+        }
+      },
+      "realRequirement": "BLOCKED_BY_CURRENT_PREFLIGHT",
+      "knownBlocker": "COMPRESSED_MAPPING_UNSUPPORTED"
+    },
+    {
+      "name": "--auto-column-mapping",
+      "mode": "MYSQL",
+      "patch": {
+        "mapping": {
+          "kind": "AUTO"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--max-discards",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "maxDiscards": "0"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--max-errors",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "maxErrors": "0"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--thread",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "thread": "2"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--batch",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "batch": "1"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--block-size",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "blockSize": "1"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--max-tps",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "maxTps": "1"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--max-wait-timeout",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "maxWaitTimeout": "1000"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--strict",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "strict": "false"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--rw",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "rw": "0.5"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--mem",
+      "mode": "MYSQL",
+      "patch": {
+        "execution": {
+          "memory": "1G"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--nls-date-format",
+      "mode": "ORACLE",
+      "patch": {
+        "execution": {
+          "nlsDateFormat": "YYYY-MM-DD"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--nls-timestamp-format",
+      "mode": "ORACLE",
+      "patch": {
+        "execution": {
+          "nlsTimestampFormat": "YYYY-MM-DD HH24:MI:SS.FF"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--nls-timestamp-tz-format",
+      "mode": "ORACLE",
+      "patch": {
+        "execution": {
+          "nlsTimestampTzFormat": "YYYY-MM-DD HH24:MI:SS.FF TZH:TZM"
+        }
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--compat-mode",
+      "mode": "MYSQL",
+      "patch": {
+        "content": "DDL_ONLY",
+        "compatMysql": true,
+        "compatMysqlVersion": "mysql80"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--replace-data",
+      "mode": "MYSQL",
+      "patch": {
+        "replaceData": true
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--replace-object",
+      "mode": "MYSQL",
+      "patch": {
+        "content": "DDL_ONLY",
+        "replaceObject": true
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--truncate-table",
+      "mode": "MYSQL",
+      "patch": {
+        "cleanup": "TRUNCATE"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    },
+    {
+      "name": "--delete-from-table",
+      "mode": "MYSQL",
+      "patch": {
+        "cleanup": "DELETE"
+      },
+      "realRequirement": "REQUIRES_REAL_EXECUTION",
+      "knownBlocker": ""
+    }
+  ]
+}

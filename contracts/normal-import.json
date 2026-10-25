@@ -14,7 +14,7 @@
         "content": { "enum": ["", "DDL_ONLY", "DATA_ONLY", "DDL_AND_DATA"] }, "format": { "enum": ["", "CSV", "CUT", "SQL"] }, "scope": { "enum": ["", "ALL", "SPECIFIC"] },
         "objects": { "type": "object", "propertyNames": { "enum": ["table", "table-group", "view", "trigger", "obj-user", "role", "sequence", "synonym", "type", "type-body", "package", "package-body", "function", "procedure"] }, "additionalProperties": { "$ref": "#/$defs/Text" } },
         "excludeTables": { "$ref": "#/$defs/Text" }, "parser": { "$ref": "#/$defs/Parser" }, "execution": { "$ref": "#/$defs/Execution" }, "mapping": { "$ref": "#/$defs/Mapping" },
-        "compatMysql": { "type": "boolean" }, "replaceData": { "type": "boolean" }, "replaceObject": { "type": "boolean" }, "cleanup": { "enum": ["NONE", "TRUNCATE", "DELETE"] }, "taskName": { "$ref": "#/$defs/Text" }
+        "compatMysql": { "type": "boolean" }, "compatMysqlVersion": { "enum": ["", "mysql56", "mysql57", "mysql80"], "description": "启用 MySQL DDL 兼容时必须明确选择源版本；旧开关不自动猜测版本，历史快照保持原样。" }, "replaceData": { "type": "boolean" }, "replaceObject": { "type": "boolean" }, "cleanup": { "enum": ["NONE", "TRUNCATE", "DELETE"] }, "taskName": { "$ref": "#/$defs/Text" }
       },
       "description": "草稿允许未填完；检查与命令生成由服务端复验必填、兼容模式、格式、互斥、数值与路径规则。只接收活动参数，禁止旁路、导出、任意 SQL、argv、秘密和客户端运行事实。"
     },
@@ -22,7 +22,7 @@
       "type": "object", "additionalProperties": false,
       "properties": {
         "columnSeparator": { "$ref": "#/$defs/Text" }, "columnQuote": { "$ref": "#/$defs/Text" }, "columnSplitter": { "$ref": "#/$defs/Text" }, "lineSeparator": { "$ref": "#/$defs/Text" }, "escapeCharacter": { "$ref": "#/$defs/Text" },
-        "skipHeader": { "type": "boolean" }, "skipFooter": { "type": "boolean" }, "ignoreEscape": { "type": "boolean" }, "trailDelimiter": { "type": "boolean" }, "withTrim": { "type": "boolean" }, "compress": { "type": "boolean" },
+        "skipHeader": { "type": "boolean" }, "skipFooter": { "type": "boolean" }, "ignoreEscape": { "type": "boolean" }, "trailDelimiter": { "type": "boolean" }, "withTrim": { "type": "boolean", "description": "未显式启用时，完整预检查拒绝可能被固定工具静默移除的未引用 CSV 首尾空白；需保留的值先正确加包围符。" }, "compress": { "type": "boolean" },
         "nullString": { "$ref": "#/$defs/Text" }, "emptyString": { "$ref": "#/$defs/Text" }, "compressionAlgo": { "enum": ["", "zstd", "zlib", "gzip", "snappy"] }, "compressionLevel": { "$ref": "#/$defs/Text" }, "dateFormat": { "$ref": "#/$defs/Text" }, "defaultDate": { "$ref": "#/$defs/Text" }
       }
     },
@@ -37,12 +37,12 @@
     "Submit": { "type": "object", "additionalProperties": false, "required": ["precheckId"], "properties": { "precheckId": { "type": "string", "minLength": 1, "maxLength": 256 }, "confirmedConfigFingerprint": { "$ref": "#/$defs/Digest" }, "taskName": { "type": "string", "maxLength": 200, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$" } }, "description": "只引用服务端保存的当前完整预检查；任务名称在提交时可选填写，去除首尾空白后留空由服务端按目标库、格式、UTC 时间和任务标识生成。名称独立冻结，不改写已预检查配置。不接受浏览器提供的 argv、文件证明或执行事实。" },
     "Draft": {
       "type": "object", "additionalProperties": false, "required": ["id", "revision", "configVersion", "config", "configFingerprint", "metadataVersion", "capabilityVersion", "executionEnabled", "updatedAt"],
-      "properties": { "id": { "type": "string" }, "revision": { "type": "integer", "minimum": 1 }, "configVersion": { "const": "normal-import-v1" }, "config": { "$ref": "#/$defs/Config" }, "configFingerprint": { "$ref": "#/$defs/Digest" }, "metadataVersion": { "const": "obloader-4.3.5-normal-v1" }, "capabilityVersion": { "const": "import-odp-local-v1" }, "executionEnabled": { "type": "boolean" }, "updatedAt": { "type": "string", "format": "date-time" } }
+      "properties": { "id": { "type": "string" }, "revision": { "type": "integer", "minimum": 1 }, "configVersion": { "const": "normal-import-v1" }, "config": { "$ref": "#/$defs/Config" }, "configFingerprint": { "$ref": "#/$defs/Digest" }, "metadataVersion": { "const": "obloader-4.3.5-normal-v1" }, "capabilityVersion": { "const": "import-odp-local-v1" }, "executionEnabled": { "type": "boolean" }, "updatedAt": { "type": "string", "format": "date-time" }, "sourceTaskId": { "type": "string", "maxLength": 256 }, "sourceDerivation": { "enum": ["", "REBUILD_FROM_CONFIG", "RERUN_FROM_SCRATCH"] } }
     },
     "Manifest": {
       "type": "object", "additionalProperties": false, "required": ["files", "fileCount", "totalBytes", "digest"],
       "properties": {
-        "fileCount": { "type": "integer", "minimum": 1, "maximum": 1024 }, "totalBytes": { "type": "integer", "minimum": 0 }, "digest": { "$ref": "#/$defs/Digest" }, "metadataDigest": { "$ref": "#/$defs/Digest", "description": "可选官方辅助清单的有界摘要，不是数据文件或数据库结果。" },
+        "fileCount": { "type": "integer", "minimum": 1, "maximum": 1024 }, "totalBytes": { "type": "integer", "minimum": 0 }, "digest": { "$ref": "#/$defs/Digest" }, "controlDigest": { "$ref": "#/$defs/Digest" }, "metadataDigest": { "$ref": "#/$defs/Digest", "description": "可选官方辅助清单的有界摘要，不是数据文件或数据库结果。" },
         "files": { "type": "array", "minItems": 1, "maxItems": 1024, "items": { "type": "object", "additionalProperties": false, "required": ["path", "kind", "object", "size", "modified", "sha256"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 512 }, "kind": { "enum": ["DATA", "DDL"] }, "object": { "type": "string" }, "size": { "type": "integer", "minimum": 0 }, "modified": { "type": "string", "pattern": "^-?[0-9]{1,19}$", "description": "Unix 纳秒时间以字符串表示，保持 int64 精度。" }, "sha256": { "$ref": "#/$defs/Digest" } } } }
       }, "description": "只含受限相对路径和摘要，文件数量、总量、排序、去重、范围、摘要及内容类型均须复核；不是导入结果。"
     },

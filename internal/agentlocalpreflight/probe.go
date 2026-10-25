@@ -110,7 +110,9 @@ type Probe struct {
 	ImportRuntime RuntimeValidator
 	ImportChecks  agentpreflight.Probe
 	// ImportDatabase 需要普通导入自己的真实探测准入，不能继承导出的凭据解析授权。
-	ImportDatabase        agentpreflight.Probe
+	ImportDatabase agentpreflight.Probe
+	// DirectLoadChecks 只在旁路专用只读探测开关启用时装配，不继承普通导入准入。
+	DirectLoadChecks      agentpreflight.Probe
 	MinimumAvailableBytes uint64
 	AvailableBytes        func(string) (uint64, error)
 	StorageConnectivity   StorageConnectivityProber
@@ -124,6 +126,9 @@ type Probe struct {
 
 // Probe 只接受既定检查。任何本机事实缺失、路径漂移或依赖异常都以稳定 UNKNOWN 结果失败关闭。
 func (p Probe) Probe(ctx context.Context, check agentpreflight.CheckID, request agentpreflight.Request) (agentpreflight.Result, error) {
+	if request.DirectLoad != nil {
+		return p.directLoadResult(ctx, check, request)
+	}
 	if request.NormalImport != nil {
 		return p.normalImportResult(ctx, check, request)
 	}

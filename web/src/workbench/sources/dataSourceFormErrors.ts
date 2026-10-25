@@ -3,6 +3,7 @@ import type { ApiError, DataSourceWrite } from '@/api/browser'
 const dataSourceFormFields = [
   'displayName',
   'environment',
+  'connectionKind',
   'compatibilityMode',
   'host',
   'port',
@@ -23,7 +24,9 @@ export function validateDataSourceForm(input: DataSourceFormInput, isNew: boolea
   const errors: DataSourceFormErrors = {}
   if (!input.displayName.trim()) errors.displayName = '请输入数据源名称。'
   if (!input.environment) errors.environment = '请选择环境。'
-  if (!input.host.trim()) errors.host = '请输入 ODP 地址。'
+  if (input.connectionKind !== 'ODP' && input.connectionKind !== 'OBSERVER_DIRECT') errors.connectionKind = '请选择有效连接方式。'
+  if (input.connectionKind === 'OBSERVER_DIRECT' && input.clusterName) errors.clusterName = '直连 OBServer 不填写 ODP 集群名。'
+  if (!input.host.trim()) errors.host = '请输入连接地址。'
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) errors.port = 'SQL 端口必须是 1 到 65535 之间的整数。'
   if (!input.tenantName.trim()) errors.tenantName = '请输入租户名称。'
   if (!input.username.trim()) errors.username = '请输入用户名。'

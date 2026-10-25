@@ -1,5 +1,7 @@
 # 日志中心设计
 
+> 2026-10-25 审计入口实现按[审计查询契约 AQ-C01](../03-technical/log-center-audit-query-contract.md#权限冲突与安全收缩)收缩：必须显式 CAP_AUDIT_LOG，旧角色隐含审计的表述不能作为自动授权依据；其他未接入能力不因此开放。
+
 > 文档状态：产品、字段与低保真规则已确认，采集、索引与限制值待技术设计\
 > 模块优先级：P1\
 > 依据：[产品范围](../01-product/product-scope.md)\
@@ -705,3 +707,7 @@ V1.0 使用一个日志查询页面和一个同来源上下文抽屉，不新增
 ### 7. 评审记录
 
 LC-LF-R01～LC-LF-R18 已于 2026-07-20 全部确认，并写入 [DEC-042](../01-product/decisions.md#dec-042-日志中心低保真基线)。
+
+## 2026-10-25 实现进度
+
+任务日志首批已接入精确任务、接收时间、实际工具通道和脱敏包含查询、固定快照、同源窗口、复制及下载；视觉使用现有 Management / Table，见[P1](../../design-system/pages/log-center.md)，工程与限制见[任务查询契约](../03-technical/log-center-task-query-contract.md)，实际检查及安装见[验收证据](../03-technical/evidence/log-center-task-query-2026-10-25.md)。仅实际接入工具输出，不宣称节点、调度、审计预设或完整日志中心已完成。

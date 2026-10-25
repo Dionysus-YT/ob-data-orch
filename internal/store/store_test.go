@@ -1200,7 +1200,16 @@ func TestRenewExecutionLeaseKeepsCurrentAgentAndEpoch(t *testing.T) {
 	if err := store.ClaimTask(context.Background(), validClaim("execution-1", "lease-1", "event-claim-1", "request-claim-1")); err != nil {
 		t.Fatalf("ClaimTask(): %v", err)
 	}
-	renewal := LeaseRenewal{ExecutionID: "execution-1", LeaseID: "lease-1", LeaseEpoch: 1, AgentID: "agent-1", ExpiresAt: testTime.Add(10 * time.Minute)}
+	submission := validTaskSubmission("task-1")
+	var argv []string
+	if json.Unmarshal([]byte(submission.PlannedArgvJSON), &argv) != nil {
+		t.Fatal("合成参数无效")
+	}
+	digest, err := executionTaskEnvelopeDigest(context.Background(), store.db, submission.TaskID, submission.NodeID, submission.ConfigFingerprint, submission.ToolVersion, submission.MetadataVersion, submission.CapabilityVersion, argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewal := LeaseRenewal{ExecutionID: "execution-1", LeaseID: "lease-1", LeaseEpoch: 1, AgentID: "agent-1", ExpiresAt: testTime.Add(10 * time.Minute), Now: testTime.Add(time.Second), EnvelopeDigest: digest}
 	if err := store.RenewExecutionLease(context.Background(), renewal); err != nil {
 		t.Fatalf("RenewExecutionLease(): %v", err)
 	}
@@ -1208,6 +1217,21 @@ func TestRenewExecutionLeaseKeepsCurrentAgentAndEpoch(t *testing.T) {
 	wrongAgent.AgentID = "agent-other"
 	if err := store.RenewExecutionLease(context.Background(), wrongAgent); !errors.Is(err, ErrEventRejected) {
 		t.Fatalf("wrong-agent RenewExecutionLease() error = %v", err)
+	}
+	wrongDigest := renewal
+	wrongDigest.EnvelopeDigest = strings.Repeat("f", 64)
+	if err := store.RenewExecutionLease(context.Background(), wrongDigest); !errors.Is(err, ErrEventRejected) {
+		t.Fatal("错摘要续租未拒绝", err)
+	}
+	// 不等过期扫描器运行，已过期的旧租约与旧请求也不能续活。
+	renewal.Now = renewal.ExpiresAt
+	renewal.ExpiresAt = renewal.Now.Add(time.Minute)
+	if err := store.RenewExecutionLease(context.Background(), renewal); !errors.Is(err, ErrEventRejected) {
+		t.Fatal("过期租约复活", err)
+	}
+	renewal.Now = renewal.Now.Add(time.Second)
+	if err := store.RenewExecutionLease(context.Background(), renewal); !errors.Is(err, ErrEventRejected) {
+		t.Fatal("重放续活过期租约", err)
 	}
 }
 
@@ -1366,9 +1390,9 @@ func TestCreateDataSourceAtomicallyPersistsEncryptedCredentialAuditAndIdempotenc
 	}
 	nonODP := input
 	nonODP.DataSourceID, nonODP.CredentialID = "source-non-odp", "credential-non-odp"
-	nonODP.ConnectionKind, nonODP.RequestID, nonODP.IdempotencyKey = "OBSERVER_DIRECT", "request-non-odp", "idempotency-non-odp"
+	nonODP.ConnectionKind, nonODP.RequestID, nonODP.IdempotencyKey = "PUBLIC_CLOUD", "request-non-odp", "idempotency-non-odp"
 	if _, err := store.CreateDataSource(context.Background(), nonODP); err == nil {
-		t.Fatal("CreateDataSource() must reject a non-ODP connection kind")
+		t.Fatal("创建数据源必须拒绝本地范围外的连接方式")
 	}
 	created, err := store.CreateDataSource(context.Background(), input)
 	if err != nil || created.DataSourceID != input.DataSourceID || created.Replayed {

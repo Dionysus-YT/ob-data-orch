@@ -20,6 +20,16 @@
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item.active { color: var(--ob-color-primary-active); font-weight: var(--ob-product-typography-weight); background: var(--ob-color-primary-soft); box-shadow: inset 0 0 0 1px var(--ob-color-primary-subtle); }
 .nav-item.active .nav-icon { color: currentColor; }
+.system-navigation { padding-right: 14px; }
+.system-navigation .nav-item { margin-right: 0; }
+.nav-item.nav-disclosure { width: 100%; height: auto; border: 0; text-align: left; }
+.nav-item.nav-disclosure > .nav-label { margin-inline-start: 0; }
+.system-navigation .nav-item.nav-disclosure:hover { color: var(--ob-color-primary-active); background: var(--ob-product-navigation-hover); }
+.system-navigation .nav-item.nav-disclosure.active { color: var(--ob-color-primary-active); background: var(--ob-color-primary-soft); }
+.nav-section-current, .nav-section-current .nav-icon { color: var(--ob-color-primary-active); }
+.nav-item.nav-disclosure > .nav-chevron { margin-inline-start: auto; font-size: var(--ob-component-field-helper-size); }
+/* 子项与父级文字对齐，复用既有导航的缩进、行高、选中和焦点样式。 */
+.nav-child { padding-inline-start: calc(18px + 16px + var(--ob-foundation-space-3)); }
 .page-frame { min-width: 0; min-height: calc(100dvh - var(--ob-product-shell-header-height)); width: calc(100% - var(--ob-product-shell-current-navigation-width)); margin-left: var(--ob-product-shell-current-navigation-width); }
 .enterprise-skip { position: fixed; top: -100px; left: var(--ob-foundation-space-4); z-index: 1200; padding: var(--ob-foundation-space-2) var(--ob-foundation-space-4); color: var(--ob-color-surface); background: var(--ob-color-form-text); }
 .enterprise-skip:focus { top: var(--ob-foundation-space-2); }
@@ -31,6 +41,7 @@
   .nav-group { width: 100%; margin-bottom: var(--ob-foundation-space-4); padding-bottom: 0; }
   .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .nav-item { justify-content: center; gap: 0; min-height: var(--ob-component-control-height); margin: 0 0 var(--ob-foundation-space-2); padding: 0; border-radius: var(--ob-component-control-radius); }
+  .system-navigation { padding-right: 0; }
 }
 @media (max-width: 480px) {
   .product-header { padding-inline: var(--ob-foundation-space-4); }
@@ -41,5 +52,6 @@
   .side-nav > nav { padding: var(--ob-foundation-space-4); }
   .nav-label { position: static; width: auto; height: auto; overflow: visible; clip-path: none; white-space: normal; }
   .nav-item { justify-content: flex-start; gap: var(--ob-foundation-space-3); margin-right: 0; padding-inline: var(--ob-foundation-space-4); }
+  .nav-child { padding-inline-start: calc(var(--ob-foundation-space-4) + 16px + var(--ob-foundation-space-3)); }
   .enterprise-shell .navigation-scrim { display: block; }
 }

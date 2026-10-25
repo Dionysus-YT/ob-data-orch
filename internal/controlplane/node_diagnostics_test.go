@@ -92,7 +92,7 @@ func Test详情诊断记录完整且执行标识必须再次授权和绑定(t *t
 			tasks.listItems = append(tasks.listItems, store.TaskListItem{TaskID: fmt.Sprintf("readable-task-%d", index), TaskType: "OBDUMPER_EXPORT", State: "WAITING_SCHEDULE", Database: "synthetic-private-database", Table: "synthetic-private-table", SubmittedAt: now})
 		}
 		server := &Server{heartbeatTTL: time.Minute, tasks: tasks, roles: auth, authorizer: auth}
-		response := server.newAuthorizedExecutionNodeDetailResponse(context.Background(), identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-reader"}, node)
+		response := server.newAuthorizedExecutionNodeDetailResponse(context.Background(), identity.Principal{Type: identity.BrowserPrincipal, ID: "synthetic-reader"}, node, server.heartbeatTTL)
 		if response.EnvironmentCheck.RequestedAt == nil || response.EnvironmentCheck.CompletedAt == nil || response.EnvironmentCheck.FactsRevision != 3 || response.AgentDiagnostics == nil || response.AgentDiagnostics.RuntimeVersions == nil || response.AgentDiagnostics.FactsRevision != 3 {
 			t.Fatal("已有检查与新采集未贯通详情")
 		}
@@ -119,18 +119,18 @@ func Test详情诊断记录完整且执行标识必须再次授权和绑定(t *t
 		}
 	}
 	server := &Server{tasks: &nodeObservationTaskStore{failed: true}}
-	response := server.newAuthorizedExecutionNodeDetailResponse(context.Background(), identity.Principal{ID: "reader"}, node)
+	response := server.newAuthorizedExecutionNodeDetailResponse(context.Background(), identity.Principal{ID: "reader"}, node, server.heartbeatTTL)
 	if response.ActiveExecutions != nil {
 		t.Fatal("读取失败不能投影为零活动执行")
 	}
 	node.ManagementState, node.EnvironmentCheck.Status, node.EnvironmentCheck.Code, node.Agent.CapacityTotal = "ENABLED", "PASSED", "TOOL_RUNTIME_READY", 1
 	server = &Server{heartbeatTTL: time.Minute, nodeManagement: &failedNodeDiagnosticBudgetReader{}}
-	response = server.newAuthorizedExecutionNodeDetailResponse(context.Background(), identity.Principal{ID: "reader", Type: identity.BrowserPrincipal}, node)
+	response = server.newAuthorizedExecutionNodeDetailResponse(context.Background(), identity.Principal{ID: "reader", Type: identity.BrowserPrincipal}, node, server.heartbeatTTL)
 	if response.AcceptsNewTasks || response.ExecutionQuota != nil {
 		t.Fatal("预算读取失败却仍授予详情执行资格")
 	}
 	node.Agent.EnvironmentFacts.RuntimeConfigurationDigest = strings.Repeat("b", 64)
-	if server.newExecutionNodeDetailResponse(node).AgentDiagnostics.RuntimeVersions != nil {
+	if server.newExecutionNodeDetailResponse(node, server.heartbeatTTL).AgentDiagnostics.RuntimeVersions != nil {
 		t.Fatal("旧配置版本进入当前安装版本")
 	}
 }

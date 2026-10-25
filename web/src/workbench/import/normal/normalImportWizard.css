@@ -1,7 +1,6 @@
 /* 普通导入沿用导出向导的工作面、分组和表单几何；不引入新的视觉值或控件状态。 */
 .normal-import-builder .normal-import-section { min-inline-size: 0; }
 .normal-import-builder .normal-import-section > * { min-inline-size: 0; }
-.normal-import-builder .normal-import-check-detail { margin-block: var(--ob-foundation-space-2) 0; }
 .normal-import-builder .normal-import-field-group { margin-block: var(--ob-foundation-space-4); }
 .normal-import-builder .normal-import-field-group h3, .normal-import-builder .wizard-advanced h3 { margin: var(--ob-foundation-space-4) 0 var(--ob-foundation-space-2); color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); font-weight: var(--ob-product-typography-weight); }
 .normal-import-builder .normal-import-field-group h3:first-child, .normal-import-builder .wizard-advanced h3:first-child { margin-block-start: 0; }
@@ -14,31 +13,18 @@
 .normal-import-builder .normal-import-panel .ant-form-item { margin-block-end: 0; }
 .normal-import-builder .normal-import-select-action { display: flex; gap: var(--ob-foundation-space-2); }
 .normal-import-builder .normal-import-select-action .ant-select { flex: 1; min-inline-size: 0; }
-.normal-import-builder .normal-import-source-filter { display: flex; flex-wrap: wrap; gap: var(--ob-foundation-space-3); margin-block: 0; }
-.normal-import-builder .normal-import-source-filter > :first-child { flex: 1 1 240px; min-inline-size: 0; }
-.normal-import-builder .normal-import-source-filter > :last-child { inline-size: 180px; }
-.normal-import-builder .normal-import-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--ob-foundation-space-2); inline-size: 100%; margin-block: var(--ob-foundation-space-4); }
-.normal-import-builder .normal-import-source-choice { display: flex; align-items: flex-start; min-inline-size: 0; margin-inline-end: 0; padding: var(--ob-foundation-space-3); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); background: var(--ob-color-surface); }
-.normal-import-builder .normal-import-source-facts { display: grid; gap: var(--ob-foundation-space-1); min-inline-size: 0; overflow-wrap: anywhere; }
-.normal-import-builder .normal-import-source-facts > span { color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
 .normal-import-builder .normal-import-content-options { display: flex; flex-wrap: wrap; max-inline-size: 100%; }
 .normal-import-builder .normal-import-inline-options { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ob-foundation-space-3); margin-block-end: var(--ob-foundation-space-4); }
 .normal-import-builder .normal-import-option-control { display: inline-flex; align-items: center; min-inline-size: 0; }
 /* 说明图标紧邻选项文字，只收起选项末尾留白，保留选择标记与文字的间距。 */
 .normal-import-builder .normal-import-option-control > :is(.ant-radio-wrapper, .ant-checkbox-wrapper) { margin-inline-end: 0; }
 .normal-import-builder .normal-import-option-control > :is(.ant-radio-wrapper, .ant-checkbox-wrapper) > span:last-child { padding-inline-end: 0; }
-.normal-import-builder .normal-import-section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ob-foundation-space-3); }
-.normal-import-builder .normal-import-section-heading h3 { margin: 0; font-size: var(--ob-product-typography-section-size); }
 .normal-import-builder .wizard-advanced { margin-block: var(--ob-foundation-space-4); }
 .normal-import-builder .normal-import-advanced-form { max-inline-size: 720px; margin-block: 0; }
-/* 长表单与命令区的滚动定位为固定底栏留白，避免字段反馈和命令说明被遮挡。 */
-.normal-import-builder .normal-import-command { display: grid; gap: var(--ob-foundation-space-3); padding-block-start: var(--ob-foundation-space-4); border-block-start: 1px solid var(--ob-color-border); scroll-margin-block-end: calc(var(--ob-component-control-height) * 3 + var(--ob-foundation-space-6) * 2); }
-.normal-import-builder .normal-import-command pre { margin: 0; padding: var(--ob-foundation-space-4); max-inline-size: 100%; min-inline-size: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--ob-color-subtle); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }
+/* 长表单滚动定位为固定底栏留白，避免字段反馈被遮挡。 */
 .normal-import-builder .ant-form-item { scroll-margin-block: calc(var(--ob-product-shell-header-height) + var(--ob-foundation-space-6)) calc(var(--ob-component-control-height) * 3 + var(--ob-foundation-space-6)); }
 .normal-import-builder .normal-import-issue-list { margin: 0; padding-inline-start: var(--ob-foundation-space-4); }
 .normal-import-builder .normal-import-issue-list button { white-space: normal; block-size: auto; text-align: start; }
-.normal-import-summary { display: grid; gap: var(--ob-foundation-space-4); padding: var(--ob-foundation-space-6); overflow-wrap: anywhere; min-inline-size: 0; }
 @media (max-width: 800px) {
   .normal-import-builder .normal-import-fields, .normal-import-builder .normal-import-format-grid, .normal-import-builder .normal-import-toggle-grid { grid-template-columns: minmax(0, 1fr); }
-  .normal-import-builder .normal-import-source-filter > :last-child { flex: 1 1 180px; }
 }

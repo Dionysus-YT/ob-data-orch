@@ -42,6 +42,21 @@ func Test普通导入冻结输入与参数逐项匹配(t *testing.T) {
 	}
 }
 
+func Test普通导入严格布尔值与冻结配置一致(t *testing.T) {
+	input, base := normalImportTestInput(t)
+	for _, value := range []string{"true", "false"} {
+		input.Config.Execution.Strict = value
+		if !normalImportArgumentsMatch(append(append([]string(nil), base...), "--strict="+value), input.Config) {
+			t.Fatal("同令牌布尔值被拒绝")
+		}
+		for _, extra := range [][]string{{"--strict", value}, {"--strict=" + value, "--strict=" + value}, {"--strict=unknown"}} {
+			if normalImportArgumentsMatch(append(append([]string(nil), base...), extra...), input.Config) {
+				t.Fatal("非规范或重复严格参数被接受")
+			}
+		}
+	}
+}
+
 func Test普通导入启动前复核输入变化(t *testing.T) {
 	input, argv := normalImportTestInput(t)
 	worker := &Worker{Runtime: Runtime{TargetPlatform: outputpath.PlatformWindowsAMD64, AllowedRoots: []string{input.Config.FilePath}}}

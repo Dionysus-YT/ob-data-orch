@@ -10,7 +10,7 @@ import { importContentChoices } from '../normalImportOptions'
 import type { NormalImportInputModel } from '../normalImportStepModels'
 
 const props = defineProps<{ model: NormalImportInputModel }>()
-const { form, fieldPrefix, selectContent, inputAdvancedCount, fieldError } = toRefs(props.model)
+const { form, fieldPrefix, selectContent, inputAdvancedCount, fieldError, validationAttempt } = toRefs(props.model)
 const advancedHasError = computed(() => ['fileRegex', 'escapeCharacter', 'emptyString', 'compressionAlgo', 'compressionLevel', 'dateFormat'].some(field => fieldError.value(field)))
 </script>
 
@@ -28,7 +28,7 @@ const advancedHasError = computed(() => ['fileRegex', 'escapeCharacter', 'emptyS
     </div>
     <NormalImportFileSettings :model="model" />
     <NormalImportFormatSettings :model="model" />
-    <WizardAdvancedSettings title="文件与解析" :configured-count="inputAdvancedCount" :force-open="advancedHasError">
+    <WizardAdvancedSettings title="文件与解析" :configured-count="inputAdvancedCount" :force-open="advancedHasError" :open-request="validationAttempt">
       <Form layout="vertical" class="normal-import-advanced-form">
         <h3>文件匹配</h3>
         <FormItem :html-for="fieldPrefix + '-regex'" :validate-status="fieldError('fileRegex') ? 'error' : undefined" :help="fieldError('fileRegex')" extra="仅对目录匹配有意义；实际匹配由 OBLOADER 检查。"><template #label><span>文件正则</span><NormalImportParameterHint name="file-regular-expression" /></template><Input :id="fieldPrefix + '-regex'" v-model:value="form.fileRegex" aria-label="文件正则" placeholder="留空按路径与后缀匹配" /></FormItem>

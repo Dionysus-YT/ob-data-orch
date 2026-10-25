@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestApplyCreatesStrictSchema 验证全部现行迁移、STRICT 表与幂等重放。
 func TestApplyCreatesStrictSchema(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -36,16 +37,16 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	if tableCount != 35 || strictCount != 35 {
-		t.Fatalf("schema tables = %d, strict tables = %d; want 35 and 35", tableCount, strictCount)
+	if tableCount != 43 || strictCount != 43 {
+		t.Fatalf("数据库表 = %d，STRICT 表 = %d；期望均为 43", tableCount, strictCount)
 	}
 
 	var migrationCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 31 {
-		t.Fatalf("迁移数量 = %d，期望 31", migrationCount)
+	if migrationCount != 41 {
+		t.Fatalf("迁移数量 = %d，期望 41", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -117,6 +118,64 @@ func Test历史解耦迁移保留现有任务(t *testing.T) {
 	defer rows.Close()
 	if rows.Next() || rows.Err() != nil {
 		t.Fatal("迁移后外键不完整")
+	}
+}
+
+func Test进度迁移从0032升级保留历史空值状态和修订(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := openTestDatabase(t)
+	legacy := fstest.MapFS{}
+	names, err := fs.Glob(migrations.Files, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if name[:4] > "0032" {
+			continue
+		}
+		data, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy[name] = &fstest.MapFile{Data: data}
+	}
+	if err := ApplyFS(ctx, db, legacy); err != nil {
+		t.Fatal("不能建立 0032 历史模式", err)
+	}
+	insertSyntheticTaskFixture(t, db)
+	if _, err := db.ExecContext(ctx, `INSERT INTO task_executions (
+		execution_id,task_id,node_id,state,revision,result_summary_json,created_at,finished_at,updated_at
+	) VALUES ('synthetic-progress-history','task-1','node-1','FAILED',7,'{"verification":"UNAVAILABLE"}',
+		'2026-10-18T00:00:00Z','2026-10-18T00:01:00Z','2026-10-18T00:01:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(ctx, db); err != nil {
+		t.Fatal("0033 进度迁移不能升级已有执行", err)
+	}
+	if err := Apply(ctx, db); err != nil {
+		t.Fatal("进度迁移不能幂等复用", err)
+	}
+	var progress sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT progress_json FROM task_executions WHERE execution_id='synthetic-progress-history'`).Scan(&progress); err != nil || progress.Valid {
+		t.Fatal("历史执行被回填进度", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE task_executions SET progress_json='invalid-json' WHERE execution_id='synthetic-progress-history'`); err == nil {
+		t.Fatal("摘要列接受非法 JSON")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE task_executions SET progress_json='{"version":"tool-progress-v1"}' WHERE execution_id='synthetic-progress-history'`); err != nil {
+		t.Fatal("摘要列拒绝合法 JSON", err)
+	}
+	var state, result, finished, updated string
+	var revision int64
+	if err := db.QueryRowContext(ctx, `SELECT state,revision,result_summary_json,finished_at,updated_at FROM task_executions WHERE execution_id='synthetic-progress-history'`).Scan(&state, &revision, &result, &finished, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if state != "FAILED" || revision != 7 || result != `{"verification":"UNAVAILABLE"}` || finished != "2026-10-18T00:01:00Z" || updated != "2026-10-18T00:01:00Z" {
+		t.Fatal("观测摘要改变了历史状态、修订或结果")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE task_executions SET progress_json=NULL WHERE execution_id='synthetic-progress-history'`); err != nil {
+		t.Fatal("摘要列不能保持兼容空值", err)
 	}
 }
 
@@ -377,6 +436,7 @@ func TestTasksAreImmutable(t *testing.T) {
 	}
 }
 
+// TestApplyRejectsChangedChecksum 验证历史迁移篡改被校验和拒绝，而非误触未来版本检查。
 func TestApplyRejectsChangedChecksum(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -498,7 +558,7 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0020_task_execution_cancellation.sql":                &fstest.MapFile{Data: twentiethMigration},
 	}
 	// 新增迁移仍纳入支持版本，保证本例实际验证旧迁移的校验和失败关闭。
-	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql", "0030_normal_import.sql", "0031_node_environment_inspection_authorization.sql"} {
+	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql", "0030_normal_import.sql", "0031_node_environment_inspection_authorization.sql", "0032_task_config_templates.sql", "0033_execution_progress.sql", "0034_direct_load.sql", "0035_subject_permissions.sql", "0036_ordinary_log_retention_policy.sql", "0037_platform_scheduling_policy.sql", "0038_platform_scheduling_timing.sql", "0039_scheduling_candidate_order.sql", "0040_log_query_positions.sql", "0041_audit_query_positions.sql"} {
 		data, err := migrations.Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

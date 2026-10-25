@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"ob-data-orch/internal/catalogresult"
+	"ob-data-orch/internal/directload"
+	"ob-data-orch/internal/directloadfiles"
 	"ob-data-orch/internal/executionbudget"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
@@ -77,9 +79,16 @@ type DraftUpdate struct {
 	ConfigFingerprint string
 	InvalidationJSON  string
 	UpdatedAt         time.Time
+	// RebindEditing 仅允许无来源任务的编辑中草稿更新引用；执行配置的绑定仍不可更改。
+	RebindEditing bool
+	DataSourceID  string
+	NodeID        string
+	// ActorSubjectID/RequestID 在浏览器保存事务中固定审计主体，旧内部调用可共同缺省。
+	ActorSubjectID string
+	RequestID      string
 	// ConfigVersion 标记更新后草稿配置的结构版本（v5 或 v6），不等同于参数元数据版本。
 	ConfigVersion string
-	// MetadataVersion/CapabilityVersion 只在用户显式新增参数时原子升级，历史任务不变更。
+	// MetadataVersion/CapabilityVersion 按当前生成结果原子冻结；编辑能力只作保存标记，不改写历史任务。
 	MetadataVersion   string
 	CapabilityVersion string
 	// 结构化子配置 JSON，仅 v6 草稿写入非空值；v5 更新时重置为 '{}'。
@@ -94,6 +103,9 @@ type DraftUpdate struct {
 
 // TaskSubmission 只冻结唯一生成器产物与当前检查绑定；普通导入使用独立快照与类型。
 type TaskSubmission struct {
+	// ExpertConfigRequired 由控制面规范化领域结果给出，不能从浏览器直接赋值。
+	// nil 只承接旧调用者的保守分类；元数据版本本身不能把普通日期格式升级为专家配置。
+	ExpertConfigRequired *bool
 	// TaskType 只允许已准入的固定任务类型；空值兼容冻结导出调用方。
 	TaskType           string
 	TaskID             string
@@ -134,6 +146,8 @@ type TaskSubmissionResult struct {
 // TaskSummary 是任务详情各只读投影共用的冻结非敏感字段。
 // HTTP 层必须按概览、快照、命令证据或执行事实再裁剪，不能把该内部结构整体返回。
 type TaskSummary struct {
+	// SchedulingWaitReason 是已授权等待任务的当前平台约束观察，不包含其他任务事实。
+	SchedulingWaitReason string
 	// TaskType 来自不可变任务类型；历史调用方缺省仍按导出读取。
 	TaskType          string
 	TaskID            string
@@ -161,6 +175,8 @@ type TaskSummary struct {
 	ResultSummary *ExecutionResultSummary
 	// ProcessEvidence 是 Agent 上报的最小进程证据投影；不含 argv、路径、日志或工具原文。
 	ProcessEvidence *ExecutionProcessEvidence
+	// Progress 由已确认日志批次投影，与进程/结果证据和任务终态独立。
+	Progress *TaskProgress
 	// OutputLocation 是按当前主体权限裁剪后的输出位置；Value 为空时只表示输出类型。
 	OutputLocation *TaskOutputLocation
 	// ParentTaskID/DerivationKind 是 EX-I8 派生任务关系（原始任务为空）。
@@ -225,21 +241,28 @@ type TaskListQuery struct {
 	Limit           int
 	// 以下为任务中心筛选（DEC-050）。所有条件只在授权范围内收窄结果，不能扩大范围；
 	// 空值表示不筛选。时间边界为半开区间 [From, To)。
-	Keyword      string
-	Types        []string
-	States       []string
-	CreatedFrom  time.Time
-	CreatedTo    time.Time
-	StartedFrom  time.Time
-	StartedTo    time.Time
-	DataSourceID string
-	Environment  string
-	CreatorID    string
+	Keyword     string
+	Types       []string
+	States      []string
+	CreatedFrom time.Time
+	CreatedTo   time.Time
+	StartedFrom time.Time
+	StartedTo   time.Time
+	// FinishedFrom/To 仅筛选已进入终态的时刻，供首页指标和趋势同口径下钻。
+	FinishedFrom time.Time
+	FinishedTo   time.Time
+	// overviewRecentFrom 只用于首页本人重点列表，避免历史失败挤占当前运行任务。
+	overviewRecentFrom time.Time
+	DataSourceID       string
+	Environment        string
+	CreatorID          string
 }
 
 // TaskListItem 是任务中心列表可读取的最小安全投影。
 // 它不包含任务配置、命令、凭据引用、日志正文、结果原文或错误原文。
 type TaskListItem struct {
+	// Progress 与详情消费相同的持久摘要，不在列表逐任务读取日志正文。
+	Progress               *TaskProgress
 	TaskID                 string
 	CreatorSubjectID       string
 	DataSourceID           string
@@ -300,11 +323,14 @@ type Claim struct {
 // LeaseRenewal 是已认证 Agent 对现有领取租约的续期请求。
 // 它不允许变更执行、节点、Agent 或 epoch，只能延长当前租约。
 type LeaseRenewal struct {
-	ExecutionID string
-	LeaseID     string
-	LeaseEpoch  int64
-	AgentID     string
-	ExpiresAt   time.Time
+	// Now 只由控制面时钟提供，EnvelopeDigest 必须绑定当前不可变任务输入。
+	Now            time.Time
+	EnvelopeDigest string
+	ExecutionID    string
+	LeaseID        string
+	LeaseEpoch     int64
+	AgentID        string
+	ExpiresAt      time.Time
 }
 
 type ExecutionEvent struct {
@@ -378,8 +404,10 @@ type ExecutionClaimNext struct {
 // ExecutionLeaseGrant 是控制面签发给已认证 Agent 的不可变任务信封安全投影。
 // PlannedArgv 绝不包含密码；密码只能由后续受租约约束的唯一槽位提供。
 type ExecutionLeaseGrant struct {
-	TaskType          string
-	NormalImport      *importfiles.ExecutionInput
+	TaskType     string
+	NormalImport *importfiles.ExecutionInput
+	// DirectLoad 只承载独立旁路配置与同一张表的冻结清单，不能与普通导入同时存在。
+	DirectLoad        *directloadfiles.ExecutionInput
 	TaskID            string
 	ExecutionID       string
 	LeaseID           string
@@ -423,6 +451,8 @@ type ExecutionSecretResolutionOutcome struct {
 // EncryptedExecutionDatabaseConnection 是正式导出短时解密前的槽位材料。
 // 它复用与预检查一致的销毁语义，但不允许用预检查的授权对象代替 execution 租约。
 type EncryptedExecutionDatabaseConnection struct {
+	// TaskType 由当前冻结任务读取，供控制面再次核对独立能力准入。
+	TaskType     string
 	Host         string
 	Port         int
 	Username     []byte
@@ -959,9 +989,10 @@ type DataSourceUpdateResult struct {
 	ConnectionTestInvalidated bool
 }
 
-// ExportConfigTemplate 是从成功任务保存的导出配置模板。
-// 可用于创建新草稿，复用已验证的配置结构。
+// ExportConfigTemplate 保留既有存储端口名称；TaskType 显式区分导出与普通导入，不允许互转。
+// 模板仅复用配置结构，不承诺新环境或文件可用。
 type ExportConfigTemplate struct {
+	TaskType          string
 	TemplateID        string
 	OwnerSubjectID    string
 	DisplayName       string
@@ -1034,7 +1065,8 @@ type ObjectExpression struct {
 
 // ContentSelection 表达导出内容类型。
 type ContentSelection struct {
-	ContentKind string `json:"contentKind"` // DDL_ONLY | DATA_ONLY | DDL_AND_DATA
+	// ContentKind 在编辑草稿中可为空；完整配置仅允许 DDL_ONLY、DATA_ONLY 或 DDL_AND_DATA。
+	ContentKind string `json:"contentKind"`
 }
 
 // DataFormat 表达数据格式及专属序列化参数。
@@ -1109,7 +1141,20 @@ type OutputConfig struct {
 	// StorageCredential 是对象存储输出绑定的凭据引用（EX-I6 存储凭据槽位）；
 	// 只含标识与修订，LOCAL 输出携带即失败关闭。
 	StorageCredential *StorageCredentialBinding `json:"storageCredential,omitempty"`
+	// StorageLocationDraft 仅保存编辑中尚未组成 URI 的位置字段，不能进入命令或执行快照。
+	StorageLocationDraft *ExportStorageLocationDraft `json:"storageLocationDraft,omitempty"`
 }
+
+// ExportStorageLocationDraft 保存未完成的对象存储位置，不包含凭据或任意 URI。
+type ExportStorageLocationDraft struct {
+	Bucket   string `json:"bucket"`
+	Path     string `json:"path"`
+	Endpoint string `json:"endpoint"`
+	Region   string `json:"region"`
+}
+
+// ExportEditingCapabilityVersion 标记仅可编辑的草稿，其内容摘要不能作为执行指纹。
+const ExportEditingCapabilityVersion = "export-draft-edit-v1"
 
 // StorageCredentialBinding 是草稿配置中的对象存储凭据引用。
 // 绝不携带 access-key/secret-key 或信封材料。
@@ -1210,6 +1255,8 @@ type ExportDraft struct {
 // TaskDerivationSource 是派生操作（基于原配置新建/从头重新执行/从检查点继续）需要读取的冻结任务事实。
 // 它包含非敏感配置与执行摘要，绝不包含凭据明文、日志正文或原始错误；调用方必须在授权谓词下使用。
 type TaskDerivationSource struct {
+	// TaskType 用于选择各自的配置领域与恢复入口，未知类型不能按导出解释。
+	TaskType string
 	// ReconciliationRequired 包含未完成的状态核对或命令摘要不一致，禁止据不可信终态发起派生。
 	ReconciliationRequired    bool
 	TaskID                    string
@@ -1272,6 +1319,8 @@ type ExportDraftCreateResult struct {
 
 // PrecheckRun 是提交前固定检查的非敏感绑定与状态投影。
 type PrecheckRun struct {
+	// DirectLoadConfigFingerprint 仅绑定旁路固定配置三键安全投影，不存原文件或秘密。
+	DirectLoadConfigFingerprint string
 	// SysCredentialID/SysCredentialRevision 只保存冻结引用，不包含 sys 账号或秘密。
 	SysCredentialID       string
 	SysCredentialRevision int64
@@ -1382,6 +1431,8 @@ type PrecheckLeaseGrant struct {
 // EX-I6：对象存储输出通过 OutputKind + StorageTarget 表达受控 URI 与 --tmp-path；本地输出缺省。
 type PrecheckExecutionContext struct {
 	// NormalImport 是独立的导入活动配置，非空时禁止套用导出目录与对象语义。
+	// DirectLoad 与普通导入互斥，旁路只接受独立配置与固定检查用途。
+	DirectLoad        *directload.Config
 	NormalImport      *importdomain.Config
 	CheckKind         string
 	CompatibilityMode string
@@ -1432,8 +1483,10 @@ type PrecheckSecretResolutionRequest struct {
 // EncryptedPrecheckDatabaseConnection 是短时解密前的数据库连接槽位材料。
 // 它只在控制面内部传递已加密密码及冻结绑定的权限复核对象；调用方完成解密或失败处理后必须调用 Destroy。
 type EncryptedPrecheckDatabaseConnection struct {
-	Host string
-	Port int
+	// CheckKind 来自当前预检查用途，不能由请求指定。
+	CheckKind string
+	Host      string
+	Port      int
 	// Username 是控制面按已登记字段短时组装的 username@tenant 或 username@tenant#cluster，不得持久化或记录日志。
 	Username     []byte
 	DataSourceID string
@@ -1518,7 +1571,9 @@ type PrecheckCheckResult struct {
 // AgentPrecheckCompletion 是受认证 Agent 在当前短租约内提交的固定检查完成事实。
 // 检查结果必须完整匹配固定清单；成功状态由 Store 根据每项结果推导，Agent 不能自行声明。
 type AgentPrecheckCompletion struct {
-	// InputManifest 仅普通导入 INPUT_FILES 通过时提供，由固定扫描器产生。
+	// DirectLoadConfigFingerprint 仅旁路完整检查的固定配置检查通过时提供。
+	DirectLoadConfigFingerprint string
+	// InputManifest 仅导入 INPUT_FILES 通过时提供，由对应固定扫描器产生。
 	InputManifest *importfiles.Manifest
 	AgentID       string
 	PrecheckID    string

@@ -1467,12 +1467,12 @@ func readEncryptedDataSourceConnectionTestDatabaseConnection(ctx context.Context
 		connection.Destroy()
 		return EncryptedDataSourceConnectionTestDatabaseConnection{}, fmt.Errorf("read encrypted data source connection test database connection: %w", err)
 	}
-	if connectionKind != "ODP" {
+	if !validLocalConnectionKind(connectionKind, clusterName) {
 		connection.Destroy()
 		return EncryptedDataSourceConnectionTestDatabaseConnection{}, ErrDataSourceConnectionTestLeaseRejected
 	}
 	var identityOK bool
-	connection.Username, identityOK = composePrivateODPJDBCIdentity(username, tenantName, clusterName)
+	connection.Username, identityOK = composeLocalJDBCIdentity(connectionKind, username, tenantName, clusterName)
 	if !identityOK {
 		connection.Destroy()
 		return EncryptedDataSourceConnectionTestDatabaseConnection{}, ErrDataSourceConnectionTestLeaseRejected

@@ -16,7 +16,7 @@ export interface ExportDraftFormValues {
   readonly objectNames: readonly string[]
   readonly objectSelections?: readonly { readonly objectType: ExportObjectType; readonly name: string }[]
   readonly excludeTables: readonly string[]
-  readonly contentKind: ExportContentKind
+  readonly contentKind: ExportContentKind | ''
   // EX-I4：数据格式单选；CSV/CUT/SQL 各有适用面板。
   readonly formatKind: ExportDataFormatKind
   readonly trailDelimiter: boolean
@@ -102,7 +102,7 @@ export interface ExportDraftFormValues {
 
 export type ExportDraftInputValidation =
   | { readonly valid: true; readonly input: ExportDraftInput }
-  | { readonly valid: false; readonly message: string }
+  | { readonly valid: false; readonly message: string; readonly field?: keyof ExportDraftFormValues }
 
 const CSV_QUOTE_MODES: readonly CsvQuoteMode[] = ['all', 'all_not_null', 'minimal', 'non_numeric', 'none']
 const COMPRESSION_ALGOS: readonly CompressionAlgo[] = ['zstd', 'zlib', 'gzip', 'snappy']
@@ -160,6 +160,7 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   const filePath = values.filePath.trim()
   const logPath = values.logPath.trim()
   if (!dataSourceId) return { valid: false, message: '请先选择一个完成基础连接测试的数据源。' }
+  if (!values.contentKind) return { valid: false, message: '请选择导出内容。' }
   if (!database) return { valid: false, message: '请填写默认数据库或 Schema。' }
   if (!nodeId) return { valid: false, message: '请选择一个已授权的执行节点。' }
   if (values.formatKind !== 'CSV' && values.formatKind !== 'CUT' && values.formatKind !== 'POS' && values.formatKind !== 'SQL' && values.formatKind !== 'PARQUET' && values.formatKind !== 'ORC' && values.formatKind !== 'AVRO') return { valid: false, message: '请选择支持的数据格式。' }
@@ -202,7 +203,7 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   // EX-I6：输出类型分流——本地输出要求节点绝对路径，对象存储按受控字段拼装 URI。
   const outputKind = values.outputKind
   if (outputKind === 'LOCAL') {
-    if (!isAbsolutePathForPlatform(filePath, values.platform)) return { valid: false, message: '导出路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
+    if (!isAbsolutePathForPlatform(filePath, values.platform)) return { valid: false, field: 'filePath', message: '导出路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
     // 本地输出没有对象存储凭据语义，残留引用必须失败关闭（与服务端 422 同口径）。
     if (values.storageCredentialId.trim()) return { valid: false, message: '本地输出不能绑定对象存储凭据。' }
   } else {
@@ -210,19 +211,19 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     const storagePath = values.storagePath.trim()
     const endpoint = values.storageEndpoint.trim()
     const region = values.storageRegion.trim()
-    if (!bucket || !storagePath.startsWith('/')) return { valid: false, message: '对象存储需要填写 Bucket 和以 / 开头的对象路径。' }
-    if (!endpoint && !region) return { valid: false, message: '对象存储需要填写 Endpoint 或 Region。' }
+    if (!bucket || !storagePath.startsWith('/')) return { valid: false, field: !bucket ? 'storageBucket' : 'storagePath', message: '对象存储需要填写 Bucket 和以 / 开头的对象路径。' }
+    if (!endpoint && !region) return { valid: false, field: 'storageEndpoint', message: '对象存储需要填写 Endpoint 或 Region。' }
     // EX-I6 安全边界：存储凭据不进 URI，走执行槽位；表单不收集密钥。
     const credentialId = values.storageCredentialId.trim()
     if (credentialId) {
       // 凭据引用必须携带正修订，且提供方与输出类型一致（服务端提交前同样复验）。
-      if (values.storageCredentialProvider !== outputKind) return { valid: false, message: '所选存储凭据与输出类型不一致，请重新选择。' }
-      if (!Number.isSafeInteger(values.storageCredentialRevision) || values.storageCredentialRevision < 1) return { valid: false, message: '所选存储凭据缺少有效修订，请刷新凭据列表后重新选择。' }
+      if (values.storageCredentialProvider !== outputKind) return { valid: false, field: 'storageCredentialId', message: '所选存储凭据与输出类型不一致，请重新选择。' }
+      if (!Number.isSafeInteger(values.storageCredentialRevision) || values.storageCredentialRevision < 1) return { valid: false, field: 'storageCredentialId', message: '所选存储凭据缺少有效修订，请刷新凭据列表后重新选择。' }
     }
   }
-  if (logPath && !isAbsolutePathForPlatform(logPath, values.platform)) return { valid: false, message: '日志路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
-  if (values.outputKind !== 'LOCAL' && !values.tmpPath.trim()) return { valid: false, message: '对象存储预检查需要填写本地临时分块目录，以检查可写性与可用空间。' }
-  if (values.tmpPath.trim() && !isAbsolutePathForPlatform(values.tmpPath.trim(), values.platform)) return { valid: false, message: '临时分块目录必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
+  if (logPath && !isAbsolutePathForPlatform(logPath, values.platform)) return { valid: false, field: 'logPath', message: '日志路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
+  if (values.outputKind !== 'LOCAL' && !values.tmpPath.trim()) return { valid: false, field: 'tmpPath', message: '对象存储预检查需要填写本地临时分块目录，以检查可写性与可用空间。' }
+  if (values.tmpPath.trim() && !isAbsolutePathForPlatform(values.tmpPath.trim(), values.platform)) return { valid: false, field: 'tmpPath', message: '临时分块目录必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。' }
   // EX-I4 POS 定版：仅包含数据时 POS 格式必须提供控制文件目录（--ctl-path）且为节点绝对路径；
   // 仅 DDL 内容不校验也不发送 controlFilePath（页面切换到仅 DDL 时清除数据格式专属残留）。
   if (values.contentKind !== 'DDL_ONLY' && values.formatKind === 'POS') {
@@ -283,7 +284,7 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
     }
     // EX-I5：结构化格式不支持压缩（官方只支持 CSV/CUT/POS/SQL 可读格式）。
     if (isStructuredFormat(values.formatKind) && (values.compress || values.compressionAlgo || values.compressionLevel.trim())) return { valid: false, message: '结构化格式不支持压缩，请关闭压缩选项。' }
-    if (values.maxFileSize && !isPositiveInteger(values.maxFileSize)) return { valid: false, message: '导出总量上限必须是正整数（单位 Byte）。' }
+    if (values.maxFileSize && !isPositiveInteger(values.maxFileSize)) return { valid: false, field: 'maxFileSize', message: '导出总量上限必须是正整数（单位 Byte）。' }
     if (values.querySql.trim() && (values.flashbackScn.trim() || values.flashbackTimestamp.trim())) return { valid: false, message: '自定义查询与闪回参数互斥，只能选择其一。' }
     // 条件筛选与自定义查询互斥。
     if (values.querySql.trim() && values.where.trim()) return { valid: false, message: '自定义查询与条件筛选互斥，只能选择其一。' }
@@ -307,12 +308,12 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
       }
     }
     if (values.flashbackScn.trim() && !isPositiveInteger(values.flashbackScn)) return { valid: false, message: '闪回 SCN 必须是正整数。' }
-    if (values.jvmMemory && !MEMORY_PATTERN.test(values.jvmMemory.trim())) return { valid: false, message: 'JVM 内存必须为数字加可选 K/M/G/T 后缀，例如 4G。' }
+    if (values.jvmMemory && !MEMORY_PATTERN.test(values.jvmMemory.trim())) return { valid: false, field: 'jvmMemory', message: 'JVM 内存必须为数字加可选 K/M/G/T 后缀，例如 4G。' }
     // EX-I7 文件拆分：--block-size 只接受正整数或正整数+MB/ROW 后缀（官方不支持 1GB/1M 等格式）。
     if (isStructuredFormat(values.formatKind) && values.blockSize.trim()) return { valid: false, message: '结构化格式不支持文件拆分参数，请清空该选项。' }
     if (values.blockSize.trim() && !BLOCK_SIZE_PATTERN.test(values.blockSize.trim())) return { valid: false, message: '文件拆分必须为正整数（MB）或正整数+MB/ROW 后缀，例如 1024 或 256ROW。' }
-    for (const [label, value] of [['线程数', values.thread], ['分页大小', values.pageSize], ['每线程宏块数', values.parallelMacro], ['游标抓取行数', values.fetchSize]] as const) {
-      if (value.trim() && !isPositiveInteger(value)) return { valid: false, message: `${label}必须是正整数。` }
+    for (const [field, label] of [['thread', '线程数'], ['pageSize', '分页大小'], ['parallelMacro', '每线程宏块数'], ['fetchSize', '游标抓取行数']] as const) {
+      if (values[field].trim() && !isPositiveInteger(values[field])) return { valid: false, field, message: `${label}必须是正整数。` }
     }
   }
   return { valid: true, input: buildExportDraftInput(values, dataSourceId, nodeId, database, filePath, logPath) }
@@ -327,8 +328,23 @@ function serializationOptionValues(values: ExportDraftFormValues): readonly stri
   return [values.columnSeparator, values.columnQuote, values.lineSeparator, values.nullString, values.fileEncoding]
 }
 
+// 编辑投影沿用唯一配置转换，但允许尚未填写必填项；错误数值仍拒绝保存，避免 NaN 变成 null 后丢失输入。
+export function buildEditingExportDraftInput(values: ExportDraftFormValues): ExportDraftInput | undefined {
+  if (!values.dataSourceId || !['CSV', 'CUT', 'SQL'].includes(values.formatKind)) return undefined
+  const numeric = [values.maxFileSize, values.compressionLevel, values.thread, values.pageSize, values.parallelMacro, values.fetchSize, values.flashbackScn, values.scopeKind === 'QUERY_RESULT' ? values.queryResultLimit : '']
+  if (numeric.some(value => value.trim() && !Number.isSafeInteger(Number(value.trim())))) return undefined
+  const input = buildExportDraftInput(values, values.dataSourceId, values.nodeId, values.database, values.filePath, values.logPath)
+  const filterConfig = values.scopeKind === 'QUERY_RESULT' && !values.queryResultLimit.trim() && input.config.filterConfig
+    ? { ...input.config.filterConfig, queryResultLimit: undefined } : input.config.filterConfig
+  const objectScope = values.scopeKind === 'SPECIFIED' && !input.config.objectScope.objectTypes?.length
+    ? { ...input.config.objectScope, objectTypes: [values.objectType] } : input.config.objectScope
+  return { ...input, draftState: 'EDITING', config: { ...input.config, objectScope, filterConfig, outputConfig: { ...input.config.outputConfig,
+    ...(values.outputKind !== 'LOCAL' ? { storageLocationDraft: { bucket: values.storageBucket, path: values.storagePath, endpoint: values.storageEndpoint, region: values.storageRegion } } : {}),
+  } } }
+}
+
 function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: string, nodeId: string, database: string, filePath: string, logPath: string): ExportDraftInput {
-  const dataOptions = values.contentKind !== 'DDL_ONLY'
+  const dataOptions = values.contentKind === 'DATA_ONLY' || values.contentKind === 'DDL_AND_DATA'
   const formatKind = values.formatKind
   const csvOptions = dataOptions ? buildSerializationOptions(values, formatKind) : undefined
   const cutOptions = dataOptions && formatKind === 'CUT' && (values.trailDelimiter || values.removeNewline)
@@ -352,7 +368,7 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
           excludeTables: values.excludeTables.length > 0 ? values.excludeTables : undefined,
         },
     contentSelection: { contentKind: values.contentKind },
-    dataFormat: values.contentKind === 'DDL_ONLY' ? undefined : { formatKind, csvOptions, cutOptions, timestampFormats: buildTimestampFormats(values) },
+    dataFormat: dataOptions ? { formatKind, csvOptions, cutOptions, timestampFormats: buildTimestampFormats(values) } : undefined,
     outputConfig: {
       outputKind: values.outputKind || 'LOCAL',
       filePath: outputFilePath, logPath: logPath || undefined, skipCheckDir: values.skipCheckDir || undefined,
@@ -381,7 +397,7 @@ function buildExportDraftInput(values: ExportDraftFormValues, dataSourceId: stri
 
 // buildDDLBehavior 按内容和对象范围构造 DDL 行为，紧凑 Schema 只发送给包含表 DDL 的组合。
 function buildDDLBehavior(values: ExportDraftFormValues): DDLBehaviorOptions | undefined {
-  if (values.contentKind === 'DATA_ONLY') return undefined
+  if (!values.contentKind || values.contentKind === 'DATA_ONLY') return undefined
   const compactSchema = supportsCompactSchema(values) && values.compactSchema
   if (!values.dropObject && !values.retainSchema && !compactSchema && !values.addExtraMessage && !values.sequencePolicy) return undefined
   return {

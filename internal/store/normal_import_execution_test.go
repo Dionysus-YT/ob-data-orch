@@ -18,6 +18,7 @@ import (
 
 func Test普通导入显式领取租约秘密与独立结果闭环(t *testing.T) {
 	s, w, c := normalImportFixture(t)
+	setTestSchedulingLimit(t, s, 1)
 	ctx := context.Background()
 	node, err := s.GetExecutionNode(ctx, c.NodeID)
 	if err != nil {

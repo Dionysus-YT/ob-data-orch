@@ -3,7 +3,7 @@ import { mockFacts } from './fixtures/facts'
 import { DATA_SOURCE_UI_FIXTURES } from '../src/workbench/sources/dataSourceUiFixture'
 const time = '2026-01-01T00:00:00Z'
 const credential = (revision = 1) => ({ id: 'synthetic-credential', displayName: '合成凭据', provider: 'OSS', revision, currentRevision: revision, updatedAt: time })
-const template = { id: 'synthetic-template', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: '2026-01-01T00:00:00Z', updatedAt: time }
+const template = { id: 'synthetic-template', taskType: 'OBDUMPER_EXPORT', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: '2026-01-01T00:00:00Z', updatedAt: time }
 async function navigate(page: Page, path: string) {
   await page.evaluate(async path => { const modulePath = '/src/router/index.ts'; const { router } = await import(/* @vite-ignore */ modulePath); await router.push(path) }, path)
 }
@@ -28,8 +28,8 @@ for (const status of [401, 403]) {
   })
   test(`模板列表 ${status} 后清除改名与删除框，恢复授权后输入不复活`, async ({ page }) => {
     await mockFacts(page); let delayRead = false; const held: Route[] = []; let writes = 0
-    await page.route('**/api/v1/export-config-templates', route => delayRead ? void held.push(route) : route.fulfill({ json: { items: [template] } }))
-    await page.route('**/api/v1/export-config-templates/synthetic-template', route => { writes++; return route.fulfill({ status: 204 }) })
+    await page.route('**/api/v1/config-templates', route => delayRead ? void held.push(route) : route.fulfill({ json: { items: [template] } }))
+    await page.route('**/api/v1/config-templates/synthetic-template', route => { writes++; return route.fulfill({ status: 204 }) })
     await page.goto('/templates'); await page.getByRole('button', { name: '改名', exact: true }).click(); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill('合成未保存改名')
     delayRead = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await expect.poll(() => held.length).toBe(1)
     await page.getByRole('button', { name: '删除', exact: true }).dispatchEvent('click'); await expect(page.getByRole('dialog')).toContainText('合成模板')
@@ -80,17 +80,17 @@ test('凭据删除重复操作阻断并保持版本与 API 安全头', async ({ 
 
 test('模板改名、选择引用与新建草稿保持语义，离开后迟到成功不导航', async ({ page }, info) => {
   await mockFacts(page); const errors: string[] = []; page.on('pageerror', error => errors.push(error.message)); let displayName = '合成模板'; const drafts: Route[] = []
-  await page.route('**/api/v1/export-config-templates', route => route.fulfill({ json: { items: [{ ...template, displayName }] } }))
-  await page.route('**/api/v1/export-config-templates/synthetic-template', route => { displayName = route.request().postDataJSON().displayName; return route.fulfill({ json: { revision: 2 } }) })
-  await page.route('**/api/v1/export-config-templates/*:create-draft', route => { drafts.push(route) })
+  await page.route('**/api/v1/config-templates', route => route.fulfill({ json: { items: [{ ...template, displayName }] } }))
+  await page.route('**/api/v1/config-templates/synthetic-template', route => { displayName = route.request().postDataJSON().displayName; return route.fulfill({ json: { revision: 2 } }) })
+  await page.route('**/api/v1/config-templates/*:create-draft', route => { drafts.push(route) })
   const source = DATA_SOURCE_UI_FIXTURES.find(item => item.state === 'ENABLED' && item.lastTestStatus === 'SUCCEEDED')!
   await page.route('**/api/v1/data-sources', route => route.fulfill({ json: { items: [source], total: 1, nextCursor: '' } }))
   await page.route('**/api/v1/execution-nodes?eligibleFor=OBDUMPER_EXPORT', route => route.fulfill({ json: { items: [{ id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64' }] } }))
   await page.goto('/templates'); await page.getByRole('button', { name: '改名', exact: true }).click(); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill(' 合成改名 '); await page.getByRole('button', { name: '保存', exact: true }).click(); await expect(page.getByText('合成改名', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '用模板新建草稿', exact: true }).click(); await expect(page.getByText('请选择数据源与执行节点。', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '用模板新建草稿', exact: true }).click(); await expect(page.getByRole('button', { name: '创建草稿', exact: true })).toBeDisabled(); await expect(page.getByText('请选择数据源与执行节点。', { exact: true })).toHaveCount(0)
   await page.getByRole('combobox', { name: /^数据源/ }).focus(); await page.keyboard.press('ArrowDown'); await page.getByText(source.displayName, { exact: true }).last().click(); await page.getByRole('combobox', { name: /^执行节点/ }).focus(); await page.keyboard.press('ArrowDown'); await page.getByText('合成节点 · Windows · x86_64', { exact: true }).click()
-  await page.getByRole('button', { name: '用模板新建草稿', exact: true }).click(); await expect.poll(() => drafts.length).toBe(1)
-  expect(drafts[0]!.request().postDataJSON()).toEqual({ dataSourceId: source.id, nodeId: 'synthetic-node' }); await navigate(page, '/settings'); await drafts[0]!.fulfill({ json: { draftId: 'synthetic-late', templateId: 'synthetic-template' } }).catch(() => {})
+  await page.getByRole('button', { name: '创建草稿', exact: true }).click(); await expect.poll(() => drafts.length).toBe(1)
+  expect(drafts[0]!.request().postDataJSON()).toEqual({ dataSourceId: source.id, nodeId: 'synthetic-node' }); await navigate(page, '/settings'); await drafts[0]!.fulfill({ json: { draftId: 'synthetic-late', templateId: 'synthetic-template', taskType: 'OBDUMPER_EXPORT' } }).catch(() => {})
   await expect(page).toHaveURL(/\/settings$/); expect(drafts).toHaveLength(1); expect(errors).toEqual([])
   await navigate(page, '/templates'); await page.setViewportSize({ width: 640, height: 720 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: info.outputPath('template-return.png'), fullPage: true })
 })

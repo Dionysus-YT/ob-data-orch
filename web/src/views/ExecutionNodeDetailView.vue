@@ -5,6 +5,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { activateModal } from '@/components/modalFocus'
 import { useOperationMessage } from '@/composables/useOperationMessage'
+import { navigateAntTabs } from '@/composables/antTabKeyboard'
 import { overlayTheme } from '@/platform/theme'
 import { component } from '@/platform/tokens'
 import { agentRegistrationCommand } from '@/workbench/nodes/executionNodeEnrollmentInstructions'
@@ -37,25 +38,6 @@ const platformHelp = computed(() => node.value ? nodePlatformHelp(node.value.pla
 function issueEnrollment() {
   if (!enrollmentDialogOpen.value) enrollmentInvoker = document.activeElement instanceof HTMLElement ? document.activeElement : null
   void requestEnrollment()
-}
-
-// 当前 Ant Tabs 仅原生处理 Enter/Space；方向键在本页按可见 Tab 顺序移动并激活。
-// 只处理 Tab 自身的按键，避免影响配置文本、资源 Tooltip 或弹层中的键盘操作。
-function navigateTabs(event: KeyboardEvent) {
-  if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return
-  const tabs = [...(event.target.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])]
-    .filter(tab => tab.getAttribute('aria-disabled') !== 'true')
-  const current = tabs.indexOf(event.target)
-  if (current < 0 || !tabs.length) return
-  let next: number
-  if (event.key === 'ArrowRight') next = (current + 1) % tabs.length
-  else if (event.key === 'ArrowLeft') next = (current + tabs.length - 1) % tabs.length
-  else if (event.key === 'Home') next = 0
-  else if (event.key === 'End') next = tabs.length - 1
-  else return
-  event.preventDefault()
-  tabs[next]?.focus()
-  tabs[next]?.click()
 }
 
 // 注册码弹层用共享焦点栈约束键盘，并在关闭时将焦点还给发起按钮。
@@ -123,7 +105,7 @@ watch([enrollmentDialogOpen, modalCloseButton], async ([open], _previous, cleanu
 
       <section class="node-detail-workspace" aria-label="节点详情工作面">
         <ASpin :spinning="refreshing">
-          <ATabs v-model:active-key="activeTab" :destroy-inactive-tab-pane="true" aria-label="节点详情内容" @keydown="navigateTabs">
+          <ATabs v-model:active-key="activeTab" :destroy-inactive-tab-pane="true" aria-label="节点详情内容" @keydown="navigateAntTabs">
             <ATabPane key="overview" tab="运行概览"><NodeRuntimeOverview :node="node" /></ATabPane>
             <ATabPane key="configuration" tab="环境与配置"><NodeEnvironmentConfiguration :node="node" /></ATabPane>
           </ATabs>

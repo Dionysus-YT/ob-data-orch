@@ -36,6 +36,8 @@ type File struct {
 
 // Manifest 绑定完整匹配集合的稳定摘要；不是导入结果或数据库行数。
 type Manifest struct {
+	// ControlDigest 绑定实际控制文件，防止检查后替换列映射或预处理定义。
+	ControlDigest string `json:"controlDigest,omitempty"`
 	// MetadataDigest 绑定官方辅助清单；不反序列化 Kryo，也不让其变化逃过执行前复核。
 	MetadataDigest string `json:"metadataDigest,omitempty"`
 	Files          []File `json:"files"`
@@ -53,24 +55,46 @@ type ExecutionInput struct {
 
 // Scan 从允许根目录内读取匹配文件的摘要；任何链接、越界、变化、超限或取消都不能产生成功清单。
 func Scan(ctx context.Context, c importdomain.Config, allowedRoots []string) (Manifest, error) {
-	if ctx == nil {
-		return Manifest{}, errors.New("导入检查上下文不可用")
-	}
-	if err := ctx.Err(); err != nil {
-		return Manifest{}, err
-	}
-	inputRoot, relative, err := openBounded(c.FilePath, allowedRoots)
-	if err != nil {
-		return Manifest{}, errors.New("导入输入路径无法安全访问")
-	}
-	defer inputRoot.Close()
 	var filter *regexp.Regexp
 	if c.FileRegex != "" {
+		var err error
 		filter, err = regexp.Compile(c.FileRegex)
 		if err != nil {
 			return Manifest{}, errors.New("文件正则不属于受控检查子集")
 		}
 	}
+	manifest, err := ScanMatched(ctx, c.FilePath, allowedRoots, func(name string) (string, string, bool) { return classify(name, c, filter) })
+	if err != nil {
+		return Manifest{}, err
+	}
+	if c.Mapping != nil && c.Mapping.Kind == "CONTROL" {
+		facts, err := controlFiles(ctx, c, allowedRoots)
+		if err != nil {
+			return Manifest{}, err
+		}
+		manifest.ControlDigest = facts.Digest
+		manifest.Digest = boundManifestDigest(manifest)
+	}
+	if !manifest.Valid(c) {
+		return Manifest{}, errors.New("没有完整匹配当前内容与对象的文件集合")
+	}
+	return manifest, nil
+}
+
+// ScanMatched 复用允许根目录、链接拒绝、有界读取和稳定摘要；匹配语义由各业务所有者提供。
+// 返回值仍须由业务校验完整集合，不能把过滤后的普通导入集合当成旁路单表证据。
+func ScanMatched(ctx context.Context, path string, allowedRoots []string, matcher func(string) (string, string, bool)) (Manifest, error) {
+	if ctx == nil || matcher == nil {
+		return Manifest{}, errors.New("导入检查上下文不可用")
+	}
+	if err := ctx.Err(); err != nil {
+		return Manifest{}, err
+	}
+	inputRoot, relative, err := openBounded(path, allowedRoots)
+	if err != nil {
+		return Manifest{}, errors.New("导入输入路径无法安全访问")
+	}
+	defer inputRoot.Close()
 	var files []File
 	entries := 0
 	var walk func(string, int) error
@@ -112,7 +136,7 @@ func Scan(ctx context.Context, c importdomain.Config, allowedRoots []string) (Ma
 		if !info.Mode().IsRegular() {
 			return errors.New("导入输入包含非常规文件")
 		}
-		kind, object, match := classify(info.Name(), c, filter)
+		kind, object, match := matcher(info.Name())
 		if !match {
 			return nil
 		}
@@ -177,9 +201,6 @@ func Scan(ctx context.Context, c importdomain.Config, allowedRoots []string) (Ma
 		manifest.TotalBytes += file.Size
 	}
 	manifest.Digest = manifestDigest(files, manifest.MetadataDigest)
-	if !manifest.Valid(c) {
-		return Manifest{}, errors.New("没有完整匹配当前内容与对象的文件集合")
-	}
 	return manifest, nil
 }
 
@@ -230,7 +251,24 @@ func (m Manifest) Valid(c importdomain.Config) bool {
 			return false
 		}
 	}
-	return total == m.TotalBytes && manifestDigest(m.Files, m.MetadataDigest) == m.Digest && (!c.HasData() || data > 0) && (!c.HasDDL() || ddl > 0)
+	if c.Mapping != nil && c.Mapping.Kind == "CONTROL" {
+		if len(m.ControlDigest) != 64 {
+			return false
+		}
+		if _, err := hex.DecodeString(m.ControlDigest); err != nil {
+			return false
+		}
+	} else if m.ControlDigest != "" {
+		return false
+	}
+	return total == m.TotalBytes && boundManifestDigest(m) == m.Digest && (!c.HasData() || data > 0) && (!c.HasDDL() || ddl > 0)
+}
+
+func boundManifestDigest(m Manifest) string {
+	if m.ControlDigest == "" {
+		return manifestDigest(m.Files, m.MetadataDigest)
+	}
+	return manifestDigest(m.Files, m.MetadataDigest+":"+m.ControlDigest)
 }
 
 func manifestDigest(files []File, metadata string) string {
@@ -329,12 +367,16 @@ func openBounded(path string, roots []string) (*os.Root, string, error) {
 func classify(name string, c importdomain.Config, filter *regexp.Regexp) (string, string, bool) {
 	original := name
 	if c.Parser.Compress {
-		for _, suffix := range []string{".zstd", ".zst", ".zlib", ".gz", ".gzip", ".snappy"} {
-			if strings.HasSuffix(name, suffix) {
-				name = strings.TrimSuffix(name, suffix)
-				break
-			}
+		// 官方 4.3.5 按算法后缀发现输入；别名不能冒充实际会读取的文件。
+		codec := c.Parser.CompressionAlgo
+		if codec == "" {
+			codec = "zstd"
 		}
+		suffix := map[string]string{"zstd": ".zst", "zlib": ".zz", "gzip": ".gz", "snappy": ".sz"}[codec]
+		if suffix == "" || !strings.HasSuffix(name, suffix) {
+			return "", "", false
+		}
+		name = strings.TrimSuffix(name, suffix)
 	}
 	kind, object := "", ""
 	if strings.HasSuffix(name, "-schema.sql") {

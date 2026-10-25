@@ -56,7 +56,7 @@ describe('节点完整采集事实解析', () => {
     const item = { id: 'synthetic-task', type: 'OBDUMPER_EXPORT', state: 'SUCCEEDED', reconciliationRequired: false, submittedAt: '2026-10-16T00:00:00Z' }
     for (const [value, reason] of [
       [{ scope: 'ALL', items: [{ ...item, type: 'synthetic-private-value' }] }, '尚未支持的任务类型'],
-      [{ scope: 'ALL', items: [{ ...item, type: 'OBLOADER_DIRECT_LOAD' }] }, '尚未支持的任务类型'],
+      [{ scope: 'ALL', items: [{ ...item, type: 'FUTURE_IMPORT' }] }, '尚未支持的任务类型'],
       [{ scope: 'ALL', items: [{ ...item, state: 'synthetic-private-value' }] }, '尚未支持的任务状态'],
       [{ scope: 'synthetic-private-value', items: [item] }, '任务读取范围'],
       [{ scope: 'ALL', items: Array.from({ length: 6 }, () => item) }, '5 条记录'],

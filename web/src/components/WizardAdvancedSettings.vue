@@ -4,12 +4,12 @@ import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import { computed, ref, watch } from 'vue'
 import { component, foundation, semantic } from '@/platform/tokens'
 
-const props = defineProps<{ title: string; configuredCount: number; forceOpen?: boolean }>()
+const props = defineProps<{ title: string; configuredCount: number; forceOpen?: boolean; openRequest?: number }>()
 const activeKey = ref<string | number | Array<string | number>>([])
 const expanded = computed(() => Array.isArray(activeKey.value) ? activeKey.value.includes('advanced') : activeKey.value === 'advanced')
 
 // 两类向导只复用高级区的呈现与开合；字段、计数和错误仍由各自业务模型提供。
-watch(() => props.forceOpen, value => { if (value) activeKey.value = ['advanced'] }, { immediate: true })
+watch(() => [props.forceOpen, props.openRequest], () => { if (props.forceOpen) activeKey.value = ['advanced'] }, { immediate: true })
 
 // 高级区仅收窄 Collapse 主题，复用既有颜色、间距和原生开合动画。
 const advancedTheme: ThemeConfig = {

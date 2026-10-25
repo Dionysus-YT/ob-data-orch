@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"ob-data-orch/internal/logretention"
 )
 
 // DefaultRetentionDays 是 DEC-050 确认的普通任务日志默认保留天数。
-const DefaultRetentionDays = 30
+const DefaultRetentionDays = logretention.DefaultDays
 
 // ErrRetentionExpired 表示存在已登记的正常保留清理事实，不等同于文件损坏或采集缺口。
 var ErrRetentionExpired = errors.New("task logs exceeded retention")
@@ -36,13 +38,11 @@ type RetentionIndex interface {
 
 // RetentionDays 兼容旧部署配置的零值，其他值必须处于已确认的 7–365 天范围。
 func RetentionDays(value int) (int, error) {
-	if value == 0 {
-		return DefaultRetentionDays, nil
-	}
-	if value < 7 || value > 365 {
+	days, err := logretention.Days(value)
+	if err != nil {
 		return 0, ErrInvalidInput
 	}
-	return value, nil
+	return days, nil
 }
 
 // CleanupExpired 分批清理已过保留期的终态日志，既不删除任务、审计和结果，也不访问 Agent 文件。
@@ -181,13 +181,26 @@ func (store *PersistentStore) retentionError(ctx context.Context, taskID string)
 	return nil
 }
 
+// RetentionPolicy 让每批清理读取当前策略，并与网页保存串行；失败时不得清理。
+type RetentionPolicy interface {
+	WithPolicy(context.Context, func(int) error) error
+}
+
 // RunRetention 由组合根管理生命周期，启动与每小时分批清理，失败保留账本供下一轮或重启恢复。
-func (store *PersistentStore) RunRetention(ctx context.Context, days int, report func(error)) {
+func (store *PersistentStore) RunRetention(ctx context.Context, policy RetentionPolicy, report func(error)) {
 	tick := time.NewTicker(time.Hour)
 	defer tick.Stop()
 	for {
 		for {
-			count, err := store.CleanupExpired(ctx, time.Now().UTC(), days, 64)
+			count := 0
+			err := logretention.ErrUnavailable
+			if policy != nil {
+				err = policy.WithPolicy(ctx, func(days int) error {
+					var cleanupErr error
+					count, cleanupErr = store.CleanupExpired(ctx, time.Now().UTC(), days, 64)
+					return cleanupErr
+				})
+			}
 			if err != nil {
 				if ctx.Err() == nil && report != nil {
 					report(err)

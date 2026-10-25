@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"ob-data-orch/internal/agentpreflight"
@@ -41,6 +42,59 @@ func normalImportFixture(t *testing.T) agentpreflight.Request {
 	r.TargetPlatform = platform
 	r.AllowedRoots = []string{root}
 	return r
+}
+
+func Test普通导入CSV空白损失不能被成功JDBC结果覆盖(t *testing.T) {
+	r := normalImportFixture(t)
+	if err := os.WriteFile(filepath.Join(r.NormalImport.FilePath, "synthetic_table.csv"), []byte("1, padded \n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := importfiles.Scan(context.Background(), *r.NormalImport, r.AllowedRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.InputManifest = &manifest
+	p := &NormalImportProbe{WorkspaceRoot: t.TempDir(), Resolver: &countingResolver{connection: Connection{Host: "synthetic.invalid", Port: 2883, Username: []byte("synthetic"), Password: []byte("synthetic-only")}}, Run: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, _ jdbcprobe.NormalImportRequest) (jdbcprobe.NormalImportResult, error) {
+		return jdbcprobe.NormalImportResult{DatabaseAccess: jdbcprobe.ObjectAccessible, WriteAccess: jdbcprobe.ObjectAccessible, InputMapping: jdbcprobe.ObjectAccessible}, nil
+	}}
+	_, _ = p.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, r)
+	result, err := p.Probe(context.Background(), "INPUT_MAPPING", r)
+	if err != nil || result.Status != agentpreflight.StatusFailed || result.EvidenceCode != "IMPORT_CSV_WHITESPACE_UNQUOTED" {
+		t.Fatal("JDBC通过覆盖了输入空白损失", result, err)
+	}
+}
+
+func Test普通导入CUT换行错配不能被成功JDBC结果覆盖(t *testing.T) {
+	r := normalImportFixture(t)
+	line := "\n"
+	if r.TargetPlatform != commandgen.PlatformWindowsAMD64 {
+		line = "\r\n"
+	}
+	old := filepath.Join(r.NormalImport.FilePath, "synthetic_table.csv")
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.NormalImport.FilePath, "synthetic_table.dat"), []byte("1|alpha|plain|"+line), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r.NormalImport.Format = "CUT"
+	r.NormalImport.Parser = importdomain.Parser{ColumnSplitter: "|", TrailDelimiter: true}
+	manifest, err := importfiles.Scan(context.Background(), *r.NormalImport, r.AllowedRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.InputManifest = &manifest
+	p := &NormalImportProbe{WorkspaceRoot: t.TempDir(), Resolver: &countingResolver{connection: Connection{Host: "synthetic.invalid", Port: 2883, Username: []byte("synthetic"), Password: []byte("synthetic-only")}}, Run: func(_ context.Context, _ credential.Workspace, _ jdbcprobe.Runtime, input jdbcprobe.NormalImportRequest) (jdbcprobe.NormalImportResult, error) {
+		if input.MappingComplete {
+			t.Fatal("执行平台默认换行不匹配仍声明输入完整")
+		}
+		return jdbcprobe.NormalImportResult{DatabaseAccess: jdbcprobe.ObjectAccessible, WriteAccess: jdbcprobe.ObjectAccessible, InputMapping: jdbcprobe.ObjectAccessible}, nil
+	}}
+	_, _ = p.Probe(context.Background(), agentpreflight.CheckDatabaseConnectivity, r)
+	result, err := p.Probe(context.Background(), "INPUT_MAPPING", r)
+	if err != nil || result.Status != agentpreflight.StatusUnknown || result.EvidenceCode != "IMPORT_INPUT_MAPPING_UNSUPPORTED" {
+		t.Fatal("成功JDBC覆盖了CUT换行未知", result, err)
+	}
 }
 
 func Test普通导入三检查一次解析槽位并清除秘密和工作区(t *testing.T) {
@@ -80,7 +134,7 @@ func Test普通导入三检查一次解析槽位并清除秘密和工作区(t *t
 }
 
 func Test普通导入映射未知独立于连接权限且取消后不接纳成功(t *testing.T) {
-	for _, kind := range []string{"changed-file", "unsupported-encoding", "cancelled", "connection-rejected", "unexpected-sys"} {
+	for _, kind := range []string{"changed-file", "unsupported-encoding", "unsupported-compression", "unsupported-control", "unsupported-footer", "unsupported-type", "cancelled", "connection-rejected", "unexpected-sys"} {
 		t.Run(kind, func(t *testing.T) {
 			r := normalImportFixture(t)
 			if kind == "changed-file" {
@@ -90,6 +144,38 @@ func Test普通导入映射未知独立于连接权限且取消后不接纳成�
 			}
 			if kind == "unsupported-encoding" {
 				r.NormalImport.FileEncoding = "GBK"
+			}
+			if kind == "unsupported-compression" {
+				r.NormalImport.Parser.Compress = true
+				r.NormalImport.Parser.CompressionAlgo = "gzip"
+				if err := os.Rename(filepath.Join(r.NormalImport.FilePath, "synthetic_table.csv"), filepath.Join(r.NormalImport.FilePath, "synthetic_table.csv.gz")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "unsupported-control" {
+				path := filepath.Join(r.NormalImport.FilePath, "synthetic_table.ctrl")
+				if err := os.WriteFile(path, []byte(`lang=java (id "CONSTANT('synthetic')");`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				r.NormalImport.Mapping = &importdomain.Mapping{Kind: "CONTROL", CtlPath: path}
+			}
+			if kind == "unsupported-footer" {
+				old := filepath.Join(r.NormalImport.FilePath, "synthetic_table.csv")
+				if err := os.Rename(old, filepath.Join(r.NormalImport.FilePath, "synthetic_table.dat")); err != nil {
+					t.Fatal(err)
+				}
+				r.NormalImport.Format = "CUT"
+				r.NormalImport.Parser = importdomain.Parser{ColumnSplitter: "|", SkipFooter: true}
+			}
+			if kind == "unsupported-type" {
+				r.NormalImport.Mapping = &importdomain.Mapping{Kind: "POSITION", ExcludeDataTypes: "UNSUPPORTED_SYNTHETIC_TYPE"}
+			}
+			if strings.HasPrefix(kind, "unsupported-") {
+				manifest, err := importfiles.Scan(context.Background(), *r.NormalImport, r.AllowedRoots)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r.InputManifest = &manifest
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

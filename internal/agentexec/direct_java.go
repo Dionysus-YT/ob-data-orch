@@ -39,7 +39,7 @@ var java8UpdatePattern = regexp.MustCompile(`(?m)(?:java|openjdk) version "1\.8\
 // DirectJavaLaunch 是已由 Agent 配置和不可变任务信封共同固定的直接 Java 启动输入。
 // 它不接收 Shell 文本、不继承父进程环境，也不允许密码进入业务参数或环境变量。
 type DirectJavaLaunch struct {
-	// Tool 只能选择固定 OBDUMPER 或 OBLOADER 主类；空值兼容历史导出。
+	// Tool 只选择固定主类及其业务参数边界；旁路与普通导入共用官方主类但分别复验。
 	Tool                  string
 	Intent                StartIntent
 	BootID                string
@@ -96,6 +96,9 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	profile, err := windowsOBDumperReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
 	if launch.Tool == "OBLOADER" {
 		profile, err = windowsOBLoaderReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
+	}
+	if launch.Tool == "OBLOADER_DIRECT_LOAD" {
+		profile, err = windowsDirectLoadReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
 	}
 	if err != nil {
 		return nil, ErrDirectJavaLaunchInvalid
@@ -285,17 +288,26 @@ func (p *DirectJavaProcess) Cancel() error {
 }
 
 func validateDirectJavaLaunch(workspace credential.Workspace, launch DirectJavaLaunch) error {
-	if launch.Tool != "" && launch.Tool != "OBDUMPER" && launch.Tool != "OBLOADER" {
+	if launch.Tool != "" && launch.Tool != "OBDUMPER" && launch.Tool != "OBLOADER" && launch.Tool != "OBLOADER_DIRECT_LOAD" {
 		return ErrDirectJavaLaunchInvalid
 	}
 	if launch.Tool == "OBLOADER" && !executionargv.ValidNormalImport(launch.BusinessArguments) {
 		return ErrDirectJavaLaunchInvalid
 	}
-	if launch.Tool == "OBLOADER" && (launch.Output.Stdout.SourceKind != logstream.SourceLoaderStdout || launch.Output.Stderr.SourceKind != logstream.SourceLoaderStderr) {
+	if launch.Tool == "OBLOADER_DIRECT_LOAD" && !executionargv.ValidDirectLoad(launch.BusinessArguments) {
+		return ErrDirectJavaLaunchInvalid
+	}
+	if launch.Tool == "OBLOADER_DIRECT_LOAD" {
+		// 专用提交解析器只适用于已核验 JAR；预检查后的包替换不能继承旧版本证据。
+		if _, err := DirectLoadToolVersion(context.Background(), launch.ToolHome); err != nil {
+			return ErrDirectJavaLaunchInvalid
+		}
+	}
+	if (launch.Tool == "OBLOADER" || launch.Tool == "OBLOADER_DIRECT_LOAD") && (launch.Output.Stdout.SourceKind != logstream.SourceLoaderStdout || launch.Output.Stderr.SourceKind != logstream.SourceLoaderStderr) {
 		return ErrDirectJavaLaunchInvalid
 	}
 	for _, stream := range []DirectJavaLogStream{launch.Output.Stdout, launch.Output.Stderr} {
-		if launch.Tool == "OBLOADER" {
+		if launch.Tool == "OBLOADER" || launch.Tool == "OBLOADER_DIRECT_LOAD" {
 			if stream.SourceKind != logstream.SourceLoaderStdout && stream.SourceKind != logstream.SourceLoaderStderr {
 				return ErrDirectJavaLaunchInvalid
 			}

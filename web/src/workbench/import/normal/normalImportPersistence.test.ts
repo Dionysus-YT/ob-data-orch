@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, ref } from 'vue'
 import type { NormalImportApi, NormalImportCheck, NormalImportConfig, NormalImportDraft } from '@/api/normalImport'
 import { createNormalImportForm } from './normalImportForm'
-import { normalImportDraftInput } from './normalImportDraftInput'
+import { hydrateNormalImport, normalImportDraftInput } from './normalImportDraftInput'
 import { projectNormalImport } from './normalImportRules'
 import { useNormalImportDraft } from './useNormalImportDraft'
 import { useNormalImportReview } from './useNormalImportReview'
 
 const scopes: ReturnType<typeof effectScope>[] = []
-afterEach(() => { scopes.splice(0).forEach(scope => scope.stop()); vi.useRealTimers() })
+afterEach(() => { scopes.splice(0).forEach(scope => scope.stop()); vi.useRealTimers(); vi.unstubAllGlobals() })
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no }); return { resolve, reject, promise } }
 function record(config: NormalImportConfig, id = 'draft-normal', revision = 1): NormalImportDraft { return { id, revision, configVersion: 'normal-import-v1', config, configFingerprint: 'a'.repeat(64), executionEnabled: false } }
 function setup() {
@@ -36,6 +36,75 @@ function report(draft: NormalImportDraft, filesOnly = false): NormalImportCheck 
 }
 
 describe('普通导入草稿与冻结事务', () => {
+  it('源兼容版本恢复原值，旧草稿不猜测版本，关闭后不恢复残留版本', () => {
+    const form = createNormalImportForm()
+    const base: NormalImportConfig = { dataSourceId: 'source', nodeId: 'node', database: 'synthetic_db', filePath: 'E:\\input', content: 'DDL_ONLY', scope: 'ALL', cleanup: 'NONE', parser: {}, mapping: { kind: 'POSITION' }, execution: {}, compatMysql: true }
+    for (const compatMysqlVersion of ['mysql56', 'mysql57', 'mysql80'] as const) {
+      hydrateNormalImport(form, { ...base, compatMysqlVersion })
+      expect(form.compatMysqlVersion).toBe(compatMysqlVersion)
+    }
+    hydrateNormalImport(form, base)
+    expect(form.compatMysqlVersion).toBe('')
+    hydrateNormalImport(form, { ...base, compatMysql: false, compatMysqlVersion: 'mysql80' })
+    expect(form.compatMysqlVersion).toBe('')
+  })
+  it('原配置重跑拒绝程序化改写，但允许同配置重新绑定当前引用事实', async () => {
+    const s = setup(), original = structuredClone(s.input.value)
+    const source = { sourceTaskId: 'source-task', sourceDerivation: 'RERUN_FROM_SCRATCH' as const }
+    vi.mocked(s.api.getNormalImportDraft).mockResolvedValue({ ...record(original), ...source })
+    vi.mocked(s.api.updateNormalImportDraft).mockImplementation(async (draft, config) => ({ ...record(config, draft.id, draft.revision + 1), ...source }))
+    await s.draft.loadDraft('draft-normal')
+    expect(s.draft.rerunLocked.value).toBe(true)
+    s.form.filePath = 'E:\\changed'
+    expect(await s.draft.saveDraft()).toBeNull()
+    expect(s.api.updateNormalImportDraft).not.toHaveBeenCalled()
+    expect(s.draft.currentDraft.value?.config.filePath).toBe(original.filePath)
+    s.form.filePath = original.filePath
+    s.draft.invalidateDraftBinding()
+    expect(await s.draft.ensureSaved()).toMatchObject({ revision: 2, ...source })
+    expect(s.draft.rerunLocked.value).toBe(true)
+    expect(s.draft.draftNeedsRebind.value).toBe(false)
+  })
+  it('保存响应丢失派生来源时不接受新修订或解除原配置锁定', async () => {
+    const s = setup(), source = { sourceTaskId: 'source-task', sourceDerivation: 'RERUN_FROM_SCRATCH' as const }
+    vi.mocked(s.api.getNormalImportDraft).mockResolvedValue({ ...record(s.input.value), ...source })
+    await s.draft.loadDraft('draft-normal')
+    s.draft.invalidateDraftBinding()
+    expect(await s.draft.ensureSaved()).toBeNull()
+    expect(s.draft.currentDraft.value).toMatchObject({ revision: 1, ...source })
+    expect(s.draft.rerunLocked.value).toBe(true)
+    expect(s.draft.draftNeedsRebind.value).toBe(true)
+    expect(s.draft.draftFailure.value).not.toBe('')
+  })
+  it('检查结果总览不把已通过外推为允许执行，过期后撤销通过提示', async () => {
+    const s = setup(), draft = await s.draft.saveDraft()
+    vi.mocked(s.api.getNormalImportCheck).mockResolvedValue(report(draft!))
+    await s.review.startCheck()
+    expect(s.review.precheckOverview.value).toMatchObject({ type: 'warning', message: '预检查通过，执行暂未开放' })
+    s.draft.currentDraft.value!.executionEnabled = true
+    expect(s.review.precheckOverview.value).toMatchObject({ type: 'success', message: '预检查通过，可以提交' })
+    s.review.checkExpired.value = true
+    expect(s.review.precheckOverview.value.type).toBe('warning')
+    expect(s.review.canSubmit.value).toBe(false)
+  })
+  it('复制失败仅保留在复制操作区，重试清除错误且迟到失败不能回写新会话', async () => {
+    const s = setup(), pending = deferred<void>(), writeText = vi.fn().mockRejectedValueOnce(new Error('合成剪贴板失败')).mockResolvedValueOnce(undefined).mockReturnValueOnce(pending.promise)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    s.review.commandPreview.value = { redactedCommand: 'obloader -p ******', configFingerprint: 'a'.repeat(64), executionEnabled: false }
+    await s.review.copyCommand()
+    expect(s.review.copyFailure.value).toContain('手动选择复制')
+    expect(s.review.reviewFailure.value).toBe('')
+    await s.review.copyCommand()
+    expect(s.review.copyFailure.value).toBe('')
+    expect(s.review.copyNotice.value).toBe('脱敏命令已复制。')
+    const copying = s.review.copyCommand()
+    s.form.database = 'synthetic_new_session'
+    pending.reject(new Error('迟到的合成失败'))
+    await copying
+    expect(s.review.copyFailure.value).toBe('')
+    expect(s.review.copyNotice.value).toBe('')
+    expect(s.review.copyingCommand.value).toBe(false)
+  })
   it('保存防重，保存期间继续编辑不被旧响应覆盖或误标为已保存', async () => {
     const s = setup(), pending = deferred<NormalImportDraft>()
     vi.mocked(s.api.createNormalImportDraft).mockReturnValue(pending.promise)

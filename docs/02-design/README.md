@@ -17,7 +17,7 @@
 | 执行节点 | [执行节点设计](execution-node-module.md) | [字段](execution-node-module.md#field-rules) · [场景](execution-node-module.md#business-scenarios) |
 | 日志中心 | [日志中心设计](log-center-module.md) | [字段](log-center-module.md#field-rules) · [场景](log-center-module.md#business-scenarios) |
 | 模板中心 | [模板中心设计](template-center-module.md) | [字段](template-center-module.md#field-rules) · [场景](template-center-module.md#business-scenarios) |
-| 系统设置 | [系统设置设计](system-settings-module.md) | [字段](system-settings-module.md#field-rules) · [场景](system-settings-module.md#business-scenarios) |
+| 平台设置 / 调度策略 / 安全策略 / 工具与兼容 | [独立配置域设计](system-settings-module.md) | [字段](system-settings-module.md#field-rules) · [场景](system-settings-module.md#business-scenarios) |
 | 权限与安全 | [权限与安全设计](access-control-security-module.md) | [字段](access-control-security-module.md#field-rules) · [场景](access-control-security-module.md#business-scenarios) |
 
 ## 跨模块规则

@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "subject": "首页只读运行概览",
+  "date": "2026-10-23",
+  "result": "LOCAL_SYNTHETIC_PASS",
+  "recordedAt": "2026-10-23T02:19:41.6714026Z",
+  "head": "0c5953cdbf406c01ee89ac9018af90a123d67b64",
+  "sourceFingerprint": "a8e1a456ea3f5b34fa894500c7a265abc35bd5bafa7f7694284d011d574c4884",
+  "sources": [
+    {
+      "path": "contracts/openapi.json",
+      "sha256": "07791cd09ff88abd50217075a4ba3b7bdc54bbaf30b2364a1390f3bd2f9dceec"
+    },
+    {
+      "path": "contracts/openapi_test.go",
+      "sha256": "ab7c6b44e319d5e6762ff9b359c29922a62c9102a7e3b85a23901b853f420823"
+    },
+    {
+      "path": "contracts/overview_test.go",
+      "sha256": "fda9c39e20ad93f8705dcf9c40fecbec6b78d55163c980212e075ac2261a8480"
+    },
+    {
+      "path": "internal/controlplane/overview.go",
+      "sha256": "2ce69dea06978df3a843f656bf063ad2c8869fdbe28852ba923f8710e869a152"
+    },
+    {
+      "path": "internal/controlplane/overview_test.go",
+      "sha256": "34cb16dbbf3375a40b2dd729f15a8dad8dc54729b5b4f322dad6eebb49c9ed88"
+    },
+    {
+      "path": "internal/controlplane/server.go",
+      "sha256": "ac6c2acc6e290209d1d14f806474f7456fb8fd830e95632ca37ee0e3a4e2be0e"
+    },
+    {
+      "path": "internal/controlplane/task_list_filters.go",
+      "sha256": "44d6ea4e00f700e44cf088ccc5f0126617ca40a3256e132c0f21568e2b76d6ed"
+    },
+    {
+      "path": "internal/localmvp/local.go",
+      "sha256": "9ed6b1e688ede647164572a073c26423156b7831995aa6ff99e54cbc29acff63"
+    },
+    {
+      "path": "internal/overview/overview.go",
+      "sha256": "3a708e9f08cf4cfe51df4ae7e0444eea2201cdc9c254fdd7a5dbb8730b10effa"
+    },
+    {
+      "path": "internal/overview/overview_test.go",
+      "sha256": "00e0a62952e35e7aff4e182320c21031035c8824d156cc71c5ec5c7c0120fd98"
+    },
+    {
+      "path": "internal/store/execution_resource_budget.go",
+      "sha256": "5379f3c92677335ad16ebf1e1b0c7504adf348dab39ddc77fc152d48981d1d9a"
+    },
+    {
+      "path": "internal/store/overview.go",
+      "sha256": "e5cf2d98c59e081eaa4c641be88b7bc7f04c3b7f37e92ac72c9357773de68a05"
+    },
+    {
+      "path": "internal/store/overview_test.go",
+      "sha256": "f0cbc0b4719fcc883c56b8eee763fb221b65d92fd10589fc8bc48a93fb346b38"
+    },
+    {
+      "path": "internal/store/store.go",
+      "sha256": "ccf9d6328f4affb791ee0c49015b07ccb0fb2bd2d1ba3f3ba3730dc451ee664c"
+    },
+    {
+      "path": "internal/store/task_list.go",
+      "sha256": "c28a61bbffca801a0839166ec61a8333978c72cf8a7c1faa8a585092ebae8ef3"
+    },
+    {
+      "path": "internal/store/types.go",
+      "sha256": "bcfbf9b3883c9930a3c2a2c78c73ed2f528634672ec3c20147d5f65aadd5c13a"
+    },
+    {
+      "path": "web/src/api/browser.ts",
+      "sha256": "41d837c06f7fe8c58b96de8a626b2f4d91301e39ff752c3bb037b73fc91065b0"
+    },
+    {
+      "path": "web/src/api/overview.test.ts",
+      "sha256": "395dda95e831aa4e5ccb2f2ca4bbcec1e5daf9caaa77fe3dcc001c51e828369a"
+    },
+    {
+      "path": "web/src/api/overview.ts",
+      "sha256": "f9a317e16146a5f303a56eb95e97c4e67e8c9e880920b0639bbfb46d13248e80"
+    },
+    {
+      "path": "web/src/views/HomeView.vue",
+      "sha256": "01ab72b44dd45b0770b6d256f060dbc23f72a1f4e33d2e2fc2f212c02402ac4c"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewTrend.vue",
+      "sha256": "46e023ffa44a24352f3c2de20d34696c724e13d116047ea738c370a4b5388ed0"
+    },
+    {
+      "path": "web/src/workbench/overview/OverviewWorkspace.vue",
+      "sha256": "fe9a94708681a6211d1772db8146cc659e8e593a2b482158dc563f7cf0c9c6ba"
+    },
+    {
+      "path": "web/src/workbench/overview/overviewLifecycle.test.ts",
+      "sha256": "e6585a72b6fdbc0f42e015f4c34eec097bd35e71074a456c2dd5a2ae9c745f77"
+    },
+    {
+      "path": "web/src/workbench/overview/overviewNavigation.test.ts",
+      "sha256": "a35d37c24464e57b4a38497f24cae1b3167ba9afc1410b7faee72c7aec0cb764"
+    },
+    {
+      "path": "web/src/workbench/overview/overviewPresentation.ts",
+      "sha256": "04a1f428f7a76f82d4e3e4dbb0828ab0cbcdcd81f4d0acfd74e3a09955b8849b"
+    },
+    {
+      "path": "web/src/workbench/overview/useOverview.ts",
+      "sha256": "338974708cc207f34186a2470f1e632744b04b9651545a394ed239f1bd84d06a"
+    },
+    {
+      "path": "web/src/workbench/tasks/TaskListFilters.vue",
+      "sha256": "f1a5a68ae7c15a4137638198b31a0e194420045f2a903d64d6afe6744d42d314"
+    },
+    {
+      "path": "web/src/workbench/tasks/TaskProgress.vue",
+      "sha256": "75f01ff754761d7bd7e59b0111bb4ed950cfadc8b4d45294612a95c200566c67"
+    },
+    {
+      "path": "web/src/workbench/tasks/taskListQuery.ts",
+      "sha256": "f20d51166e461447529dc3bdc27b0bc9ac04799d231fc1d0429e0eee5c41dcfb"
+    },
+    {
+      "path": "web/src/workbench/tasks/taskProgressPresentation.ts",
+      "sha256": "e20749d2344937bc4aa5845b5c8d0cbf92ba0ff115a158d039aff73d67a06267"
+    },
+    {
+      "path": "web/tests/fixtures/overview.ts",
+      "sha256": "b0a3980f334ac65c08d6e83aa3b83d76184f354e06a12b8a849eea0e0bcc4f79"
+    },
+    {
+      "path": "web/tests/overview.spec.ts",
+      "sha256": "925afdd0c7288d6868e38900e2b3fb84a54fcaf95698ea6b6696b6b7836f2582"
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-初次加载保留骨架且不展示猜测指标-chrome/overview-initial-loading.png",
+      "sha256": "6448a00a4e537120e3467bc537936e46f1ad636228a71a40782066974b6a2264"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-1280×720-显示授权事实并完成范围、系列和刷新交互-chrome/overview-1280.png",
+      "sha256": "b4f9a2dfef1b8f32264bc2dcc6f9165cb56e6aa2d07ee995fff9d785723799f4"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-1440×1024-显示授权事实并完成范围、系列和刷新交互-chrome/overview-1440.png",
+      "sha256": "772ccb87bf439f5bedd21445bbd80b8e5995672c160867b2f0ac48f85d6d252a"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-1920×1080-显示授权事实并完成范围、系列和刷新交互-chrome/overview-1920.png",
+      "sha256": "112bd6fc5cb98c3eb4a9a32eb0bda6a135dddae8d13fc43afdc97b4cafd7e6a1"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-denied-状态不展示伪造事实-chrome/overview-denied.png",
+      "sha256": "e4d29a5c018d9339163101a3dfc41464974c0121a9537bec017bad234853bd3e"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-empty-状态不展示伪造事实-chrome/overview-empty.png",
+      "sha256": "8a772dbb70b2ac41f98bb99bf623ba5df60a8ca1995335eb5fb9d853f869d47e"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-invalid-状态不展示伪造事实-chrome/overview-invalid.png",
+      "sha256": "23c8d5e828217fac4233cb79830b6b52c0ef5203769b4c9d47a170076e6e321e"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-partial-状态不展示伪造事实-chrome/overview-partial.png",
+      "sha256": "7e1efee4d6b211c1f7381b0a518a3a5a86e4fd1396898754088a12bbf2f1ff19"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页-stale-状态不展示伪造事实-chrome/overview-stale.png",
+      "sha256": "9ed5299b007ed9407b772d5bb138376198651e2feb77991955719ad903500574"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-首页原生-200-缩放下刷新和趋势键盘操作可达-chrome/overview-native-200-percent.png",
+      "sha256": "cfb9b66643b42fa333064b56369fd879f22ad4716f0178740986ec669d55f5e7"
+    },
+    {
+      "path": "artifacts/home-overview-20261023/browser/overview-长中文与长标识在窄屏不撑破页面-chrome/overview-long-1280.png",
+      "sha256": "a632a8af5ad74b9d24d82bf5b3a14df56203ab5001f7f119522158f05b5cd248"
+    }
+  ],
+  "browserLastRun": {
+    "status": "passed",
+    "failedTests": []
+  },
+  "workingTreeFingerprint": {
+    "fileCount": 1022,
+    "sha256": "47cddf95901c3872214410bfd246a567d1b10f17b61e61e0020414f12160c29c",
+    "excluded": [
+      "docs/03-technical/evidence/home-overview-2026-10-23.md",
+      "docs/03-technical/evidence/home-overview-2026-10-23-results.json"
+    ],
+    "algorithm": "SHA256(UTF8(concat(ordinal-sorted git cached and non-ignored untracked path + TAB + lowercase SHA256(raw file bytes) or MISSING + LF))); excludes the paired record to avoid recursion"
+  },
+  "sourceFingerprintAlgorithm": "SHA256(UTF8(concat(sources in listed order: path + TAB + lowercase sha256 + LF)))",
+  "versionScope": "现有未提交工作树；sourceFingerprint 是列出的 32 个关键实现文件，workingTreeFingerprint 覆盖全仓 Git 已跟踪及未忽略新文件，并排除此配对验收记录；不表示这些文件的全部改动均由本轮引入。",
+  "environment": {
+    "os": "Windows AMD64",
+    "go": "go1.26.4",
+    "node": "v24.16.0",
+    "npm": "11.13.0",
+    "chrome": "156.0.8078.48",
+    "nativeZoomChromium": "153.0.8010.12",
+    "baseURL": "http://127.0.0.1:15174",
+    "fixtures": "合成 API；隔离 Vite，不代理现役控制面",
+    "proxyHandling": "仅在测试进程清除 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 并设置 NO_PROXY，不修改用户代理"
+  },
+  "checks": [
+    {
+      "command": "go test ./cmd/... ./contracts/... ./internal/... ./migrations/...",
+      "result": "PASS",
+      "scope": "当前工作树全量 Go 回归"
+    },
+    {
+      "command": "go vet ./cmd/... ./contracts/... ./internal/... ./migrations/...",
+      "result": "PASS"
+    },
+    {
+      "command": "CGO_ENABLED=0 go build -trimpath -o <unique-temp-exe> ./cmd/control-plane",
+      "result": "PASS",
+      "scope": "Windows AMD64 隔离输出，临时成品已删除，未安装或替换服务"
+    },
+    {
+      "command": "npm run test",
+      "cwd": "web",
+      "result": "PASS",
+      "files": 51,
+      "tests": 606
+    },
+    {
+      "command": "npm run test:browser -- tests/overview.spec.ts --output=../artifacts/home-overview-20261023/browser",
+      "cwd": "web",
+      "result": "PASS",
+      "tests": 16
+    },
+    {
+      "command": "npm run build",
+      "cwd": "web",
+      "result": "PASS",
+      "includes": "vue-tsc -b and Vite production build",
+      "warning": "既有 chunk 超过 500 kB 提示"
+    },
+    {
+      "command": "npm run lint -- --quiet",
+      "cwd": "web",
+      "result": "PASS"
+    },
+    {
+      "command": "npm run tokens:check",
+      "cwd": "web",
+      "result": "PASS"
+    },
+    {
+      "command": "npm run audit:business",
+      "cwd": "web",
+      "result": "PASS",
+      "violations": 0,
+      "review": 19
+    },
+    {
+      "command": "npm run audit:platform",
+      "cwd": "web",
+      "result": "PASS",
+      "violations": 0,
+      "review": 105,
+      "runtimeReferences": 7
+    },
+    {
+      "command": "./scripts/check-secrets.ps1",
+      "result": "PASS"
+    },
+    {
+      "command": "git -c core.safecrlf=false diff --check",
+      "result": "PASS"
+    }
+  ],
+  "visualGates": [
+    {
+      "gate": "同类型页面遵循统一布局和对齐规则",
+      "result": "通过"
+    },
+    {
+      "gate": "同类控件使用统一尺寸、样式和状态",
+      "result": "通过"
+    },
+    {
+      "gate": "表格、表单、抽屉、弹窗的视觉规则一致",
+      "result": "通过",
+      "notApplicable": "本切片无业务表单、Drawer、Modal"
+    },
+    {
+      "gate": "同类操作具有一致的动效和反馈",
+      "result": "通过",
+      "notApplicable": "本切片无保存、危险确认、脏输入、关闭弹层事务"
+    },
+    {
+      "gate": "不同模块之间没有明显的视觉密度落差",
+      "result": "通过",
+      "comparison": "以数据源定版复用规则、P0 和既有任务表格/状态/进度组件为基准；没有修改共享视觉，不声称重跑数据源业务流程"
+    },
+    {
+      "gate": "1920×1080 实际截图检查通过",
+      "result": "通过"
+    },
+    {
+      "gate": "1440×1024、1280×720 响应式检查通过",
+      "result": "通过"
+    },
+    {
+      "gate": "未发现无依据的模块私有样式或重复实现",
+      "result": "通过"
+    }
+  ],
+  "limitations": [
+    "仅本地源码、隔离构建、合成和视觉验收；未安装控制面/Agent，未升级运行 SQLite，未做真实网络/凭据/数据库/官方工具操作。",
+    "当前明确使用 BUILTIN_UTC，未接入系统设置时区。",
+    "异常只覆盖已有任务终态和授权节点当前事实；独立调度及工具日志检索未接入。",
+    "Overview 单页 P1 仍为 PAGE SPEC NOT YET READY；本次 P4 不提升 P1 或 EX-V1/NIV/DLV/G3/G4。",
+    "任务中心/空态切换仍可出现既有 Ant/Vite ResizeObserver 开发诊断；三档正常首页的页面异常/控制台 error 断言为空，不能外推全部开发服务零诊断。",
+    "生产构建仍有既有大包体提示；麒麟原生环境未验证。"
+  ]
+}

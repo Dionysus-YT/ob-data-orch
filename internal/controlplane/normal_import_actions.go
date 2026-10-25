@@ -15,6 +15,13 @@ import (
 )
 
 func precheckChecksForContext(c store.PrecheckExecutionContext) []agentpreflight.CheckID {
+	if c.DirectLoad != nil {
+		var checks []agentpreflight.CheckID
+		for _, name := range precheckcontract.DirectLoadChecks(c.CheckKind) {
+			checks = append(checks, agentpreflight.CheckID(name))
+		}
+		return checks
+	}
 	if c.NormalImport == nil {
 		return agentpreflight.ChecksForOutputKind(agentpreflight.OutputKind(c.OutputKind))
 	}
@@ -186,7 +193,7 @@ func (s *Server) submitNormalImport(w http.ResponseWriter, r *http.Request, p id
 		return
 	}
 	snapshot, _ := json.Marshal(store.NormalImportSnapshot{ConfigVersion: importdomain.ConfigVersion, TaskType: importdomain.TaskType, TaskName: name, Config: config, InputManifest: *check.InputManifest})
-	result, err := s.tasks.SubmitTaskIdempotent(r.Context(), store.TaskSubmission{TaskType: importdomain.TaskType, TaskID: taskID, CreatorSubjectID: p.ID, AuditActorID: p.ID, DataSourceID: draft.DataSourceID, NodeID: draft.NodeID, PrecheckID: check.Run.PrecheckID, CredentialID: check.Run.CredentialID, CredentialRevision: check.Run.CredentialRevision, ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: importdomain.ConfigVersion, SnapshotJSON: string(snapshot), PlannedArgvJSON: string(argv), PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now}, key, normalImportDigest(fmt.Sprintf("%s/%d/%s/%s/%s", draft.ID, revision, check.Run.PrecheckID, preview.ConfigFingerprint, strings.TrimSpace(request.TaskName))))
+	result, err := s.tasks.SubmitTaskIdempotent(r.Context(), store.TaskSubmission{TaskType: importdomain.TaskType, ParentTaskID: draft.SourceTaskID, DerivationKind: draft.SourceDerivation, TaskID: taskID, CreatorSubjectID: p.ID, AuditActorID: p.ID, DataSourceID: draft.DataSourceID, NodeID: draft.NodeID, PrecheckID: check.Run.PrecheckID, CredentialID: check.Run.CredentialID, CredentialRevision: check.Run.CredentialRevision, ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: importdomain.ConfigVersion, SnapshotJSON: string(snapshot), PlannedArgvJSON: string(argv), PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now}, key, normalImportDigest(fmt.Sprintf("%s/%d/%s/%s/%s", draft.ID, revision, check.Run.PrecheckID, preview.ConfigFingerprint, strings.TrimSpace(request.TaskName))))
 	if err != nil {
 		writeError(w, 422, "NORMAL_IMPORT_SUBMIT_REJECTED", "提交失败，配置、权限、预检查或幂等绑定已变化", false)
 		return

@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"time"
 
+	"ob-data-orch/internal/auditquery"
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/controlplane"
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/identity"
+	"ob-data-orch/internal/logquery"
 	"ob-data-orch/internal/logstream"
+	"ob-data-orch/internal/schedulingpolicy"
 	"ob-data-orch/internal/store"
 )
 
@@ -62,6 +65,10 @@ func DependenciesWithLogs(database *store.Store, keyring *credential.Keyring, ag
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("加载普通导入命令生成器: %w", err)
 	}
+	directLoadGenerator, err := commandgen.NewDirectLoad()
+	if err != nil {
+		return controlplane.Dependencies{}, fmt.Errorf("加载旁路导入命令生成器: %w", err)
+	}
 	persistentLogs, err := logstream.NewPersistentStore(logDirectory, database)
 	if err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("初始化本机 MVP 日志段存储: %w", err)
@@ -69,7 +76,15 @@ func DependenciesWithLogs(database *store.Store, keyring *credential.Keyring, ag
 	if err := persistentLogs.Recover(context.Background()); err != nil {
 		return controlplane.Dependencies{}, fmt.Errorf("恢复本机 MVP 已登记日志段: %w", err)
 	}
-	return controlplane.Dependencies{Identity: localIdentity{}, Authorizer: localAuthorizer{}, Roles: localAuthorizer{}, DataSources: database, Creator: database, StateChanger: database, Deleter: database, ConnectionTests: database, Updater: database, CredentialRefs: database, Drafts: database, Prechecks: database, Tasks: database, Executions: database, StorageCredentials: database, Templates: database, LogLedger: logstream.NewBatchLedger(), PersistentLogs: persistentLogs, Nodes: localExecutionNodeReader{database: database}, NodeManagement: database, NodeEnvironment: database, NodeDeleter: database, NodeCandidates: database, AgentProtocol: database, AgentEnvironmentChecks: database, AgentPrechecks: database, PrecheckSecrets: database, AgentConnectionTests: database, ConnectionTestSecrets: database, Generator: generator, GeneralizedGenerator: generalizedGenerator, NormalImportDrafts: database, NormalImportGenerator: normalImportGenerator, PrecheckTTL: 2 * time.Minute, AgentJDBCConnectionTestEnabled: agentJDBCConnectionTestEnabled, RealExecutionEnabled: realExecutionEnabled, EnrollmentTTL: 15 * time.Minute, HeartbeatTTL: 2 * time.Minute, ConnectionTestTTL: 2 * time.Minute, Encryptor: keyring, Decryptor: keyring, CSRF: localCSRF{}, CredentialKeyID: "local-mvp-root-v1"}, nil
+	logQuery, err := logquery.New(database, persistentLogs)
+	if err != nil {
+		return controlplane.Dependencies{}, fmt.Errorf("初始化日志中心任务查询: %w", err)
+	}
+	auditQuery, err := auditquery.New(database)
+	if err != nil {
+		return controlplane.Dependencies{}, fmt.Errorf("初始化日志中心审计查询: %w", err)
+	}
+	return controlplane.Dependencies{Identity: localIdentity{}, Authorizer: localAuthorizer{}, Roles: localAuthorizer{}, DataSources: database, Creator: database, StateChanger: database, Deleter: database, ConnectionTests: database, Updater: database, CredentialRefs: database, Drafts: database, Prechecks: database, Tasks: database, Overview: database, AccessControl: database, Executions: database, StorageCredentials: database, Templates: database, LogLedger: logstream.NewBatchLedger(), PersistentLogs: persistentLogs, LogQuery: logQuery, AuditQuery: auditQuery, Nodes: localExecutionNodeReader{database: database}, NodeManagement: database, NodeEnvironment: database, NodeDeleter: database, NodeCandidates: database, AgentProtocol: database, AgentEnvironmentChecks: database, AgentPrechecks: database, PrecheckSecrets: database, AgentConnectionTests: database, ConnectionTestSecrets: database, Generator: generator, GeneralizedGenerator: generalizedGenerator, DirectLoadDrafts: database, DirectLoadGenerator: directLoadGenerator, NormalImportDrafts: database, NormalImportGenerator: normalImportGenerator, PrecheckTTL: 2 * time.Minute, AgentJDBCConnectionTestEnabled: agentJDBCConnectionTestEnabled, RealExecutionEnabled: realExecutionEnabled, EnrollmentTTL: 15 * time.Minute, HeartbeatTTL: schedulingpolicy.DefaultHeartbeatTimeout, ConnectionTestTTL: 2 * time.Minute, Encryptor: keyring, Decryptor: keyring, CSRF: localCSRF{}, CredentialKeyID: "local-mvp-root-v1"}, nil
 }
 
 // localExecutionNodeReader 仅将已持久化的受认证 Agent 事实转换为命令生成所需投影。
@@ -127,7 +142,7 @@ func (localIdentity) AuthenticateAgent(*http.Request) (identity.Principal, error
 type localAuthorizer struct{}
 
 func (localAuthorizer) Authorize(_ context.Context, principal identity.Principal, scope identity.Scope, objectID string) error {
-	if principal.Type != identity.BrowserPrincipal || principal.ID != localSubjectID || objectID == "" || (scope != identity.ScopeDataSourceRead && scope != identity.ScopeDataSourceWrite && scope != identity.ScopeNodeUse && scope != identity.ScopeNodeManage) {
+	if principal.Type != identity.BrowserPrincipal || principal.ID != localSubjectID || objectID == "" || (scope != identity.ScopeDataSourceRead && scope != identity.ScopeDataSourceUse && scope != identity.ScopeDataSourceWrite && scope != identity.ScopeNodeUse && scope != identity.ScopeNodeManage) {
 		return identity.ErrDenied
 	}
 	return nil

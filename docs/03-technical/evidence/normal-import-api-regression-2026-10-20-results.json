@@ -1,0 +1,1034 @@
+{
+  "runId": "68b747da7ad9400d906e337fe1acf5d3",
+  "scope": "TEST_MYSQL_ODP_WINDOWS_AMD64_LOCAL_CSV_CUT_SQL",
+  "records": [
+    {
+      "id": "NI-E2E-01",
+      "title": "未引用空白 CSV 在完整预检查阻断",
+      "startedAt": "2026-10-20T00:59:30.187Z",
+      "draftId": "6fe8c884-3b14-40ca-944d-c0676f66b7d0",
+      "fingerprint": "693cf65e8f5e9f816204b06e356a41f5ee22e88afc6fde46f964819b9c061330",
+      "precheckId": "7ed889ad-50e7-4f02-845e-47be934aad03",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "FAILED",
+          "evidenceCode": "IMPORT_CSV_WHITESPACE_UNQUOTED"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T00:59:36.024Z",
+      "noTaskCreated": true,
+      "targetUnchanged": true
+    },
+    {
+      "id": "NI-E2E-02",
+      "title": "CUT 数据导入",
+      "startedAt": "2026-10-20T00:59:36.026Z",
+      "draftId": "2931222e-06b8-41fc-8181-fd1e9e28a143",
+      "fingerprint": "6c86e4a5c524a5d3a3db0f16c36c14f1a659df5b5ea5bf4fe49ca197b3014b25",
+      "precheckId": "20e45da6-2165-4a4a-bc2f-b23fa250ce24",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "abe17741-10ac-41d1-b55f-c056f5f31d73",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 79,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:00:09.914Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 2,
+        "contentMatched": true,
+        "actualRows": 2,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-E2E-03",
+      "title": "SQL 数据导入",
+      "startedAt": "2026-10-20T01:00:09.919Z",
+      "draftId": "e854d63c-939a-4a85-84be-12e28ecfbb43",
+      "fingerprint": "b167886d5be4e189f968899f51f1873eb7396dbc498b3a55c4e15e200469e397",
+      "precheckId": "c72c1212-4947-4a3e-9d48-045c29e9c562",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "23d243b8-1e66-4346-9a7b-c848236ea128",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 78,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:00:43.812Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 2,
+        "contentMatched": true,
+        "actualRows": 2,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-E2E-04",
+      "title": "仅结构导入",
+      "startedAt": "2026-10-20T01:00:43.814Z",
+      "draftId": "153c6884-d27a-481f-9c2f-c43d10aa7d48",
+      "fingerprint": "c2f6044ff9754ca5e4752ea9fecc30e7b4825a9a500878b02dcedba740d740f6",
+      "precheckId": "6a918617-6765-4943-8b88-b3cee1e8d3cd",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "b99ec81a-5e4a-45cb-8e50-51b6c0a81cbb",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 41,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:01:10.981Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 0,
+        "contentMatched": true,
+        "actualRows": 0,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-E2E-05",
+      "title": "CSV 结构和数据导入",
+      "startedAt": "2026-10-20T01:01:10.983Z",
+      "draftId": "6485b8e7-3df2-4de8-b8a9-bee7a4cc854f",
+      "fingerprint": "a8bc8f0e36ee300d5f1b27e6aeef75e7d590a5e311c5ca289aaaee02139f6f72",
+      "precheckId": "bc6ac095-d9c8-4664-bb5a-8ec28309c408",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "FAILED",
+          "evidenceCode": "IMPORT_CSV_WHITESPACE_UNQUOTED"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "manifestFiles": 2,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:01:14.614Z",
+      "noTaskCreated": true,
+      "targetUnchanged": true
+    },
+    {
+      "id": "NI-E2E-06",
+      "title": "列数不匹配阻断",
+      "startedAt": "2026-10-20T01:01:14.616Z",
+      "draftId": "1e170fb6-2bb4-438a-bcbd-0d26edd7d4a3",
+      "fingerprint": "26c19fe30946094c2c1fe87c6e7b8d76fca57440f408f28c70ca8806e04c3c79",
+      "precheckId": "062be0ae-375d-4b41-8aa0-18d0bc946123",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "FAILED",
+          "evidenceCode": "IMPORT_COLUMN_COUNT_MISMATCH"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:01:24.069Z"
+    },
+    {
+      "id": "NI-E2E-07",
+      "title": "低堆阻断",
+      "startedAt": "2026-10-20T01:01:24.071Z",
+      "draftId": "bd505b9d-27fc-425b-b47a-11eaba13c072",
+      "fingerprint": "feafb7090da1b5038b282f961eb7f08eb069c4abb4e7334dc7cea49e963da60f",
+      "precheckId": "b8bae9ee-cb09-4132-9585-4af5164f671a",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "FAILED",
+          "evidenceCode": "IMPORT_JVM_HEAP_TOO_SMALL"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "FAILED",
+          "evidenceCode": "IMPORT_CSV_WHITESPACE_UNQUOTED"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:01:29.175Z"
+    },
+    {
+      "id": "NI-E2E-08",
+      "title": "空输入阻断",
+      "startedAt": "2026-10-20T01:01:29.182Z",
+      "draftId": "6bc18290-e1e8-41ee-893a-64c7f602d7a1",
+      "fingerprint": "f23ca0af0fb36391ba5bd5e8fc20bba6f5d4ee8acc77d7c04877f2b5836b2391",
+      "precheckId": "ac95de92-73c1-4285-a999-0e75effc38cd",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "UNKNOWN",
+          "evidenceCode": "DATABASE_CONNECTION_UNAVAILABLE"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "UNKNOWN",
+          "evidenceCode": "PRECHECK_BLOCKED_BY_DATABASE"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "FAILED",
+          "evidenceCode": "IMPORT_REJECTED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "UNKNOWN",
+          "evidenceCode": "PRECHECK_BLOCKED_BY_DATABASE"
+        }
+      ],
+      "checkStatus": "FAILED",
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:01:31.396Z"
+    },
+    {
+      "id": "NI-E2E-09",
+      "title": "旁路参数拒绝",
+      "startedAt": "2026-10-20T01:01:31.399Z",
+      "outcome": "PASS",
+      "httpStatus": 400,
+      "code": "REQUEST_INVALID",
+      "finishedAt": "2026-10-20T01:01:31.401Z"
+    },
+    {
+      "id": "NI-E2E-10",
+      "title": "任务级密码字段拒绝",
+      "startedAt": "2026-10-20T01:01:31.410Z",
+      "outcome": "PASS",
+      "httpStatus": 400,
+      "code": "REQUEST_INVALID",
+      "finishedAt": "2026-10-20T01:01:31.418Z"
+    },
+    {
+      "id": "NI-E2E-11",
+      "title": "文件发现不能解锁提交",
+      "startedAt": "2026-10-20T01:01:31.426Z",
+      "draftId": "82250863-a5b7-4a85-87e1-ee4ec8e46b42",
+      "fingerprint": "693cf65e8f5e9f816204b06e356a41f5ee22e88afc6fde46f964819b9c061330",
+      "precheckId": "b8cdc95e-8f13-42fd-973d-c9c571bcd714",
+      "checks": [
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:01:33.284Z"
+    },
+    {
+      "id": "NI-E2E-12",
+      "title": "配置变化使旧检查失效",
+      "startedAt": "2026-10-20T01:01:33.287Z",
+      "draftId": "5ff3181d-4b25-4d84-b051-81a1beb32cbb",
+      "fingerprint": "07577d8e1c983f226dbcdbcffce3236cb43c0c33c1db2efa9108813aec7c73ec",
+      "precheckId": "c4b59c5b-b675-4568-bb52-2599c121ae92",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "outcome": "PASS",
+      "submitStatus": 422,
+      "submitCode": "PRECHECK_REQUIRED",
+      "finishedAt": "2026-10-20T01:01:38.025Z"
+    },
+    {
+      "id": "NI-E2E-13",
+      "title": "全字段加引号 CSV 特殊值导入",
+      "startedAt": "2026-10-20T01:01:38.027Z",
+      "draftId": "53ac88d9-1b02-4cd2-b53a-4d780faeae3f",
+      "fingerprint": "07577d8e1c983f226dbcdbcffce3236cb43c0c33c1db2efa9108813aec7c73ec",
+      "precheckId": "4095e7db-948b-489e-90d0-377d89270cac",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "b618ba32-3989-44fb-be07-f3176697ef9b",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 80,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:02:14.507Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 4,
+        "contentMatched": true,
+        "actualRows": 4,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-E2E-14",
+      "title": "重复主键写入失败",
+      "startedAt": "2026-10-20T01:02:14.511Z",
+      "draftId": "2f77657c-fd9a-446c-b94b-667038f08a14",
+      "fingerprint": "689656d893573c7b2785a06d1bdf3d1f8bf26fbc187655e226f2c0f8bc423228",
+      "precheckId": "92082967-81eb-4921-a5fb-c0f4a2a0d93b",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "67b390fb-552d-4dfa-b1c8-c7b1d55524a8",
+      "submitIdempotent": true,
+      "state": "FAILED",
+      "exitCode": 1,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "errorCode": "PROCESS_EXIT_NONZERO",
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 85,
+      "successLog": false,
+      "duplicateLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:02:47.111Z",
+      "persistedEvidence": {
+        "state": "FAILED",
+        "result": "FAILED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 1,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "duplicateTargetUnchanged": true,
+      "discardLimitFailure": true
+    },
+    {
+      "id": "NI-E2E-15",
+      "title": "成功任务派生、幂等与同类型隔离",
+      "outcome": "PASS",
+      "draftId": "01e408c9-e3ab-49fd-9af0-95ba840da8ac",
+      "idempotent": true,
+      "crossTypeStatus": 404
+    },
+    {
+      "id": "NI-E2E-16",
+      "title": "成功任务不能从头重跑",
+      "outcome": "PASS",
+      "httpStatus": 422,
+      "code": "TASK_DERIVATION_UNAVAILABLE"
+    },
+    {
+      "id": "NI-E2E-17",
+      "title": "模板保存与重新绑定普通导入草稿",
+      "outcome": "PASS",
+      "templateId": "67956078-ad11-478c-8b3e-7dd6695947a1",
+      "draftId": "8ce99742-bf35-4708-a245-17280930089d",
+      "oldCheckSubmitStatus": 422
+    },
+    {
+      "id": "NI-E2E-18",
+      "title": "CSRF 缺失与旧修订写入拒绝",
+      "outcome": "PASS",
+      "csrfStatus": 401,
+      "revisionStatus": 412
+    },
+    {
+      "id": "NI-E2E-19",
+      "title": "失败任务从头重跑参数锁定",
+      "outcome": "PASS",
+      "draftId": "13929a3f-d654-45e9-9d38-328e6ac5b6e2",
+      "changedConfigStatus": 422,
+      "rejectionCode": "NORMAL_IMPORT_CONFIG_LOCKED",
+      "configUnchanged": true
+    },
+    {
+      "id": "NI-E2E-20",
+      "title": "继承 strict 默认值时重复主键写入失败",
+      "startedAt": "2026-10-20T01:02:47.113Z",
+      "draftId": "f6817306-4897-431f-b940-f4cc68f3a34c",
+      "fingerprint": "19f4e4ad057684e4abfb2a37bb1014cb9cfa9cda527656240304011e30a9ec11",
+      "precheckId": "8f45038b-8ea7-4e89-ab48-5d48d3538d87",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "2b244437-f976-4e69-8b47-499cd4cd6974",
+      "submitIdempotent": true,
+      "state": "FAILED",
+      "exitCode": 1,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "errorCode": "PROCESS_EXIT_NONZERO",
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 84,
+      "successLog": false,
+      "duplicateLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:03:16.052Z",
+      "persistedEvidence": {
+        "state": "FAILED",
+        "result": "FAILED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 1,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "duplicateTargetUnchanged": true,
+      "discardLimitFailure": true
+    },
+    {
+      "id": "NI-E2E-21",
+      "title": "显式 with-trim 按预期删除空白",
+      "startedAt": "2026-10-20T01:03:16.054Z",
+      "draftId": "f767b19e-64ea-40e7-8c2f-486a4922a0af",
+      "fingerprint": "7b8eaf034c0d7709c307fe582528b8ce9325b5cfd304c670d73085a834dc7892",
+      "precheckId": "73674d5b-39b8-4eac-bc5a-7aa4e9d4aae5",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "96ab94d2-0a10-4d1f-af8d-ff2beaf98155",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 81,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:03:44.050Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 4,
+        "contentMatched": true,
+        "actualRows": 4,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-E2E-22",
+      "title": "引用空白的 CSV 结构和数据保真导入",
+      "startedAt": "2026-10-20T01:03:44.052Z",
+      "draftId": "c878828f-bbef-412b-9a82-52ee5f52c098",
+      "fingerprint": "33f61823020cd01a403a11b82f93d7be029f6d093fbd2d42b8898a2a37414015",
+      "precheckId": "5d6b787b-54c9-41a9-9fd1-a66c8f2a0a70",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 2,
+      "taskId": "684b5bde-3992-4278-8c26-53579acd9545",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 101,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:04:21.763Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 2,
+        "contentMatched": true,
+        "actualRows": 2,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    },
+    {
+      "id": "NI-E2E-23",
+      "title": "显式 strict=false 正常数据导入",
+      "startedAt": "2026-10-20T01:04:21.765Z",
+      "draftId": "9093af71-e640-4314-be2c-fae532fca997",
+      "fingerprint": "ba6591ab2362262da5b51a2642b09c08c2a014f67ba4057a720a7f2a8e522fef",
+      "precheckId": "fafb609b-3c2f-4330-b705-7ea3aa40fa1e",
+      "checks": [
+        {
+          "check": "DATABASE_CONNECTIVITY",
+          "status": "PASSED",
+          "evidenceCode": "DATABASE_CONNECTED"
+        },
+        {
+          "check": "WRITE_ACCESS",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "TOOL_ENVIRONMENT",
+          "status": "PASSED",
+          "evidenceCode": "TOOL_RUNTIME_READY"
+        },
+        {
+          "check": "NODE_RESOURCE",
+          "status": "PASSED",
+          "evidenceCode": "NODE_RESOURCE_READY"
+        },
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        },
+        {
+          "check": "INPUT_MAPPING",
+          "status": "PASSED",
+          "evidenceCode": "IMPORT_VERIFIED"
+        }
+      ],
+      "checkStatus": "SUCCEEDED",
+      "manifestFiles": 1,
+      "taskId": "c7f2f6a0-073d-490d-b00b-42948600f197",
+      "submitIdempotent": true,
+      "state": "SUCCEEDED",
+      "exitCode": 0,
+      "plannedActualMatch": "MATCHED",
+      "reconciliationRequired": false,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "logCount": 79,
+      "successLog": true,
+      "outcome": "PASS",
+      "finishedAt": "2026-10-20T01:04:54.119Z",
+      "persistedEvidence": {
+        "state": "SUCCEEDED",
+        "result": "VERIFIED",
+        "normalImport": true,
+        "noExportCounts": true,
+        "checkpointPresent": false,
+        "reconciliationRequired": false,
+        "processExitCode": 0,
+        "plannedActualMatch": "MATCHED",
+        "processStartedEvents": 1,
+        "resultEvents": 1
+      },
+      "content": {
+        "exists": true,
+        "expectedRows": 2,
+        "contentMatched": true,
+        "actualRows": 2,
+        "differences": [],
+        "columnsMatched": true,
+        "structureMatched": true
+      }
+    }
+  ],
+  "counts": {
+    "PASS": 23
+  },
+  "ownerVerified": true,
+  "rejectedTargetUnchanged": true,
+  "secretAuditPassed": true
+}

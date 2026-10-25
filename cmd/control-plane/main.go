@@ -20,8 +20,12 @@ import (
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/deployment"
 	"ob-data-orch/internal/localmvp"
+	"ob-data-orch/internal/logretention"
+	"ob-data-orch/internal/schedulingpolicy"
+	"ob-data-orch/internal/securitypolicy"
 	"ob-data-orch/internal/servicehost"
 	"ob-data-orch/internal/store"
+	"ob-data-orch/internal/toolcompatibility"
 )
 
 func main() {
@@ -133,15 +137,49 @@ func serveWithDevelopment(ctx context.Context, base, data, devWeb string) (resul
 	if err := database.EnsureAuthSubject(ctx, store.AuthSubject{SubjectID: deployment.SubjectID, ExternalSubject: deployment.SubjectID, DisplayName: "管理员", AccountStatus: "ACTIVE", CreatedAt: now, UpdatedAt: now}); err != nil {
 		return err
 	}
+	// 只在当前可信初始身份首次接入时保存既有职责，重启不会恢复已撤销授权。
+	if err := database.BootstrapPermissionOwner(ctx, deployment.SubjectID, now); err != nil {
+		return err
+	}
 	dependencies, err := localmvp.DependenciesWithLogs(database, keyring, settings.RealExecutionEnabled, settings.RealExecutionEnabled, filepath.Join(data, "local-mvp-logs"))
-	dependencies.NormalImportExecutionEnabled = settings.RealExecutionEnabled && settings.NormalImportExecutionEnabled
 	if err != nil {
 		return err
 	}
+	dependencies.NormalImportExecutionEnabled = settings.RealExecutionEnabled && settings.NormalImportExecutionEnabled
+	dependencies.DirectLoadProbeEnabled = settings.RealExecutionEnabled && settings.DirectLoadProbeEnabled
+	dependencies.DirectLoadExecutionEnabled = dependencies.DirectLoadProbeEnabled && settings.DirectLoadExecutionEnabled
+	database.ConfigureDirectLoadCapabilities(dependencies.DirectLoadProbeEnabled, dependencies.DirectLoadExecutionEnabled)
 	dependencies.Identity = browser
-	dependencies.Authorizer = browser
-	dependencies.Roles = browser
+	dependencies.Authorizer = database
+	dependencies.Roles = database
+	dependencies.AccessControl = database
+	dependencies.SchedulingPolicy = database
+	dependencies.SchedulingTiming = database
+	dependencies.SchedulingCandidates = database
+	dependencies.SecurityPolicy, err = securitypolicy.New(securitypolicy.Startup{
+		LoadedAt: now, CredentialKeyID: "local-mvp-root-v1", RealExecutionEnabled: settings.RealExecutionEnabled,
+		NormalImportExecutionEnabled: dependencies.NormalImportExecutionEnabled,
+		DirectLoadProbeEnabled:       dependencies.DirectLoadProbeEnabled, DirectLoadExecutionEnabled: dependencies.DirectLoadExecutionEnabled,
+	}, func() bool {
+		for _, id := range keyring.KeyIDs() {
+			if id == "local-mvp-root-v1" {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return err
+	}
+	dependencies.ToolCompatibility, err = toolcompatibility.New(time.Now().UTC())
+	if err != nil {
+		return err
+	}
 	dependencies.CSRF = browser
+	dependencies.LogRetention, err = logretention.New(database, settings.LogRetentionDays)
+	if err != nil {
+		return err
+	}
 	dependencies.EnrollmentTTL = 24 * time.Hour
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -155,9 +193,16 @@ func serveWithDevelopment(ctx context.Context, base, data, devWeb string) (resul
 	retentionStopped := make(chan struct{})
 	go func() {
 		defer close(retentionStopped)
-		dependencies.PersistentLogs.RunRetention(retentionContext, settings.LogRetentionDays, func(error) { slog.Error("普通日志清理失败，保留清理账本等待重试") })
+		dependencies.PersistentLogs.RunRetention(retentionContext, dependencies.LogRetention, func(error) { slog.Error("普通日志清理失败，保留清理账本等待重试") })
 	}()
 	defer func() { stopRetention(); <-retentionStopped }()
+	schedulingContext, stopScheduling := context.WithCancel(ctx)
+	schedulingStopped := make(chan struct{})
+	go func() {
+		defer close(schedulingStopped)
+		schedulingpolicy.RunMonitor(schedulingContext, database, dependencies.HeartbeatTTL, func(error) { slog.Error("调度超时核对失败，保留执行状态与预算等待重试") })
+	}()
+	defer func() { stopScheduling(); <-schedulingStopped }()
 	var handler http.Handler
 	if devWeb == "" {
 		handler, err = browser.Handler(api, filepath.Join(base, "web"), filepath.Join(base, "agents"), data)

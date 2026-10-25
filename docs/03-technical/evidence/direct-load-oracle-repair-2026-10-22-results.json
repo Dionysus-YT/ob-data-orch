@@ -1,0 +1,327 @@
+{
+  "scope": "ORACLE_MYSCHEMA_FIXED_4_3_5_OBSERVER_4_4_2_3_API_E2E",
+  "verifiedAt": "2026-10-22T08:13:13.167498+00:00",
+  "passed": true,
+  "apiPassed": true,
+  "apiRecords": [
+    {
+      "id": "SOURCE_CONNECTION_TEST",
+      "outcome": "PASS",
+      "status": "SUCCEEDED"
+    },
+    {
+      "id": "BASIC",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "confirmationRejected": true,
+      "submissionReplayed": true,
+      "inputFiles": 1,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "SHARDS",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "inputFiles": 2,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "SEPARATOR",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "inputFiles": 1,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "INCREMENTAL",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "inputFiles": 1,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "TRUNCATE",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "inputFiles": 1,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "THREAD",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "inputFiles": 1,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "PARALLEL",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "inputFiles": 1,
+      "commandMatched": true,
+      "snapshotMatched": true,
+      "sameTableCommitObserved": true
+    },
+    {
+      "id": "RAW_BLOCKED",
+      "outcome": "PASS",
+      "precheckStatus": "FAILED",
+      "submissionStatus": 422,
+      "code": "PRECHECK_REQUIRED"
+    },
+    {
+      "id": "INDEXED_REPLACE_BLOCKED",
+      "outcome": "PASS",
+      "precheckStatus": "FAILED",
+      "submissionStatus": 422,
+      "code": "PRECHECK_REQUIRED"
+    },
+    {
+      "id": "LOB_REPLACE_BLOCKED",
+      "outcome": "PASS",
+      "precheckStatus": "FAILED",
+      "submissionStatus": 422,
+      "code": "PRECHECK_REQUIRED"
+    },
+    {
+      "id": "CONFIG_CHANGE_INVALIDATES_PROOF",
+      "outcome": "PASS",
+      "precheckStatus": "SUCCEEDED",
+      "submissionStatus": 422,
+      "status": "INVALIDATED"
+    }
+  ],
+  "realTasks": 7,
+  "taskResults": {
+    "BASIC": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    },
+    "SHARDS": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    },
+    "SEPARATOR": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    },
+    "INCREMENTAL": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    },
+    "TRUNCATE": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    },
+    "THREAD": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    },
+    "PARALLEL": {
+      "state": "SUCCEEDED",
+      "reconciliationRequired": false,
+      "resultVerified": true,
+      "directLoad": true,
+      "serverCommitObserved": true,
+      "checkpointAbsent": true,
+      "exitCode": 0,
+      "plannedActualMatched": true,
+      "fingerprintMatched": true,
+      "taskTypeMatched": true,
+      "sourceMatched": true,
+      "rowsMatched": true,
+      "structureMatched": true,
+      "fullDDLObserved": true,
+      "oneStartEvent": true,
+      "oneResultEvent": true,
+      "commandAndSnapshotMatched": true,
+      "noExportResultCounts": true,
+      "passed": true
+    }
+  },
+  "integrity": {
+    "originalSharedSourceUnchanged": true,
+    "allFixtureTablesPreserved": true,
+    "untouchedTablesUnchanged": true,
+    "newTestSourceArchived": true,
+    "unsubmittedDraftsRemaining": 0,
+    "sourceTaskCount": 7,
+    "fixtureTablesAbsent": true,
+    "inputAbsent": true,
+    "uncontrolledRuntimeFiles": [],
+    "nonTerminalExecutions": 0
+  },
+  "component": {
+    "scope": "FIXED_TOOL_ORACLE_4_4_2_3_COMPATIBILITY",
+    "passed": true,
+    "requiresSeparateAPIE2E": true
+  },
+  "authBoundary": {
+    "passed": true,
+    "checks": 7
+  },
+  "secretAudit": {
+    "files": 43,
+    "adminPlaintextOrUTF16Present": false,
+    "oraclePasswordOrRecoverableEncodingPresent": false,
+    "passed": true,
+    "at": "2026-10-22T08:05:48.403Z"
+  },
+  "runtime": {
+    "at": "2026-10-22T08:13:13.167498+00:00",
+    "flags": {
+      "controlPlane": {
+        "realExecutionEnabled": true,
+        "normalImportExecutionEnabled": true,
+        "directLoadProbeEnabled": true,
+        "directLoadExecutionEnabled": true
+      },
+      "agent": {
+        "realExecutionEnabled": true,
+        "normalImportExecutionEnabled": true,
+        "directLoadProbeEnabled": true,
+        "directLoadExecutionEnabled": true
+      }
+    },
+    "flagsPreserved": true,
+    "agent": {
+      "status": "ACTIVE",
+      "heartbeatAgeSeconds": 21.38,
+      "capacityUsed": 0,
+      "environmentStatus": "PASSED"
+    },
+    "nonTerminalExecutions": 0,
+    "componentInputAbsent": true,
+    "hashes": {
+      "controlPlane": "de70ee3aa919591c7c3c9ce6cc4ec9ff74d10bb014d3992581a2de0bb91a9dac",
+      "agent": "73bcba9d2cdcf5e4b865a35c9af923b92efb9145b95da679ab2d30872f9e7884",
+      "jdbcProbe": "f5713698cb97c859ce271ff7281ad43870744f56e67236b164e38c783ed4b64e"
+    },
+    "backupIntegrityOK": true,
+    "passed": true,
+    "httpsHealthStatus": 200
+  },
+  "officialToolSHA256": "b43f88caafd2c62462cfdeff38a0fd7088b0195c5d064074f977bc0b363fec06",
+  "connectorSHA256": "3168e7e3f2f14f35738d7c695e05012bf351f623757c7baada29659d2afa2ad4",
+  "limits": [
+    "WINDOWS_AMD64",
+    "ORACLE_CURRENT_USER_SCHEMA_ONLY",
+    "OBSERVER_DIRECT_4.4.2.3_WITH_FIXED_OBLOADER_4.3.5",
+    "CSV_NUMBER_VARCHAR2_REPRESENTATIVE_CASES",
+    "NO_CROSS_SCHEMA_ODP_F5_OTHER_VERSIONS_ALL_PARAMETERS_OR_FULL_DLV_G3_G4_CLAIM"
+  ]
+}

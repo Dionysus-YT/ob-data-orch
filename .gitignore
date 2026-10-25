@@ -30,6 +30,10 @@
 /web/.env*
 !/web/.env.example
 
+# Python 测试缓存
+__pycache__/
+*.py[cod]
+
 # Editor and operating-system files
 .idea/
 .vscode/

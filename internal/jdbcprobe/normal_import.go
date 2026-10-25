@@ -42,7 +42,7 @@ type ImportTable struct {
 	RequiredColumns []string
 }
 
-// NormalImportRequest 是固定 v10 普通导入只读检查输入；权限位不接受任意权限表达式。
+// NormalImportRequest 是固定 v11 普通导入只读检查输入；权限位不接受任意权限表达式。
 type NormalImportRequest struct {
 	Connection        Request
 	CompatibilityMode CompatibilityMode
@@ -56,6 +56,17 @@ type NormalImportRequest struct {
 	HasData           bool
 	AutoMapping       bool
 	ReplaceObject     bool
+	// ExcludeDataTypes 只接受固定类型枚举，不传递任意表达式。
+	ExcludeDataTypes []string
+	// Objects 是非表定义的结构化权限事实，绝不携带 SQL。
+	Objects []ImportObject
+}
+
+// ImportObject 描述已识别对象及当前 Schema 的单个依赖。
+type ImportObject struct {
+	Kind      string
+	Name      string
+	Reference string
 }
 
 // NormalImportResult 的三个固定结果只表达只读检查事实，不证明导入已经执行。
@@ -73,8 +84,16 @@ func TestNormalImport(ctx context.Context, runtime Runtime, request NormalImport
 	if ctx == nil || !validRuntime(runtime) {
 		return NormalImportResult{}, ErrInvalidRuntime
 	}
-	if !validRequest(request.Connection) || !validCompatibilityMode(request.CompatibilityMode) || !validObjectIdentifier(request.Database) || len(request.Tables) > 1024 || !validImportNames(request.IncludeColumns) || !validImportNames(request.ExcludeColumns) || len(request.IncludeColumns) > 0 && len(request.ExcludeColumns) > 0 {
+	if !validRequest(request.Connection) || !validCompatibilityMode(request.CompatibilityMode) || !validObjectIdentifier(request.Database) || len(request.Tables)+len(request.Objects) > 1024 || !validImportNames(request.IncludeColumns) || !validImportNames(request.ExcludeColumns) || len(request.IncludeColumns) > 0 && len(request.ExcludeColumns) > 0 || !ValidImportDataTypes(request.ExcludeDataTypes) {
 		return NormalImportResult{}, ErrInvalidRequest
+	}
+	objectKeys := map[string]bool{}
+	for _, object := range request.Objects {
+		key := object.Kind + ":" + object.Name
+		if !ValidImportObjectKind(object.Kind) || !validObjectIdentifier(object.Name) || strings.ContainsAny(object.Name, "*,") || object.Reference != "" && (!validObjectIdentifier(object.Reference) || strings.ContainsAny(object.Reference, "*,")) || objectKeys[key] {
+			return NormalImportResult{}, ErrInvalidRequest
+		}
+		objectKeys[key] = true
 	}
 	seen := map[string]bool{}
 	hasData, hasDefinition := false, false
@@ -98,6 +117,7 @@ func TestNormalImport(ctx context.Context, runtime Runtime, request NormalImport
 			}
 		}
 	}
+	hasDefinition = hasDefinition || len(request.Objects) > 0
 	if !request.HasData && hasData || !request.HasDDL && hasDefinition || request.MappingComplete && request.HasData && !hasData || request.DDLComplete && request.HasDDL && !hasDefinition {
 		return NormalImportResult{}, ErrInvalidRequest
 	}
@@ -179,7 +199,14 @@ func encodeNormalImportRequest(request NormalImportRequest) ([]byte, error) {
 			return nil, ErrInvalidRequest
 		}
 	}
-	base := encodeProbeRequest(10, request.Connection, [][]byte{[]byte(request.CompatibilityMode), []byte(request.Database)})
+	appendNames(request.ExcludeDataTypes)
+	appendInt(uint32(len(request.Objects)))
+	for _, object := range request.Objects {
+		appendText(object.Kind)
+		appendText(object.Name)
+		appendText(object.Reference)
+	}
+	base := encodeProbeRequest(11, request.Connection, [][]byte{[]byte(request.CompatibilityMode), []byte(request.Database)})
 	defer zero(base)
 	if overflow || len(base)+len(body) > 1024*1024 {
 		return nil, ErrInvalidRequest
@@ -188,6 +215,38 @@ func encodeNormalImportRequest(request NormalImportRequest) ([]byte, error) {
 	copy(input, base)
 	copy(input[len(base):], body)
 	return input, nil
+}
+
+// ValidImportObjectKind 限定固定只读探针能核算的对象类型。
+func ValidImportObjectKind(kind string) bool {
+	switch kind {
+	case "table-group", "view", "trigger", "obj-user", "role", "sequence", "synonym", "type", "type-body", "package", "package-body", "function", "procedure":
+		return true
+	}
+	return false
+}
+
+// ValidImportDataTypes 仅允许已核对的元信息类型名称。
+func ValidImportDataTypes(types []string) bool {
+	if len(types) > 32 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, name := range types {
+		if !validImportDataType(name) || name == "" || seen[name] {
+			return false
+		}
+		seen[name] = true
+	}
+	return true
+}
+
+func validImportDataType(name string) bool {
+	switch name {
+	case "BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "CLOB", "TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT", "RAW", "BINARY", "VARBINARY", "CHAR", "VARCHAR", "VARCHAR2", "NUMBER", "DECIMAL", "INT", "INTEGER", "DATE", "TIMESTAMP":
+		return true
+	}
+	return false
 }
 
 func validImportNames(names []string) bool {

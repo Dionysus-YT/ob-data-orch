@@ -1,0 +1,746 @@
+{
+  "contracts": {
+    "done": true,
+    "scope": "REAL_API_CONTRACT_ONLY",
+    "records": [
+      {
+        "name": "--host",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "2c46a9cc-8d1f-417f-a8df-98c391ac768c",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--user",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "4748666c-c698-4527-9dfc-112ea8b4ec96",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--database",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "64f16c5f-0b20-4a40-881c-f4a4f0fdf540",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--port",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "78385c9a-266a-494a-b4bf-f6dc20184970",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--password",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "51105da4-3073-4d7f-bec0-06e1c02c5955",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--no-sys",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "10c00785-d92e-42c4-937f-17dd6ecfda74",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--yes",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "19bad93a-651a-452b-a7f6-64df5f9ffa90",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--file-path",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "5cdf1d16-83fe-4665-8a4b-0fb0911f1be5",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--log-path",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "8aa71739-233c-4b51-87ce-f1b91c4aef9a",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--ctl-path",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "6365b8e1-baeb-459a-bd66-ed5031556205",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--file-suffix",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "cec62a64-f9e3-4a78-8bcc-026439f41628",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--file-encoding",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "7a72cb97-dcac-42a7-bfad-dfd635f616e7",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--file-regular-expression",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "7e85ddf8-f383-4374-91bf-010315359e1b",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--all",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "d9de8678-6357-48ff-904c-04fca2cc6543",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--table",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "5d4d3c75-4e71-4082-97c1-214badb7d6fc",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--table-group",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "f2bf64d3-81b2-4aff-b419-ce7e1092746d",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--view",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "6ba329d6-653d-4829-80bd-83a719937d1b",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--trigger",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "566ae9d3-d507-4fd2-9bf1-963b5f564cd6",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--obj-user",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "43e55679-47e0-4818-857d-da7efd61022e",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--role",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "cdb52939-f8ac-4092-94d8-11eba1e1e0c3",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--sequence",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "274d5b33-7610-4443-b2fb-d56d43b4850d",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--synonym",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "7791962b-9276-4740-8780-1518a9514278",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--type",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "1e7e3002-ba47-420e-950d-dd5795d3ceda",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--type-body",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "6249d5ae-2f64-4e60-92c8-c094de53387c",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--package",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "b85de3f6-8d0f-4775-b320-0e62848ffbc3",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--package-body",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "af5e9b72-188f-444d-96ed-bf5175876854",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--function",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "e0fcd569-30c9-4f29-a4b2-ba185caf63fa",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--procedure",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "1259326a-932f-44f0-8cf5-82f98fb96d11",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--exclude-table",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "0ff5f00d-64e8-42e2-9157-5a5b48134765",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--include-column-names",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "73b5714c-18bb-489b-b23c-affb14b8c0f7",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--exclude-column-names",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "db540461-68d0-422f-a2b2-5c258eb61d80",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--exclude-data-types",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "a4154152-86a2-4a74-8dcf-3aedabfbe9f7",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--ddl",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "053704e2-9ef2-47d9-a0be-16d8515a855f",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--csv",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "83120c31-5fe5-41e8-a546-6f3ef594eab3",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--cut",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "38a34a9e-240d-437d-9296-c17a10d6ff24",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--sql",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "e60c7e11-82ec-44fc-bc11-fc4fd40f92a4",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--column-quote",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "afcad72d-c3ee-4265-b422-0cf61d0a5eeb",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--column-separator",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "396a39ef-6225-42d4-8b9f-9ea4b4cd2453",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--column-splitter",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "52fc9f63-dedb-4169-b793-df387f612b14",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--line-separator",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "6e76be8a-fe81-46fe-ac62-14cab102cbfc",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--escape-character",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "06feff00-bd69-4785-bb92-bc0a1ff4a330",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--null-string",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "38c0a60f-99d6-4d03-8270-30bf84fecdf0",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--empty-string",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "e952134c-36f4-4959-b418-a19b001a50ea",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--compression-algo",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "5a73c0fb-9223-4d5c-b04f-0ec0c11baa09",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--compression-level",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "efcc384e-66ff-4b12-ab34-c464515e2fe2",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--date-format",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "a69f182c-1c3c-454b-a5a7-5fbc40e1364c",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--default-date",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "9bf32eaf-61f3-4e23-b332-b570e4f6af28",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--skip-header",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "1f007f44-e215-44a2-af7f-232934e4d756",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--skip-footer",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "a130aca6-a6f8-48de-ae90-45e3995dc409",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--ignore-escape",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "e2af8cb6-2569-46bb-9c63-72c7df845895",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--trail-delimiter",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "3a3e75c7-0c36-4db4-9805-fa1af1910456",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--with-trim",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "c3fd651c-0f49-423c-824b-4e0c64e0bf9b",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--compress",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "513cfba1-a214-4832-b0e3-f1543bb9c001",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--auto-column-mapping",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "1f38f3fd-2efa-4c74-9136-252885e6afe5",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--max-discards",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "b7606f52-fc82-45fb-b3ae-fb596086cd99",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--max-errors",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "ea8553a3-954b-4d49-82de-f4f1379302d7",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--thread",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "66838f1e-0dfa-4f0d-8da3-aff408f9d917",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--batch",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "617197a8-3640-4f23-8a67-dc37a68f7b74",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--block-size",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "0d84221c-2a1f-4ce4-9d52-89e48a9b1834",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--max-tps",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "6a0414e3-f83c-4256-bf05-b00e58ec3b7b",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--max-wait-timeout",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "635f1a2d-7b47-41a5-b03d-5af7e8b396f4",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--strict",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "3f5e3dbb-a481-41a5-8503-fbc164f3390b",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--rw",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "3a568bcd-4631-4b07-b702-3f421fd910cf",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--mem",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "6d2c89cf-d43e-49f2-af6d-284c9618587a",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--nls-date-format",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "2e99b7c3-55cb-4f0c-a160-6f591974960c",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--nls-timestamp-format",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "2af3dc5c-7bd0-4efe-85f6-8504ca7490e7",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--nls-timestamp-tz-format",
+        "mode": "ORACLE",
+        "outcome": "PASS",
+        "draftId": "1b726f60-c04a-48a2-84f1-248b20dd8252",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--compat-mode",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "b1dc7d06-d999-4f9c-9d35-8d14f51588c2",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--replace-data",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "e2639de0-3703-4d80-bff1-e8327ca6a8b4",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--replace-object",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "01f25cdb-b123-443d-8d88-816c799d843f",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--truncate-table",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "3846e236-b609-46b1-acb9-6ac72b6143e2",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      },
+      {
+        "name": "--delete-from-table",
+        "mode": "MYSQL",
+        "outcome": "PASS",
+        "draftId": "edb7da99-7d95-4738-a398-61216f9c3255",
+        "previewMatched": true,
+        "rejectionStatus": 400,
+        "rejectionCode": "REQUEST_INVALID",
+        "cleanupStatus": 200
+      }
+    ],
+    "startedAt": "2026-10-20T01:34:10.572Z",
+    "finishedAt": "2026-10-20T01:34:28.160Z"
+  },
+  "compatibilityBoundaries": {
+    "records": [
+      {
+        "name": "LEGACY_VERSION_REQUIRED",
+        "createStatus": 201,
+        "outcome": "PASS",
+        "preview-command": 422,
+        "precheck": 422
+      },
+      {
+        "name": "INVALID_MYSQL_VERSION",
+        "createStatus": 422,
+        "outcome": "PASS"
+      }
+    ]
+  }
+}

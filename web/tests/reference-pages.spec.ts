@@ -4,9 +4,52 @@ import { mockFacts } from './fixtures/facts'
 import { DATA_SOURCE_UI_FIXTURES } from '../src/workbench/sources/dataSourceUiFixture'
 import type { GeneralizedExportConfig } from '../src/api/browser'
 
+test.beforeEach(({ page }) => { page.on('dialog', dialog => { if (dialog.type() === 'beforeunload') void dialog.accept() }) })
+
+test('候选策略读取失败撤下旧节点选项，重试保持原绑定且不改派', async ({ page }, info) => {
+  test.setTimeout(60000)
+  await mockFacts(page); await page.goto('/exports/new'); await page.getByRole('radio').first().check(); await page.getByRole('button', { name: '下一步：导出内容与对象' }).click(); await chooseDataContent(page)
+  const selector = page.locator('.export-node-select'), select = selector.locator('.ant-select')
+  await select.click(); await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('合成执行节点 · Windows · x86_64', { exact: true }).click()
+  await page.route('**/api/v1/execution-nodes?eligibleFor=OBDUMPER_EXPORT', route => route.fulfill({ status: 503, json: { code: 'EXECUTION_NODE_QUERY_UNAVAILABLE', message: '执行节点候选暂不可用，请稍后重试。', retryable: true } }))
+  await selector.getByRole('button', { name: '刷新', exact: true }).click(); await expect(page.getByText(/执行节点候选暂不可用|无法加载可选执行节点/)).toBeVisible()
+  await select.click(); await expect(page.locator('.ant-select-dropdown:visible .ant-select-item-option')).toHaveCount(0); await page.keyboard.press('Escape')
+  await page.screenshot({ path: info.outputPath('candidate-read-failure-clears-options.png'), animations: 'disabled' })
+  await page.route('**/api/v1/execution-nodes?eligibleFor=OBDUMPER_EXPORT', route => route.fulfill({ json: { items: [{ id: 'synthetic-node', displayName: '合成原节点已恢复', platform: 'WINDOWS_AMD64' }, { id: 'synthetic-another-node', displayName: '合成其他在线节点', platform: 'WINDOWS_AMD64' }] } }))
+  await selector.getByRole('button', { name: '刷新', exact: true }).click(); await expect(select).toContainText('合成原节点已恢复'); await expect(select).not.toContainText('合成其他在线节点')
+})
+
 async function chooseDatabase(page: Page, name = 'finance_reporting') {
+  await chooseDataContent(page)
+  // 数据库目录读取前显式选择合成节点，不能依赖单候选的默认选择。
+  const selector = page.locator('.export-node-select')
+  await expect(selector).toBeVisible()
+  if (await selector.getByText('请选择执行节点', { exact: true }).isVisible()) {
+    await selector.locator('.ant-select').click()
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('合成执行节点 · Windows · x86_64', { exact: true }).click()
+  }
   await page.getByRole('button', { name: '展开数据库列表' }).click()
   await page.getByText(name, { exact: true }).last().click()
+}
+
+async function chooseDataContent(page: Page) {
+  const content = page.getByRole('radiogroup', { name: '导出内容', exact: true })
+  await expect(content).toBeVisible()
+  if (!await content.getByRole('radio', { checked: true }).count()) await content.getByText('仅导出数据', { exact: true }).click()
+}
+
+async function openExportStep(page: Page, step: 3 | 4) {
+  await page.getByRole('button', { name: '全部参数', exact: true }).click()
+  const catalog = page.getByRole('dialog', { name: '导出全部参数' })
+  await catalog.getByRole('textbox').fill(step === 3 ? 'CSV 数据格式' : 'file-path')
+  await catalog.getByRole('button', { name: step === 3 ? '选择数据格式' : '执行与输出', exact: true }).first().click()
+  await expect(page).toHaveURL(new RegExp('step=' + step))
+}
+
+async function openDataFormat(page: Page) {
+  await page.goto('/exports/new?step=2')
+  await chooseDataContent(page)
+  await openExportStep(page, 3)
 }
 
 function exportSelect(page: Page, label: string) {
@@ -107,6 +150,7 @@ test('导出单选、步骤和摘要不改变草稿语义', async ({ page }, inf
   await page.goto('/exports/new')
   await page.getByRole('radio').first().check()
   await page.getByRole('button', { name: '下一步：导出内容与对象' }).click()
+  await chooseDataContent(page)
   await expect(page.getByRole('heading', { name: '导出内容', level: 3, exact: true })).toBeVisible()
   const progress = await page.locator('.export-ant-step-rail').boundingBox()
   const workspace = await page.locator('.orch-task-workspace').boundingBox()
@@ -153,7 +197,7 @@ test('导出单选、步骤和摘要不改变草稿语义', async ({ page }, inf
   await page.keyboard.press('Escape')
   await expect(drawer).not.toBeVisible()
   await expect(page.getByRole('button', { name: '查看任务摘要', exact: true })).toBeFocused()
-  await page.getByRole('button', { name: /选择数据源 已完成/ }).click()
+  await page.locator('.wizard-ant-step-rail .ant-steps-item').first().click()
   await expect(page.getByRole('heading', { name: '筛选数据源' })).toBeVisible()
   await expect(page.getByRole('radio', { name: /Production finance reporting/ })).toBeChecked()
 })
@@ -200,21 +244,19 @@ test('部分导出从节点元数据加载对象并清除跨库旧选择', async
   await candidates.getByRole('checkbox', { name: 'fresh_table' }).check()
   await page.getByRole('button', { name: '下一步：选择数据格式' }).click()
   await page.getByRole('button', { name: '下一步：执行与输出' }).click()
-  await expect(page.getByRole('button', { name: '更换节点' })).toBeVisible()
-  await expect(page.getByRole('combobox', { name: '执行节点', exact: true })).toHaveCount(0)
-  const nodeFacts = page.getByRole('group', { name: '执行节点信息' })
-  await expect(nodeFacts.getByText('合成执行节点', { exact: true })).toBeVisible()
-  await expect(nodeFacts.getByText('平台 · Windows · x86_64', { exact: true })).toBeVisible()
+  const nodeFacts = page.locator('.export-node-select')
+  await expect(nodeFacts.getByRole('combobox', { name: /^(?:\* )?执行节点$/ })).toBeVisible()
+  await expect(nodeFacts).toContainText('合成执行节点 · Windows · x86_64')
   await expect(page).toHaveURL(/step=4/)
   await expect(page).toHaveTitle(/OB Data Orch/)
   await expect(page.locator('vite-error-overlay')).toHaveCount(0)
   for (const width of [1440, 925, 720]) {
     await page.setViewportSize({ width, height: 900 })
-    await expect(nodeFacts.getByRole('button', { name: '更换节点' })).toBeVisible()
+    await expect(nodeFacts.getByRole('button', { name: '刷新', exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.screenshot({ path: info.outputPath(`export-output-node-${width}.png`), fullPage: false })
   }
-  await page.getByRole('button', { name: '更换节点' }).click()
+  await page.locator('.wizard-ant-step-rail .ant-steps-item').nth(1).click()
   await expect(page.getByRole('heading', { name: '已选 1 项' })).toBeVisible()
   expect(errors).toEqual([])
 })
@@ -267,7 +309,7 @@ test('步骤 2 刷新恢复同会话选择并重新读取目录，数据源修�
   sourceRevision = 102
   await page.reload()
   await expect(page.locator('.export-field-body .ant-select').nth(1)).toContainText('请选择数据库')
-  await expect(page.getByText('选择数据库后显示导出对象')).toBeVisible()
+  await expect(page.getByText('请选择导出内容', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: '已选 1 项' })).toHaveCount(0)
 
   await chooseDatabase(page)
@@ -414,7 +456,9 @@ test('旧控制面拒绝数据库目录时提示版本不匹配且下拉保留�
   await page.getByText('合成执行节点 · Windows · x86_64').last().click()
   await expect(page.getByText('目录查询条件与当前控制面版本不兼容。请更新控制面与 Agent 后重新加载。')).toBeVisible()
   await page.getByRole('button', { name: '展开数据库列表' }).click()
-  await expect(page.getByText('手动输入其他数据库 / Schema…')).toBeVisible()
+  const manualOption = page.locator('.ant-select-dropdown:visible').getByText('手动输入其他数据库', { exact: true })
+  await expect(manualOption).toBeVisible(); await manualOption.click()
+  await expect(page.getByRole('dialog', { name: '手动输入数据库 / Schema', exact: true })).toBeVisible()
 })
 
 test('导出对象按五类切换并保留跨分类选择', async ({ page }) => {
@@ -735,6 +779,7 @@ test('对象查询未被节点领取后停止轮询并提示重试', async ({ pa
 test('导出列包含与排除保持互斥，空配置不能推进', async ({ page }) => {
   await mockFacts(page)
   await page.goto('/exports/new?step=2')
+  await chooseDataContent(page)
   await expect(page.getByRole('textbox', { name: '排除表' })).toHaveCount(0)
   await page.getByRole('button', { name: /高级设置 · DDL、对象与数据筛选/ }).click()
   await expect(page.getByRole('textbox', { name: '排除表' })).toBeVisible()
@@ -823,7 +868,7 @@ for (const mode of ['MYSQL', 'ORACLE'] as const) {
     await options.screenshot({ path: info.outputPath('all-checkboxes.png') })
     await page.getByRole('button', { name: /^下一步：/ }).click()
     await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/synthetic-checkboxes')
-    await page.getByRole('button', { name: '创建草稿并进入预检查' }).click()
+    await page.getByRole('button', { name: '查看预检查与命令' }).click()
     await expect.poll(() => saved?.ddlBehavior).toEqual({ dropObject: true, retainSchema: true, compactSchema: true })
     expect(saved?.dataFormat?.formatKind).toBe('SQL')
     expect(saved?.filterConfig?.excludeVirtualColumns).toBe(true)
@@ -1137,7 +1182,7 @@ test('筛选入口保留适用原因，快照与 SCN 在第三步互斥并保留
   await expect(scn).toHaveValue('100')
   await page.getByRole('button', { name: /^下一步：/ }).click()
   await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/synthetic-consistency')
-  await page.getByRole('button', { name: '创建草稿并进入预检查' }).click()
+  await page.getByRole('button', { name: '查看预检查与命令' }).click()
   await expect.poll(() => saved?.filterConfig).toMatchObject({ flashbackScn: 100, where: 'id > 100', partition: 'p0,p2' })
   expect(saved?.filterConfig?.snapshot).toBeUndefined()
   expect(saved?.filterConfig?.flashbackTimestamp).toBeUndefined()
@@ -1177,7 +1222,8 @@ test('导出参数按租户显隐，切换 MySQL 清除 Oracle 专属活动值',
   await page.getByRole('button', { name: /高级设置 · 执行限制与资源/ }).click()
   await page.getByRole('textbox', { name: '游标抓取行数' }).fill('256')
   for (let index = 0; index < 3; index++) await page.getByRole('button', { name: '上一步', exact: true }).click()
-  await page.getByRole('radio', { name: /Production finance reporting/ }).check()
+  await page.getByRole('radio', { name: /Production finance reporting/ }).click()
+  await page.getByRole('dialog', { name: '更换导出数据源？' }).getByRole('button', { name: '更换并清除关联配置', exact: true }).click()
   await page.getByRole('button', { name: /^下一步：/ }).click()
   await expect(page.getByRole('radio', { name: '指定时间（Oracle）' })).toHaveCount(0)
   await expect(page.getByRole('textbox', { name: '闪回时间点' })).toHaveCount(0)
@@ -1193,10 +1239,10 @@ test('导出参数按租户显隐，切换 MySQL 清除 Oracle 专属活动值',
   await page.getByRole('button', { name: /^下一步：/ }).click()
   await expect(page.getByRole('textbox', { name: '游标抓取行数' })).toHaveCount(0)
   await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/synthetic-mode')
-  await page.getByRole('button', { name: '创建草稿并进入预检查' }).click()
+  await page.getByRole('button', { name: '查看预检查与命令' }).click()
   await expect.poll(() => Boolean(saved)).toBe(true)
   await page.getByRole('button', { name: '查看任务摘要', exact: true }).click()
-  await expect(page.locator('.configuration-summary')).toContainText('Production finance reporting')
+  await expect(page.locator('.wizard-summary')).toContainText('Production finance reporting')
   expect(saved?.filterConfig?.flashbackTimestamp).toBeUndefined()
   expect(saved?.performanceConfig?.fetchSize).toBeUndefined()
 })
@@ -1204,7 +1250,7 @@ test('导出参数按租户显隐，切换 MySQL 清除 Oracle 专属活动值',
 test('导出普通入口限制格式，执行页仅展开一个高级设置', async ({ page }, info) => {
   await mockFacts(page)
   await page.setViewportSize({ width: 1440, height: 1024 })
-  await page.goto('/exports/new?step=3')
+  await openDataFormat(page)
   const formats = page.getByRole('combobox', { name: '数据格式' })
   await expect(formats).toBeVisible()
   await expect(page.locator('.export-format-grid .ant-select-selection-item').first()).toHaveText('CSV 格式')
@@ -1258,7 +1304,7 @@ test('导出普通入口限制格式，执行页仅展开一个高级设置', as
   await expect(page.getByRole('checkbox', { name: '包含列名表头' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /高级设置 · 读取一致性与文件设置/ })).toBeVisible()
   await page.screenshot({ path: info.outputPath('export-format.png'), fullPage: true })
-  await page.goto('/exports/new?step=4')
+  await openExportStep(page, 4)
   await expect(page.getByRole('button', { name: /高级设置 · 执行限制与资源/ })).toHaveCount(1)
   await expect(page.getByRole('textbox', { name: '导出路径' })).toBeVisible()
   await expect(page.getByText('日志路径（可选）', { exact: true })).toBeVisible()
@@ -1268,7 +1314,7 @@ test('导出普通入口限制格式，执行页仅展开一个高级设置', as
   await expect(page.getByText('可能覆盖同名文件；路径可写性与可用空间仍会检查。')).toBeVisible()
   await expect(page.getByRole('button', { name: /高级设置 · 执行限制与资源/ })).not.toContainText('已配置')
   await page.screenshot({ path: info.outputPath('export-output.png'), fullPage: true })
-  await page.getByRole('button', { name: '创建草稿并进入预检查' }).click()
+  await page.getByRole('button', { name: '查看预检查与命令' }).click()
   await expect(page.getByText('请先选择一个完成基础连接测试的数据源。').first()).toBeVisible()
 })
 
@@ -1294,7 +1340,7 @@ test('导出高级设置使用 Ant 展开反馈并按格式和输出类型显隐
   await expect(objectAdvanced).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByRole('checkbox', { name: /前置 DROP/ })).toHaveCount(0)
 
-  await page.goto('/exports/new?step=3')
+  await openDataFormat(page)
   await page.getByRole('button', { name: /高级设置 · 读取一致性与文件设置/ }).click()
   const compressionAlgo = page.getByRole('combobox', { name: '压缩算法' })
   await expect(compressionAlgo).toHaveCount(0)
@@ -1320,7 +1366,7 @@ test('导出高级设置使用 Ant 展开反馈并按格式和输出类型显隐
   await expect(page.getByRole('heading', { name: '日期时间' })).toHaveCount(0)
   await expect(page.getByRole('textbox', { name: 'NULL 替换' })).toHaveCount(0)
 
-  await page.goto('/exports/new?step=4')
+  await openExportStep(page, 4)
   const executionAdvanced = page.getByRole('button', { name: /高级设置 · 执行限制与资源/ })
   await expect(executionAdvanced).toHaveAttribute('aria-expanded', 'false')
   await captureAdvanced('advanced-collapsed.png')
@@ -1348,7 +1394,7 @@ test('导出高级设置使用 Ant 展开反馈并按格式和输出类型显隐
 test('导出格式在 200% 缩放下仍可填写且无整页横滚', async ({ page }, info) => {
   await mockFacts(page)
   await page.setViewportSize({ width: 1280, height: 720 })
-  await page.goto('/exports/new?step=3')
+  await openDataFormat(page)
   await page.evaluate(() => { document.documentElement.style.zoom = '2' })
   await expect(page.getByRole('combobox', { name: '字段分隔符' })).toBeVisible()
   await expect(page.getByRole('combobox', { name: '换行符号' })).toBeVisible()
@@ -1435,11 +1481,11 @@ test('导出草稿修改后沿用原标识，预检查通过后仍需提交确�
   await selectSyntheticTable(page)
   await page.getByRole('button', { name: /^下一步：/ }).click()
   await page.getByRole('button', { name: /^下一步：/ }).click()
-  await expect(page.getByRole('combobox', { name: '执行节点' })).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: /^(?:\* )?执行节点$/ })).toBeVisible()
   await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/synthetic')
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
-  await expect(page.locator('.ant-message').getByText('导出草稿已创建。', { exact: true })).toBeVisible()
+  await expect(page.locator('.ant-message').getByText('草稿已保存。', { exact: true })).toBeVisible()
   await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/changed')
   await expect(page.getByText('草稿有未保存更改')).toBeVisible()
   await page.getByRole('button', { name: '保存草稿' }).click()
@@ -1453,7 +1499,7 @@ test('导出草稿修改后沿用原标识，预检查通过后仍需提交确�
   await expect(page.getByRole('textbox', { name: '导出路径' })).toHaveValue('/E:/exports/changed')
   expect(created).toBe(1)
   expect(updated).toBe(1)
-  await page.getByRole('button', { name: '保存并进入预检查' }).click()
+  await page.getByRole('button', { name: '查看预检查与命令' }).click()
   await expect(page.getByRole('heading', { name: '预检查与提交确认' })).toBeVisible()
   await page.reload()
   await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
@@ -1463,7 +1509,7 @@ test('导出草稿修改后沿用原标识，预检查通过后仍需提交确�
   await expect(page.locator('.command-empty .ant-alert-success')).toHaveCount(0)
   await page.evaluate(() => Reflect.set(window, 'syntheticCommandCopyDenied', true))
   await page.getByRole('button', { name: '复制脱敏命令', exact: true }).click()
-  await expect(page.locator('.command-empty .ant-alert-error')).toContainText('复制失败')
+  await expect(page.locator('.wizard-command .ant-alert-error')).toContainText('复制失败')
   await expect(page.locator('.ant-message-notice')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提交并启动导出', exact: true })).toBeDisabled()
   await expect(page.getByText('预检查结果无法用于当前配置', { exact: true })).toBeVisible()
@@ -1521,10 +1567,10 @@ test('更换执行节点后创建新草稿以遵守绑定不可变契约', async
   await page.getByRole('textbox', { name: '导出路径' }).fill('/E:/exports/synthetic')
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '更换节点' }).click()
+  await page.locator('.wizard-ant-step-rail .ant-steps-item').nth(1).click()
   await page.locator('.export-field-body .ant-select').first().click()
   await page.getByText('合成执行节点 2 · Windows · x86_64').last().click()
-  await expect(page.getByText('草稿尚未创建')).toBeVisible()
+  await expect(page.getByText('草稿有未保存更改')).toBeVisible()
   await selectSyntheticTable(page)
   await page.getByRole('button', { name: /^下一步：/ }).click()
   await page.getByRole('button', { name: /^下一步：/ }).click()
@@ -1597,17 +1643,17 @@ test('卸数整改保留空格分隔符、整库排除表、自动压缩与文�
   await page.getByRole('textbox', { name: '导出总量上限' }).fill('1048576')
   await expect(page.getByText('已设置导出总量限制，输出可能不包含全部所选数据。')).toBeVisible()
   await page.screenshot({ path: info.outputPath('export-output-audit.png'), fullPage: true })
-  await page.getByRole('button', { name: '创建草稿并进入预检查' }).click()
+  await page.getByRole('button', { name: '查看预检查与命令' }).click()
   await expect.poll(() => saved?.config.objectScope.excludeTables).toEqual(['synthetic_excluded'])
   expect(saved?.config.dataFormat?.csvOptions).toMatchObject({ columnSeparator: ' ', nullString: ' NULL ' })
   expect(saved?.config.outputConfig).toMatchObject({ compress: true, compressionAlgo: 'zstd', retainEmptyFiles: true, noNestedDir: true, maxFileSize: 1048576 })
   expect(saved?.config.performanceConfig).toMatchObject({ blockSize: '256ROW' })
   expect(saved?.config.filterConfig?.snapshot).toBe(true)
   await page.getByRole('button', { name: '查看任务摘要', exact: true }).click()
-  await expect(page.locator('.configuration-summary')).toContainText('synthetic_excluded')
-  await expect(page.locator('.configuration-summary')).toContainText('256 行')
-  await expect(page.locator('.configuration-summary')).toContainText('1048576 Byte')
-  await expect(page.locator('.configuration-summary .export-option-hint, .configuration-summary .export-format-panel')).toHaveCount(0)
+  await expect(page.locator('.wizard-summary')).toContainText('synthetic_excluded')
+  await expect(page.locator('.wizard-summary')).toContainText('256 行')
+  await expect(page.locator('.wizard-summary')).toContainText('1048576 Byte')
+  await expect(page.locator('.wizard-summary .export-option-hint, .wizard-summary .export-format-panel')).toHaveCount(0)
   expect(errors).toEqual([])
 })
 

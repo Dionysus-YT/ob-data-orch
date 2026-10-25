@@ -21,7 +21,7 @@ func Test节点复验分别投影待授权待核验与环境异常(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			node := store.ExecutionNode{NodeID: "synthetic-node", Platform: "WINDOWS_AMD64", ManagementState: "ENABLED", EnvironmentCheck: store.ExecutionNodeEnvironmentCheck{Status: tc.checkStatus, Code: tc.code, FactsRevision: 2, CompletedAt: &now}, Agent: &store.ExecutionNodeAgent{AgentID: "synthetic-agent", LastHeartbeatAt: &now, FactsRevision: 2, CapacityTotal: 1, EnvironmentInspectionAuthorized: tc.authorized, EnvironmentFacts: store.AgentEnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64"}}}
-			response := (&Server{heartbeatTTL: time.Minute}).newExecutionNodeListResponse(node)
+			response := (&Server{heartbeatTTL: time.Minute}).newExecutionNodeListResponse(node, time.Minute)
 			if response.EnvironmentStatus != tc.want || response.AcceptsNewTasks != (tc.want == "NORMAL") {
 				t.Fatalf("环境投影或接收资格不正确：%s %t", response.EnvironmentStatus, response.AcceptsNewTasks)
 			}
@@ -29,7 +29,7 @@ func Test节点复验分别投影待授权待核验与环境异常(t *testing.T)
 				t.Fatalf("阻断原因不正确：%v", response.UnavailableReasons)
 			}
 			node.ManagementState = "DISABLED"
-			if response := (&Server{heartbeatTTL: time.Minute}).newExecutionNodeListResponse(node); response.AcceptsNewTasks || response.ManagementState != "DISABLED" {
+			if response := (&Server{heartbeatTTL: time.Minute}).newExecutionNodeListResponse(node, time.Minute); response.AcceptsNewTasks || response.ManagementState != "DISABLED" {
 				t.Fatal("完整检查通过隐式启用了禁用节点")
 			}
 		})

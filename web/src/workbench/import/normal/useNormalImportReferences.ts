@@ -52,7 +52,7 @@ export function useNormalImportReferences(form: NormalImportForm, api: NormalImp
     loadingNodes.value = true
     nodeFailure.value = ''
     try {
-      const items = await api.listExecutionNodes()
+      const items = await api.listExecutionNodes({ forTaskSelection: true })
       if (disposed || epoch !== nodeEpoch) return
       nodes.value = items
       if (form.nodeId && !items.some(node => node.id === form.nodeId && node.acceptsNewTasks)) form.nodeId = ''

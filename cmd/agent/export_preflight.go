@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"ob-data-orch/internal/agentconnectiontest"
+	"ob-data-orch/internal/agentenvironment"
+	"ob-data-orch/internal/agentexec"
 	"ob-data-orch/internal/agentjdbc"
 	"ob-data-orch/internal/agentlocalpreflight"
 	"ob-data-orch/internal/agentpreflight"
@@ -47,6 +49,9 @@ func (r configuredExportPreflightRunner) RunNext(ctx context.Context) (agentwork
 		BootID:        r.bootID,
 		LocalPlatform: platform,
 	}
+	directProbeEnabled, directErr := featuregate.LoadDirectLoadProbeEnabled(r.lookupEnv)
+	realEnabled, realErr := featuregate.LoadRealExecutionEnabled(r.lookupEnv)
+	worker.DirectLoadProbeEnabled = directErr == nil && realErr == nil && directProbeEnabled && realEnabled
 	return worker.RunNext(ctx)
 }
 
@@ -67,6 +72,7 @@ func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platfo
 	}
 	jdbcRuntime, jdbcErr := jdbcprobe.DiscoverRuntime(runtimeConfig.JavaPath, runtimeConfig.ToolHome, runtimeConfig.Environment)
 	normalImportEnabled, normalImportGateErr := featuregate.LoadRealExecutionEnabled(r.lookupEnv)
+	directProbeEnabled, directGateErr := featuregate.LoadDirectLoadProbeEnabled(r.lookupEnv)
 	storageConnectivityEnabled, _ := r.lookupEnv("OB_DATA_ORCH_ENABLE_AGENT_STORAGE_CONNECTIVITY_PROBE")
 	return func(resolver agentworker.SecretResolver) agentpreflight.Probe {
 		probe := agentlocalpreflight.Probe{
@@ -90,6 +96,17 @@ func (r configuredExportPreflightRunner) probeFactory(platform commandgen.Platfo
 				importProbe := &agentjdbc.NormalImportProbe{WorkspaceRoot: runtimeConfig.WorkspaceRoot, Runtime: jdbcRuntime, Resolver: resolver}
 				probe.ImportDatabase = importProbe
 				probe.ImportChecks = importProbe
+			}
+			if directGateErr == nil && directProbeEnabled && normalImportGateErr == nil && normalImportEnabled {
+				probe.DirectLoadChecks = &agentjdbc.DirectLoadProbe{WorkspaceRoot: runtimeConfig.WorkspaceRoot, Runtime: jdbcRuntime, Resolver: resolver,
+					ObserveRuntime: func(ctx context.Context, _ agentpreflight.Request) (jdbcprobe.DirectLoadResult, error) {
+						version, _ := agentexec.DirectLoadToolVersion(ctx, runtimeConfig.ToolHome)
+						if ctx == nil || ctx.Err() != nil {
+							return jdbcprobe.DirectLoadResult{}, agentpreflight.ErrInvalidRequest
+						}
+						return jdbcprobe.DirectLoadResult{ToolVersion: version, DirectLoadConfig: agentenvironment.ReadDirectLoadConfiguration(runtimeConfig.ToolHome), ObservedAt: time.Now().UTC()}, nil
+					},
+				}
 			}
 		}
 		return probe

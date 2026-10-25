@@ -1,0 +1,302 @@
+{
+  "scope": "LIVE_DIRECT_LOAD_AUTHENTICATED_API",
+  "overall": "BLOCKED",
+  "at": "2026-10-22T01:23:50.429Z",
+  "latestEvidenceDirectory": "direct-load-e2e-20261022-8453750f71d8",
+  "summary": {
+    "records": 34,
+    "passed": 31,
+    "blocked": 3,
+    "failed": 0,
+    "unauthenticatedBoundaryPassed": 7,
+    "realDirectLoadTasksSubmitted": 0,
+    "officialObloaderStarted": false,
+    "realImportVerified": false
+  },
+  "userConfirmedTopology": "STANDALONE_REQUIRES_OBSERVER_PATH_REVIEW",
+  "registeredSourceReadiness": {
+    "hasCluster": false,
+    "hasTenant": true,
+    "kind": "ODP",
+    "lastTestStatus": "SUCCEEDED"
+  },
+  "records": [
+    {
+      "id": "METADATA",
+      "outcome": "PASS",
+      "definitions": 103
+    },
+    {
+      "id": "LIST",
+      "outcome": "PASS",
+      "executionEnabled": false
+    },
+    {
+      "id": "CSRF_REQUIRED",
+      "outcome": "PASS",
+      "status": 401
+    },
+    {
+      "id": "UNKNOWN_OBJECT_HIDDEN",
+      "outcome": "PASS",
+      "status": 404
+    },
+    {
+      "id": "CLOUD_REJECTED",
+      "outcome": "PASS",
+      "status": 404,
+      "code": "NOT_FOUND"
+    },
+    {
+      "id": "OBSERVER_SOURCE_MISMATCH",
+      "outcome": "PASS",
+      "status": 404,
+      "code": "NOT_FOUND"
+    },
+    {
+      "id": "SQL_REJECTED",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "PARQUET_REJECTED",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "ORC_REJECTED",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "RPC_RANGE",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "RPC_TYPE",
+      "outcome": "PASS",
+      "status": 400,
+      "code": "REQUEST_INVALID"
+    },
+    {
+      "id": "UNKNOWN_FIELD",
+      "outcome": "PASS",
+      "status": 400,
+      "code": "REQUEST_INVALID"
+    },
+    {
+      "id": "THREAD_TYPE",
+      "outcome": "PASS",
+      "status": 400,
+      "code": "REQUEST_INVALID"
+    },
+    {
+      "id": "THREAD_RANGE",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "PARALLEL_RANGE",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "TABLE_INJECTION",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID"
+    },
+    {
+      "id": "COMPLETE_CONFIG_SOURCE_BINDING",
+      "outcome": "BLOCKED",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID",
+      "reason": "REGISTERED_ODP_CLUSTER_OR_TENANT_MISSING"
+    },
+    {
+      "id": "CREATE_READ",
+      "outcome": "PASS"
+    },
+    {
+      "id": "CREATE_IDEMPOTENT",
+      "outcome": "PASS"
+    },
+    {
+      "id": "IDEMPOTENCY_CONFLICT",
+      "outcome": "PASS",
+      "status": 409,
+      "code": "IDEMPOTENCY_CONFLICT"
+    },
+    {
+      "id": "REVISION_REQUIRED",
+      "outcome": "PASS",
+      "status": 428
+    },
+    {
+      "id": "REVISION_STALE",
+      "outcome": "PASS",
+      "status": 412
+    },
+    {
+      "id": "PREVIEW",
+      "outcome": "BLOCKED",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID",
+      "reason": "REGISTERED_ODP_CLUSTER_OR_TENANT_MISSING"
+    },
+    {
+      "id": "PATCH",
+      "outcome": "PASS"
+    },
+    {
+      "id": "FIXTURE_CREATE",
+      "outcome": "PASS",
+      "ownerVerified": true
+    },
+    {
+      "id": "FILE_DISCOVERY_API",
+      "outcome": "PASS",
+      "status": "SUCCEEDED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "DIRECT_LOAD_VERIFIED"
+        }
+      ],
+      "inputFiles": 1
+    },
+    {
+      "id": "FILES_SHARDS",
+      "outcome": "PASS",
+      "status": "SUCCEEDED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "DIRECT_LOAD_VERIFIED"
+        }
+      ],
+      "inputFiles": 2
+    },
+    {
+      "id": "FILES_SINGLE_FILE",
+      "outcome": "PASS",
+      "status": "SUCCEEDED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "PASSED",
+          "evidenceCode": "DIRECT_LOAD_VERIFIED"
+        }
+      ],
+      "inputFiles": 1
+    },
+    {
+      "id": "FILES_MULTI_TABLE_REJECTED",
+      "outcome": "PASS",
+      "status": "FAILED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "FAILED",
+          "evidenceCode": "DIRECT_LOAD_REJECTED"
+        }
+      ],
+      "inputFiles": null
+    },
+    {
+      "id": "FILES_EMPTY_REJECTED",
+      "outcome": "PASS",
+      "status": "FAILED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "FAILED",
+          "evidenceCode": "DIRECT_LOAD_REJECTED"
+        }
+      ],
+      "inputFiles": null
+    },
+    {
+      "id": "FILES_MISSING_REJECTED",
+      "outcome": "PASS",
+      "status": "FAILED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "FAILED",
+          "evidenceCode": "DIRECT_LOAD_REJECTED"
+        }
+      ],
+      "inputFiles": null
+    },
+    {
+      "id": "FILES_OUTSIDE_ROOT_REJECTED",
+      "outcome": "PASS",
+      "status": "FAILED",
+      "results": [
+        {
+          "check": "INPUT_FILES",
+          "status": "FAILED",
+          "evidenceCode": "DIRECT_LOAD_REJECTED"
+        }
+      ],
+      "inputFiles": null
+    },
+    {
+      "id": "PREFLIGHT_API",
+      "outcome": "BLOCKED",
+      "status": 422,
+      "code": "DIRECT_LOAD_CONFIG_INVALID",
+      "reason": "COMPLETE_CONFIGURATION_UNAVAILABLE"
+    },
+    {
+      "id": "UNPROVEN_SUBMISSION_REJECTED",
+      "outcome": "PASS",
+      "status": 422,
+      "code": "DIRECT_LOAD_EXECUTION_GATED"
+    }
+  ],
+  "closeout": {
+    "ownedDraftsRemaining": 0,
+    "totalDirectLoadTasks": 0,
+    "nonTerminalExecutions": 0,
+    "latestAgent": {
+      "status": "ACTIVE",
+      "heartbeat": "2026-10-22T01:26:22.6756351Z",
+      "capacityUsed": 0
+    },
+    "inputAbsent": true,
+    "rowsAndDDLUnchanged": true,
+    "controlPlane": {
+      "realExecutionEnabled": true,
+      "directLoadProbeEnabled": false,
+      "directLoadExecutionEnabled": false
+    },
+    "agent": {
+      "realExecutionEnabled": true,
+      "directLoadProbeEnabled": false,
+      "directLoadExecutionEnabled": false
+    }
+  },
+  "secretAudit": {
+    "status": "AUDITED",
+    "files": 16,
+    "adminSecretOrEncodingPresent": false,
+    "dataSourceSecretOrEncodingPresent": false
+  },
+  "limitations": [
+    "SOURCE_API_ODP_ONLY_CONFLICTS_WITH_DIRECT_LOAD_OBSERVER_SCENARIO",
+    "TENANT_IDENTITY_AND_TOOL_PARAMETER_MAPPING_REQUIRE_REVIEW",
+    "FIXED_TOOL_4_3_5_WITH_OBSERVER_4_4_2_3_NOT_VALIDATED",
+    "DIRECT_LOAD_PROBE_AND_EXECUTION_DISABLED"
+  ]
+}

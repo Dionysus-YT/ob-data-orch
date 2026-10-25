@@ -12,12 +12,21 @@ import (
 	"ob-data-orch/internal/store"
 )
 
-// listExportDrafts 固定为当前主体所有的未提交草稿，不接受全部账号或其他主体筛选。
+// listExportDrafts 按路径限定导出或两类草稿；固定当前主体的未提交记录，不接受跨主体筛选。
 func (s *Server) listExportDrafts(w http.ResponseWriter, r *http.Request, principal identity.Principal) {
-	reader, ok := s.drafts.(interface {
+	var read func(context.Context, store.TaskDraftListQuery) ([]store.TaskDraftListItem, int, error)
+	if r.URL.Path == "/api/v1/task-drafts" {
+		if reader, ok := s.drafts.(interface {
+			ListOwnedTaskDrafts(context.Context, store.TaskDraftListQuery) ([]store.TaskDraftListItem, int, error)
+		}); ok {
+			read = reader.ListOwnedTaskDrafts
+		}
+	} else if reader, ok := s.drafts.(interface {
 		ListOwnedExportDrafts(context.Context, store.ExportDraftListQuery) ([]store.ExportDraftListItem, int, error)
-	})
-	if !ok {
+	}); ok {
+		read = reader.ListOwnedExportDrafts
+	}
+	if read == nil {
 		writeError(w, 503, "EXPORT_DRAFT_QUERY_UNAVAILABLE", "草稿列表暂时不可读取", false)
 		return
 	}
@@ -34,7 +43,7 @@ func (s *Server) listExportDrafts(w http.ResponseWriter, r *http.Request, princi
 		return
 	}
 	query := store.ExportDraftListQuery{SubjectID: principal.ID, Keyword: keyword, Limit: limit}
-	binding := fmt.Sprintf("%s|export-drafts|%d|%s", principal.ID, limit, keyword)
+	binding := fmt.Sprintf("%s|%s|%d|%s", principal.ID, r.URL.Path, limit, keyword)
 	if value := r.URL.Query().Get("cursor"); value != "" {
 		position, valid := decodeTaskListCursor(value, binding)
 		if !valid {
@@ -43,7 +52,7 @@ func (s *Server) listExportDrafts(w http.ResponseWriter, r *http.Request, princi
 		}
 		query.BeforeUpdated, query.BeforeID = position.BeforeSubmitted, position.BeforeTaskID
 	}
-	items, total, err := reader.ListOwnedExportDrafts(r.Context(), query)
+	items, total, err := read(r.Context(), query)
 	if err != nil {
 		writeError(w, 503, "EXPORT_DRAFT_QUERY_UNAVAILABLE", "草稿列表暂时不可读取", true)
 		return

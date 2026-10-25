@@ -7,12 +7,18 @@ function check() { return { id: 'check', draftId: 'draft', draftRevision: 1, con
 function apiWith(value: Record<string, unknown>) { const read = vi.fn(async () => value), write = vi.fn(async () => value); return { api: createNormalImportApi({ read, write }), read, write } }
 
 describe('普通导入独立 API 解码与请求', () => {
+  it('控制文件摘要保留冻结绑定且拒绝无效摘要', async () => {
+    const value = check()
+    const withControl = { ...value, inputManifest: { ...value.inputManifest, controlDigest: 'd'.repeat(64) } }
+    expect((await apiWith(withControl).api.getNormalImportCheck('check')).inputManifest?.controlDigest).toBe('d'.repeat(64))
+    await expect(apiWith({ ...withControl, inputManifest: { ...withControl.inputManifest, controlDigest: 'invalid' } }).api.getNormalImportCheck('check')).rejects.toThrow('普通导入响应无效')
+  })
   it('逐表权限与映射细化原因均不能提升为通过', async () => {
     const cases = [
       ['NODE_RESOURCE', 'FAILED', ['IMPORT_JVM_HEAP_TOO_SMALL']],
       ['WRITE_ACCESS', 'FAILED', ['IMPORT_WRITE_INSERT_REQUIRED', 'IMPORT_WRITE_UPDATE_REQUIRED', 'IMPORT_WRITE_DELETE_REQUIRED', 'IMPORT_WRITE_CREATE_REQUIRED', 'IMPORT_WRITE_ALTER_REQUIRED', 'IMPORT_WRITE_DROP_REQUIRED']],
       ['WRITE_ACCESS', 'UNKNOWN', ['IMPORT_WRITE_GRANTS_UNAVAILABLE', 'IMPORT_WRITE_GRANTS_UNSUPPORTED', 'IMPORT_WRITE_DDL_UNSUPPORTED', 'IMPORT_WRITE_INPUT_UNAVAILABLE', 'IMPORT_WRITE_SCHEMA_UNAVAILABLE', 'IMPORT_WRITE_CLEANUP_SCOPE_UNAVAILABLE']],
-      ['INPUT_MAPPING', 'FAILED', ['IMPORT_COLUMN_COUNT_MISMATCH', 'IMPORT_COLUMN_NAME_MISMATCH', 'IMPORT_REQUIRED_COLUMN_MISSING']],
+      ['INPUT_MAPPING', 'FAILED', ['IMPORT_COLUMN_COUNT_MISMATCH', 'IMPORT_COLUMN_NAME_MISMATCH', 'IMPORT_REQUIRED_COLUMN_MISSING', 'IMPORT_CSV_WHITESPACE_UNQUOTED']],
       ['INPUT_MAPPING', 'UNKNOWN', ['IMPORT_TARGET_METADATA_UNAVAILABLE', 'IMPORT_TARGET_STRUCTURE_MISSING', 'IMPORT_INPUT_DEFINITION_UNSUPPORTED', 'IMPORT_AUTO_COLUMNS_UNSUPPORTED', 'IMPORT_INPUT_FILES_CHANGED']],
     ] as const
     for (const [name, status, codes] of cases) for (const evidenceCode of codes) {
@@ -52,6 +58,15 @@ describe('普通导入独立 API 解码与请求', () => {
     expect(saved.write.mock.calls[0]).toEqual(['/api/v1/normal-import-drafts', { configVersion: 'normal-import-v1', config: config() }])
     expect(saved.write.mock.calls[1]).toEqual(['/api/v1/normal-import-drafts/draft', { configVersion: 'normal-import-v1', config: config() }, 1, 'PATCH'])
     const files = apiWith(check()); expect((await files.api.getNormalImportCheck('check')).inputManifest?.files[0]?.modified).toBe('1790000000000000000')
+  })
+  it('兼容版本响应只接纳官方枚举并保留未选择的旧草稿', async () => {
+    for (const compatMysqlVersion of ['mysql56', 'mysql57', 'mysql80'] as const) {
+      const value = { ...draft(), config: { ...config(), content: 'DDL_ONLY', compatMysql: true, compatMysqlVersion } }
+      expect((await apiWith(value).api.getNormalImportDraft('draft')).config.compatMysqlVersion).toBe(compatMysqlVersion)
+    }
+    const legacy = { ...draft(), config: { ...config(), content: 'DDL_ONLY', compatMysql: true } }
+    expect((await apiWith(legacy).api.getNormalImportDraft('draft')).config.compatMysqlVersion).toBeUndefined()
+    await expect(apiWith({ ...legacy, config: { ...legacy.config, compatMysqlVersion: 'mysql' } }).api.getNormalImportDraft('draft')).rejects.toThrow('普通导入响应无效')
   })
   it('响应中的未知字段、旁路参数、任务连接覆盖和不支持格式失败关闭', async () => {
     for (const foreign of [{ ...config(), direct: true }, { ...config(), sessionConfig: 'synthetic' }, { ...config(), format: 'MIX' }, { ...config(), execution: { parallel: '8' } }, { ...config(), parser: { compress: 'yes' } }]) {

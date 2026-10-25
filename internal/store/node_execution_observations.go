@@ -29,11 +29,11 @@ func (s *Store) ListAuthorizedNodeExecutionBindings(ctx context.Context, nodeID,
         WHERE e.node_id = ? AND e.agent_id = ? AND e.state IN ('STARTING','RUNNING','CANCELLING')
           AND l.lease_epoch = (SELECT MAX(current.lease_epoch) FROM execution_leases current WHERE current.execution_id = e.execution_id)
           AND l.status != 'RELEASED'
-          AND (? = 1 OR t.creator_subject_id = ? OR EXISTS (
+          AND ((? = 1 AND `+managedGlobalTaskRead()+`) OR (t.creator_subject_id = ? AND `+managedTaskOwnerRead("t")+`) OR EXISTS (
               SELECT 1 FROM subject_object_scopes task_scope WHERE task_scope.subject_id = ?
-                AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE' AND task_scope.object_id = t.data_source_id))
+                AND task_scope.scope_type = 'TASK_OPERATE_BY_DATA_SOURCE' AND `+managedTaskOperatorRead("task_scope")+` AND task_scope.object_id = t.data_source_id))
         ORDER BY e.execution_id
-    `, subjectID, nodeID, agentID, globalRead, subjectID, subjectID)
+    `, subjectID, nodeID, agentID, globalRead, subjectID, subjectID, subjectID)
 	if err != nil {
 		return nil, err
 	}

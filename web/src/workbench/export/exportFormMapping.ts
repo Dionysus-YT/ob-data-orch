@@ -4,6 +4,7 @@ import type { ExportCatalog } from './useExportCatalog'
 
 // 回填只还原受控配置；调用方保持 hydration 标记直到 Vue watcher 刷新结束。
 export function populateFormFromDraft(deps: ExportForm & Pick<ExportCatalog, 'candidateObjectNames' | 'candidateObjectKeyword' | 'selectedObjectKeyword'>, draft: ExportDraft) {
+  deps.resetForm()
   const {
     selectedDataSourceID, selectedNodeID, database, scopeKind, objectType, clearSelectedObjects,
     selectedObjectsByType, candidateObjectNames, objectNames, candidateObjectKeyword,
@@ -50,12 +51,15 @@ export function populateFormFromDraft(deps: ExportForm & Pick<ExportCatalog, 'ca
   tmpPath.value = output.tmpPath ?? ''
   if (output.outputKind !== 'LOCAL') {
     outputKind.value = output.outputKind
-    const parsed = parseControlledStorageURI(output.filePath)
+    const parsed = draft.draftState === 'EDITING' && output.storageLocationDraft ? output.storageLocationDraft : parseControlledStorageURI(output.filePath)
     storageBucket.value = parsed.bucket
     storagePath.value = parsed.path
     storageEndpoint.value = parsed.endpoint
     storageRegion.value = parsed.region
     storageCredentialID.value = output.storageCredential?.storageCredentialId ?? ''
+  } else {
+    outputKind.value = 'LOCAL'
+    storageBucket.value = storagePath.value = storageEndpoint.value = storageRegion.value = storageCredentialID.value = ''
   }
   const csv = config.dataFormat?.csvOptions
   if (csv) {

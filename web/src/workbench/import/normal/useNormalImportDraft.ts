@@ -15,6 +15,7 @@ export function useNormalImportDraft(deps: {
   const savedSignature = ref(formSignature.value)
   const draftDirty = computed(() => savedSignature.value !== formSignature.value)
   const draftNeedsRebind = ref(false)
+  const rerunLocked = computed(() => currentDraft.value?.sourceDerivation === 'RERUN_FROM_SCRATCH')
   let disposed = false, epoch = 0, formVersion = 0, bindingVersion = 0
   watch(formSignature, () => { formVersion++; operationNotice.value = '' }, { flush: 'sync' })
 
@@ -41,6 +42,10 @@ export function useNormalImportDraft(deps: {
   }
   async function saveDraft(): Promise<NormalImportDraft | null> {
     if (disposed || loadingDraft.value || savingDraft.value || !deps.input.value.dataSourceId) return null
+    if (rerunLocked.value && currentDraft.value && normalImportConfigSignature(currentDraft.value.config) !== normalImportConfigSignature(deps.input.value)) {
+      draftFailure.value = '从头重新执行保留原配置；如需修改，请从来源任务选择“基于原配置新建”。'
+      return null
+    }
     const request = epoch, version = formVersion, binding = bindingVersion, signature = formSignature.value
     const input: NormalImportConfig = JSON.parse(JSON.stringify(deps.input.value)), previous = currentDraft.value
     savingDraft.value = true; draftFailure.value = ''; operationNotice.value = ''
@@ -48,7 +53,7 @@ export function useNormalImportDraft(deps: {
       const draft = previous ? await deps.api.updateNormalImportDraft(previous, input) : await deps.api.createNormalImportDraft(input)
       if (disposed || request !== epoch) return null
       if (normalImportConfigSignature(draft.config) !== normalImportConfigSignature(input)) throw new Error('草稿活动配置绑定无效')
-      if (previous && (draft.id !== previous.id || draft.revision <= previous.revision)) throw new Error('草稿修订无效')
+      if (previous && (draft.id !== previous.id || draft.revision <= previous.revision || draft.sourceTaskId !== previous.sourceTaskId || draft.sourceDerivation !== previous.sourceDerivation)) throw new Error('草稿修订或来源绑定无效')
       currentDraft.value = draft
       savedSignature.value = signature
       draftNeedsRebind.value = binding !== bindingVersion
@@ -70,6 +75,6 @@ export function useNormalImportDraft(deps: {
     return currentDraft.value && !draftDirty.value && !draftNeedsRebind.value ? currentDraft.value : saveDraft()
   }
   onScopeDispose(() => { disposed = true; resetDraft() })
-  return { currentDraft, loadingDraft, savingDraft, bindingDraftRoute, draftDirty, draftNeedsRebind, draftFailure, draftLoadFailure, operationNotice, formSignature, loadDraft, saveDraft, resetDraft, ensureSaved, invalidateDraftBinding }
+  return { currentDraft, loadingDraft, savingDraft, bindingDraftRoute, draftDirty, draftNeedsRebind, rerunLocked, draftFailure, draftLoadFailure, operationNotice, formSignature, loadDraft, saveDraft, resetDraft, ensureSaved, invalidateDraftBinding }
 }
 export type NormalImportDraftState = ReturnType<typeof useNormalImportDraft>

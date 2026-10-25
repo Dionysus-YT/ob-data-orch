@@ -8,7 +8,7 @@ export function normalImportDraftInput(p: ReturnType<typeof projectNormalImport>
     dataSourceId: p.dataSourceId, nodeId: p.nodeId, database: p.database, filePath: p.filePath,
     fileSuffix: p.fileSuffix, fileEncoding: p.fileEncoding, fileRegex: p.fileRegex, logPath: p.logPath,
     content: p.content, format: p.format, scope: p.scope, objects: p.objects, excludeTables: p.excludeTables,
-    parser: p.parser, mapping: p.mapping, execution: p.execution, compatMysql: p.compatMysql,
+    parser: p.parser, mapping: p.mapping, execution: p.execution, compatMysql: p.compatMysql, compatMysqlVersion: p.compatMysqlVersion,
     replaceData: p.replaceData, replaceObject: p.replaceObject, cleanup: p.cleanup, taskName: p.taskName,
   }
 }
@@ -30,6 +30,7 @@ export function hydrateNormalImport(form: NormalImportForm, config: NormalImport
   const next = initialNormalImportForm()
   for (const key of ['dataSourceId', 'nodeId', 'database', 'filePath', 'fileSuffix', 'fileEncoding', 'fileRegex', 'logPath', 'excludeTables', 'taskName'] as const) next[key] = config[key] ?? ''
   Object.assign(next, { content: config.content, format: config.format ?? '', scope: config.scope, cleanup: config.cleanup, compatMysql: config.compatMysql ?? false, replaceData: config.replaceData ?? false, replaceObject: config.replaceObject ?? false })
+  next.compatMysqlVersion = config.compatMysql ? config.compatMysqlVersion ?? '' : ''
   Object.assign(next.objects, config.objects)
   Object.assign(next.execution, config.execution)
   if (next.format) {

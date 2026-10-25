@@ -1,141 +1,53 @@
 <script setup lang="ts">
-import { ExclamationCircleOutlined } from '@ant-design/icons-vue'
-import { Checkbox as ACheckbox, Radio as ARadio, Input as AInput, Button as AButton } from 'ant-design-vue'
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-
+import { nextTick, onBeforeUnmount, reactive, ref, toRef, useId } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { Alert, Button, Checkbox, FormItem, Input, Tag } from 'ant-design-vue'
+import { browserApi } from '@/api/browser'
+import { useOperationMessage } from '@/composables/useOperationMessage'
+import { useLogoutGuard } from '@/composables/useLogoutGuard'
 import WizardFrame from '@/components/WizardFrame.vue'
+import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
+import { useDirectLoadWizard } from '@/workbench/import/direct-load/useDirectLoadWizard'
+import DirectLoadConfigurationStep from '@/workbench/import/direct-load/steps/DirectLoadConfigurationStep.vue'
+import DirectLoadReviewStep from '@/workbench/import/direct-load/steps/DirectLoadReviewStep.vue'
+import DirectLoadSummary from '@/workbench/import/direct-load/steps/DirectLoadSummary.vue'
+import DirectLoadParameterCatalog from '@/workbench/import/direct-load/components/DirectLoadParameterCatalog.vue'
+import '@/workbench/import/direct-load/directLoadWizard.css'
 
-const route = useRoute()
-const activeStep = computed(() => {
-  const value = Number(route.query.step ?? '1')
-  return Number.isInteger(value) && value >= 1 && value <= 6 ? value : 1
-})
-const titles = ['适用条件', '连接与版本', '单表文件', '表与格式', '执行参数', '预检查与命令']
+const requests = new AbortController(), route = useRoute(), fieldPrefix = useId()
+const wizard = reactive(useDirectLoadWizard({ api: browserApi(requests.signal), route, router: useRouter() }))
+const { MessageContext } = useOperationMessage([{ content: toRef(wizard, 'operationNotice') }, { content: toRef(wizard, 'copyNotice') }])
+const frame = ref<InstanceType<typeof WizardFrame>>(), catalogOpen = ref(false), confirmLeave = ref(false)
+let resolveLeave: ((leave: boolean) => void) | undefined
+function guardLeave() { if (!wizard.draftDirty) return true; resolveLeave?.(false); confirmLeave.value = true; return new Promise<boolean>(resolve => { resolveLeave = resolve }) }
+function finishLeave(leave: boolean) { confirmLeave.value = false; const resolve = resolveLeave; resolveLeave = undefined; resolve?.(leave) }
+const logoutCommitted = useLogoutGuard(guardLeave)
+function beforeUnload(event: BeforeUnloadEvent) { if (wizard.draftDirty && !logoutCommitted.value) { event.preventDefault(); event.returnValue = '' } }
+onBeforeRouteLeave(guardLeave)
+onBeforeRouteUpdate((to, from) => !(wizard.bindingDraftRoute && to.query.draft === wizard.currentDraft?.id) && to.query.draft !== from.query.draft ? guardLeave() : true)
+window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => { requests.abort(); finishLeave(false); window.removeEventListener('beforeunload', beforeUnload) })
+async function advance() { wizard.nextStep(); await nextTick(); const root = frame.value?.$el as HTMLElement | undefined; const error = root?.querySelector<HTMLElement>('.ant-form-item-has-error'); if (error && !requests.signal.aborted) { error.scrollIntoView({ block: 'center' }); error.querySelector<HTMLElement>('input:not([disabled]),button')?.focus({ preventScroll: true }) } }
 </script>
 
 <template>
-  <section class="page-heading">
-    <div>
-      <h1>新建旁路导入任务</h1>
-      <p>OBLOADER 旁路导入是独立流程：只承载单目标表的数据批量写入，SQL 与 RPC 分别校验，且不支持检查点继续。</p>
-    </div>
-    <span class="draft-status">草稿尚未创建</span>
-  </section>
-  <WizardFrame kind="direct" :active-step="activeStep">
+  <MessageContext />
+  <section class="page-heading"><div><h1>新建旁路导入任务</h1><p>单表整体提交；SQL/RPC、版本、文件与结构分别核验，失败只能从头执行。</p></div><Tag :color="wizard.draftDirty ? 'warning' : wizard.currentDraft ? 'success' : 'default'">{{ wizard.draftDirty ? '草稿有未保存更改' : wizard.currentDraft ? '草稿已保存' : '草稿尚未创建' }}</Tag></section>
+  <WizardFrame ref="frame" kind="direct" :step-titles="wizard.titles" :active-step="wizard.activeStep" :progress-percent="wizard.stepProgressPercent" :completed-steps="wizard.completedSteps" :navigation-locked="wizard.rerunLocked" @step-change="wizard.moveToStep">
+    <template #actions><Button @click="catalogOpen = true">全部参数</Button><Button :loading="wizard.savingDraft" :disabled="wizard.rerunLocked || !wizard.selectedSource || wizard.loadingDraft || !!wizard.draftLoadFailure || wizard.busy" @click="wizard.saveDraft">保存草稿</Button></template>
     <template #default>
-      <section v-if="activeStep === 1" class="form-section">
-        <h2>确认旁路导入适用条件</h2>
-        <p>旁路导入不是普通导入的高级开关。只有明确适合大批量、唯一目标表写入的任务，才进入后续配置。</p>
-        <div class="option-grid three form-line">
-          <label class="option-card selected"><ACheckbox checked />大批量单目标表<span>本任务只写入一个目标表，不承载对象定义或多表导入。</span></label>
-          <label class="option-card selected"><ACheckbox checked />同表文件分片<span>多个输入文件只能是同一目标表的数据分片。</span></label>
-          <label class="option-card selected"><ACheckbox checked />接受整体提交<span>表级整体提交；失败后只能从头重新执行。</span></label>
-        </div>
-        <section class="context-note form-line"><span><ExclamationCircleOutlined class="product-icon" aria-hidden="true" /></span><span>旁路导入通过 RPC 传输数据，并受目标表索引和结构限制约束；不提供断点续传、错误阈值或任务级重试。</span></section>
-      </section>
-
-      <section v-else-if="activeStep === 2" class="form-section">
-        <h2>数据源、连接场景与版本</h2>
-        <div class="section-block">
-          <h3>连接场景</h3>
-          <div class="option-grid three">
-            <label class="option-card selected"><ARadio checked name="scenario" />OceanBase Cloud + Cloud ODP<span>SQL 连接与云上旁路端口分别确认。</span></label>
-            <label class="option-card"><ARadio name="scenario" />私有 OceanBase + 私有 ODP<span>ODP SQL 端口与 RPC 监听端口分开校验。</span></label>
-            <label class="option-card"><ARadio name="scenario" />私有 OceanBase + OBServer<span>直连时须额外确认跨机事务风险。</span></label>
-          </div>
-        </div>
-        <div class="section-block">
-          <h3>SQL 与 RPC 连接</h3>
-          <div class="parameter-list">
-            <div><strong>SQL 连接</strong><span>从已有数据源只读获取；不在向导中编辑凭据。</span><AInput disabled placeholder="功能接入后显示数据源摘要" /></div>
-            <div><strong>RPC 地址与端口 <b>*</b></strong><span>来源必须可追溯：数据源、节点、安全查询或授权输入。</span><AInput placeholder="功能接入后按来源填写" /></div>
-          </div>
-          <p class="section-hint">RPC 地址和端口必须单独验证，不能直接沿用 SQL 地址或端口。</p>
-        </div>
-        <div class="section-block">
-          <h3>版本矩阵</h3>
-          <div class="placeholder-control short"><span>预检查将核对 OBLOADER、OBServer 与 ODP 的实际版本组合；未执行前不展示“已通过”。</span></div>
-        </div>
-      </section>
-
-      <section v-else-if="activeStep === 3" class="form-section">
-        <h2>单表数据文件</h2>
-        <div class="section-block">
-          <h3>输入位置</h3>
-          <div class="radio-row"><label><ARadio checked name="file-source" />执行节点本地绝对路径</label><label><ARadio disabled name="file-source" />远程存储（待官方参数映射确认）</label></div>
-          <label class="field-label wide-label">文件或目录路径 <b>*</b><AInput aria-label="文件或目录路径 *" placeholder="由执行节点读取的完整绝对路径" /></label>
-          <p class="section-hint">不提供浏览器上传、任意文件浏览、平台文件管理或跨节点复制。</p>
-        </div>
-        <div class="section-block">
-          <h3>同表分片发现</h3>
-          <div class="placeholder-control short"><span>功能接入后由执行节点确认路径可读、文件集合、后缀和总量；不读取业务内容进行字段推断。</span></div>
-          <p class="section-hint">目录、文件后缀和第三方文件模式仅在对应官方条件满足时显示。</p>
-        </div>
-      </section>
-
-      <section v-else-if="activeStep === 4" class="form-section">
-        <h2>唯一目标表、格式与结构</h2>
-        <div class="section-block">
-          <h3>目标表</h3>
-          <label class="field-label wide-label">数据库与唯一目标表 <b>*</b><AInput aria-label="数据库与唯一目标表 *" placeholder="功能接入后从已授权数据源读取并选择" /></label>
-          <p class="section-hint">目标表是否为空将派生全量或增量旁路模式；不提供手工切换。DDL、MIX、全部对象和多表均不进入旁路导入。</p>
-        </div>
-        <div class="section-block">
-          <h3>文件格式</h3>
-          <div class="format-grid">
-            <label class="format-card selected"><ARadio checked name="format" />CSV<span>三种已确认连接场景均可作为旁路格式。</span></label>
-            <label class="format-card pending"><ARadio disabled name="format" />Parquet<span>待官方参数映射确认</span></label>
-            <label class="format-card pending"><ARadio disabled name="format" />ORC<span>待官方参数映射确认</span></label>
-          </div>
-          <p class="section-hint">格式可用性由“格式 + 连接场景”共同决定，普通导入支持不自动等于旁路支持。</p>
-        </div>
-        <div class="section-block">
-          <h3>结构限制</h3>
-          <div class="placeholder-control short"><span>预检查将核对列结构、唯一索引冲突和当前格式的旁路适用证据；不在此页面假设结构可用。</span></div>
-        </div>
-      </section>
-
-      <section v-else-if="activeStep === 5" class="form-section">
-        <h2>执行参数与 Direct Load 配置</h2>
-        <div class="parameter-list">
-          <div><strong>旁路标识</strong><span><code>--direct</code> 由旁路流程固定派生，不能关闭。</span><AInput disabled value="系统固定生成" /></div>
-          <div><strong>客户端并发 thread</strong><span>客户端连接服务端连接池；与 parallel 分开配置。</span><AInput disabled placeholder="沿用官方默认" /></div>
-          <div><strong>服务端并发 parallel</strong><span>OBServer 写入与排序线程；不自动与 thread 联动。</span><AInput disabled placeholder="沿用官方默认" /></div>
-          <div><strong>执行节点配置</strong><span>session.config.json 与节点工具事实仅只读展示。</span><AInput disabled placeholder="尚未选择执行节点" /></div>
-        </div>
-        <section class="context-note form-line"><span><ExclamationCircleOutlined class="product-icon" aria-hidden="true" /></span><span>并发值由预检查结合实际节点与目标表事实评估；页面不会给出伪精确推荐，也不会自动改写任一参数。</span></section>
-        <details class="parameter-fold"><summary>高级配置 <span>已确认的文件解析、日志与并发参数按条件显示</span></summary><p>例如 CSV 列分隔符、文件后缀、第三方文件模式和日志目录；未确认旁路适用性的参数保持“待官方参数映射确认”。</p></details>
-        <details class="parameter-fold"><summary>专家配置 <span>103 个 OBLOADER 参数均有适用状态，不适用项不生成</span></summary><p>普通导入专属的 <code>--retry</code>、<code>--max-errors</code>、<code>--max-discards</code>、<code>--ddl</code>、<code>--all</code> 不在旁路任务中出现。</p></details>
-      </section>
-
-      <section v-else class="form-section">
-        <h2>预检查、完整命令与风险确认</h2>
-        <section class="precheck-list">
-          <h3>预检查结果</h3>
-          <div v-for="item in ['适用条件与整体提交', 'SQL 与 RPC 连接', '版本矩阵与节点工具', '文件集合与唯一目标表', '格式与结构限制', 'Direct Load 参数约束', '最终风险确认']" :key="item" class="precheck-item"><span class="status-dot neutral" /><strong>{{ item }}</strong><span>尚未执行；当前页面不会把未知事实显示为通过。</span></div>
-        </section>
-        <section class="command-empty">
-          <div><h3>旁路导入执行命令（只读）</h3><AButton disabled>复制脱敏命令</AButton></div>
-          <pre><code>完成旁路配置和 Agent 预检查后，由控制面生成只读、脱敏的 OBLOADER 命令。</code></pre>
-          <p>命令只包含已确认的旁路适用参数，并绑定当前预检查和不可变任务快照。</p>
-        </section>
-        <section class="context-note form-line"><span><ExclamationCircleOutlined class="product-icon" aria-hidden="true" /></span><span>旁路失败不提供“从检查点继续”或“从失败点继续”；后续只能基于原配置新建任务并从头执行。</span></section>
-      </section>
+      <Alert v-if="wizard.invalidDraftLink" type="error" show-icon message="旁路导入草稿链接无效，请重新打开。" />
+      <Alert v-if="wizard.draftFailure" type="error" show-icon :message="wizard.draftFailure"><template v-if="wizard.draftLoadFailure" #action><Button type="link" @click="wizard.retryDraft">重试</Button></template></Alert>
+      <Alert v-if="wizard.loadingDraft" type="info" show-icon message="正在读取旁路导入草稿…" />
+      <Alert v-if="wizard.rerunLocked" type="info" show-icon message="从头重新执行保留原配置，并重新完成所有检查。" />
+      <template v-if="!wizard.loadingDraft && !wizard.draftLoadFailure && !wizard.invalidDraftLink"><DirectLoadConfigurationStep v-if="wizard.activeStep < wizard.reviewStep" :model="wizard" :field-prefix="fieldPrefix" /><DirectLoadReviewStep v-else :model="wizard" /></template>
     </template>
-
-    <template #summary>
-      <h2>配置总览</h2>
-      <dl class="summary-definition">
-        <div><dt>当前步骤</dt><dd>{{ titles[activeStep - 1] }}</dd></div>
-        <div><dt>适用条件</dt><dd>尚未确认</dd></div>
-        <div><dt>数据源 / RPC</dt><dd>尚未配置</dd></div>
-        <div><dt>文件集合</dt><dd>尚未配置</dd></div>
-        <div><dt>唯一目标表</dt><dd>尚未选择</dd></div>
-        <div><dt>格式与执行参数</dt><dd>尚未配置</dd></div>
-        <div><dt>预检查</dt><dd>尚未执行</dd></div>
-      </dl>
-      <p class="aside-note">旁路导入使用 SQL 与 RPC 双连接，表级整体提交。失败后仅支持从头执行或基于原配置新建。</p>
-    </template>
+    <template #summary><DirectLoadSummary :model="wizard" /></template>
+    <template #footer><footer class="wizard-footer"><Button :disabled="wizard.activeStep === 1 || wizard.rerunLocked || wizard.navigating" @click="wizard.previousStep">上一步</Button><span class="wizard-baseline-note">{{ wizard.activeStep < wizard.reviewStep ? '当前仅校验输入；完整预检查在第 5 步进行。' : '必须通过完整预检查与独立执行门禁后才能提交。' }}</span><span class="footer-grow" /><Button v-if="wizard.activeStep < wizard.reviewStep" type="primary" :disabled="wizard.loadingDraft || !!wizard.draftLoadFailure || wizard.invalidDraftLink || wizard.loadingSources && wizard.activeStep === 1 || wizard.loadingNodes && wizard.activeStep === 3" :loading="wizard.navigating" @click="advance">下一步：{{ wizard.titles[wizard.activeStep] }}</Button><div v-else class="footer-actions"><Button :disabled="!wizard.canReview" :loading="wizard.checking || wizard.previewing" @click="wizard.prepareReview()">重新预检查</Button><Button type="primary" :disabled="!wizard.canSubmit" :loading="wizard.submitting" @click="wizard.openSubmit">提交并启动旁路导入</Button></div></footer></template>
   </WizardFrame>
+  <DirectLoadParameterCatalog :open="catalogOpen" :model="wizard" @close="catalogOpen = false" @locate="wizard.moveToStep" />
+  <OrchDangerConfirm :open="wizard.applicabilityConfirmationOpen" title="确认旁路导入适用条件" confirm-label="已了解，继续配置" cancel-label="返回配置" @cancel="wizard.cancelApplicabilityConfirmation" @confirm="wizard.confirmApplicability"><p>继续配置前，请了解以下边界：</p><ul><li>仅导入一个明确目标表，同表可以有多个文件分片。</li><li>按表粒度整体提交，不能按普通会话或事务解释。</li><li>失败需从头执行，不支持检查点继续或任务级重试。</li><li>RPC、版本与表结构仍须预检查；BIT/二进制类型、虚拟生成列、索引及 LOB 存在适用限制。</li></ul><p>本次确认只记录已了解适用边界；最终提交仍须核对实际目标、结构证据和当前风险。</p></OrchDangerConfirm>
+  <OrchDangerConfirm :open="confirmLeave" title="离开旁路导入配置？" confirm-label="放弃配置并离开" cancel-label="继续配置" @cancel="finishLeave(false)" @confirm="finishLeave(true)"><p>当前未保存输入将丢失。页面内步骤切换保留输入。</p></OrchDangerConfirm>
+  <OrchDangerConfirm :open="wizard.pendingSourceId !== null" title="更换目标数据源？" confirm-label="更换并清除关联配置" cancel-label="保留当前配置" @cancel="wizard.cancelSourceChange" @confirm="wizard.confirmSourceChange"><p>将回填新数据源默认数据库，清除目标表与高风险数据行为，撤销旧命令、检查及风险确认。</p></OrchDangerConfirm>
+  <OrchDangerConfirm :open="wizard.confirmSubmit" title="确认提交旁路导入" confirm-label="确认整体提交并启动" cancel-label="返回检查" :busy="wizard.submitting" @cancel="wizard.closeSubmit" @confirm="wizard.submitTask"><p>目标：{{ wizard.selectedSource?.displayName }} / {{ wizard.form.database }} / {{ wizard.form.table }}；节点：{{ wizard.selectedNode?.displayName }}。</p><FormItem label="任务名称" required :validate-status="wizard.nameError ? 'error' : undefined" :help="wizard.nameError"><Input v-model:value="wizard.taskName" :disabled="wizard.submissionUncertain || wizard.submitting" :maxlength="128" aria-label="任务名称" /></FormItem><Checkbox v-model:checked="wizard.riskAccepted">已确认单表整体提交、失败从头执行、结构与唯一索引限制、资源影响{{ wizard.form.truncateTable ? '、清空原数据' : '' }}{{ wizard.form.scenario === 'OBSERVER_DIRECT' ? '、直连跨机事务风险' : '' }}。</Checkbox><Alert v-if="!wizard.riskAccepted" type="warning" show-icon message="必须确认以上实际范围的风险后才能提交。" /></OrchDangerConfirm>
 </template>

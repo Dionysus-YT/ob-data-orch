@@ -49,6 +49,8 @@ CPU/内存来自授权列表；磁盘通过既有详情 GET 补读，三个并�
 
 维护入口见[节点索引](../../web/src/workbench/nodes/README.md)。浏览器覆盖真实页面、离线与未知状态、320/640/1280/1440/1920 布局、200% 缩放及圆环悬停/聚焦；所有数据均为合成夹具。
 
+2026-10-19 规范校准：`NodeExecutionQuota.vue` 的现役 SVG 分段与只读 Tooltip 聚焦按钮按 [Component Semantics Pattern](../patterns/component-semantics.md#已登记的领域图形例外) 登记，`quota-*` 动态类来自唯一展示规则。此例外只承认已有额度图形及键盘说明，不允许新增自研通用按钮、输入组件或动作行为。
+
 ## 注册与编辑抽屉
 
 2026-10-10 将注册/编辑的独立大表单收敛为 Management / Table 下的右侧 Ant Drawer，按数据源定版规则复用 520px 宽度并限制为视口宽度。保持列表、筛选和刷新间隔的原会话；原有 `/nodes/new`、`/nodes/:id/edit` 路由直接访问同一抽屉。标题固定，正文独立滚动，底栏右对齐取消与保存；不新增 Shell、Token、字段或注册协议。
@@ -85,3 +87,7 @@ CPU/内存来自授权列表；磁盘通过既有详情 GET 补读，三个并�
 登记的工具目录仍为包含 `bin`、`lib`、`conf` 的 4.3.5 安装根目录。Windows 启动文件位于 `<安装根>\bin\windows\obdumper.bat` 和 `obloader.bat`，Linux 位于 `<安装根>/bin/obdumper` 和 `obloader`；不将 `bin/windows` 当成安装根目录，也不自动改写路径。固定环境检查与已有任务预检查共用平台布局规则，错误层级不得判为通过。
 
 实现与唯一状态所有者见[节点维护索引](../../web/src/workbench/nodes/README.md)，实际验证及未安装服务的限制见[最新精简与路径修正记录](../../docs/03-technical/evidence/execution-node-detail-refactor-2026-10-12.md#核心详情精简与平台路径修正)。
+
+## 2026-10-19 任务数据目录命名
+
+原“导出数据目录白名单/导出目录”在注册、编辑、字段错误与详情统一改称“任务数据目录白名单/任务数据目录”。同一 allowedRoots 既约束导出输出，也约束普通导入输入；帮助说明 Agent 账户按用途具备读或写权限。保留平台路径形式、原样传递、目录范围及采集口径，不扩大可读写范围。此条修订上文沿用的旧导出专属称呼。

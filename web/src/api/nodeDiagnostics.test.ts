@@ -29,7 +29,7 @@ describe('执行节点详情诊断边界', () => {
   it('详情接受混合导出与普通导入的近期任务，未知任务类型仍拒绝整份响应', async () => {
     const items = ['OBDUMPER_EXPORT', 'OBLOADER_NORMAL_IMPORT'].map((type, index) => ({ id: `synthetic-task-${index}`, type, state: 'SUCCEEDED', reconciliationRequired: false, submittedAt: time }))
     expect((await read({ recentTasks: { scope: 'ALL', items } })).recentTasks).toEqual({ scope: 'ALL', items })
-    await expect(read({ recentTasks: { scope: 'ALL', items: [{ ...items[0], type: 'OBLOADER_DIRECT_LOAD' }] } })).rejects.toMatchObject({ code: 'RESPONSE_INVALID', message: expect.stringContaining('节点近期任务无法校验：存在当前页面尚未支持的任务类型。') })
+    await expect(read({ recentTasks: { scope: 'ALL', items: [{ ...items[0], type: 'FUTURE_IMPORT' }] } })).rejects.toMatchObject({ code: 'RESPONSE_INVALID', message: expect.stringContaining('节点近期任务无法校验：存在当前页面尚未支持的任务类型。') })
   })
 
   it.each<readonly [string, object, string]>([
@@ -61,7 +61,7 @@ describe('执行节点详情诊断边界', () => {
   })
 
   it('启用响应校验失败保留具体区域，并提示先核对可能已经生效的操作', async () => {
-    const api = createBrowserApi({ fetcher: async () => Response.json({ item: { ...detail, recentTasks: { scope: 'ALL', items: [{ id: 'synthetic-task', type: 'OBLOADER_DIRECT_LOAD', state: 'SUCCEEDED' }] } } }), csrfToken: () => 'synthetic-csrf', idempotencyKey: () => 'synthetic-key' })
+    const api = createBrowserApi({ fetcher: async () => Response.json({ item: { ...detail, recentTasks: { scope: 'ALL', items: [{ id: 'synthetic-task', type: 'FUTURE_IMPORT', state: 'SUCCEEDED' }] } } }), csrfToken: () => 'synthetic-csrf', idempotencyKey: () => 'synthetic-key' })
     await expect(api.enableExecutionNode(detail.id, 1)).rejects.toMatchObject({ code: 'RESPONSE_INVALID', message: expect.stringMatching(/节点近期任务无法校验.*操作可能已经生效.*先刷新节点核对结果/) })
   })
 

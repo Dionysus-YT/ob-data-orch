@@ -1,4 +1,4 @@
-// Package agentexecution 编排已冻结的官方工具信封；导出和普通导入各自复核业务与结果边界。
+// Package agentexecution 编排已冻结的官方工具信封；各任务类型分别复核业务与结果边界。
 // 它不接收浏览器参数、任意命令、任意 SQL 或任意文件操作。
 package agentexecution
 
@@ -20,6 +20,8 @@ import (
 	"ob-data-orch/internal/agentlogqueue"
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/directload"
+	"ob-data-orch/internal/directloadfiles"
 	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/identifier"
 	"ob-data-orch/internal/importdomain"
@@ -131,7 +133,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	if !found {
 		return Outcome{}, false, nil
 	}
-	if !validGrant(grant) || !w.now().Before(grant.ExpiresAt) || (w.TaskType == importdomain.TaskType) != (grant.TaskType == importdomain.TaskType) {
+	if !validGrant(grant) || !w.now().Before(grant.ExpiresAt) || executionTaskType(w.TaskType) != executionTaskType(grant.TaskType) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	w.mu.Lock()
@@ -157,17 +159,20 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 	executionPaths, ok := executionPathsFromArgv(w.Runtime.TargetPlatform, grant.Argv)
 	isImport := grant.TaskType == importdomain.TaskType
+	isDirect := grant.TaskType == directload.TaskType
 	if isImport {
 		executionPaths, ok = w.normalImportPaths(ctx, grant)
+	} else if isDirect {
+		executionPaths, ok = w.directLoadPaths(ctx, grant)
 	}
-	if !ok || (!isImport && !executionPaths.StorageOutput && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots)) ||
-		(!isImport && executionPaths.LogPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.LogPath, w.Runtime.AllowedRoots)) ||
+	if !ok || (!isImport && !isDirect && !executionPaths.StorageOutput && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.OutputPath, w.Runtime.AllowedRoots)) ||
+		(!isImport && !isDirect && executionPaths.LogPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.LogPath, w.Runtime.AllowedRoots)) ||
 		(executionPaths.TmpPath != "" && !withinAllowedRoots(w.Runtime.TargetPlatform, executionPaths.TmpPath, w.Runtime.AllowedRoots)) {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	var localOutputPath string
-	if !isImport && !executionPaths.StorageOutput {
+	if !isImport && !isDirect && !executionPaths.StorageOutput {
 		localOutputPath, ok = outputpath.LocalFilesystemPath(w.Runtime.TargetPlatform, executionPaths.OutputPath)
 		if !ok {
 			_ = w.appendStartRejected(ctx, grant)
@@ -187,7 +192,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
 	defer slot.Destroy()
-	if !validExecutionSysSlot(grant.Argv, slot) || isImport && slot.StorageCredential != nil {
+	if !validExecutionSysSlot(grant.Argv, slot) || (isImport || isDirect) && slot.StorageCredential != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
@@ -236,6 +241,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	tool, parser := "", "direct-java-v1"
 	stdout, stderr := agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 1, ParserVersion: parser}, agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 2, ParserVersion: parser}
 	terminal := &normalImportTerminal{}
+	directTerminal := &directLoadTerminal{}
 	sink := logs.append
 	if isImport {
 		// 解析只接收第一层脱敏后的固定工具管道；日志缺口或未知完成标记不能解锁成功。
@@ -244,6 +250,18 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		stdout.ParserVersion, stderr.ParserVersion = parser, parser
 		sink = func(record logstream.Record) error { terminal.observe(record); return logs.append(record) }
 		if _, valid := w.normalImportPaths(ctx, grant); !valid || !w.now().Before(grant.ExpiresAt) {
+			_ = w.appendStartRejected(ctx, grant)
+			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+		}
+	}
+	if isDirect {
+		tool, parser = "OBLOADER_DIRECT_LOAD", directLoadParserVersion
+		stdout.SourceKind, stderr.SourceKind = logstream.SourceLoaderStdout, logstream.SourceLoaderStderr
+		stdout.ParserVersion, stderr.ParserVersion = parser, parser
+		directTerminal.table = grant.DirectLoad.Config.Table
+		sink = func(record logstream.Record) error { directTerminal.observe(record); return logs.append(record) }
+		// 文件冻结在解析秘密前和启动前分别复核，不能将预检查后的改写默认为原输入。
+		if _, valid := w.directLoadPaths(ctx, grant); !valid || !w.now().Before(grant.ExpiresAt) {
 			_ = w.appendStartRejected(ctx, grant)
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 		}
@@ -288,6 +306,9 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	nextSequence++
 	if isImport {
 		return w.finishNormalImport(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, treeObserved, terminal, logs)
+	}
+	if isDirect {
+		return w.finishDirectLoad(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, directTerminal, logs)
 	}
 	if cancelRequested {
 		if err := w.appendEvent(ctx, grant, nextSequence, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED", "errorCode": agentwire.ExecutionErrorCancelledByRequest}); err != nil {
@@ -440,6 +461,10 @@ func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.Execu
 		case <-renewTicker.C:
 			_ = w.Protocol.RenewExecutionLease(ctx, agentwire.ExecutionLeaseRenewal{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
 		case <-pollTicker.C:
+			// 旁路服务端提交阶段的取消语义尚未核验，不能借共享轮询强杀并承诺回滚。
+			if grant.TaskType == directload.TaskType {
+				continue
+			}
 			if cancelRequested {
 				continue
 			}
@@ -459,7 +484,7 @@ func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.Execu
 }
 
 func (w *Worker) validConfiguration() bool {
-	if w.TaskType != "" && w.TaskType != "OBDUMPER_EXPORT" && w.TaskType != importdomain.TaskType {
+	if w.TaskType != "" && w.TaskType != "OBDUMPER_EXPORT" && w.TaskType != importdomain.TaskType && w.TaskType != directload.TaskType {
 		return false
 	}
 	if w.Protocol == nil || w.Clock == nil || w.BootID == "" || filepath.IsAbs(w.Runtime.JavaPath) == false || filepath.IsAbs(w.Runtime.ToolHome) == false || filepath.IsAbs(w.Runtime.WorkspaceRoot) == false || len(w.Runtime.Environment) == 0 || len(w.Runtime.AllowedRoots) == 0 {
@@ -504,9 +529,18 @@ func validGrant(grant agentwire.ExecutionGrant) bool {
 		return false
 	}
 	if grant.TaskType == importdomain.TaskType {
-		return grant.NormalImport != nil && grant.NormalImport.Manifest.Valid(grant.NormalImport.Config) && executionargv.ValidNormalImport(grant.Argv)
+		return grant.DirectLoad == nil && grant.NormalImport != nil && grant.NormalImport.Manifest.Valid(grant.NormalImport.Config) && executionargv.ValidNormalImport(grant.Argv)
 	}
-	if grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT" {
+	if grant.TaskType == directload.TaskType {
+		if grant.NormalImport != nil || grant.DirectLoad == nil || len(grant.DirectLoad.DirectLoadConfigFingerprint) != 64 || strings.ToLower(grant.DirectLoad.DirectLoadConfigFingerprint) != grant.DirectLoad.DirectLoadConfigFingerprint || grant.DirectLoad.CompatibilityMode != "MYSQL" && grant.DirectLoad.CompatibilityMode != "ORACLE" {
+			return false
+		}
+		if _, err := hex.DecodeString(grant.DirectLoad.DirectLoadConfigFingerprint); err != nil {
+			return false
+		}
+		return directloadfiles.Valid(grant.DirectLoad.Manifest, grant.DirectLoad.Config) && executionargv.MatchesDirectLoad(grant.Argv, grant.DirectLoad.Config)
+	}
+	if grant.DirectLoad != nil || grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT" {
 		return false
 	}
 	_, ok := executionPathArguments(grant.Argv)
@@ -786,6 +820,8 @@ func newLogUploader(ctx context.Context, protocol Protocol, bootID string, grant
 func (u *logUploader) append(record logstream.Record) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	// 只解析已完成第一层脱敏的管道记录；结构化事实随同一可靠批次持久化和重放。
+	record.Progress = logstream.ParseProgress(record)
 	batch := logstream.Batch{StreamID: record.StreamID, SourceEpoch: record.SourceEpoch, FirstSeq: record.SourceSeq, LastSeq: record.SourceSeq, PreviousDigest: u.previous[record.SourceEpoch], PolicyVersion: record.PolicyVersion, Records: []logstream.Record{record}}
 	sealed, err := logstream.SealBatch(batch)
 	if err != nil {

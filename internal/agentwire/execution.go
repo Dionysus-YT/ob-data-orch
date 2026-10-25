@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/directload"
+	"ob-data-orch/internal/directloadfiles"
 	"ob-data-orch/internal/executionargv"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
@@ -28,8 +30,10 @@ type ExecutionClaimNext struct {
 // ExecutionGrant 是服务端签发的不可变导出信封。
 // Argv 只含控制面已冻结的非密码令牌，密码另由当前 execution 租约解析。
 type ExecutionGrant struct {
-	TaskType       string
-	NormalImport   *importfiles.ExecutionInput
+	TaskType     string
+	NormalImport *importfiles.ExecutionInput
+	// DirectLoad 只由显式旁路领取响应提供，与普通导入上下文互斥。
+	DirectLoad     *directloadfiles.ExecutionInput
 	TaskID         string
 	ExecutionID    string
 	LeaseID        string
@@ -264,19 +268,20 @@ type executionLogGapAcceptedPayload struct {
 }
 
 type executionClaimPayload struct {
-	TaskType             string                      `json:"taskType,omitempty"`
-	NormalImport         *importfiles.ExecutionInput `json:"normalImport,omitempty"`
-	TaskID               string                      `json:"taskId"`
-	ExecutionID          string                      `json:"executionId"`
-	LeaseID              string                      `json:"leaseId"`
-	LeaseEpoch           int64                       `json:"leaseEpoch"`
-	ExpiresAt            string                      `json:"expiresAt"`
-	EnvelopeDigest       string                      `json:"envelopeDigest"`
-	Argv                 []string                    `json:"argv"`
-	ToolVersion          string                      `json:"toolVersion"`
-	MetadataVersion      string                      `json:"metadataVersion"`
-	CapabilityVersion    string                      `json:"capabilityVersion"`
-	RealExecutionEnabled *bool                       `json:"realExecutionEnabled"`
+	TaskType             string                          `json:"taskType,omitempty"`
+	NormalImport         *importfiles.ExecutionInput     `json:"normalImport,omitempty"`
+	DirectLoad           *directloadfiles.ExecutionInput `json:"directLoad,omitempty"`
+	TaskID               string                          `json:"taskId"`
+	ExecutionID          string                          `json:"executionId"`
+	LeaseID              string                          `json:"leaseId"`
+	LeaseEpoch           int64                           `json:"leaseEpoch"`
+	ExpiresAt            string                          `json:"expiresAt"`
+	EnvelopeDigest       string                          `json:"envelopeDigest"`
+	Argv                 []string                        `json:"argv"`
+	ToolVersion          string                          `json:"toolVersion"`
+	MetadataVersion      string                          `json:"metadataVersion"`
+	CapabilityVersion    string                          `json:"capabilityVersion"`
+	RealExecutionEnabled *bool                           `json:"realExecutionEnabled"`
 }
 
 type executionSecretPayload struct {
@@ -666,6 +671,10 @@ func (c *httpsClient) claimNextExecution(ctx context.Context, state *identitySta
 		request.PayloadType = "OBLOADER_NORMAL_IMPORT_CLAIM_NEXT"
 		request.Payload.Capability = importdomain.TaskType
 	}
+	if input.TaskType == directload.TaskType {
+		request.PayloadType = "OBLOADER_DIRECT_LOAD_CLAIM_NEXT"
+		request.Payload.Capability = directload.TaskType
+	}
 	body, err := json.Marshal(request)
 	if err != nil {
 		return ExecutionGrant{}, false, ErrProtocolRejected
@@ -698,11 +707,14 @@ func (c *httpsClient) claimNextExecution(ctx context.Context, state *identitySta
 		return ExecutionGrant{}, false, ErrProtocolRejected
 	}
 	grant := ExecutionGrant{TaskID: payload.TaskID, ExecutionID: payload.ExecutionID, LeaseID: payload.LeaseID, LeaseEpoch: payload.LeaseEpoch, ExpiresAt: expiresAt, EnvelopeDigest: payload.EnvelopeDigest, Argv: append([]string(nil), payload.Argv...)}
-	grant.TaskType, grant.NormalImport = payload.TaskType, payload.NormalImport
+	grant.TaskType, grant.NormalImport, grant.DirectLoad = payload.TaskType, payload.NormalImport, payload.DirectLoad
 	if input.TaskType == importdomain.TaskType && (grant.TaskType != importdomain.TaskType || payload.ToolVersion != importdomain.ToolVersion || payload.MetadataVersion != importdomain.MetadataVersion || payload.CapabilityVersion != importdomain.CapabilityVersion) {
 		return ExecutionGrant{}, false, ErrProtocolRejected
 	}
-	if input.TaskType != importdomain.TaskType && (grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT") {
+	if input.TaskType == directload.TaskType && (grant.TaskType != directload.TaskType || payload.ToolVersion != directload.ToolVersion || payload.MetadataVersion != directload.MetadataVersion || payload.CapabilityVersion != directload.CapabilityVersion) {
+		return ExecutionGrant{}, false, ErrProtocolRejected
+	}
+	if input.TaskType != importdomain.TaskType && input.TaskType != directload.TaskType && (grant.NormalImport != nil || grant.DirectLoad != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT") {
 		return ExecutionGrant{}, false, ErrProtocolRejected
 	}
 	if !validExecutionGrant(grant) {
@@ -724,17 +736,21 @@ func (p *executionSecretPayload) destroy() {
 }
 
 func validExecutionClaimNext(input ExecutionClaimNext) bool {
-	return (input.TaskType == "" || input.TaskType == "OBDUMPER_EXPORT" || input.TaskType == importdomain.TaskType) && validOpaqueValue(input.BootID, 256) && !input.SentAt.IsZero()
+	return (input.TaskType == "" || input.TaskType == "OBDUMPER_EXPORT" || input.TaskType == importdomain.TaskType || input.TaskType == directload.TaskType) && validOpaqueValue(input.BootID, 256) && !input.SentAt.IsZero()
 }
 func validExecutionLeaseInput(bootID, executionID, leaseID string, leaseEpoch int64, digest string, sentAt time.Time) bool {
 	return validOpaqueValue(bootID, 256) && validOpaqueValue(executionID, 256) && !strings.ContainsAny(executionID, "/\\?#:") && validOpaqueValue(leaseID, 256) && leaseEpoch > 0 && validExecutionDigest(digest) && !sentAt.IsZero()
 }
 func validExecutionGrant(grant ExecutionGrant) bool {
 	if grant.TaskType == importdomain.TaskType {
-		if grant.NormalImport == nil || !grant.NormalImport.Manifest.Valid(grant.NormalImport.Config) || !executionargv.ValidNormalImport(grant.Argv) {
+		if grant.DirectLoad != nil || grant.NormalImport == nil || !grant.NormalImport.Manifest.Valid(grant.NormalImport.Config) || !executionargv.ValidNormalImport(grant.Argv) {
 			return false
 		}
-	} else if grant.NormalImport != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT" {
+	} else if grant.TaskType == directload.TaskType {
+		if grant.NormalImport != nil || grant.DirectLoad == nil || !validExecutionDigest(grant.DirectLoad.DirectLoadConfigFingerprint) || (grant.DirectLoad.CompatibilityMode != "MYSQL" && grant.DirectLoad.CompatibilityMode != "ORACLE") || !directloadfiles.Valid(grant.DirectLoad.Manifest, grant.DirectLoad.Config) || !executionargv.MatchesDirectLoad(grant.Argv, grant.DirectLoad.Config) {
+			return false
+		}
+	} else if grant.NormalImport != nil || grant.DirectLoad != nil || grant.TaskType != "" && grant.TaskType != "OBDUMPER_EXPORT" {
 		return false
 	}
 	return validExecutionLeaseInput("boot", grant.ExecutionID, grant.LeaseID, grant.LeaseEpoch, grant.EnvelopeDigest, grant.ExpiresAt) && validOpaqueValue(grant.TaskID, 256) && !strings.ContainsAny(grant.TaskID, "/\\?#:") && grant.ExpiresAt.After(time.Now().UTC().Add(-5*time.Minute)) && validExecutionArgv(grant.Argv)

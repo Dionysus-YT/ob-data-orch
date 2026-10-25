@@ -1,5 +1,17 @@
 # 参数元数据与确定性命令生成契约
 
+> 2026-10-24 工具与兼容只读状态使用命令生成器同源的实际目录，区分导出按配置选择、v6/v8 历史重放和普通/旁路固定目录。读取不改变参数资源、生成规则或快照，不宣称全平台单一活动元数据，也不提供目录激活；现役事实与边界见[工具与兼容契约](tool-compatibility-contract.md)。
+
+> 2026-10-22 DEC-058：本地直连数据源使用 canonical `OBSERVER_DIRECT`，控制面从拆分字段生成 SQL `username@tenant` 与独立 `--tenant`；只有 ODP 生成 `--cluster`。唯一生成器及 Agent 冻结 argv 同步要求直连 tenant 非空、cluster 非活动；固定官方 103 项研究目录不改写，仅修正当前本地投影。版本与真实执行结论以[单机验收](evidence/direct-load-standalone-repair-2026-10-22.md)为准，不能沿用下方历史“未执行”描述作为现役状态。
+
+2026-10-20 普通导入真实 API 整改：兼容 DDL 的源 MySQL 版本由活动字段 `compatMysqlVersion` 显式选择，只生成官方 `--compat-mode mysql56/mysql57/mysql80`；旧开关缺版本不开放完整配置或执行。CUT 默认换行在预检查副本中按目标平台解释，不能使用控制面主机默认值或改写冻结 argv。具体边界及证据见[普通导入技术契约](normal-import-contract.md)和[本轮 API 验证](evidence/normal-import-full-parameter-validation-2026-10-20.md)。
+
+> 2026-10-20 普通导入真实整改：`--strict` 是可显式取 true/false 的带值布尔选项，区别于无值 flag。唯一生成器使用 `--strict=<value>` 同令牌写法，false 不省略；普通导入执行白名单和冻结复验同步只接受该表达。配置枚举及参数目录不变，不改写历史已提交 argv。其他无值 flag 仍沿用下文规则。
+
+> 2026-10-20 旁路按 DEC-057 限定本地部署：独立 `direct-load-v1` 配置与官方 103 项研究目录由 `internal/directload` 和唯一生成器承载；活动场景仅私有 ODP / OBServer、格式仅 CSV，页面目录 102 项。写入、探针、生成与执行均复验本地范围，普通导入/导出的参数和通过证据不能进入旁路。未确认或不适用字段直接调用生成器也拒绝，不新增 SQL 文本入口。执行器按独立目录及冻结配置逐值复验 argv，RPC 默认预填 2885 / 2882 且可修改，不从 SQL 端口推测。元数据、历史读取、配置、指纹与快照边界见[旁路技术契约](direct-load-contract.md)，独立探针和执行开关默认关闭，真实 DLV 未执行。
+
+> 2026-10-17 导出草稿阶段补充：v6 `EDITING` 只保存类型化的未完成输入，独立 `export-draft-edit-v1` 内容摘要不属于任何执行能力或命令指纹；不调用生成器、解析凭据或分配租约。本文与历史记录中的完整参数、互斥和探针资格校验适用于 READY 保存及执行准备，编辑状态不能解锁其入口。补齐后同 ID/If-Match 更新重新通过唯一生成器并失效旧检查；历史元数据不改写。未完成对象存储位置也禁止用户信息和密钥查询参数。详细格式见[通用导出契约](export-general-contract.md#2026-10-17-未完成草稿与导入交互同步)。
+
 > 2026-10-16 普通导入 G2：使用独立配置 `normal-import-v1`、元数据 `obloader-4.3.5-normal-v1` 与能力 `import-odp-local-v1`，不继承导出或旁路参数。唯一生成器输出非秘密 argv 与脱敏展示，当前仅本地 CSV/CUT/SQL；输入路径按节点平台原样校验，不套用导出 Hadoop 路径兼容转换。72 条服务端定义与 76 项页面说明的受管差额见[普通导入参数映射](../02-design/normal-import-parameter-mapping.md)，提交及未实现边界见[技术契约](normal-import-contract.md)。
 
 > 文档状态：历史首条纵向切片专项契约；当前 Export v1 以[通用导出技术契约](export-general-contract.md)和[导出模块 Canonical](../02-design/export-module.md)为准

@@ -8,7 +8,7 @@ test('我的草稿保持关键字和游标分页，入口分别进入编辑及�
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   await mockFacts(page)
   const reads: URL[] = []; let deleted = false, writes = 0
-  await page.route('**/api/v1/export-drafts?*', route => { const url = new URL(route.request().url()); reads.push(url); return route.fulfill({ json: { items: deleted ? [] : url.searchParams.has('cursor') ? [draft('second')] : [draft('first'), draft('leased', ['CONTINUE_EDIT', 'SUBMIT'])], totalPages: deleted ? 0 : 2, nextCursor: url.searchParams.has('cursor') || deleted ? null : 'draft-cursor' } }) })
+  await page.route('**/api/v1/task-drafts?*', route => { const url = new URL(route.request().url()); reads.push(url); return route.fulfill({ json: { items: deleted ? [] : url.searchParams.has('cursor') ? [draft('second')] : [draft('first'), draft('leased', ['CONTINUE_EDIT', 'SUBMIT'])], totalPages: deleted ? 0 : 2, nextCursor: url.searchParams.has('cursor') || deleted ? null : 'draft-cursor' } }) })
   await page.route('**/api/v1/export-drafts/first', route => { if (route.request().method() !== 'DELETE') return route.fallback(); writes++; const headers = route.request().headers(); expect(headers['x-csrf-token']).toBe('local-mvp-csrf-v1'); expect(headers['if-match']).toBe('"rev-2"'); expect(headers['idempotency-key']).toBeTruthy(); deleted = true; return route.fulfill({ json: { deleted: true } }) })
   await page.goto('/tasks?tab=drafts')
   await expect(page.getByText('synthetic.first', { exact: true }).first()).toBeVisible()
@@ -27,7 +27,7 @@ test('我的草稿保持关键字和游标分页，入口分别进入编辑及�
 
 test('草稿操作使用已有向导重新读取，不直接提交任务或启动工具', async ({ page }) => {
   await mockFacts(page)
-  await page.route('**/api/v1/export-drafts?*', route => route.fulfill({ json: { items: [draft('editable')], nextCursor: null, totalPages: 1 } }))
+  await page.route('**/api/v1/task-drafts?*', route => route.fulfill({ json: { items: [draft('editable')], nextCursor: null, totalPages: 1 } }))
   await page.goto('/tasks?tab=drafts'); await page.getByRole('button', { name: '继续编辑', exact: true }).click(); await expect(page).toHaveURL(/exports\/new\?draft=editable&step=1/)
   await page.goto('/tasks?tab=drafts'); await page.getByRole('button', { name: 'synthetic.editable 草稿的更多操作' }).click(); await page.getByRole('menuitem', { name: '提交执行', exact: true }).click(); await expect(page).toHaveURL(/exports\/new\?draft=editable&step=5/)
 })
@@ -38,6 +38,6 @@ test('任务操作菜单方向键进入、跳过未准入类型，Escape 关闭�
   await page.goto('/tasks')
   const trigger = page.getByRole('button', { name: '新建任务', exact: true }); await trigger.focus(); await page.keyboard.press('ArrowDown')
   await expect(page.getByRole('menuitem', { name: '导出', exact: true })).toBeFocused()
-  await page.keyboard.press('End'); await expect(page.getByRole('menuitem', { name: '导出', exact: true })).toBeFocused()
+  await page.keyboard.press('End'); await expect(page.getByRole('menuitem', { name: '普通导入', exact: true })).toBeFocused()
   await page.keyboard.press('Escape'); await expect(page.getByRole('menuitem', { name: '导出', exact: true })).toHaveCount(0); await expect(trigger).toBeFocused()
 })

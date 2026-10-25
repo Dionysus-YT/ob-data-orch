@@ -1,4 +1,4 @@
-import { computed, watch, onMounted, onScopeDispose } from 'vue'
+import { computed, watch, onMounted, onScopeDispose, nextTick, ref } from 'vue'
 import type { ExportRuntime } from './exportRuntime'
 import { createExportForm } from './exportForm'
 import { useExportReferences } from './useExportReferences'
@@ -16,6 +16,8 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     return Number.isInteger(value) && value >= 1 && value <= 5 ? value : 1
   })
   const form = createExportForm()
+  const initializing = ref(true)
+  const draftRouteInvalid = computed(() => route.query.draft !== undefined && (typeof route.query.draft !== 'string' || !route.query.draft.trim() || route.query.draft.length > 256 || [...route.query.draft].some(character => character.charCodeAt(0) < 32)))
   const references = useExportReferences({ ...form, ...runtime })
   const parameters = useExportParameters({ ...form, ...references })
   const catalog = useExportCatalog({ ...form, ...references, activeStep, ...runtime })
@@ -29,6 +31,14 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     draftDirty, createDraft } = { ...form, ...references, ...parameters, ...lifecycle,
   }
   const titles = ['选择数据源', '导出内容与对象', '选择数据格式', '执行与输出', '预检查与命令']
+  const validationAttempt = ref(0)
+  // 完成状态只来自本步骤所需的当前配置，不以参数目录导航或访问顺序作为依据。
+  const completedSteps = computed(() => [
+    Boolean(selectedSource.value),
+    Boolean(selectedSource.value && selectedNode.value && !contentInputMessage.value && !objectInputMessage.value && !objectOptionsMessage.value),
+    Boolean(selectedSource.value && ordinaryFormat.value && !formatOptionsMessage.value),
+    Boolean(draftInput.value),
+  ].flatMap((complete, index) => complete && index + 1 < activeStep.value ? [index + 1] : []))
   const footerBaselineNote = computed(() => {
     if (activeStep.value === 5) {
       return canSubmit.value ? '提交后，所选执行节点将启动导出。' : (currentDraft.value ? '当前配置的必需检查通过且结果有效后可提交。' : '请返回第四步保存配置。')
@@ -61,7 +71,7 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   })
 
   const footerLabel = computed(() => {
-    if (activeStep.value === 4) return creatingDraft.value ? '正在保存草稿…' : currentDraft.value ? '保存并进入预检查' : '创建草稿并进入预检查'
+    if (activeStep.value === 4) return '查看预检查与命令'
     if (activeStep.value === 5) {
       if (startingPrecheck.value) return precheckWaitingForResults.value ? '正在读取预检查…' : '正在发起预检查…'
       if (precheckFailure.value && precheckID.value) return '重新读取预检查'
@@ -81,7 +91,12 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     return ''
   })
 
-  watch(activeStep, () => { attemptedStep.value = 0 })
+  watch(activeStep, () => { attemptedStep.value = 0; parameters.cancelSourceChange() })
+
+  function fieldError(field: string) {
+    const result = parameters.draftValidation.value
+    return attemptedStep.value === 4 && !result.valid && result.field === field ? result.message : undefined
+  }
 
   const outputPathPlaceholder = computed(() => selectedNode.value?.platform === 'WINDOWS_AMD64'
     ? '例如 /E:/exports/daily'
@@ -96,8 +111,10 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   }
 
   function nextStep() {
+    if (initializing.value || lifecycle.loadingDraft.value || draftRouteInvalid.value || lifecycle.draftLoadFailure.value) return
     if (!canAdvance.value) {
       attemptedStep.value = activeStep.value
+      validationAttempt.value++
       return
     }
     if (activeStep.value === 4) {
@@ -112,27 +129,54 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   }
 
   onMounted(() => { void initializeWizard() })
-  let disposed = false
+  let disposed = false, sessionGeneration = 0, referencesReady = false
+  let fingerprint: Promise<string>
   onScopeDispose(() => {
-    disposed = true
+    disposed = true; sessionGeneration++
     lifecycle.stopPrecheckPolling()
     catalog.stopCatalogQuery()
     catalog.stopDatabaseCatalogQuery()
   })
   async function initializeWizard() {
-    const fingerprint = recovery.currentSessionFingerprint()
-    await Promise.all([references.loadSources(), references.loadNodeCandidates(), references.loadStorageCredentials()])
-    if (disposed) return
-    const derivedDraftID = typeof route.query.draft === 'string' ? route.query.draft : ''
-    if (derivedDraftID) await lifecycle.loadDerivedDraft(derivedDraftID)
-    else if (!references.sourceLoadFailure.value && !references.nodeLoadFailure.value) {
+    try {
+      fingerprint = recovery.currentSessionFingerprint()
+      await Promise.all([references.loadSources(), references.loadNodeCandidates(), references.loadStorageCredentials()])
+      if (disposed) return
+      referencesReady = true
+      await openDraftSession(false)
+    } finally { if (!disposed) initializing.value = false }
+  }
+
+  // URL 草稿身份变化立即撤销旧事务；自身保存绑定 URL 与步骤切换都保留当前表单。
+  watch(() => route.query.draft, () => {
+    if (lifecycle.bindingDraftRoute.value && route.query.draft === lifecycle.currentDraft.value?.id) return
+    void openDraftSession(true)
+  }, { flush: 'sync' })
+
+  async function openDraftSession(reset: boolean) {
+    const request = ++sessionGeneration
+    if (reset) {
+      parameters.cancelSourceChange()
+      lifecycle.clearDraftState()
+      catalog.stopCatalogQuery(); catalog.stopDatabaseCatalogQuery()
+      form.hydratingDerivedDraft.value = true
+      try { form.resetForm(); await nextTick() }
+      finally { if (!disposed && request === sessionGeneration) form.hydratingDerivedDraft.value = false }
+    }
+    if (disposed || request !== sessionGeneration || !referencesReady || draftRouteInvalid.value) return
+    const id = typeof route.query.draft === 'string' ? route.query.draft : ''
+    if (id) await lifecycle.loadDerivedDraft(id)
+    else if (!reset && !references.sourceLoadFailure.value && !references.nodeLoadFailure.value) {
       const savedDraftID = await recovery.restoreAfterReferences(await fingerprint)
-      if (!disposed && savedDraftID) await lifecycle.loadDerivedDraft(savedDraftID, false)
+      if (!disposed && request === sessionGeneration && savedDraftID) await lifecycle.loadDerivedDraft(savedDraftID, false)
     }
   }
+
+  const draftSessionLoading = computed(() => initializing.value || lifecycle.loadingDraft.value)
+  const canSaveDraft = computed(() => !!references.selectedSource.value && !draftRouteInvalid.value && !draftSessionLoading.value && !lifecycle.creatingDraft.value && !lifecycle.submitting.value && !lifecycle.startingPrecheck.value && !lifecycle.precheckRunning.value && !lifecycle.previewingCommand.value && !lifecycle.draftLoadFailure.value)
   return {
     ...form, ...references, ...parameters, ...catalog, ...lifecycle, ...runtime, activeStep, titles,
-    footerBaselineNote, canAdvance, stepProgressPercent, footerLabel, currentStepError,
+    footerBaselineNote, canAdvance, stepProgressPercent, completedSteps, footerLabel, currentStepError, fieldError, validationAttempt, draftRouteInvalid, draftSessionLoading, canSaveDraft,
     outputPathPlaceholder, moveToStep, previousStep, nextStep,
   }
 }

@@ -86,6 +86,21 @@ Success / Warning / Error 通过 Ant semantic token 消费，页面不得另建�
 | `product.source.editorWidth` | `520px` |
 | `product.inspector.width` | `640px` |
 
+`component.table.headerHeight` 表示管理表格密度；向导预检查结果表的 44px 例外见 [Tables Pattern](../patterns/tables.md)，不覆盖本 Token。
+
+### 环境标记
+
+现役 Ant `environmentTagTheme` 与数据源编辑器直接消费 `product.environment`。2026-10-19 按现有页面校准，以下值作为源文件与生成 CSS 的共同基线，不能从过期的生成 CSS 反向改写主题。
+
+| 环境 | 文字 | 背景 |
+| --- | --- | --- |
+| DEVELOPMENT | `#389e0d` | `#f6ffed` |
+| TEST | `#d48806` | `#fffbe6` |
+| STAGING | `#8a5a00` | `#fff7df` |
+| PRODUCTION | `#b42318` | `#fef2f2` |
+
+环境是业务分类，颜色不表示连接成功、失败或任务资格。生成 CSS 必须与 `tokens.ts` 同源；不得以登记例外放行生成漂移。
+
 ## 5. Ant Theme Mapping
 
 `web/src/platform/theme.ts` 固定消费 token：

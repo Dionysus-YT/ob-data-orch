@@ -30,7 +30,7 @@ export function initialNormalImportForm() {
       maxWaitTimeout: '', memory: '', nlsDateFormat: '',
       nlsTimestampFormat: '', nlsTimestampTzFormat: '',
     },
-    compatMysql: false, replaceData: false, replaceObject: false, cleanup: 'NONE' as 'NONE' | 'TRUNCATE' | 'DELETE', taskName: '',
+    compatMysql: false, compatMysqlVersion: '' as '' | 'mysql56' | 'mysql57' | 'mysql80', replaceData: false, replaceObject: false, cleanup: 'NONE' as 'NONE' | 'TRUNCATE' | 'DELETE', taskName: '',
   }
 }
 

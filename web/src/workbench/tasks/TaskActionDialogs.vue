@@ -14,7 +14,7 @@ const title = computed(() => kind.value ? taskActionLabels[kind.value] : '')
 <template>
   <OrchDangerConfirm :open="Boolean(kind)" :title="title" :confirm-label="kind === 'CANCEL' ? '确认取消' : kind === 'SAVE_TEMPLATE' ? '保存' : title" :destructive="kind === 'CANCEL'" :busy="Boolean(model.busyTaskId)" @confirm="model.confirm()" @cancel="model.dismiss()">
     <dl v-if="target" class="task-confirm-facts"><div><dt>任务</dt><dd>{{ target.displayName }}（{{ target.id }}）</dd></div><div><dt>类型 / 状态</dt><dd>{{ taskTypeLabel(target.type) }} · {{ taskStateLabel(target) }}</dd></div><div><dt>执行节点</dt><dd>{{ taskHistoricalName(target.nodeName, target.nodeId, target.nodeDeleted) }}</dd></div></dl>
-    <template v-if="kind === 'CANCEL'"><p>取消只终止工具进程，不回滚已写入的文件或数据。尚未领取的任务可直接取消；已领取的任务先进入“取消中”，确认工具未启动或已终止后才显示“已取消”。</p><p class="task-confirm-note">受控取消目前只完成合成验证，真实 OBDUMPER 进程终止取证仍待完成。</p></template>
+    <template v-if="kind === 'CANCEL'"><p>取消只终止工具进程，不回滚已写入的文件或数据。尚未领取的任务可直接取消；已领取的任务先进入“取消中”，确认工具未启动或已终止后才显示“已取消”。</p><p class="task-confirm-note">受控取消目前只完成合成验证，真实 {{ target?.type === 'OBLOADER_NORMAL_IMPORT' ? 'OBLOADER' : 'OBDUMPER' }} 进程终止取证仍待完成。</p></template>
     <p v-else-if="kind === 'REBUILD_FROM_CONFIG'">创建可编辑的新草稿，不复制凭据、预检查结果、风险确认或日志，提交前重新预检查。</p>
     <p v-else-if="kind === 'RERUN_FROM_SCRATCH'">生成新草稿并直达预检查步骤，不允许修改参数；提交前重新复验数据源、节点与风险。</p>
     <p v-else-if="kind === 'CHECKPOINT_RESUME'">使用原快照和官方 --retry 生成新任务 ID，不允许修改参数；资格由服务端复验。</p>

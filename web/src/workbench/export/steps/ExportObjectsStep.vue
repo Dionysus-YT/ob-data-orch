@@ -2,7 +2,7 @@
 import { computed, ref, toRefs } from 'vue'
 import { useExportObjectViewport } from '../useExportObjectViewport'
 import type { ExportObjectsStepModel } from '../exportStepModels'
-import { Form as AForm, FormItem as AFormItem, RadioGroup as ARadioGroup, RadioButton as ARadioButton, Skeleton as ASkeleton, Select as ASelect, SelectOption as ASelectOption, SelectOptGroup as ASelectOptGroup, Button as AButton, Alert as AAlert, Radio as ARadio, Input as AInput, Modal as AModal, Checkbox as ACheckbox, Empty as AEmpty, List as AList, ListItem as AListItem } from 'ant-design-vue'
+import { Form as AForm, FormItem as AFormItem, RadioGroup as ARadioGroup, RadioButton as ARadioButton, Select as ASelect, SelectOption as ASelectOption, SelectOptGroup as ASelectOptGroup, Button as AButton, Alert as AAlert, Radio as ARadio, Input as AInput, Modal as AModal, Checkbox as ACheckbox, Empty as AEmpty, List as AList, ListItem as AListItem } from 'ant-design-vue'
 import { CaretDownOutlined, CaretRightOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import SqlQueryEditor from '@/workbench/export/components/SqlQueryEditor.vue'
 import ExportAdvancedSettings from '@/components/WizardAdvancedSettings.vue'
@@ -10,7 +10,7 @@ import ExportOptionHint from '@/workbench/export/components/ExportOptionHint.vue
 import { nodePlatformLabel } from '@/workbench/nodes/executionNodePresentation'
 
 const props = defineProps<{ model: ExportObjectsStepModel }>()
-const { sequencePolicy, sequencePolicySupported, exportMode, scopeKind, contentKind, fieldPrefix, nodeLoadFailure, loadingNodes, onNodeDropdownVisibleChange, selectedNodeID, derivedDraftBindingLocked, nodes, attemptedStep, database, selectedSource, databaseDropdownOpen, databaseCatalogLoading, onDatabaseDropdownVisibleChange, scheduleDatabaseCatalog, selectDatabaseOption, databaseOptions, databaseCatalogFailure, databaseCatalogLoaded, manualDatabaseInput, manualDatabaseError, manualDatabaseOpen, loadDatabaseCatalog, databaseCatalogTruncated, querySql, queryResultLimit, objectInputMessage, confirmManualDatabase, enteredObjectCount, allSelectedObjects, candidateTotalCount, candidateObjectKeyword, loadCatalog, catalogLoading, catalogKeywordTooLong, catalogFailure, visibleObjectCategories, objectType, candidateGroupExpanded, chooseObjectCategory, selectableCategoryNames, categorySelectedCount, toggleCategorySelection, catalogCount, candidateObjectNames, catalogLoaded, visibleCandidateObjectNames, objectNames, toggleCandidate, clearObjectNameRows, selectedObjectKeyword, visibleSelectedGroups, selectedGroupExpanded, clearObjectCategory, removeObjectNameRow, objectAdvancedCount, dataOptionsActive, excludeTablesSupported, excludeTablesText, includeColumnNames, excludeColumnNames, excludeDataTypes, whereSupported, where, partitionSupported, partition, migrateLegacyQuery } = toRefs(props.model)
+const { sequencePolicy, sequencePolicySupported, exportMode, scopeKind, contentKind, fieldPrefix, nodeLoadFailure, loadingNodes, onNodeDropdownVisibleChange, loadNodeCandidates, selectedNodeID, derivedDraftBindingLocked, nodes, attemptedStep, database, selectedSource, databaseDropdownOpen, databaseCatalogLoading, onDatabaseDropdownVisibleChange, scheduleDatabaseCatalog, selectDatabaseOption, databaseOptions, databaseCatalogFailure, databaseCatalogLoaded, manualDatabaseInput, manualDatabaseError, manualDatabaseOpen, loadDatabaseCatalog, databaseCatalogTruncated, querySql, queryResultLimit, objectInputMessage, confirmManualDatabase, enteredObjectCount, allSelectedObjects, candidateTotalCount, candidateObjectKeyword, loadCatalog, catalogLoading, catalogKeywordTooLong, catalogFailure, visibleObjectCategories, objectType, candidateGroupExpanded, chooseObjectCategory, selectableCategoryNames, categorySelectedCount, toggleCategorySelection, catalogCount, candidateObjectNames, catalogLoaded, visibleCandidateObjectNames, objectNames, toggleCandidate, clearObjectNameRows, selectedObjectKeyword, visibleSelectedGroups, selectedGroupExpanded, clearObjectCategory, removeObjectNameRow, objectAdvancedCount, dataOptionsActive, excludeTablesSupported, excludeTablesText, includeColumnNames, excludeColumnNames, excludeDataTypes, whereSupported, where, partitionSupported, partition, migrateLegacyQuery } = toRefs(props.model)
 const candidatePane = ref<HTMLElement>()
 const selectedPane = ref<HTMLElement>()
 const selectedNames = computed(() => new Set(objectNames.value))
@@ -35,9 +35,9 @@ function selectedWindow(type: string, count: number) { return selectedViewport.r
       <AForm layout="vertical" class="export-field-body">
         <div class="export-database-grid">
           <AFormItem :html-for="fieldPrefix + '-catalog-node'" required :help="nodeLoadFailure || undefined">
-            <template #label>选择执行节点</template>
-            <ASkeleton v-if="loadingNodes && !nodes.length" active :paragraph="{ rows: 1 }" aria-label="正在加载已授权执行节点" />
-            <ASelect v-else :id="fieldPrefix + '-catalog-node'" v-model:value="selectedNodeID" aria-label="读取执行节点" :loading="loadingNodes" :disabled="derivedDraftBindingLocked" placeholder="请选择执行节点" @dropdown-visible-change="onNodeDropdownVisibleChange"><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ nodePlatformLabel(node.platform) }}</ASelectOption></ASelect>
+            <template #label>执行节点</template>
+            <div class="export-node-select"><ASelect :id="fieldPrefix + '-catalog-node'" :value="selectedNodeID || undefined" aria-label="执行节点" :loading="loadingNodes" :disabled="derivedDraftBindingLocked" placeholder="请选择执行节点" @change="selectedNodeID = String($event ?? '')" @dropdown-visible-change="onNodeDropdownVisibleChange"><ASelectOption v-for="node in nodes" :key="node.id" :value="node.id">{{ node.displayName }} · {{ nodePlatformLabel(node.platform) }}</ASelectOption></ASelect><AButton :loading="loadingNodes" @click="loadNodeCandidates">刷新</AButton></div>
+            <p v-if="!loadingNodes && !nodeLoadFailure && !nodes.length" class="section-hint">当前授权范围内没有可用执行节点。</p>
           </AFormItem>
           <AFormItem :html-for="fieldPrefix + '-database'" required :validate-status="attemptedStep === 2 && !database.trim() ? 'error' : undefined" :help="attemptedStep === 2 && !database.trim() ? '请选择数据库。' : undefined">
             <template #label>数据库</template>
@@ -60,7 +60,7 @@ function selectedWindow(type: string, count: number) { return selectedViewport.r
         <AAlert v-if="databaseCatalogFailure" type="warning" show-icon :message="databaseCatalogFailure"><template #action><AButton type="link" :disabled="!selectedNodeID" @click="loadDatabaseCatalog">重试</AButton></template></AAlert>
         <p v-else-if="databaseCatalogTruncated" class="section-hint" role="status">仅显示前 100 个匹配数据库；输入关键字继续筛选。</p>
         <p v-else-if="!selectedNodeID" class="section-hint">选择执行节点后加载数据库目录；已登记的默认数据库仍可直接选择。</p>
-        <AFormItem v-if="scopeKind !== 'QUERY_RESULT'" required>
+        <AFormItem v-if="contentKind && scopeKind !== 'QUERY_RESULT'" required>
           <template #label>导出范围</template><ARadioGroup v-model:value="scopeKind" role="radiogroup" aria-label="导出范围"><ARadio value="SPECIFIED">部分导出</ARadio><ARadio value="ALL">整库导出</ARadio></ARadioGroup>
         </AFormItem>
       </AForm>
@@ -84,7 +84,8 @@ function selectedWindow(type: string, count: number) { return selectedViewport.r
       <AAlert v-if="manualDatabaseError" type="error" show-icon :message="manualDatabaseError" />
       <p class="section-hint">目录不可用时可填写明确名称，最终访问权限由预检查确认。</p>
     </AModal>
-    <AAlert v-if="scopeKind === 'SPECIFIED' && !database.trim()" type="info" show-icon message="选择数据库后显示导出对象" description="先从数据库下拉框选择，或手动输入数据库 / Schema。" />
+    <AAlert v-if="!contentKind" type="info" show-icon message="请选择导出内容" description="选择导出结构、数据或结果集后，继续配置导出范围。" />
+    <AAlert v-else-if="scopeKind === 'SPECIFIED' && !database.trim()" type="info" show-icon message="选择数据库后显示导出对象" description="先从数据库下拉框选择，或手动输入数据库 / Schema。" />
     <div v-else-if="scopeKind === 'SPECIFIED'" class="export-field-group export-object-group">
       <div class="export-group-heading"><h3>导出对象</h3><span class="export-object-count" role="status">{{ database }} · 已选 {{ enteredObjectCount }} 项</span></div>
       <AAlert v-if="contentKind === 'DATA_ONLY' && allSelectedObjects.length > enteredObjectCount" type="info" show-icon message="已选的非表对象暂不参与仅数据导出；切回包含结构的模式后会恢复显示。" />
@@ -142,7 +143,7 @@ function selectedWindow(type: string, count: number) { return selectedViewport.r
         </section>
       </div>
     </div>
-    <ExportAdvancedSettings v-if="scopeKind !== 'QUERY_RESULT'" class="export-advanced" title="DDL、对象与数据筛选" :configured-count="objectAdvancedCount">
+    <ExportAdvancedSettings v-if="contentKind && scopeKind !== 'QUERY_RESULT'" class="export-advanced" title="DDL、对象与数据筛选" :configured-count="objectAdvancedCount">
       <AForm layout="vertical" class="export-advanced-form">
         <template v-if="contentKind !== 'DATA_ONLY'">
           <h3>DDL 与对象处理</h3>

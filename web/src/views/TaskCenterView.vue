@@ -12,6 +12,7 @@ import TaskListFilters from '@/workbench/tasks/TaskListFilters.vue'
 import TaskActionDialogs from '@/workbench/tasks/TaskActionDialogs.vue'
 import TaskActionMenu from '@/workbench/tasks/TaskActionMenu.vue'
 import TaskDraftList from '@/workbench/tasks/TaskDraftList.vue'
+import TaskProgress from '@/workbench/tasks/TaskProgress.vue'
 import { Tabs as ATabs, TabPane as ATabPane } from 'ant-design-vue'
 import { taskHistoricalName, taskMoreActions, taskNeedsReconciliation, taskRowPrimary, taskStageLabel, taskStateBadgeStatus, taskStateLabel, taskTypeLabel } from '@/workbench/tasks/taskListPresentation'
 import { hasTaskListConditions } from '@/workbench/tasks/taskListQuery'
@@ -49,10 +50,11 @@ const columns: TableColumnsType<TaskListItem> = [
   { key: 'source', title: '数据源 / 对象', width: 190, customCell: middleCell },
   { key: 'state', title: '状态 / 阶段', width: 130, align: 'center', customCell: middleCell },
   { key: 'progress', title: '进度', width: 90, align: 'center', customCell: middleCell },
+  { key: 'duration', title: '耗时', width: 120, align: 'center', customCell: middleCell },
   { key: 'node', title: '执行节点', width: 140, customCell: middleCell },
   { key: 'creator', title: '创建人', width: 110, customCell: middleCell },
-  { key: 'time', title: '时间', width: 170, align: 'center', customCell: middleCell },
-  { key: 'actions', title: '操作', width: 110, align: 'center', customCell: middleCell },
+  { key: 'time', title: '开始时间', width: 170, align: 'center', customCell: middleCell },
+  { key: 'actions', title: '操作', width: 110, align: 'center', fixed: 'right', customCell: middleCell },
 ]
 
 function openPrimary(task: TaskListItem) {
@@ -81,7 +83,7 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
               <div class="task-page-actions">
                 <span v-if="lastLoadedAt" class="task-updated">最后更新：{{ lastLoadedAt }}</span>
                 <AButton type="text" :loading="refreshing" :disabled="loading || refreshing" :aria-busy="refreshing" aria-label="刷新" @click="list.refresh()"><template #icon><CheckCircleOutlined v-if="refreshCompleted" aria-hidden="true" /><ReloadOutlined v-else aria-hidden="true" /></template>{{ refreshing ? '刷新中' : refreshCompleted ? '已刷新' : '刷新' }}</AButton>
-                <TaskActionMenu v-if="!restricted" :actions="['CREATE_EXPORT', 'CREATE_NORMAL_IMPORT', 'CREATE_DIRECT_LOAD']" label="新建任务" :session-key="route.fullPath" creation @select="action => action === 'CREATE_EXPORT' ? router.push('/exports/new') : action === 'CREATE_NORMAL_IMPORT' && router.push('/imports/normal/new')" />
+                <TaskActionMenu v-if="!restricted" :actions="['CREATE_EXPORT', 'CREATE_NORMAL_IMPORT', 'CREATE_DIRECT_LOAD']" label="新建任务" :session-key="route.fullPath" creation @select="action => action === 'CREATE_EXPORT' ? router.push('/exports/new') : router.push(action === 'CREATE_NORMAL_IMPORT' ? '/imports/normal/new' : '/imports/direct/new')" />
               </div>
             </div>
 
@@ -90,7 +92,7 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
             <ASkeleton v-if="loading && !tasks.length" active :paragraph="{ rows: 6 }" class="task-loading" role="status" aria-label="正在读取授权任务" />
             <AAlert v-else-if="failure && !tasks.length" class="task-state" :type="restricted ? 'warning' : 'error'" :message="restricted ? '当前身份无权查看任务' : '无法加载任务列表'" :description="restricted ? '请联系管理员确认任务查看权限。' : failure" show-icon><template #action><AButton v-if="!restricted" @click="list.refresh()">重试</AButton></template></AAlert>
             <template v-else-if="!dateRangeError">
-              <OrchOperationalTable :rows="tasks" :columns="columns" :loading="loading || refreshing" row-key="id" :minimum-width="1250" :label="hasConditions ? '符合当前筛选条件的授权任务' : '当前授权范围内的任务'">
+              <OrchOperationalTable :rows="tasks" :columns="columns" :loading="loading || refreshing" row-key="id" :minimum-width="1370" :label="hasConditions ? '符合当前筛选条件的授权任务' : '当前授权范围内的任务'">
                 <template #bodyCell="{ record: task, column }">
                   <template v-if="column.key === 'task'">
                     <ATooltip :title="task.displayName"><RouterLink class="task-name" :to="{ name: 'task-detail', params: { id: task.id } }">{{ task.displayName }}</RouterLink></ATooltip>
@@ -103,17 +105,15 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
                   </template>
                   <template v-else-if="column.key === 'state'">
                     <ABadge :status="taskStateBadgeStatus(task)" :text="taskStateLabel(task)" />
-                    <span v-if="taskStageLabel()" class="task-secondary">{{ taskStageLabel() }}</span>
+                    <span v-if="taskStageLabel(task)" class="task-secondary">{{ taskStageLabel(task) }}</span>
                     <ATag v-if="taskNeedsReconciliation(task)" color="warning" class="task-flag">状态核对中</ATag>
                     <ATag v-else-if="task.cancelRequested && task.state !== 'CANCELLING'" class="task-flag">取消请求中</ATag>
                   </template>
-                  <template v-else-if="column.key === 'progress'"><ATooltip title="工具未提供可靠进度"><span class="task-muted" aria-label="工具未提供可靠进度">—</span></ATooltip></template>
+                  <template v-else-if="column.key === 'progress'"><TaskProgress :progress="task.progress" :state="task.state" :reconciliation="task.reconciliationRequired" :type="task.type" /></template>
+                  <template v-else-if="column.key === 'duration'"><span class="task-primary">{{ taskDurationText(task.startedAt, task.finishedAt, now) || '—' }}</span></template>
                   <template v-else-if="column.key === 'node'"><span class="task-primary">{{ taskHistoricalName(task.nodeName, task.nodeId, task.nodeDeleted) }}</span></template>
-                  <template v-else-if="column.key === 'creator'"><span class="task-primary">{{ task.creatorName || '—' }}<template v-if="task.ownedByCurrentUser">（我）</template></span></template>
-                  <template v-else-if="column.key === 'time'">
-                    <template v-if="task.startedAt"><span class="task-primary">开始 {{ taskDateTimeText(task.startedAt) }}</span><span class="task-secondary">耗时 {{ taskDurationText(task.startedAt, task.finishedAt, now) || '—' }}</span></template>
-                    <span v-else class="task-primary">提交 {{ taskDateTimeText(task.submittedAt) }}</span>
-                  </template>
+                  <template v-else-if="column.key === 'creator'"><span class="task-primary">{{ task.creatorName || '—' }}</span></template>
+                  <template v-else-if="column.key === 'time'"><span class="task-primary">{{ taskDateTimeText(task.startedAt) }}</span></template>
                   <template v-else-if="column.key === 'actions'">
                     <div class="task-row-actions">
                       <AButton type="link" size="small" :disabled="busyTaskId === task.id" @click="openPrimary(task)">{{ taskRowPrimary(task) === 'VIEW_ERROR' ? '查看错误' : '查看详情' }}</AButton>
@@ -163,7 +163,6 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
 .task-secondary :deep(.ant-tag) { margin: 0; }
 .task-inline-type { display: none; }
 .task-flag { display: block; width: fit-content; margin: var(--ob-foundation-space-1) auto 0; }
-.task-muted { color: var(--ob-color-muted); }
 .task-row-actions { display: flex; justify-content: center; align-items: center; gap: var(--ob-foundation-space-1); }
 .task-footer { justify-content: space-between; }
 .task-pagination { display: flex; align-items: center; gap: var(--ob-foundation-space-2); margin-left: auto; }

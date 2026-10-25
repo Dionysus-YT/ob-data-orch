@@ -2,6 +2,8 @@
 
 > 状态：DONE。2026-09-16 用户授权的前端基础设施迁移已完成本地与合成验收；本文件不替代 P0/P1 冻结值，也不代表真实业务发布或部署完成。
 
+> 2026-10-19 按用户要求校准现役规范：主工作面浅阴影、预检查结果表 44px 表头及限定组件例外以 [DESIGN v4.1](../../design-system/DESIGN.md) 为准；平台审计区分硬违规与未引用选择器 REVIEW。下文历史验收计数仅对应其日期，当前变更及验证见[本轮记录](evidence/platform-design-baseline-2026-10-19.md)。
+
 ## 权威与边界
 
 业务、安全、权限与能力契约 → 页面 P1 → P0 → 已确认 DCR → Canonical Token → 平台实现 → Ant Design Vue 默认值。保持 Vue 3、TypeScript、Vite 和现有 API；本次不执行真实数据库、凭据探测或工具启动，也不替换运行后端。
@@ -28,16 +30,19 @@ Ant Design Vue（MIT）用于替代自研 Primitive，避免继续维护第三�
 
 ## Token 与样式架构
 
-`web/src/platform/tokens.ts` 是唯一值源，分为 Foundation（色板、字体、间距）、Semantic（界面角色）、Component（控件、表格、焦点、弹层几何）、Product（Shell、Inspector、任务轨、环境标记）。`theme.ts` 消费这些值；`tokens.css` 由 `npm run tokens:generate` 生成，禁止手改，`tokens:check` 检查漂移。2026-09-17 UI Design System Consolidation 后，基线采用 B2B neutral + restrained blue：控件 36px、表头 36px、基础行 42px；包含多行事实/禁用原因的行可自然增高。
+`web/src/platform/tokens.ts` 是唯一值源，分为 Foundation（色板、字体、间距）、Semantic（界面角色）、Component（控件、表格、焦点、弹层几何）、Product（Shell、Inspector、任务轨、环境标记）。`theme.ts` 消费这些值；`tokens.css` 由 `npm run tokens:generate` 生成，禁止手改，`tokens:check` 检查漂移。现行密度为控件 36px、管理表头 36px、基础行 42px；向导预检查结果表保留 44px 表头，包含多行事实/禁用原因的行可自然增高。主工作面的浅阴影与内部平面分区边界按 DESIGN §6。
 
 入口顺序为 Ant reset → tokens → archetypes → sources → shell → components。`shell.css` 唯一承载 P0 外壳；`archetypes.css` 承载各页面原型与证据布局；`sources.css` 承载数据源领域事实；`components.css` 承载产品组件及已登记的 Ant 适配。页面 scoped CSS 只可处理该页面的业务布局，不重新定义基础控件、色板、字体和主题。
 
-`audit:platform` 按运行入口图分类 ACTIVE / FIXTURE / DEAD，并逐条输出六类样式处置、来源和理由。迁移起点的 Duplicate 是全局同属性同值的候选重复；终态门禁使用同文件、选择器、媒体作用域的重复属性检测，不能直接比较两者的 Duplicate 计数。布局比例、定位、边框形状、可见性及 CSS 关键字登记为 Component Exception，不为 `display:flex` 或某页列宽制造无意义 Token。裸颜色、裸字号、未定义变量、第二个 Token 定义来源、现役旧 Primitive、重复覆盖及未登记 important 会使命令失败。
+`audit:platform` 按运行入口图分类 ACTIVE / FIXTURE / DEAD，并逐条输出六类样式处置、来源和理由。迁移起点的 Duplicate 是全局同属性同值的候选重复；终态门禁使用同文件、选择器、媒体作用域的重复属性检测，不能直接比较两者的 Duplicate 计数。布局比例、定位、边框形状、可见性及 CSS 关键字登记为 Component Exception，不为 `display:flex` 或某页列宽制造无意义 Token。未登记的裸颜色、裸字号、未定义变量、第二个 Token 定义来源、现役旧 Primitive、重复覆盖及未登记 important 会使命令失败。
+
+2026-10-19 审计口径：静态字符串搜索未发现完整类名只产生 REVIEW，不能直接证明 Dead 或视觉不一致；确认无用后仍应清理，不将旧选择器确认为推荐模式。Monaco 查找区与节点额度动态类按限定文件记录运行时引用，四条视觉声明与只读额度 Tooltip 按 P0 的精确边界登记，不能扩展到其他文件、数值或动作。JSON 与终端分别保留硬违规、REVIEW、运行时引用，退出码只表达硬违规是否存在；零违规不等于零债务或浏览器视觉验收通过。命令先运行 `audit-platform.test.mjs` 的正反例，防止登记例外放宽既有硬规则。
 
 Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分区 padding/斑马行；Form.Item 标签和帮助布局；危险确认 footer 的 36px 次级动作；产品布局中的 Select 占宽。仅 reduced-motion 规则的三条 important 用于覆盖框架注入动画，其他样式不得堆叠 important。升级时优先用新版本 Theme API 替换适配。
 
 ## 产品组件契约
 
+- `ProductHeader` / `ProductShell`：退出事务由 Header 唯一持有；`useLogoutGuard` 只在当前 Shell 内协调已注册的页面离开守卫及注销后的整页卸载许可。导出、普通导入、数据源编辑与节点编辑继续拥有各自 dirty / busy / 确认状态，公共协调器不复制表单或建立事件总线。编辑会话卸载取消旧确认，迟到结果不得批准新会话；请求失败保留输入和原生刷新保护。验证入口为 `useLogoutGuard.test.ts` 与 `tests/logout-guard.spec.ts`。
 - `OrchOperationalTable`：Feature Composition，只接收调用方提供的授权事实与列模型，禁用 Ant 内置分页；排序、筛选、Cursor、总数和版本均由原领域/API 流程负责。
 - Ant `Drawer` + `useAntDrawerDialog`：页面直接使用 Ant Drawer；关闭只是意图，由页面执行 dirty / busy / 异步测试守卫。`useAntDrawerDialog` 只补齐 Ant Vue 4.2.6 未转发的 ARIA、焦点约束和关闭后焦点恢复，不接管 Drawer 视觉、结构、动画或默认关闭按钮。
 - `OrchDangerConfirm`：明确对象、影响与动作；安全取消初始焦点，busy 阻止退出，关闭恢复触发点；不把打开确认等同于取得服务端资格。
@@ -85,6 +90,8 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 未来新增复杂模块先查任务地图准入、P0/P1 与业务契约；建立实际所需的状态、规则与异步所有者，并登记维护入口、失效/卸载/重复负例。2026-10-15 普通导入按用户确认接入本页五步配置（DEC-051 合并文件来源与内容格式，DEC-052 沿用导出布局且仅配置 CSV/CUT/SQL，独立于旁路），维护与范围见[普通导入索引](../../web/src/workbench/import/normal/README.md)；保存、预检查、命令和提交仍未接入。旁路导入及其余未准入能力不提前创建业务实现。
 
 ## 复杂向导架构与开发规范
+
+2026-10-20 按用户采纳的 [DEC-056](../01-product/decisions.md#dec-056-旁路五步配置与入口集中确认)，旁路当前为独立五步，入口集中确认由旁路导航能力绑定当前会话，RPC 默认填写转换归唯一表单能力；三类来源列表仅共用已有呈现几何，不共享资格或业务状态。此条更新下方历史旁路占位/六步描述的现役步骤事实，能力与真实准入仍以任务地图为准。
 
 2026-10-08 导出按本节完成职责拆分，普通导入/旁路导入只纳入开发约束。[本轮验收证据](evidence/frontend-wizard-refactor-2026-10-08.md)记录当前检查及遗留阻断；下文 2026-09 的迁移通过结果是历史事实，不能代替当前 Token/样式审计。
 
@@ -181,6 +188,8 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 - Export 的 CONS-05 尚属任务地图下一工作项。基础设施迁移保留当前业务步骤与参数语义，不借 UI 框架迁移实施未收口的运行时契约变更。
 
 ## 验证证据
+
+前端模块完成的视觉与交互验收统一遵循 [P0 视觉验收门槛](../../design-system/MASTER.md#视觉验收门槛)；下文历史验证记录不替代当前版本验收。
 
 迁移前：Windows AMD64，Node 24.16.0 / npm 11.13.0；`npm test` 18/18 文件、152/152 测试通过；`npm run typecheck` 退出码 0。
 

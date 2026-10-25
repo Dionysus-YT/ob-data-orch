@@ -86,6 +86,9 @@ func validateNormalImportFields(request Request) []Issue {
 	if (has("replace-object") || has("compat-mode")) && !has("ddl") {
 		block("replace-object")
 	}
+	if has("compat-mode") && !contains([]string{"mysql56", "mysql57", "mysql80"}, value("compat-mode")) {
+		block("compat-mode")
+	}
 	if has("compression-algo") || has("compression-level") {
 		if !has("compress") {
 			block("compress")

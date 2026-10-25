@@ -14,7 +14,7 @@ import StorageCredentialsView from '@/views/StorageCredentialsView.vue'
 import TaskCenterView from '@/views/TaskCenterView.vue'
 import TaskDetailView from '@/views/TaskDetailView.vue'
 import TemplateCenterView from '@/views/TemplateCenterView.vue'
-import SystemSettingsView from '@/views/SystemSettingsView.vue'
+import PlatformSettingsView from '@/views/PlatformSettingsView.vue'
 
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -35,7 +35,11 @@ export const router = createRouter({
     ] },
     { path: '/nodes/:id', name: 'node-detail', component: ExecutionNodeDetailView, meta: { title: '执行节点详情' } },
     { path: '/logs', name: 'logs', component: LogCenterView, meta: { title: '日志中心' } },
-    { path: '/settings', name: 'settings', component: SystemSettingsView, meta: { title: '系统设置' } },
+    { path: '/settings', name: 'settings', redirect: (to) => ({ name: 'platform-settings', query: to.query, hash: to.hash }) },
+    { path: '/settings/platform', name: 'platform-settings', component: PlatformSettingsView, meta: { title: '平台设置' } },
+    { path: '/settings/scheduling', name: 'scheduling-policy', component: () => import('@/views/SchedulingPolicyView.vue'), meta: { title: '调度策略' } },
+    { path: '/settings/security', name: 'security-policy', component: () => import('@/views/SecurityPolicyView.vue'), meta: { title: '安全策略' } },
+    { path: '/settings/tools', name: 'tool-compatibility', component: () => import('@/views/ToolCompatibilityView.vue'), meta: { title: '工具与兼容' } },
     { path: '/settings/access-control', name: 'access-control', component: AccessControlView, meta: { title: '权限配置' } },
     { path: '/settings/storage-credentials', name: 'storage-credentials', component: StorageCredentialsView, meta: { title: '存储凭据' } },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { title: '页面不存在' } },

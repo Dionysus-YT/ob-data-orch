@@ -170,6 +170,14 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 	if normalImportEnabled && !realExecutionEnabled {
 		return errors.New("普通导入要求同时开启真实执行")
 	}
+	directLoadProbeEnabled, directLoadProbeErr := featuregate.LoadDirectLoadProbeEnabled(lookupEnv)
+	directLoadEnabled, directLoadErr := featuregate.LoadDirectLoadExecutionEnabled(lookupEnv)
+	if directLoadProbeErr != nil || directLoadErr != nil {
+		return errors.New("旁路能力开关无效")
+	}
+	if directLoadProbeEnabled && !realExecutionEnabled || directLoadEnabled && (!realExecutionEnabled || !directLoadProbeEnabled) {
+		return errors.New("旁路检查要求真实能力总开关，旁路执行还要求独立检查开关")
+	}
 	if realExecutionEnabled && (operatingSystem != "WINDOWS" || architecture != "AMD64") {
 		return errors.New("real execution is currently limited to Windows AMD64 local integration")
 	}
@@ -210,6 +218,8 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 		"networkEnabled", true,
 		"realExecutionEnabled", realExecutionEnabled,
 		"normalImportExecutionEnabled", normalImportEnabled,
+		"directLoadProbeEnabled", directLoadProbeEnabled,
+		"directLoadExecutionEnabled", directLoadEnabled,
 		"agentJDBCConnectionTestEnabled", jdbcConnectionTestEnabled,
 		"agentExportPreflightEnabled", exportPreflightEnabled,
 	)
@@ -267,6 +277,7 @@ func runWithContext(ctx context.Context, args []string, stdin io.Reader, stdout 
 			executions: &asynchronousExportExecutionRunner{delegate: &configuredExportExecutionRunner{
 				stateStore: stateStore, lookupEnv: lookupEnv, operatingSystem: operatingSystem, architecture: architecture, bootID: bootID,
 				normalImportEnabled: normalImportEnabled,
+				directLoadEnabled:   directLoadEnabled,
 			}, logger: logger, capacity: agenttelemetry.ExecutionWorkerLimit},
 		}
 	}

@@ -68,11 +68,13 @@ type Outcome struct {
 // Worker 串行执行一个受控的 EXPORT_PREFLIGHT 租约。
 // Agent 与节点标识只能从已关联的受保护身份状态读取，调用方不能通过本地配置覆盖。
 type Worker struct {
-	Protocol      Protocol
-	ProbeFactory  ProbeFactory
-	Clock         func() time.Time
-	BootID        string
-	LocalPlatform commandgen.Platform
+	// DirectLoadProbeEnabled 是本机显式许可；旁路文件发现始终不能借此解析数据库秘密。
+	DirectLoadProbeEnabled bool
+	Protocol               Protocol
+	ProbeFactory           ProbeFactory
+	Clock                  func() time.Time
+	BootID                 string
+	LocalPlatform          commandgen.Platform
 
 	mu      sync.Mutex
 	running bool
@@ -119,11 +121,12 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 
 	resolver := &leaseSecretResolver{
-		protocol: w.Protocol,
-		clock:    w.Clock,
-		bootID:   w.BootID,
-		grant:    grant,
-		active:   true,
+		protocol:               w.Protocol,
+		clock:                  w.Clock,
+		bootID:                 w.BootID,
+		grant:                  grant,
+		active:                 true,
+		directLoadProbeEnabled: w.DirectLoadProbeEnabled,
 	}
 	// 槽位初始保持关闭，即使工厂错误地提前调用解析器也不会发起控制面请求。
 	// 只有固定包装器进入相应检查的调用范围时才附加内部许可；resolver 分别限制数据库和存储槽位各解析一次，并会在 RunNext 返回时立即失效。
@@ -131,7 +134,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	probe := secretGatedProbe{delegate: w.ProbeFactory(resolver), resolver: resolver}
 	request := requestForGrant(identity.AgentID, grant)
 	runContext := ctx
-	if grant.Context.NormalImport != nil {
+	if grant.Context.NormalImport != nil || grant.Context.DirectLoad != nil {
 		// 文件摘要可能读取大文件；将本机读取约束在剩余租约内，不能因 Agent 主循环尚未退出而无限扫描。
 		bounded, cancel := context.WithTimeout(ctx, grant.ExpiresAt.Sub(w.now()))
 		defer cancel()
@@ -140,6 +143,9 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	report, err := agentpreflight.Run(runContext, request, probe)
 	if err != nil || agentpreflight.ValidateReportFor(kindForGrant(grant), report) != nil {
 		report = failedReport(kindForGrant(grant), grant.PrecheckID)
+		if grant.Context.DirectLoad != nil {
+			report = failedDirectLoadReport(grant)
+		}
 		if grant.Context.NormalImport != nil {
 			report = failedNormalImportReport(grant)
 		}
@@ -244,6 +250,11 @@ func requestForGrant(agentID string, grant agentwire.PrecheckGrant) agentpreflig
 		request.CheckKind = grant.Context.CheckKind
 		request.Capability = agentpreflight.Capability(grant.Context.CheckKind)
 	}
+	if grant.Context.DirectLoad != nil {
+		request.DirectLoad = cloneDirectLoad(grant.Context.DirectLoad)
+		request.CheckKind = grant.Context.CheckKind
+		request.Capability = agentpreflight.Capability(grant.Context.CheckKind)
+	}
 	return request
 }
 
@@ -283,6 +294,9 @@ func checkSetForKind(kind agentpreflight.OutputKind, checkSet []agentpreflight.C
 }
 
 func validExecutionContext(executionContext agentwire.PrecheckExecutionContext) bool {
+	if executionContext.DirectLoad != nil {
+		return validDirectLoadExecutionContext(executionContext)
+	}
 	if executionContext.NormalImport != nil {
 		return validNormalImportExecutionContext(executionContext)
 	}
@@ -361,6 +375,7 @@ func expectedState(report agentpreflight.Report, state agentwire.PrecheckState) 
 }
 
 func cloneGrant(grant agentwire.PrecheckGrant) agentwire.PrecheckGrant {
+	grant.Context.DirectLoad = cloneDirectLoad(grant.Context.DirectLoad)
 	grant.Context.NormalImport = cloneNormalImport(grant.Context.NormalImport)
 	grant.CheckSet = append([]agentpreflight.CheckID(nil), grant.CheckSet...)
 	grant.Context.AllowedRoots = append([]string(nil), grant.Context.AllowedRoots...)
@@ -383,10 +398,11 @@ func cloneGrant(grant agentwire.PrecheckGrant) agentwire.PrecheckGrant {
 // leaseSecretResolver 将一次可用的预检查租约封装为不可复用的槽位解析器。
 // 即使 Probe 保留接口引用，RunNext 返回后 active 也会关闭，从而拒绝延迟解析。
 type leaseSecretResolver struct {
-	protocol Protocol
-	clock    func() time.Time
-	bootID   string
-	grant    agentwire.PrecheckGrant
+	directLoadProbeEnabled bool
+	protocol               Protocol
+	clock                  func() time.Time
+	bootID                 string
+	grant                  agentwire.PrecheckGrant
 
 	mu               sync.Mutex
 	active           bool
@@ -441,6 +457,10 @@ func (r *leaseSecretResolver) disallow(permit *secretResolvePermit) {
 }
 
 func (r *leaseSecretResolver) ResolveDatabaseConnection(ctx context.Context, binding agentstate.PrecheckBinding) (agentjdbc.Connection, error) {
+	// 只有独立开关与完整旁路检查同时成立时才允许槽位；文件发现永久拒绝。
+	if r.grant.Context.DirectLoad != nil && (!r.directLoadProbeEnabled || r.grant.Context.CheckKind != "DIRECT_LOAD_PREFLIGHT") {
+		return agentjdbc.Connection{}, ErrSecretResolution
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if ctx == nil {

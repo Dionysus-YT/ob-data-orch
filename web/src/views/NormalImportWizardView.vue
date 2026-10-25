@@ -4,6 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { Alert, Button, Tag } from 'ant-design-vue'
 import { browserApi } from '@/api/browser'
 import { useOperationMessage } from '@/composables/useOperationMessage'
+import { useLogoutGuard } from '@/composables/useLogoutGuard'
 import WizardFrame from '@/components/WizardFrame.vue'
 import OrchDangerConfirm from '@/components/OrchDangerConfirm.vue'
 import { useNormalImportWizard } from '@/workbench/import/normal/useNormalImportWizard'
@@ -59,7 +60,8 @@ function finishLeave(leave: boolean) {
   resolveLeave = undefined
   resolve?.(leave)
 }
-function beforeUnload(event: BeforeUnloadEvent) { if (wizard.hasInputs) { event.preventDefault(); event.returnValue = '' } }
+const logoutCommitted = useLogoutGuard(guardLeave)
+function beforeUnload(event: BeforeUnloadEvent) { if (wizard.hasInputs && !logoutCommitted.value) { event.preventDefault(); event.returnValue = '' } }
 onBeforeRouteLeave(guardLeave)
 onBeforeRouteUpdate((to, from) => !(wizard.bindingDraftRoute && to.query.draft === wizard.currentDraft?.id) && to.query.draft !== from.query.draft ? guardLeave() : true)
 window.addEventListener('beforeunload', beforeUnload)
@@ -69,12 +71,13 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
 <template>
   <MessageContext />
   <section class="page-heading"><h1>新建普通导入任务</h1><Tag :color="wizard.draftDirty ? 'warning' : wizard.currentDraft ? 'success' : 'default'">{{ wizard.draftDirty ? '草稿有未保存更改' : wizard.currentDraft ? '草稿已保存' : '草稿尚未创建' }}</Tag></section>
-  <WizardFrame ref="frame" kind="normal" :active-step="wizard.activeStep" :step-titles="wizard.titles" :progress-percent="wizard.stepProgressPercent" :completed-steps="wizard.completedSteps" class="normal-import-builder" @step-change="wizard.moveToStep">
-    <template #actions><Button @click="catalogOpen = true">全部参数</Button><Button :loading="wizard.savingDraft" :disabled="!wizard.selectedSource || wizard.loadingDraft || wizard.reviewBusy" @click="wizard.saveDraft">保存草稿</Button></template>
+  <WizardFrame ref="frame" kind="normal" :active-step="wizard.activeStep" :step-titles="wizard.titles" :progress-percent="wizard.stepProgressPercent" :completed-steps="wizard.completedSteps" :navigation-locked="wizard.rerunLocked" class="normal-import-builder" @step-change="wizard.moveToStep">
+    <template #actions><Button @click="catalogOpen = true">全部参数</Button><Button :loading="wizard.savingDraft" :disabled="wizard.rerunLocked || !wizard.selectedSource || wizard.loadingDraft || !!wizard.draftLoadFailure || wizard.reviewBusy" @click="wizard.saveDraft">保存草稿</Button></template>
     <template #default>
+      <Alert v-if="wizard.rerunLocked" type="info" show-icon message="从头重新执行：保留原配置并重新预检查。"><template #description>如需调整参数，请返回<RouterLink :to="`/tasks/${encodeURIComponent(wizard.currentDraft?.sourceTaskId ?? '')}`">来源任务</RouterLink>，选择“基于原配置新建”。</template></Alert>
       <Alert v-if="wizard.unsupportedDraft" type="warning" show-icon message="普通导入草稿链接无效，请重新打开。" />
-      <Alert v-if="wizard.draftFailure" type="error" show-icon :message="wizard.draftFailure" />
-      <Alert v-if="wizard.reviewFailure" type="error" show-icon :message="wizard.reviewFailure" />
+      <Alert v-if="wizard.draftFailure" type="error" show-icon :message="wizard.draftFailure"><template v-if="wizard.draftLoadFailure" #action><Button type="link" :loading="wizard.loadingDraft" @click="wizard.retryDraft">重试</Button></template></Alert>
+      <Alert v-if="wizard.reviewFailure && wizard.activeStep !== wizard.steps.review" type="error" show-icon :message="wizard.reviewFailure" />
       <Alert v-if="wizard.loadingDraft" type="info" show-icon message="正在读取普通导入草稿…" />
       <Alert v-if="wizard.attemptedStep === wizard.activeStep && wizard.currentStepError" type="error" show-icon :message="wizard.currentStepError" />
       <template v-if="!wizard.loadingDraft && !wizard.draftLoadFailure && !wizard.unsupportedDraft">
@@ -88,8 +91,8 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
     <template #summary><NormalImportSummary :model="wizard" /></template>
     <template #footer>
       <footer class="wizard-footer">
-        <Button :disabled="wizard.activeStep === 1 || wizard.navigating" @click="wizard.previousStep">上一步</Button>
-        <span :id="wizard.fieldPrefix + '-unavailable'" class="wizard-baseline-note">保存当前活动配置；完整预检查与执行门禁通过后才能提交。</span>
+        <Button :disabled="wizard.rerunLocked || wizard.activeStep === 1 || wizard.navigating" @click="wizard.previousStep">上一步</Button>
+        <span :id="wizard.fieldPrefix + '-unavailable'" class="wizard-baseline-note">{{ wizard.rerunLocked ? '保留原配置重新检查；当前预检查与执行门禁通过后才能提交。' : '保存当前活动配置；完整预检查与执行门禁通过后才能提交。' }}</span>
         <span class="footer-grow" />
         <Button v-if="wizard.activeStep < wizard.steps.review" type="primary" :loading="wizard.navigating" :disabled="wizard.loadingDraft || wizard.unsupportedDraft || !!wizard.draftLoadFailure || wizard.loadingSources && wizard.activeStep === wizard.steps.source || wizard.loadingNodes && wizard.activeStep === wizard.steps.input" @click="advance">{{ wizard.footerLabel }}</Button>
         <div v-else class="footer-actions"><Button :loading="wizard.checking || wizard.previewingCommand" :disabled="!wizard.canStartPrecheck" @click="wizard.retryReview">重新预检查</Button><Button type="primary" :loading="wizard.submitting" :disabled="!wizard.canSubmit" :aria-describedby="wizard.fieldPrefix + '-unavailable'" @click="wizard.submitTask()">提交并启动导入</Button></div>

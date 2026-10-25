@@ -19,7 +19,7 @@ async function openChoices(page: Page, surface: string) {
     await expect(select).toBeEnabled()
     await select.focus()
   } else if (surface === 'export') {
-    const select = page.getByRole('combobox', { name: /选择执行节点/ })
+    const select = page.getByRole('combobox', { name: /执行节点/ })
     await expect(select).toBeEnabled()
     await select.focus()
   } else {
@@ -40,8 +40,8 @@ for (const surface of ['sources', 'export', 'templates']) {
     await mockFacts(page)
     await page.route('**/api/v1/execution-nodes?eligibleFor=*', route => route.fulfill({ json: { items: nodes } }))
     await page.route(`**/api/v1/data-sources/${source.id}`, route => route.fulfill({ json: { item: source } }))
-    await page.route('**/api/v1/export-config-templates', route => route.fulfill({ json: { items: [{
-      id: 'synthetic-template', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability',
+    await page.route('**/api/v1/config-templates', route => route.fulfill({ json: { items: [{
+      id: 'synthetic-template', taskType: 'OBDUMPER_EXPORT', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability',
       configFingerprint: 'synthetic-fingerprint', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     }] } }))
     const path = surface === 'sources' ? `/data-sources?edit=${source.id}&test=1` : surface === 'export' ? '/exports/new?step=2' : '/templates'

@@ -93,7 +93,11 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
       return run(task, '取消请求未完成。', true, async () => { await api.cancelTask(task.id); return { kind: 'NOTICE', text: '已提交取消请求。' } })
     }
     if (kind === 'REBUILD_FROM_CONFIG' || kind === 'RERUN_FROM_SCRATCH') {
-      return run(task, kind === 'RERUN_FROM_SCRATCH' ? '从头重新执行发起失败。' : '基于原配置新建发起失败。', false, async () => ({ kind: 'NAVIGATE', location: derivedDraftRoute(await api.rebuildTaskDraft(task.id, kind)) }))
+      return run(task, kind === 'RERUN_FROM_SCRATCH' ? '从头重新执行发起失败。' : '基于原配置新建发起失败。', false, async () => {
+        const derived = await api.rebuildTaskDraft(task.id, kind)
+        if ((derived.taskType ?? 'OBDUMPER_EXPORT') !== task.type) throw new Error('派生草稿类型与来源任务不一致。')
+        return { kind: 'NAVIGATE', location: derivedDraftRoute(derived, task.type) }
+      })
     }
     if (kind === 'CHECKPOINT_RESUME') {
       return run(task, '从检查点继续发起失败。', false, async () => ({ kind: 'NAVIGATE', location: derivedTaskRoute((await api.resumeTaskFromCheckpoint(task.id)).id) }))

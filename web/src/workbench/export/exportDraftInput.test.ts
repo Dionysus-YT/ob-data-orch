@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { validateExportDraftInput, type ExportDraftFormValues } from './exportDraftInput'
+import { buildEditingExportDraftInput, validateExportDraftInput, type ExportDraftFormValues } from './exportDraftInput'
+
+it.each(['maxFileSize', 'thread', 'pageSize', 'parallelMacro', 'jvmMemory', 'filePath', 'logPath'] as const)('非法 %s 返回领域字段定位且不生成草稿', field => {
+  const result = validateExportDraftInput({ ...completeValues, [field]: 'invalid' })
+  expect(result).toMatchObject({ valid: false, field })
+  expect(result).not.toHaveProperty('input')
+})
 
 const completeValues: ExportDraftFormValues = {
   dataSourceId: 'source-1',
@@ -677,6 +683,19 @@ describe('泛化导出草稿输入', () => {
     if (oracle.valid) expect(oracle.input.config.dataFormat?.timestampFormats).toMatchObject({ nlsDateFormat: 'YYYY-MM-DD HH24:MI:SS', timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss' })
     expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', formatKind: 'SQL', nlsDateFormat: 'YYYY-MM-DD' })).toMatchObject({ valid: true })
     expect(validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', preserveZeroDatetime: true })).toMatchObject({ valid: false })
+  })
+
+  it('未完成草稿保留空查询上限和对象类型，非法数值不转换成空值', () => {
+    const noContent = { ...completeValues, contentKind: '' as const }
+    expect(validateExportDraftInput(noContent)).toMatchObject({ valid: false, message: '请选择导出内容。' })
+    expect(buildEditingExportDraftInput(noContent)).toMatchObject({ draftState: 'EDITING', config: { contentSelection: { contentKind: '' } } })
+    expect(buildEditingExportDraftInput(noContent)?.config.dataFormat).toBeUndefined()
+    const input = buildEditingExportDraftInput({ ...completeValues, nodeId: '', database: '', filePath: '', scopeKind: 'QUERY_RESULT', querySql: 'SELECT', queryResultLimit: '' })
+    expect(input?.draftState).toBe('EDITING')
+    expect(input?.config.filterConfig?.queryResultLimit).toBeUndefined()
+    expect(input?.config.filterConfig?.querySql).toBe('SELECT')
+    expect(buildEditingExportDraftInput({ ...completeValues, thread: 'invalid' })).toBeUndefined()
+    expect(buildEditingExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', objectType: 'VIEW', objectNames: [] })?.config.objectScope.objectTypes).toEqual(['VIEW'])
   })
 
   it('序列策略仅随序列 DDL 构造，结果集不能携带读取开关', () => {

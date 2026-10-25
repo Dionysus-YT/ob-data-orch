@@ -22,16 +22,52 @@ import (
 )
 
 type normalImportMemoryStore struct {
-	item   store.NormalImportDraft
-	writes int
-	check  *store.NormalImportCheck
+	item    store.NormalImportDraft
+	writes  int
+	check   *store.NormalImportCheck
+	saveErr error
 }
 
 func (s *normalImportMemoryStore) SaveNormalImportDraft(_ context.Context, input store.NormalImportDraftWrite) (store.NormalImportDraft, error) {
+	if s.saveErr != nil {
+		return store.NormalImportDraft{}, s.saveErr
+	}
 	s.writes++
 	s.item = input.NormalImportDraft
 	s.item.Revision = input.ExpectedRevision + 1
 	return s.item, nil
+}
+
+func Test普通导入显式Strict生成同令牌布尔值(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		var input normalImportWriteRequest
+		_ = json.Unmarshal([]byte(normalImportBody()), &input)
+		input.Config.Execution.Strict = value
+		raw, _ := json.Marshal(input)
+		s := &normalImportMemoryStore{}
+		h := normalImportHandler(t, s, allowedCSRF{})
+		created := normalImportRequest(h, "POST", "/api/v1/normal-import-drafts", string(raw), "")
+		if created.Code != 201 {
+			t.Fatal("创建失败", created.Code)
+		}
+		preview := normalImportRequest(h, "POST", "/api/v1/normal-import-drafts/"+s.item.ID+":preview-command", `{}`, `"rev-1"`)
+		if preview.Code != 200 || !strings.Contains(preview.Body.String(), "--strict="+value) || strings.Contains(preview.Body.String(), "--strict ") {
+			t.Fatal("严格布尔值未使用唯一规范表达", preview.Code)
+		}
+	}
+}
+
+func Test普通导入重跑配置拒绝映射为不可重试业务错误(t *testing.T) {
+	s := &normalImportMemoryStore{}
+	h := normalImportHandler(t, s, allowedCSRF{})
+	if response := normalImportRequest(h, "POST", "/api/v1/normal-import-drafts", normalImportBody(), ""); response.Code != 201 {
+		t.Fatal(response.Code)
+	}
+	s.saveErr = store.ErrPrecheckInvalid
+	response := normalImportRequest(h, "PATCH", "/api/v1/normal-import-drafts/"+s.item.ID, normalImportBody(), `"rev-1"`)
+	if response.Code != 422 || !strings.Contains(response.Body.String(), "NORMAL_IMPORT_CONFIG_LOCKED") || strings.Contains(response.Body.String(), `"retryable":true`) || s.writes != 1 {
+		t.Fatal("锁定被误报为服务故障", response.Code)
+	}
 }
 func (s *normalImportMemoryStore) GetNormalImportDraft(_ context.Context, id, owner string) (store.NormalImportDraft, error) {
 	if s.item.ID != id || s.item.OwnerSubjectID != owner {

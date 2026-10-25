@@ -16,10 +16,12 @@ export function useNormalImportParameters(form: NormalImportForm, refs: Paramete
   const currentFormat = computed(() => traits.value.format ? form.formats[traits.value.format] : undefined)
   const facts = computed(() => ({ source: refs.selectedSource.value, node: refs.selectedNode.value }))
   const configuration = computed(() => projectNormalImport(form, facts.value))
+  watch(() => form.compatMysql, enabled => { if (!enabled) form.compatMysqlVersion = '' }, { flush: 'sync' })
   const configurationSignature = computed(() => JSON.stringify(configuration.value))
   const acknowledgedSignature = ref('')
   const riskAcknowledged = computed(() => acknowledgedSignature.value === configurationSignature.value)
   const riskDescriptions = computed(() => [
+    ...(['DDL_ONLY', 'DDL_AND_DATA'].includes(configuration.value.content) && (configuration.value.objects['obj-user'] || configuration.value.objects.role) ? ['创建账号或角色会改变租户安全对象，提交时须确认当前配置。'] : []),
     ...(configuration.value.replaceData ? ['替换重复数据仅适用于有主键或非空唯一键的目标表，适用性尚未检查。'] : []),
     ...(configuration.value.replaceObject ? ['替换已有对象定义可能先删除再创建对象。'] : []),
     ...(configuration.value.cleanup === 'TRUNCATE' ? ['导入前清空目标表，现有数据将丢失。'] : []),
@@ -64,6 +66,7 @@ export function useNormalImportParameters(form: NormalImportForm, refs: Paramete
     form.execution.nlsTimestampFormat = ''
     form.execution.nlsTimestampTzFormat = ''
     form.compatMysql = false
+    form.compatMysqlVersion = ''
     form.replaceData = false
     form.replaceObject = false
     form.cleanup = 'NONE'
@@ -103,6 +106,7 @@ export function useNormalImportParameters(form: NormalImportForm, refs: Paramete
       for (const type of Object.keys(form.objects) as (keyof typeof form.objects)[]) if (type !== 'table') form.objects[type] = ''
       form.replaceObject = false
       form.compatMysql = false
+      form.compatMysqlVersion = ''
     }
     if (!next.structuredData) { form.replaceData = false; form.cleanup = 'NONE' }
   }

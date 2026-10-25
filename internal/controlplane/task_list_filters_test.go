@@ -30,7 +30,7 @@ func Test任务列表筛选参数解析与失败关闭(t *testing.T) {
 	}
 	for name, values := range map[string]url.Values{
 		"未知状态":     {"state": {"DRAFT"}},
-		"未准入类型":    {"type": {"OBLOADER_DIRECT_LOAD"}},
+		"未知类型":     {"type": {"UNKNOWN_IMPORT"}},
 		"单值重复":     {"keyword": {"a", "b"}},
 		"多值参数重复":   {"state": {"RUNNING", "FAILED"}},
 		"过多状态":     {"state": {"RUNNING,FAILED,SUCCEEDED,CANCELLED,STARTING,CANCELLING,WAITING_SCHEDULE,RUNNING,FAILED"}},
@@ -122,11 +122,12 @@ func Test任务列表行操作资格(t *testing.T) {
 		{"取消中只读", store.TaskListItem{State: "CANCELLING", Operable: true}, true, []string{"COPY_COMMAND", "VIEW_LOGS"}},
 	}
 	for _, tc := range cases {
+		tc.item.TaskType = "OBDUMPER_EXPORT"
 		if got := taskListActions(tc.item, tc.real, true); !slices.Equal(got, tc.want) {
 			t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
 		}
 	}
-	if got := taskListActions(store.TaskListItem{State: "SUCCEEDED", SnapshotVersion: "v2", Operable: true}, true, false); slices.Contains(got, "SAVE_TEMPLATE") {
+	if got := taskListActions(store.TaskListItem{TaskType: "OBDUMPER_EXPORT", State: "SUCCEEDED", SnapshotVersion: "v2", Operable: true}, true, false); slices.Contains(got, "SAVE_TEMPLATE") {
 		t.Fatal("未配置模板依赖时不应提供保存模板")
 	}
 }

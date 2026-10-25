@@ -1,9 +1,9 @@
 import { onScopeDispose, ref, watch } from 'vue'
-import { taskDetailErrorMessage, type ExportConfigTemplateItem } from '@/api/browser'
+import { taskDetailErrorMessage, type ConfigTemplateItem } from '@/api/browser'
 import type { useTemplateCatalog } from './useTemplateCatalog'
 
 export function useTemplateActions(catalog: ReturnType<typeof useTemplateCatalog>) {
-  const pendingDelete = ref<ExportConfigTemplateItem>()
+  const pendingDelete = ref<ConfigTemplateItem>()
   const renameID = ref('')
   const renameValue = ref('')
   let renameVersion = 0
@@ -13,19 +13,19 @@ export function useTemplateActions(catalog: ReturnType<typeof useTemplateCatalog
   onScopeDispose(() => { cancelRename(); cancelDelete() })
   // 目录授权失效时同步撤销两类编辑会话，成功重读也不恢复旧输入或目标。
   watch(catalog.accessDenied, denied => { if (denied) { cancelRename(); cancelDelete() } }, { flush: 'sync' })
-  function startRename(template: ExportConfigTemplateItem) {
+  function startRename(template: ConfigTemplateItem) {
     if (!catalog.active() || catalog.actionBusy.value || catalog.accessDenied.value) return
     cancelRename()
     renameID.value = template.id
     renameValue.value = template.displayName
     catalog.notice.value = ''
   }
-  function requestDelete(template: ExportConfigTemplateItem) {
+  function requestDelete(template: ConfigTemplateItem) {
     if (!catalog.active() || catalog.actionBusy.value || catalog.accessDenied.value) return
     cancelDelete()
     pendingDelete.value = template
   }
-  async function confirmRename(template: ExportConfigTemplateItem) {
+  async function confirmRename(template: ConfigTemplateItem) {
     if (renameID.value !== template.id || !catalog.active() || catalog.actionBusy.value) return
     const displayName = renameValue.value.trim()
     if (!displayName || displayName === template.displayName) { cancelRename(); return }
@@ -33,7 +33,7 @@ export function useTemplateActions(catalog: ReturnType<typeof useTemplateCatalog
     const version = renameVersion
     const valid = () => catalog.active() && version === renameVersion
     try {
-      const revision = await catalog.api.renameExportConfigTemplate(template.id, template.revision, displayName)
+      const revision = await catalog.api.renameConfigTemplate(template.id, template.revision, displayName)
       if (!valid()) return
       catalog.templates.value = catalog.templates.value.map(item => item.id === template.id ? { ...item, displayName, revision } : item)
       catalog.notice.value = `模板「${displayName}」已改名。`
@@ -50,7 +50,7 @@ export function useTemplateActions(catalog: ReturnType<typeof useTemplateCatalog
     const version = deleteVersion
     const valid = () => catalog.active() && version === deleteVersion
     try {
-      await catalog.api.deleteExportConfigTemplate(template.id, template.revision)
+      await catalog.api.deleteConfigTemplate(template.id, template.revision)
       if (!valid()) return
       cancelDelete()
       catalog.templates.value = catalog.templates.value.filter(item => item.id !== template.id)

@@ -1,0 +1,16 @@
+/* 旁路复用共享水平 Task Builder 与 Ant 控件，只定义业务字段布局。 */
+.direct-load-section { min-inline-size: 0; }
+.direct-load-section > * + * { margin-block-start: var(--ob-foundation-space-4); }
+.direct-load-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ob-foundation-space-4); align-items: start; }
+.direct-load-fields > * { min-inline-size: 0; }
+.direct-load-field-group { margin-block: var(--ob-foundation-space-4); }
+.direct-load-field-group h3 { margin: var(--ob-foundation-space-4) 0 var(--ob-foundation-space-2); color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); font-weight: var(--ob-product-typography-weight); }
+.direct-load-field-group h3:first-child { margin-block-start: 0; }
+.direct-load-field-group > .ant-alert + .ant-alert { margin-block-start: var(--ob-foundation-space-3); }
+.direct-load-catalog { display: grid; gap: var(--ob-foundation-space-3); }
+.direct-load-catalog ul { list-style: none; margin: 0; padding: 0; }
+.direct-load-catalog li { padding-block: var(--ob-foundation-space-3); border-block-end: 1px solid var(--ob-color-border); overflow-wrap: anywhere; }
+.direct-load-catalog li > div { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ob-foundation-space-2); }
+.direct-load-catalog p { margin: 0; color: var(--ob-color-secondary); }
+.direct-load-issues { padding-inline-start: var(--ob-foundation-space-4); margin: 0; }
+@media (max-width: 1280px) { .direct-load-fields { grid-template-columns: minmax(0, 1fr); } }

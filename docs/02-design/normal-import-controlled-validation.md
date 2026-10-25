@@ -1,10 +1,12 @@
 # 普通导入参数最小受控验证计划
 
-> 文档状态：计划已形成，尚未执行\
+> 文档状态：Windows MySQL 本地切片已部分执行，完整 NIV 仍未完成\
 > 目标程序：OBLOADER 4.3.5-RELEASE\
 > 更新日期：2026-10-16\
 > 参数事实依据：[普通导入参数映射基线](normal-import-parameter-mapping.md)\
 > 字段规则依据：[普通导入字段与条件矩阵](normal-import-module.md#field-rules)
+
+2026-10-19 用户授权使用现有非生产数据源执行普通导入真实 E2E，20 项为 16 PASS/4 FAIL。涉及 `NIV-P0-04/06/21` 及 `NIV-P1-01/02/03` 的部分场景，未覆盖整套 NIV 或参数定版所需的两次独立一致性要求。逐项结果、失败与未执行范围见[真实验证证据](../03-technical/evidence/normal-import-mysql-e2e-2026-10-19.md)。下文“尚未执行”描述初版计划阶段，不否定本轮限定切片证据。
 
 2026-10-16 独立只读 JDBC v9、文件首条结构比对、第五步自动准备和提交可选命名仅完成合成实现验证；没有运行本计划的真实数据库/OBLOADER 用例。权限与映射不能确定时仍阻断，完整能力边界见[普通导入技术契约](../03-technical/normal-import-contract.md)。
 

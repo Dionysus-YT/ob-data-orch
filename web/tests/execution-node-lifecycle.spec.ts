@@ -62,7 +62,7 @@ test('节点编辑 A → B → 新建保持实例，保存期阻断切换，迟�
   await navigate(page, '/nodes/C/edit'); await expect.poll(() => held.length).toBe(1)
   await navigate(page, '/nodes/new'); await expect(page.getByRole('heading', { name: '注册执行节点' })).toBeVisible()
   await expect(heading).toHaveAttribute('data-instance', 'retained'); await held[0]!.fulfill({ json: { item: node('C') } }).catch(() => {})
-  await expect(page.getByLabel('节点名称', { exact: true })).toHaveValue(''); await expect(page.getByLabel('导出数据目录白名单', { exact: true })).toHaveValue('')
+  await expect(page.getByLabel('节点名称', { exact: true })).toHaveValue(''); await expect(page.getByLabel('任务数据目录白名单', { exact: true })).toHaveValue('')
   await page.setViewportSize({ width: 640, height: 720 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: info.outputPath('node-form-mode-reset.png'), fullPage: true })
 })
@@ -70,7 +70,7 @@ test('节点编辑 A → B → 新建保持实例，保存期阻断切换，迟�
 test('新建防重且保存期间阻断离开，成功后仅进入已创建节点', async ({ page }) => {
   await reads(page); const posts: Route[] = []
   await page.route('**/api/v1/execution-nodes', route => { if (route.request().method() === 'POST') posts.push(route); else return route.fulfill({ json: { items: [] } }) })
-  await page.goto('/nodes/new'); await page.getByLabel('节点名称', { exact: true }).fill('合成新建节点'); await page.getByLabel('OB Loader/Dumper 安装目录', { exact: true }).fill('E:/synthetic-tools'); await page.getByLabel('工具专用 Java 8 路径', { exact: true }).fill('C:/synthetic-java'); await page.getByLabel('导出数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
+  await page.goto('/nodes/new'); await page.getByLabel('节点名称', { exact: true }).fill('合成新建节点'); await page.getByLabel('OB Loader/Dumper 安装目录', { exact: true }).fill('E:/synthetic-tools'); await page.getByLabel('工具专用 Java 8 路径', { exact: true }).fill('C:/synthetic-java'); await page.getByLabel('任务数据目录白名单', { exact: true }).fill('/E:/synthetic-exports')
   await page.getByRole('button', { name: '保存并继续 Agent 关联' }).click(); await expect.poll(() => posts.length).toBe(1)
   await expect(page.getByLabel('节点名称', { exact: true })).toBeDisabled()
   await navigate(page, '/nodes/B/edit'); await expect(page).toHaveURL(/\/nodes\/new$/)

@@ -73,9 +73,9 @@ test('注册码复制失败持久警示，成功短时确认且关闭清除', as
 test('模板重复成功替换同一提示，离开页面不保留旧成功', async ({ page }) => {
   await mockFacts(page)
   let revision = 1
-  const template = { id: 'synthetic-template', displayName: '合成初始模板', revision, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: time, updatedAt: time }
-  await page.route('**/api/v1/export-config-templates', route => route.fulfill({ json: { items: [template] } }))
-  await page.route('**/api/v1/export-config-templates/synthetic-template', route => route.fulfill({ json: { revision: ++revision } }))
+  const template = { id: 'synthetic-template', taskType: 'OBDUMPER_EXPORT', displayName: '合成初始模板', revision, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: time, updatedAt: time }
+  await page.route('**/api/v1/config-templates', route => route.fulfill({ json: { items: [template] } }))
+  await page.route('**/api/v1/config-templates/synthetic-template', route => route.fulfill({ json: { revision: ++revision } }))
   await page.goto('/templates')
   for (const name of ['合成新模板', '合成初始模板', '合成新模板']) {
     await page.getByRole('button', { name: '改名', exact: true }).click()
@@ -90,7 +90,7 @@ test('模板重复成功替换同一提示，离开页面不保留旧成功', as
 
 for (const [path, endpoint, title] of [
   ['/tasks', '/api/v1/tasks', '无法加载任务列表'],
-  ['/templates', '/api/v1/export-config-templates', '操作未完成'],
+  ['/templates', '/api/v1/config-templates', '操作未完成'],
   ['/settings/storage-credentials', '/api/v1/storage-credentials', '无法加载存储凭据'],
 ]) test(`${title}使用持久 Ant Alert`, async ({ page }) => {
   await mockFacts(page)

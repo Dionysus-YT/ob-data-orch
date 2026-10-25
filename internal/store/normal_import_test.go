@@ -102,7 +102,7 @@ func Test普通导入检查清单冻结证据与失效(t *testing.T) {
 			if kind == "NORMAL_IMPORT_FILES" {
 				var secretErr error
 				_ = s.withWrite(ctx, func(tx *sql.Tx) error {
-					_, secretErr = readEncryptedPrecheckDatabaseConnection(ctx, tx, grant.Binding)
+					_, secretErr = s.readEncryptedPrecheckDatabaseConnection(ctx, tx, grant.Binding)
 					return nil
 				})
 				if !errors.Is(secretErr, ErrPrecheckLeaseRejected) {

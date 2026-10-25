@@ -9,6 +9,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。按当�
 | 日常改代码与热更新 | [源码开发模式](03-technical/deployment-operations.md#源码开发模式) | `scripts/dev.ps1` 与开发 Agent，稳定后才打包 |
 | 产品做什么、不做什么 | [产品范围](01-product/product-scope.md) | [关键决策](01-product/decisions.md)解释已确认的取舍 |
 | 当前做到哪、下一步是什么 | [开发任务地图](03-technical/development-task-map.md) | [准入与真实验证门禁](03-technical/development-readiness-closure.md) |
+| 权限配置首批边界与维护 | [权限配置契约](03-technical/access-control-contract.md) | [前端能力所有者](../web/src/workbench/access-control/README.md) |
 | 某个页面的功能、字段和异常场景 | [模块设计索引](02-design/README.md) | 每个模块一份设计；导入参数映射和验证计划按需读取 |
 | 页面应该长什么样 | [P0 MASTER](../design-system/MASTER.md) | [数据源标准页](../design-system/pages/data-sources.md)及对应页面 P1 |
 | 前端基础控件、Token、样式与升级 | [前端平台基线](03-technical/frontend-platform-baseline.md) | Qualification、浏览器回归和静态审计入口 |
@@ -18,6 +19,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。按当�
 | 系统如何实现、接口有哪些边界 | [技术契约索引](03-technical/README.md) | 只读受影响的契约 |
 | 某项能力有什么验证证据 | [验证记录索引](03-technical/README.md#evidence) | 区分合成验证、Windows 实测和正式发布 |
 | 普通导入保存、文件与预检查做到哪 | [普通导入技术契约](03-technical/normal-import-contract.md) | [普通导入维护索引](../web/src/workbench/import/normal/README.md)；真实执行与恢复仍受门禁约束 |
+| 旁路导入配置、单表文件与独立预检查 | [旁路导入技术契约](03-technical/direct-load-contract.md) | [旁路前端维护索引](../web/src/workbench/import/direct-load/README.md)；[单机真实 API 验收](03-technical/evidence/direct-load-standalone-repair-2026-10-22.md)，范围以任务地图为准 |
 
 首次了解项目，读“产品范围 → 任务地图 → 当前相关模块”即可。字段矩阵供实现和验收时查阅，不是入门必读。
 
@@ -37,3 +39,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。按当�
 需要追溯删除前原文时，在仓库根目录使用 `git show 94adccdd421f54ad22fba0b087448c7ad6379880:<原仓库相对路径>`。该提交用于查历史，不代表当前功能状态。冻结参数元数据里的历史 `sourceDocuments` 原样保留，解释见 [兼容契约](03-technical/export-general-contract.md#25-ex-d0-冻结边界的承接)。
 
 有独立验证价值的实施记录保留在 [工程历史](03-technical/evidence/engineering-history.md)；默认阅读路径不包含它。后续维护直接更新对应入口和正文，不再新增重复进度表或仅作跳转的文档。
+
+- [日志中心任务查询契约](03-technical/log-center-task-query-contract.md)：任务日志首批的授权、快照与分段读取边界。
+
+- [日志中心审计查询契约](03-technical/log-center-audit-query-contract.md)：独立能力、对象裁剪、安全字段、固定水位和访问审计。

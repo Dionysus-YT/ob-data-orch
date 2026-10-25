@@ -26,7 +26,7 @@ export function useExportRecovery(deps: Pick<ExportForm, 'selectedDataSourceID' 
     sourceRevision: number
     nodeId: string
     database: string
-    contentKind: ExportContentKind
+    contentKind: ExportContentKind | ''
     scopeKind: ExportScopeKind
     querySql?: string
     queryResultLimit?: string
@@ -125,7 +125,7 @@ export function useExportRecovery(deps: Pick<ExportForm, 'selectedDataSourceID' 
       selectedNodeID.value = node?.id ?? ''
       if (node && source.revision === saved.sourceRevision && typeof saved.database === 'string' && saved.database.length <= 256) {
         database.value = saved.database
-        contentKind.value = saved.contentKind === 'DDL_ONLY' || saved.contentKind === 'DDL_AND_DATA' ? saved.contentKind : 'DATA_ONLY'
+        contentKind.value = saved.contentKind === 'DDL_ONLY' || saved.contentKind === 'DDL_AND_DATA' || saved.contentKind === 'DATA_ONLY' ? saved.contentKind : ''
         scopeKind.value = saved.scopeKind === 'ALL' || saved.scopeKind === 'QUERY_RESULT' ? saved.scopeKind : 'SPECIFIED'
         querySql.value = scopeKind.value === 'QUERY_RESULT' && typeof saved.querySql === 'string' && new TextEncoder().encode(saved.querySql).length <= 60 * 1024 ? saved.querySql : ''
         queryResultLimit.value = scopeKind.value === 'QUERY_RESULT' && typeof saved.queryResultLimit === 'string' && saved.queryResultLimit.length <= 10 ? saved.queryResultLimit : ''

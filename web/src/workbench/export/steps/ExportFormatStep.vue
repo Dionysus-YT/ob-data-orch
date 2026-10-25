@@ -14,6 +14,7 @@ const { weakRead, addExtraMessage, enableHiddenPk, preserveZeroDatetime, extraMe
 
 <template>
   <section class="form-section">
+    <AAlert v-if="!contentKind" type="info" show-icon message="请选择导出内容" description="请返回第二步选择导出内容，再配置相应格式。" />
     <AAlert v-if="formatChangeNotice" type="info" show-icon :message="formatChangeNotice" closable @close="formatChangeNotice = ''" />
     <AAlert v-if="contentKind === 'DDL_ONLY'" type="info" show-icon message="无数据格式" description="仅 DDL 导出不生成数据文件；仍可在其他选项中配置 DDL 文件行为。" />
     <div v-if="dataOptionsActive" class="export-field-group">
@@ -73,7 +74,7 @@ const { weakRead, addExtraMessage, enableHiddenPk, preserveZeroDatetime, extraMe
         <p v-else class="section-hint">SQL 数据文件与仅导出结构的 DDL 文件不同。此格式仅配置文件编码与换行符号；日期、文件拆分与压缩在高级设置中按适用范围配置。</p>
       </AForm>
     </div>
-    <div class="export-field-group" role="region" aria-label="其他选项">
+    <div v-if="contentKind" class="export-field-group" role="region" aria-label="其他选项">
       <h3>其他选项</h3>
       <AForm layout="vertical" class="export-field-body export-format-panel export-other-options-body">
         <section v-if="contentKind !== 'DATA_ONLY'" class="export-option-group" aria-label="结构导出选项">

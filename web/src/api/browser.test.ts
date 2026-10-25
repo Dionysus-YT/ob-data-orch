@@ -15,6 +15,12 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
+  it('任务选择显式请求平台候选顺序，节点管理保持原读取', async () => {
+    const selection = apiWith(new Response(JSON.stringify({ items: [] })))
+    await selection.api.listExecutionNodes({ forTaskSelection: true }); expect(selection.calls[0]?.path).toBe('/api/v1/execution-nodes?candidateOrder=platform')
+    const management = apiWith(new Response(JSON.stringify({ items: [] })))
+    await management.api.listExecutionNodes(); expect(management.calls[0]?.path).toBe('/api/v1/execution-nodes')
+  })
   it('普通导入冻结快照使用独立版本与分组，拒绝混入导出版本或旁路格式', async () => {
     const item = { type: 'OBLOADER_NORMAL_IMPORT', snapshotVersion: 'normal-import-v1', dataSourceId: 'source-1', nodeId: 'node-1', precheckId: 'precheck-1', format: 'CSV', configFingerprint: 'a'.repeat(64), toolVersion: '4.3.5-RELEASE', metadataVersion: 'obloader-4.3.5-normal-v1', capabilityVersion: 'import-odp-local-v1', groups: ['source', 'input', 'objects', 'execution', 'review'].map(key => ({ key, label: key, fields: [{ key: 'synthetic', label: '合成字段', value: '合成值', source: 'UNKNOWN' }] })) }
     await expect(apiWith(Response.json({ item })).api.getTaskSnapshot('task-normal')).resolves.toMatchObject({ type: 'OBLOADER_NORMAL_IMPORT', snapshotVersion: 'normal-import-v1' })
@@ -705,6 +711,15 @@ describe('浏览器 API 客户端', () => {
     await expect(api.getPrecheck('precheck-1')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
   })
 
+  it('编辑草稿恢复空引用与未完成远端位置，标记不一致时失败关闭', async () => {
+    const item = { id: 'editing', configVersion: 'v6', draftState: 'EDITING', capabilityVersion: 'export-draft-edit-v1', dataSourceId: 'source-1', nodeId: '', revision: 1, configFingerprint: 'synthetic', config: { draftState: 'EDITING', config: { objectScope: { scopeKind: 'SPECIFIED' }, contentSelection: { contentKind: '' }, dataFormat: { formatKind: 'CSV' }, outputConfig: { outputKind: 'S3', filePath: '', storageLocationDraft: { bucket: 'synthetic-bucket', path: '', endpoint: '', region: '' } } } } }
+    const { api } = apiWith(Response.json({ item }))
+    await expect(api.getExportDraft('editing')).resolves.toMatchObject({ draftState: 'EDITING', nodeId: '', config: { objectScope: { database: '' }, contentSelection: { contentKind: '' }, outputConfig: { storageLocationDraft: { bucket: 'synthetic-bucket' } } } })
+    for (const invalid of [{ ...item, draftState: 'READY' }, { ...item, capabilityVersion: 'ready' }, { ...item, config: { ...item.config, draftState: 'READY' } }]) {
+      await expect(apiWith(Response.json({ item: invalid })).api.getExportDraft('editing')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    }
+  })
+
   it('读取导出草稿时只解析服务端返回的固定 CSV 配置', async () => {
     const { api, calls } = apiWith(Response.json({
       item: {
@@ -1389,7 +1404,7 @@ describe('浏览器 API 客户端', () => {
       return Response.json({ id: 'task-derived', parentTaskId: 'task-1', derivationKind: 'CHECKPOINT_RESUME' })
     }) as FetchLike
     const api = createBrowserApi({ fetcher, csrfToken: () => 'synthetic-csrf-token', idempotencyKey: () => 'synthetic-idempotency-key' })
-    await expect(api.rebuildTaskDraft('task-1', 'REBUILD_FROM_CONFIG')).resolves.toEqual({ draftId: 'draft-derived', sourceTaskId: 'task-1', derivation: 'REBUILD_FROM_CONFIG' })
+    await expect(api.rebuildTaskDraft('task-1', 'REBUILD_FROM_CONFIG')).resolves.toEqual({ draftId: 'draft-derived', sourceTaskId: 'task-1', derivation: 'REBUILD_FROM_CONFIG', taskType: 'OBDUMPER_EXPORT' })
     expect(calls[0]?.path).toBe('/api/v1/tasks/task-1:rebuild-draft')
     expect(calls[0]?.init.headers).toMatchObject({ 'X-CSRF-Token': 'synthetic-csrf-token', 'Idempotency-Key': 'synthetic-idempotency-key' })
     await expect(api.resumeTaskFromCheckpoint('task-1')).resolves.toEqual({ id: 'task-derived', parentTaskId: 'task-1', derivationKind: 'CHECKPOINT_RESUME' })

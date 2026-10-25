@@ -78,7 +78,7 @@ func (b *Browser) Authorize(_ context.Context, p identity.Principal, scope ident
 		return identity.ErrDenied
 	}
 	switch scope {
-	case identity.ScopeDataSourceRead, identity.ScopeDataSourceWrite, identity.ScopeNodeUse, identity.ScopeNodeManage, identity.ScopeTaskRead, identity.ScopeTaskReadAll:
+	case identity.ScopeDataSourceRead, identity.ScopeDataSourceUse, identity.ScopeDataSourceWrite, identity.ScopeNodeUse, identity.ScopeNodeManage, identity.ScopeTaskRead, identity.ScopeTaskReadAll:
 		return nil
 	}
 	return identity.ErrDenied
