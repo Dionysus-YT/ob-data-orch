@@ -10,7 +10,6 @@
 .log-query-message { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .log-query-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--ob-foundation-space-3); }
 .log-query-footer nav { display: flex; align-items: center; gap: var(--ob-foundation-space-2); margin-inline-start: auto; }
-.log-query-footnote { margin-block-start: var(--ob-foundation-space-4); color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .log-context-list { list-style: none; margin-block: var(--ob-foundation-space-4); padding: 0; }
 .log-context-list li { padding: var(--ob-foundation-space-3); border-block-end: 1px solid var(--ob-color-border); }
 .log-context-list pre { margin-block: var(--ob-foundation-space-2) 0; white-space: pre-wrap; overflow-wrap: anywhere; }

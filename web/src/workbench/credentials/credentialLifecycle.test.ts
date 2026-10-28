@@ -56,8 +56,10 @@ describe('存储凭据列表和短时输入生命周期', () => {
     write.resolve(item('synthetic-created')); await pending; expect(list.credentials.value).toHaveLength(2); expect(secretsEmpty(editor)).toBe(true); expect(editor.editorOpen.value).toBe(false); expect(list.writeBusy.value).toBe(false)
   })
   it('失败保留当前输入便于重试；关闭、轮换对象切换均清除秘密', async () => {
-    const { editor, api } = setup(); editor.openCreate(); fill(editor); api.createStorageCredential.mockRejectedValueOnce({ status: 409 }); await editor.submitForm()
-    expect(secretsEmpty(editor)).toBe(false); expect(editor.saving.value).toBe(false); editor.openRotate(item()); expect(secretsEmpty(editor)).toBe(true); fill(editor); editor.closeEditor(); expect(secretsEmpty(editor)).toBe(true)
+    const { list, editor, api } = setup(); editor.openCreate(); fill(editor); api.createStorageCredential.mockRejectedValueOnce({ status: 409 }); await editor.submitForm()
+    expect(secretsEmpty(editor)).toBe(false); expect(editor.saving.value).toBe(false); expect(list.feedback.value).not.toBe('')
+    editor.openRotate(item()); expect(secretsEmpty(editor)).toBe(true); expect(list.feedback.value).toBe('')
+    fill(editor); editor.closeEditor(); expect(secretsEmpty(editor)).toBe(true); expect(list.feedback.value).toBe('')
   })
   it('轮换捕获打开时修订，刷新不静默提升版本，旧读取不能覆盖操作结果', async () => {
     const { list, editor, api } = setup(); await list.loadCredentials(); editor.openRotate(item()); fill(editor)

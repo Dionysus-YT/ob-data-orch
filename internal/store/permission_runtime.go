@@ -22,7 +22,7 @@ func taskPermissionEligibility(alias string) string {
         AND EXISTS(SELECT 1 FROM execution_nodes pn WHERE pn.node_id=$T.node_id AND pn.management_state='ENABLED')
         AND EXISTS(SELECT 1 FROM subject_object_scopes ps WHERE ps.subject_id=$T.creator_subject_id AND ps.scope_type='DATA_SOURCE_USE' AND ps.object_id=$T.data_source_id)
         AND EXISTS(SELECT 1 FROM subject_object_scopes ps WHERE ps.subject_id=$T.creator_subject_id AND ps.scope_type='NODE_USE' AND ps.object_id=$T.node_id)
-        AND (($T.task_type != 'OBLOADER_DIRECT_LOAD' AND COALESCE(json_extract($T.submitted_permission_scope_json,'$.expertConfig'),CASE WHEN $T.metadata_version='obdumper-4.3.5-slice-v11-expert-parameters' OR $T.task_type='OBLOADER_NORMAL_IMPORT' THEN 1 ELSE 0 END) != 1) OR EXISTS(SELECT 1 FROM subject_grants pg WHERE pg.subject_id=$T.creator_subject_id AND pg.grant_code='CAP_EXPERT_CONFIG'))
+        AND (($T.task_type != 'OBLOADER_DIRECT_LOAD' AND COALESCE(json_extract($T.submitted_permission_scope_json,'$.expertConfig'),CASE WHEN $T.metadata_version IN ('obdumper-4.3.5-slice-v11-expert-parameters','obdumper-4.3.5-slice-v12-schema-boolean') OR $T.task_type='OBLOADER_NORMAL_IMPORT' THEN 1 ELSE 0 END) != 1) OR EXISTS(SELECT 1 FROM subject_grants pg WHERE pg.subject_id=$T.creator_subject_id AND pg.grant_code='CAP_EXPERT_CONFIG'))
         AND (NOT EXISTS(SELECT 1 FROM data_sources pd WHERE pd.data_source_id=$T.data_source_id AND pd.environment IN ('PROD','PRODUCTION')) OR EXISTS(SELECT 1 FROM subject_grants pg WHERE pg.subject_id=$T.creator_subject_id AND pg.grant_code='CAP_PRODUCTION_TASK'))
     ))`, "$T", alias)
 }
@@ -83,7 +83,7 @@ func submissionNeedsExpert(input TaskSubmission) bool {
 	if input.ExpertConfigRequired != nil {
 		return *input.ExpertConfigRequired
 	}
-	return input.MetadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters"
+	return input.MetadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters" || input.MetadataVersion == "obdumper-4.3.5-slice-v12-schema-boolean"
 }
 
 // resumedTaskNeedsExpert 优先沿用来源任务已冻结的领域分类，避免仅凭版本把普通配置提升为专家。

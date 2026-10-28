@@ -1,5 +1,12 @@
 import type { DirectLoadCheck } from '@/api/directLoad'
 
+/** 修正入口只使用当前证据；环境能力缺失不能引导用户反复修改业务参数，失效或等待结果不沿用旧入口。 */
+export function directLoadCheckRecovery(check: DirectLoadCheck | undefined, result: DirectLoadCheck['results'][number] | undefined, expired: boolean) {
+  if (!check || expired || ['INVALIDATED', 'EXPIRED', 'PENDING', 'LEASED'].includes(check.status) || !result || result.status === 'PASSED') return undefined
+  if (result.evidenceCode === 'DIRECT_LOAD_PROBE_NOT_CONFIGURED') return 'NODE_SETUP' as const
+  return result.status === 'FAILED' ? 'CONFIGURATION' as const : undefined
+}
+
 export const directLoadCheckItems = [
   { check: 'TOOL_ENVIRONMENT', name: '工具环境', step: 3 }, { check: 'NODE_RESOURCE', name: '节点资源', step: 3 },
   { check: 'INPUT_FILES', name: '单表文件集合', step: 3 }, { check: 'DATABASE_CONNECTIVITY', name: 'SQL 连接', step: 1 },
@@ -42,5 +49,5 @@ export function directLoadCheckPresentation(check: DirectLoadCheck | undefined, 
   if (result?.check === 'DIRECT_LOAD_STRUCTURE' && structureReasons[result.evidenceCode]) return { status: result.status === 'FAILED' ? 'error' as const : 'warning' as const, text: result.status === 'FAILED' ? '未通过' : '无法确认', detail: structureReasons[result.evidenceCode]! }
   if (result?.evidenceCode.startsWith('PRECHECK_BLOCKED_BY_')) return { status: 'warning' as const, text: '前置阻断，未执行', detail: '依赖的工具或数据库检查未通过，本项未执行。' }
   if (result?.status === 'FAILED') return { status: 'error' as const, text: '未通过', detail: '当前检查事实未满足旁路要求，请修正后重试。' }
-  return { status: 'warning' as const, text: '无法确认', detail: result?.evidenceCode === 'DIRECT_LOAD_PROBE_NOT_CONFIGURED' ? '旁路专用探针尚未装配，当前不能确认此项事实。' : '当前证据不足，不能提交。' }
+  return { status: 'warning' as const, text: '无法确认', detail: result?.evidenceCode === 'DIRECT_LOAD_PROBE_NOT_CONFIGURED' ? '检查能力未配置。' : '当前证据不足，不能提交。' }
 }

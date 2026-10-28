@@ -1,0 +1,22 @@
+{
+  "metadataVersion": "obdumper-4.3.5-slice-v12-schema-boolean",
+  "baseVersion": "obdumper-4.3.5-slice-v1",
+  "baseResource": "obdumper-4.3.5-slice-v1.json",
+  "baseSha256": "86615ad174b6a4430d2755f424b1ee3618f89e53b494e67ee14d420f517e12bf",
+  "inherits": "obdumper-4.3.5-slice-v11-expert-parameters.json",
+  "revisionReason": "固定 4.3.5 解析器只接受等号形式的 compact-schema 显式布尔值；MySQL 保留 Schema 使用 false 元数据重建路径。历史版本不原地修改。",
+  "sourceDocuments": [
+    "docs/03-technical/export-general-contract.md",
+    "docs/03-technical/evidence/export-retain-schema-2026-10-26.md"
+  ],
+  "categoryOrder": ["CONNECTION", "DATABASE_CONNECTION", "OBJECT_SCOPE", "CONTENT_FORMAT", "FORMAT_SERIALIZATION", "OUTPUT_FILE", "DATA_FILTER", "PERFORMANCE", "COMPRESSION"],
+  "overrides": [
+    {
+      "definitionId": "obdumper.ddl.compact_schema",
+      "emissionTarget": "ARGV",
+      "explicitBoolean": true,
+      "appendEvidence": ["4.3.5 固定解析器：compact-schema=false 单令牌保留 false，空格形式拒绝"]
+    }
+  ],
+  "additions": []
+}

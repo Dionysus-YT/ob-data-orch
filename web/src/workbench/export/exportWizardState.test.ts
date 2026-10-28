@@ -68,6 +68,26 @@ async function setup(overrides: Partial<BrowserApi> = {}) {
   return { ...state, source, step, scope, runtime, draft, passed, saved }
 }
 
+it('保留 Schema 的正常交互清除原生路径冲突，恢复旧值不静默改写', async () => {
+  const state = await setup()
+  state.form.contentKind.value = 'DDL_ONLY'
+  await nextTick()
+  state.form.compactSchema.value = true
+  state.form.retainSchema.value = true
+  await nextTick()
+  expect(state.form.compactSchema.value).toBe(false)
+  expect(state.parameters.draftInput.value?.config.ddlBehavior?.compactSchema).toBe(false)
+  state.form.hydratingDerivedDraft.value = true
+  state.form.retainSchema.value = false
+  state.form.compactSchema.value = true
+  await nextTick()
+  state.form.retainSchema.value = true
+  await nextTick()
+  expect(state.form.compactSchema.value).toBe(true)
+  state.form.hydratingDerivedDraft.value = false
+  expect(state.parameters.draftInput.value).toBeUndefined()
+})
+
 describe('导出向导单一状态与参数边界', () => {
   it('仅手动选择节点也是未保存输入，回到空表单后不误报丢失配置', async () => {
     const s = await setup()

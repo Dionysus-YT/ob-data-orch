@@ -29,7 +29,7 @@ export interface TaskListOptions {
   readonly autoRefreshMs?: number
 }
 
-// 任务列表的唯一状态所有者：筛选来自路由 query，读取、分页、自动刷新与写事务互斥都在这里。
+// 任务列表的唯一状态所有者：筛选来自注入 query（任务中心路由或首页固定分析窗口），读取、分页及迟到隔离都在这里。
 // 路由条件变化立即使旧读取失效；迟到、重复或卸载后的响应不能覆盖当前结果。
 export function useTaskList(routeQuery: Readonly<Ref<LocationQuery>>, replaceQuery: (query: LocationQueryRaw) => unknown, options: TaskListOptions = {}) {
   const createApi = options.createApi ?? browserApi

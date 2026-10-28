@@ -1,6 +1,7 @@
 # 安全策略维护入口
 
 - `views/SecurityPolicyView.vue` 只装配 Settings 工作面、路由会话与安全状态展示。
+- 安全基线、密钥载入与执行许可使用只读 Badge/Descriptions，来源及时间按需展开配置详情；不以禁用开关暗示可修改，折叠不保留撤权或失败后的事实。
 - `useSecurityPolicy.ts` 唯一持有只读事实、请求防重、取消与会话代；路由变化、撤权、失败和卸载都不能重放旧安全状态。
 - `api/securityPolicy.ts` 严格校验非秘密白名单、实际启动时间、固定安全模式及执行开关依赖；没有写接口。
 - `internal/securitypolicy` 持有不可变启动事实及内存密钥标识可用性；`internal/controlplane/security_policy.go` 在读取前后复验 ACTIVE 系统管理员。

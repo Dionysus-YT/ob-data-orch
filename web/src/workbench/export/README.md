@@ -1,5 +1,11 @@
 # 导出向导维护索引
 
+2026-10-27 两条普通向导体验补查：底栏只保留步骤动作，移除通用说明；第四步具名字段错误由既有 Form.Item 原位反馈，`useExportWizard.currentStepAlert` 仅保留无法归属字段的步骤问题，`currentStepError` 继续用于阻断、展开和焦点定位。第五步保留唯一检查总览与逐项证据，不重复自动检查机制。专家参数用例显式选择导出内容，并使用现役节点控件及预检查入口，不依赖已取消的默认选择；验证记录见[产品体验整改](../../../../docs/03-technical/evidence/product-experience-fixes-2026-10-27.md)。
+
+2026-10-27 Schema 策略修复：`useExportParameters` 独占 MySQL retain/native 正常交互清值，hydration 保留历史冲突供校验；`exportDraftInput` 校验互斥并派生 compactSchema=false；`ExportFormatStep` 只消费唯一表单、禁用态和提示。服务端 `exportdomain/schema_strategy.go` 复验组合，唯一生成器负责 v12 等号令牌，步骤不发请求或改写 DDL。没有增加表单副本或全局状态，已有字段继续触发配置失效。97 项受影响单测、实际恢复/切换与三项 API 拒绝反例见[前缀修复验收](../../../../docs/03-technical/evidence/export-retain-schema-2026-10-26.md)；只读历史预览与冻结任务不升级。
+
+2026-10-26 默认日志文案由 `steps/ExportOutputStep.vue`、`steps/ExportSummary.vue` 和 `exportParameterCatalog.ts` 同步：未填路径时描述 Agent 受控采集；摘要仍只以唯一已保存草稿为事实来源。实际日志配置与私有 Java 临时目录归 Agent 的固定启动配置，不在向导新增参数、隐式日志路径、目录空性跳过或第二份表单状态。真实压缩兼容仍以任务地图的目标环境证据为准。
+
 2026-10-24 候选顺序由控制面调度策略统一提供，`useExportReferences` 仍唯一持有节点候选和绑定读取；重排不改选、不清空仍有效绑定。读取失败须撤下旧候选，保留当前绑定标识供复读恢复，不以旧顺序代替当前策略；未选节点不能因排序或单候选自动填入。负例见 `exportWizardState.test.ts` 与 `reference-pages.spec.ts` 的候选失败重试用例。
 
 2026-10-17 跨模块一致性整改：按用户确认完成 8 项 P1 与 5 项模块内 P2，公共呈现规则登记于 Task Builder Pattern。摘要、预检查行和只读命令复用现有平台样式；来源切换确认仍归 `useExportParameters`，错误字段由 `exportDraftInput` 返回，步骤只关联 Form.Item，入口仅负责展开后的滚动与焦点。`useExportWizard` 按配置提供完成步骤；离开守卫消费未保存状态，持久化签名包含手选节点。参数目录和摘要复用原焦点工具的开关事实保护，快速关闭不得由迟到动画回调重新锁住背景。

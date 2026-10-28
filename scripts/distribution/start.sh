@@ -30,10 +30,33 @@ start_and_check() {
 }
 printf '1 启动（首次自动安装）  2 停止  3 升级  4 查看状态\n'
 if [ "$binary" = agent ]; then printf '5 重新注册（关联到新节点）\n'; fi
+if [ "$binary" = control-plane ]; then printf '6 首次授权 admin 审计读取（需先停止控制面）\n'; fi
 read -r action
 case "$action" in
   2) systemctl stop "$name"; exit ;;
   4) systemctl status "$name"; exit ;;
+  6)
+    [ "$binary" = control-plane ] || { printf '首次审计授权仅适用于控制面。\n'; exit 1; }
+    [ "$(id -u)" = 0 ] || { printf '首次审计授权请使用 sudo 运行同一个启动入口。\n'; exit 1; }
+    systemctl cat "$name" >/dev/null 2>&1 || { printf '请先完成控制面安装与首次启动。\n'; exit 1; }
+    [ "$(systemctl show -p WorkingDirectory "$name")" = "WorkingDirectory=$root" ] &&
+      [ "$(systemctl show -p User "$name")" = "User=$name" ] || { printf '已有服务目录或账户不匹配，请使用原安装目录。\n'; exit 1; }
+    [ "$(systemctl show -p ActiveState "$name")" = ActiveState=inactive ] || { printf '请先选择“2 停止”并确认控制面停止。\n'; exit 1; }
+    printf '仅为固定 admin 授予 CAP_AUDIT_LOG 审计读取，不增加业务对象权限。入口只可使用一次，撤权后不能重授。\n'
+    printf '确认请输入 GRANT_AUDIT_LOG admin，其他输入取消：'; read -r confirmation
+    [ "$confirmation" = 'GRANT_AUDIT_LOG admin' ] || { printf '已取消首次审计授权。\n'; exit 1; }
+    printf '现有 admin 密码（不会重置密码）：'
+    terminal_state=$(stty -g)
+    trap 'stty "$terminal_state"; unset password' EXIT HUP INT TERM
+    stty -echo
+    read -r password
+    stty "$terminal_state"
+    trap - EXIT HUP INT TERM
+    printf '\n'
+    status=0
+    printf '%s\n%s\n' "$password" "$confirmation" | runuser -u "$name" -- "$root/$binary" -bootstrap-audit-access || status=$?
+    unset password
+    exit "$status" ;;
   5)
     [ "$binary" = agent ] || { printf '重新注册仅适用于 Agent，请使用 Agent 原安装目录的启动入口。\n'; exit 1; }
     [ "$(id -u)" = 0 ] || { printf '重新注册请使用 sudo 运行同一个启动入口。\n'; exit 1; }

@@ -199,12 +199,17 @@ test('普通导入自动检查工具前置阻断，手动重检区分未启用�
   await expect(table.getByText('未启用', { exact: true })).toHaveCount(1)
   await expect(table.getByText('前置阻断，未执行', { exact: true })).toHaveCount(2)
   await expect(table.getByText('通过', { exact: true })).toHaveCount(3)
-  await expect(table.getByText('当前节点尚未启用普通导入数据库连接检查，请更新 Agent 并核对本机只读 JDBC 检查配置。', { exact: true })).toBeVisible()
+  await expect(table.getByText('节点未配置这项检查。', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '查看执行节点', exact: true })).toHaveCount(1)
+  await expect(table.getByRole('button', { name: '检查数据源', exact: true })).toHaveCount(0)
+  await expect(page.getByText('NORMAL_IMPORT_PROBE_NOT_CONFIGURED', { exact: true })).toHaveCount(1)
   await expect(table.getByText('未通过', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '提交并启动导入', exact: true })).toBeDisabled()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: info.outputPath('normal-import-unconfigured.png'), fullPage: true })
   expect(errors).toEqual([])
+  await page.getByRole('button', { name: '查看执行节点', exact: true }).click()
+  await expect(page).toHaveURL(/\/nodes\/synthetic-import-node$/)
 })
 
 test('普通导入低堆阻断提交，调整配置后重新检查清除旧失败', async ({ page }, info) => {

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Alert as AAlert } from 'ant-design-vue'
 import { usePageEntryPosition } from '@/composables/usePageEntryPosition'
 import SchedulingPolicySettings from '@/workbench/scheduling/SchedulingPolicySettings.vue'
 import SchedulingTimingSettings from '@/workbench/scheduling/SchedulingTimingSettings.vue'
@@ -11,22 +10,19 @@ usePageEntryPosition(content)
 </script>
 
 <template>
-  <div ref="content" class="orch-ui">
-    <header class="orch-page-header"><div class="orch-page-title"><h1>调度策略</h1><p class="orch-context-label">管理全平台并发、时间策略与节点候选顺序。</p></div></header>
-    <section class="settings-main settings-sections" aria-label="调度策略内容">
-      <AAlert type="info" show-icon message="并发、时间与候选顺序分别编辑和保存" description="节点并发由 JVM 内存预算约束，预算在执行节点中维护；候选顺序只影响列表，始终由用户显式选择节点。" />
-      <section aria-labelledby="scheduling-concurrency-title">
-        <h2 id="scheduling-concurrency-title">并发约束</h2>
-        <SchedulingPolicySettings />
-      </section>
-      <section aria-labelledby="scheduling-timing-title">
-        <h2 id="scheduling-timing-title">时间策略</h2>
-        <SchedulingTimingSettings />
-      </section>
-      <section aria-labelledby="scheduling-candidates-title">
-        <h2 id="scheduling-candidates-title">节点选择</h2>
-        <SchedulingCandidatesSettings />
-      </section>
+  <div ref="content" class="settings-domain" aria-label="调度策略内容">
+    <header class="settings-domain-header"><h2>调度策略</h2></header>
+    <section class="settings-group" aria-labelledby="scheduling-concurrency-title">
+      <div class="settings-group-label"><h3 id="scheduling-concurrency-title">并发约束</h3><p>限制全平台同时占用的执行数量。节点资源预算在执行节点中维护。</p></div>
+      <SchedulingPolicySettings />
+    </section>
+    <section class="settings-group" aria-labelledby="scheduling-timing-title">
+      <div class="settings-group-label"><h3 id="scheduling-timing-title">时间策略</h3></div>
+      <SchedulingTimingSettings />
+    </section>
+    <section class="settings-group" aria-labelledby="scheduling-candidates-title">
+      <div class="settings-group-label"><h3 id="scheduling-candidates-title">节点选择</h3></div>
+      <SchedulingCandidatesSettings />
     </section>
   </div>
 </template>

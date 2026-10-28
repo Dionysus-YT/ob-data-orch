@@ -31,7 +31,6 @@ const strictOptions = [{ value: '', label: '沿用官方默认 true' }, { value:
         </div>
       </Form>
     </div>
-    <p class="section-hint">未显式设置的参数沿用工具默认；实际资源与错误处理仍须预检查核对。</p>
     <WizardAdvancedSettings title="资源、会话与数据行为" :configured-count="executionAdvancedCount" :force-open="advancedHasError" :open-request="validationAttempt">
       <Form layout="vertical" class="normal-import-advanced-form">
         <template v-for="group in advancedGroups" :key="group.title">

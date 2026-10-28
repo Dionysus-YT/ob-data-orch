@@ -17,6 +17,16 @@ function setup(read: (range: '24h' | '7d') => Promise<OverviewSnapshot>, autoRef
 }
 
 describe('首页快照生命周期', () => {
+  it('下钻入口确认失权时同步清全页快照、停止计时并隔离在途刷新', async () => {
+    vi.useFakeTimers()
+    const model = setup(async () => overviewFixture(), 1000); await settle()
+    const pending = deferred<OverviewSnapshot>(); model.getOverview.mockImplementationOnce(() => pending.promise)
+    void model.state.refresh(); model.state.invalidateAuthorization()
+    expect(model.state.snapshot.value).toBeNull(); expect(model.state.restricted.value).toBe(true)
+    expect(model.signals.at(-1)?.aborted).toBe(true)
+    pending.resolve(overviewFixture()); await settle(); await vi.advanceTimersByTimeAsync(5000)
+    expect(model.state.snapshot.value).toBeNull(); expect(model.getOverview).toHaveBeenCalledTimes(2)
+  })
   it('方法入口防重，刷新失败保留整份快照且部分结果不混入旧分区', async () => {
     const pending = deferred<OverviewSnapshot>()
     const first = overviewFixture()

@@ -54,6 +54,8 @@ type Draft struct {
 	DropObject    bool
 	RetainSchema  bool
 	CompactSchema bool
+	// CompactSchemaValue 保留显式 false；nil 继续表示继承工具默认，历史 flag 仍由原版本解释。
+	CompactSchemaValue *bool
 	// AddExtraMessage 依赖当前数据源的 sys 凭据及固定权限预检查。
 	AddExtraMessage bool
 	// SequencePolicy 仅包含序列 DDL 时活动；命令值使用官方小写枚举。
@@ -86,6 +88,6 @@ func (n Draft) HasZeroOptions() bool {
 		n.QuerySql == "" && n.QueryResultLimit == nil && len(n.IncludeColumns) == 0 && len(n.ExcludeColumns) == 0 &&
 		!n.ExcludeVirtualColumns && n.FlashbackScn == nil && n.FlashbackTimestamp == "" &&
 		n.Thread == nil && n.PageSize == nil && n.ParallelMacro == nil && n.FetchSize == nil && n.JvmMemory == "" && n.BlockSize == "" &&
-		!n.DropObject && !n.RetainSchema && !n.CompactSchema && !n.AddExtraMessage && n.SequencePolicy == "" && n.Where == "" && !n.Snapshot && !n.WeakRead && !n.EnableHiddenPk &&
+		!n.DropObject && !n.RetainSchema && !n.CompactSchema && n.CompactSchemaValue == nil && !n.AddExtraMessage && n.SequencePolicy == "" && n.Where == "" && !n.Snapshot && !n.WeakRead && !n.EnableHiddenPk &&
 		n.Partition == "" && len(n.ExcludeDataTypes) == 0 && n.TimestampFormats == (store.TimestampFormatConfig{})
 }

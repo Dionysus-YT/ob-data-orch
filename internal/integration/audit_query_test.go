@@ -24,8 +24,14 @@ import (
 
 // Test审计实际会话CSRF与独立能力 使用合成口令、临时 SQLite 与真实浏览器会话验证完整传输边界。
 func Test审计实际会话CSRF与独立能力(t *testing.T) {
-	database, path := openSyntheticStore(t)
 	ctx := context.Background()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "local-mvp.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
 	now := time.Now().UTC()
 	if err := database.EnsureAuthSubject(ctx, store.AuthSubject{SubjectID: deployment.SubjectID, ExternalSubject: deployment.SubjectID, DisplayName: "合成管理员", AccountStatus: "ACTIVE", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
@@ -33,8 +39,16 @@ func Test审计实际会话CSRF与独立能力(t *testing.T) {
 	if err := database.BootstrapPermissionOwner(ctx, deployment.SubjectID, now); err != nil {
 		t.Fatal(err)
 	}
-	settings, err := deployment.OpenSettings(t.TempDir(), strings.NewReader("https://orch.example.test:8080\nsynthetic-password-1234\n"), io.Discard)
+	settings, err := deployment.OpenSettings(directory, strings.NewReader("https://orch.example.test:8080\nsynthetic-password-1234\n"), io.Discard)
 	if err != nil {
+		t.Fatal(err)
+	}
+	settings.ListenAddress = "127.0.0.1:0"
+	configuration, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(directory, "settings.json"), configuration, 0600); err != nil {
 		t.Fatal(err)
 	}
 	browser, err := deployment.NewBrowser(settings)
@@ -93,8 +107,8 @@ func Test审计实际会话CSRF与独立能力(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// 仅在隔离夹具预置显式授权，不修改现役主体，也不绕过自身只读的产品接口。
-	if _, err = db.Exec(`INSERT INTO subject_grants(subject_id,grant_code,granted_by,granted_at) VALUES(?,'CAP_AUDIT_LOG',?,?)`, deployment.SubjectID, deployment.SubjectID, now.Format(time.RFC3339Nano)); err != nil {
+	// 通过原口令、明确确认与实际部署事务授予，不能用夹具直接插入代替入口验收。
+	if err = deployment.BootstrapInitialAuditAccess(ctx, directory, strings.NewReader("synthetic-password-1234\nGRANT_AUDIT_LOG admin\n"), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	response := request("GET", queryPath, "", cookie, "")
@@ -140,5 +154,14 @@ func Test审计实际会话CSRF与独立能力(t *testing.T) {
 	var n int
 	if err = db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action IN ('AUDIT_LOG_QUERY','AUDIT_LOG_DETAIL','AUDIT_LOG_DOWNLOAD')`).Scan(&n); err != nil || n != 3 {
 		t.Fatal("访问审计不完整", n, err)
+	}
+	if err = deployment.BootstrapInitialAuditAccess(ctx, directory, strings.NewReader("synthetic-password-1234\nGRANT_AUDIT_LOG admin\n"), io.Discard); err == nil {
+		t.Fatal("实际撤权后部署入口重新授予")
+	}
+	if r := request("POST", "/logout", "", cookie, matches[1]); r.Code != 204 {
+		t.Fatal("注销失败", r.Code)
+	}
+	if r := request("GET", "/api/v1/logs/audit-access", "", cookie, ""); r.Code != 401 {
+		t.Fatal("注销后旧会话仍能读取", r.Code)
 	}
 }

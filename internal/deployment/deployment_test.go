@@ -143,6 +143,61 @@ func TestBrowserLoginCSRFAndMachineIsolation(t *testing.T) {
 	}
 }
 
+// 登录页须自包含：认证前不能引用需会话的网页资源；失败回显只含固定提示与转义后的账户名，不含口令。
+func TestLoginPageSelfContainedAndFailureFeedback(t *testing.T) {
+	settings := testSettings(t)
+	browser, err := NewBrowser(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	os.WriteFile(filepath.Join(directory, "index.html"), []byte(`<meta name="ob-data-orch-csrf-token" content="local-mvp-csrf-v1">`), 0600)
+	handler, err := browser.Handler(http.NotFoundHandler(), directory, directory, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", settings.PublicURL+"/login", nil))
+	page := response.Body.String()
+	if response.Code != 200 || !strings.Contains(page, "data:image/png;base64,") || !strings.Contains(page, "--ob-color-primary") {
+		t.Fatalf("登录页未嵌入标识或 Token：%d", response.Code)
+	}
+	if strings.Contains(page, `href="/assets/`) || strings.Contains(page, `src="/assets/`) || strings.Contains(page, `role="alert"`) {
+		t.Fatal("首次打开登录页不得引用需会话资源或预置错误提示")
+	}
+	post := func(form url.Values, origin string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest("POST", settings.PublicURL+"/login", strings.NewReader(form.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Origin", origin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	failed := post(url.Values{"username": {`<script>x</script>`}, "password": {"synthetic-wrong-secret"}}, settings.PublicURL)
+	body := failed.Body.String()
+	if failed.Code != 401 || !strings.Contains(body, "账户或密码不正确") || !strings.Contains(body, `role="alert"`) || !strings.Contains(body, `aria-invalid="true"`) {
+		t.Fatalf("登录失败未给出页面内反馈：%d", failed.Code)
+	}
+	if strings.Contains(body, "<script>x</script>") || !strings.Contains(body, "&lt;script&gt;x&lt;/script&gt;") {
+		t.Fatal("回填账户名未转义")
+	}
+	if strings.Contains(body, "synthetic-wrong-secret") {
+		t.Fatal("登录失败页回显了口令")
+	}
+	if long := post(url.Values{"username": {strings.Repeat("a", 65)}, "password": {"x"}}, settings.PublicURL); !strings.Contains(long.Body.String(), `value="admin"`) {
+		t.Fatal("超长账户名不得回填")
+	}
+	if forbidden := post(url.Values{"username": {"admin"}, "password": {"x"}}, "https://other.example.test"); forbidden.Code != 403 || !strings.Contains(forbidden.Body.String(), "请求来源无效") {
+		t.Fatalf("跨来源登录未以登录页拒绝：%d", forbidden.Code)
+	}
+	for range 12 {
+		post(url.Values{"username": {"admin"}, "password": {"x"}}, settings.PublicURL)
+	}
+	if limited := post(url.Values{"username": {"admin"}, "password": {"x"}}, settings.PublicURL); limited.Code != 429 || limited.Header().Get("Retry-After") != "60" || !strings.Contains(limited.Body.String(), "尝试过于频繁") {
+		t.Fatalf("频率限制未保持：%d", limited.Code)
+	}
+}
+
 func TestTLSStableTrustAndHostnameVerification(t *testing.T) {
 	directory := t.TempDir()
 	first, err := TLSConfig(directory, "https://orch.example.test:8080")

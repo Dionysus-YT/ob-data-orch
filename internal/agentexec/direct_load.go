@@ -1,7 +1,6 @@
 package agentexec
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -52,29 +51,7 @@ func windowsDirectLoadReplicaArguments(workspace credential.Workspace, toolHome,
 // directLoadLogConfiguration 固定仅输出到受控 stdout；官方 Routing 的 task.workspace 会把日志写回输入目录。
 // 配置不接收任务内容或外部路径，已有运行时资产必须逐字节相同且不能为链接。
 func directLoadLogConfiguration(workspace credential.Workspace) (string, error) {
-	const content = `<?xml version="1.0" encoding="UTF-8"?><Configuration status="ERROR"><Appenders><Console name="ControlledOutput" target="SYSTEM_OUT"><PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss} [%p] %m%n"/></Console></Appenders><Loggers><Root level="info"><AppenderRef ref="ControlledOutput"/></Root></Loggers></Configuration>`
-	path := filepath.Join(workspace.RuntimeDirectory(), "direct-load-log4j2.xml")
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if os.IsExist(err) {
-		info, statErr := os.Lstat(path)
-		if statErr != nil || !info.Mode().IsRegular() || info.Size() != int64(len(content)) {
-			return "", ErrDirectJavaLaunchInvalid
-		}
-		body, readErr := os.ReadFile(path)
-		if readErr != nil || !bytes.Equal(body, []byte(content)) {
-			return "", ErrDirectJavaLaunchInvalid
-		}
-		return path, nil
-	}
-	if err != nil {
-		return "", ErrDirectJavaLaunchInvalid
-	}
-	_, writeErr := file.WriteString(content)
-	closeErr := file.Close()
-	if writeErr != nil || closeErr != nil {
-		return "", ErrDirectJavaLaunchInvalid
-	}
-	return path, nil
+	return controlledLogConfiguration(workspace, "direct-load-log4j2.xml")
 }
 
 // DirectLoadToolVersion 只读固化工具目录中的固定 JAR，不运行工具或依赖文件名猜测版本。

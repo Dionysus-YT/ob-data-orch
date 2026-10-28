@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import type { OverviewNode, OverviewNodes, OverviewSection } from '@/api/overview'
 import { nodeCapacityLabel, nodeEnvironmentLabel, nodeHeartbeatLabel, nodeManagementLabel, nodeUnavailableReasonLabel } from '@/workbench/nodes/executionNodePresentation'
 import { overviewTime } from './overviewPresentation'
+import { overviewTableComponents } from './overviewTable'
 
 const props = defineProps<{ section: OverviewSection<OverviewNodes>; busy: boolean; currentTime: number }>()
 const emit = defineEmits<{ retry: [] }>()
 const router = useRouter()
+const tableComponents = overviewTableComponents('执行节点摘要')
 const columns = [
   { title: '节点', key: 'name', width: '34%' }, { title: '接收新任务', key: 'accepts' }, { title: '槽位', key: 'capacity' }, { title: '心跳 / 资源（UTC）', key: 'runtime' },
 ]
@@ -20,10 +22,17 @@ const sampleExpired = (at?: string) => !at || props.currentTime - Date.parse(at)
 <template>
   <section class="content-card overview-section" aria-labelledby="overview-nodes-title">
     <div class="overview-section-heading">
-      <div><h2 id="overview-nodes-title">执行节点</h2><p v-if="section.status === 'READY'">{{ section.data.total }} 个可见节点 · {{ section.data.unavailable }} 个当前不能接收任务</p></div>
+      <div class="overview-nodes-heading">
+        <h2 id="overview-nodes-title">执行节点</h2>
+        <template v-if="section.status === 'READY'">
+          <span class="overview-meta">{{ section.data.total }} 个可见节点</span>
+          <AButton type="link" class="overview-object-link" :aria-label="`不可接收节点 ${section.data.unavailable} 个，可见 ${section.data.total} 个，查看执行节点`" @click="router.push({ name: 'nodes' })"><ABadge :status="section.data.unavailable ? 'warning' : 'success'" :text="`${section.data.unavailable} 个不可接收`" /></AButton>
+        </template>
+        <ABadge v-else-if="section.status === 'RESTRICTED'" status="default" text="范围受限" />
+      </div>
       <AButton type="link" class="overview-object-link" @click="router.push({ name: 'nodes' })">查看全部节点</AButton>
     </div>
-    <ATable v-if="section.status === 'READY'" :data-source="[...section.data.items]" :columns="columns" row-key="id" :pagination="false" :scroll="{ x: 560 }" aria-label="执行节点摘要">
+    <ATable v-if="section.status === 'READY'" :components="tableComponents" :data-source="[...section.data.items]" :columns="columns" row-key="id" :pagination="false" :scroll="{ x: 560 }">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'name'">
           <AButton type="link" class="overview-object-link" :title="nodeOf(record).displayName" @click="router.push({ name: 'node-detail', params: { id: nodeOf(record).id } })">{{ nodeOf(record).displayName }}</AButton>
@@ -48,5 +57,6 @@ const sampleExpired = (at?: string) => !at || props.currentTime - Date.parse(at)
 </template>
 
 <style scoped>
+.overview-nodes-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); }
 .overview-node-reason { margin: var(--ob-foundation-space-1) 0 0; color: var(--ob-color-warning); font-size: var(--ob-component-table-metadata-size); overflow-wrap: anywhere; }
 </style>

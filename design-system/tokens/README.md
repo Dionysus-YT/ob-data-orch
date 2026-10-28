@@ -1,6 +1,6 @@
 # Design Tokens
 
-> 本目录描述设计 token taxonomy。实现唯一值源仍是 `web/src/platform/tokens.ts`；`web/src/platform/tokens.css` 由 `npm run tokens:generate` 生成，禁止手改。
+> 本目录描述设计 token taxonomy。实现唯一值源仍是 `web/src/platform/tokens.ts`；`web/src/platform/tokens.css` 与登录页嵌入用的 `internal/deployment/loginpage/tokens.css` 由 `npm run tokens:generate` 同时生成，禁止手改。
 
 ## 1. Taxonomy
 

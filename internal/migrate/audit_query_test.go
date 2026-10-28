@@ -2,7 +2,6 @@ package migrate
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -19,7 +18,7 @@ func Test审计水位迁移保留历史及原子追加(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range files {
-		if strings.HasPrefix(file.Name(), "0041_") {
+		if file.Name() >= "0041_" {
 			continue
 		}
 		data, err := migrations.Files.ReadFile(file.Name())

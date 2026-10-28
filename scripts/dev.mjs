@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile, copyFile, readdir, stat, rm, rename } from 
 import { createInterface } from 'node:readline'
 import { developmentSettings, shouldReload } from './dev-settings.mjs'
 import { buildDevelopmentAgentPackages } from './dev-agent-packages.mjs'
+import { waitForDevelopmentHealth } from './dev-readiness.mjs'
 import https from 'node:https'
 import net from 'node:net'
 import path from 'node:path'
@@ -92,15 +93,17 @@ async function checkPort(port) {
   await once(server, 'listening')
   await new Promise(resolve => server.close(resolve))
 }
-async function health() {
+async function health(timeoutMs = 2000) {
   const ca = await readFile(path.join(controlBase, 'data', 'control-plane-ca.pem'))
   return new Promise((resolve, reject) => {
-    const request = https.get(`${publicURL}/healthz`, { ca, timeout: 2000 }, response => {
+    const request = https.get(`${publicURL}/healthz`, { ca }, response => {
       response.resume()
-      response.statusCode === 200 ? resolve() : reject(new Error('健康响应无效'))
+      response.statusCode === 200 ? resolve() : reject(new Error(`健康响应无效（HTTP ${response.statusCode}）`))
     })
-    request.on('timeout', () => request.destroy(new Error('健康检查超时')))
-    request.on('error', reject)
+    // 从请求创建起计时，覆盖连接、TLS 和等待响应；完成后清理计时器。
+    const timer = setTimeout(() => request.destroy(new Error('健康检查超时')), timeoutMs)
+    request.once('close', () => clearTimeout(timer))
+    request.on('error', error => reject(new Error(error.code ? `健康连接失败（${error.code}）` : error.message)))
   })
 }
 async function start() {
@@ -108,12 +111,12 @@ async function start() {
   if (mode === 'control-plane') await checkPort(18443)
   child = launch(executable, mode === 'control-plane' ? ['-dev-web-url', 'http://127.0.0.1:15173'] : ['-dev-watch'])
   if (mode === 'control-plane') {
-    let ready = false
-    for (let attempt = 0; attempt < 40; attempt++) {
-      if (child.exitCode !== null) break
-      try { await health(); ready = true; break } catch { await delay(250) }
-    }
-    if (!ready) throw new Error('开发控制面健康检查失败')
+    console.log('正在等待开发控制面就绪（最多 120 秒，包含 SQLite 校验与迁移）…')
+    await waitForDevelopmentHealth({
+      probe: health,
+      exited: () => child.exitCode ?? child.signalCode,
+      canceled: () => closing,
+    })
   } else {
     await delay(1000)
     if (child.exitCode !== null) throw new Error('开发 Agent 启动失败')

@@ -1,5 +1,7 @@
 # 参数元数据与确定性命令生成契约
 
+> 2026-10-27 MySQL 保留 Schema 使用新不可变 v12 的显式 compact-schema 布尔语法；旧版本及冻结任务不改变。规则见[本次修订](#2026-10-27-v12-结构策略布尔值)，实际工具证据见[前缀修复验收](evidence/export-retain-schema-2026-10-26.md)。
+
 > 2026-10-24 工具与兼容只读状态使用命令生成器同源的实际目录，区分导出按配置选择、v6/v8 历史重放和普通/旁路固定目录。读取不改变参数资源、生成规则或快照，不宣称全平台单一活动元数据，也不提供目录激活；现役事实与边界见[工具与兼容契约](tool-compatibility-contract.md)。
 
 > 2026-10-22 DEC-058：本地直连数据源使用 canonical `OBSERVER_DIRECT`，控制面从拆分字段生成 SQL `username@tenant` 与独立 `--tenant`；只有 ODP 生成 `--cluster`。唯一生成器及 Agent 冻结 argv 同步要求直连 tenant 非空、cluster 非活动；固定官方 103 项研究目录不改写，仅修正当前本地投影。版本与真实执行结论以[单机验收](evidence/direct-load-standalone-repair-2026-10-22.md)为准，不能沿用下方历史“未执行”描述作为现役状态。
@@ -138,7 +140,7 @@
 | 60 | `--table` | 任务显式值 | 必填；本切片只允许一个已预检查的明确表名，不允许 `*`、列表或任意表达式 |
 | 70 | `--csv` | 格式选择 | 必填固定开关；本切片不接受其他格式 |
 | 80 | `--file-path` | 任务显式值 | 必填；执行节点上的完整绝对路径，按平台规则原样传入 |
-| 90 | `--log-path` | 任务显式值 | 可选；填写时必须是执行节点上的完整绝对路径并传入，留空保持 OBDUMPER 默认行为 |
+| 90 | `--log-path` | 任务显式值 | 可选；填写时必须是执行节点上的完整绝对路径并传入；留空不发射该业务令牌，现行 Agent 由固定 console 配置受控采集默认日志 |
 | 100 | `--skip-check-dir` | 任务显式值 | 可选开关；只有用户勾选时生成，跳过的仅是导出目录空性检查 |
 
 ### 6.1 PC-R04 兼容修订
@@ -147,6 +149,8 @@ PC-R04 确认的八项是首条切片的**逻辑输入集合**，不是八个实
 
 - 八项必填逻辑输入仍为 host、port、user、password、database、table、csv、file-path；`log-path` 与 `skip-check-dir` 是 v5 新增的显式可选输入；
 - 未填写可选项时，实际 `argvTemplate` 只包含 `-h<host>`、`-P<port>`、`-u<username@tenant[#cluster]>`、database、table、csv、file-path，共七项；填写日志路径或勾选跳过目录检查时按稳定顺序追加对应令牌；
+- 2026-10-26 默认日志修订只改变 Agent 的固定 JVM 日志配置，不改业务 argv、指纹或历史元数据；不隐式追加日志路径或跳过目录检查。Java 临时目录也由固定启动配置绑定私有 runtime，不成为用户参数。实际工具兼容状态以目标环境证据为准；
+- Windows Java 8 执行入口另检查当前系统代码页下的 argv 无损往返，不能表示的查询、路径或其他参数在进程创建前拒绝，不能静默替换成 `?` 后执行。该限制不改写生成器输出、展示形态或历史快照，也不新增自由 JVM 参数；固定日志 `file.encoding=UTF-8` 与数据文件显式 `--file-encoding` 分别生效；
 - password 只保存版本化凭据引用，生成到 `secretSlots`，目标属性固定为 `oceanbase.jdbc.password`；
 - `argvTemplate`、环境变量和显示命令均不得出现密码原值；显示命令固定以 `-p ******` 标识密码逻辑位置，实际 argv 不含 `-p`，避免 Agent 进入交互式提示；
 - 参数元数据 `obdumper-4.3.5-slice-v1` 保持不可变，`v2` 以校验和固定 `v1` 并只覆盖密码发射目标；`v3`、`v4` 保留该密码边界及私有 ODP 能力；现行 `v5` 继续固定 `v1`，并以版本化附加定义启用 `--log-path` 和 `--skip-check-dir`，不为 `--column-quote-mode` 注入默认值。
@@ -406,3 +410,13 @@ Agent 只能在拥有有效任务租约、快照指纹和节点授权时解析�
 2026-10-14 真实导出回归补充：CSV `columnQuoteMode=none` 必须显式填写单字节 `escapeCharacter`，前端与草稿 API 在进入工具前校验。包含列/排除列的字面列表在草稿入口同步复用固定元数据协议的重复项限制；不保存无法被固定探针验证的重复列表。`--tmp-path` 的现行 v11 元数据为所有已绑定能力的可选参数，不把本地输出携带该参数误判为 API 负例；节点路径和根目录约束仍在预检、执行时核对。
 
 对象存储 `--log-path` 与 `--tmp-path` 均是节点本地路径，预检查与执行保持相同平台/根目录边界；URI 原样传递。页面要求明确临时分块目录，底层历史参数可空但预检查不能取得完整目录/空间证据。`--mem` 静态资格使用已有预算规则，未填时按已有预算默认评估，不因此向历史命令或配置注入新字段；真正执行继续复核实时额度。
+
+## 2026-10-27 v12 结构策略布尔值
+
+`obdumper-4.3.5-slice-v12-schema-boolean` 继承 v11，保持 79 项定义和九类稳定顺序；仅覆盖 `obdumper.ddl.compact_schema` 的 `explicitBoolean=true`。加载器只允许固定 v12、固定 definition/option 和 flag 类型使用该语法；标记出现在历史版本、未知定义或其他类型时拒绝。历史资源及固定 v1 摘要不修改。
+
+生成器对这一参数保留显式 false，true/false 分别生成单个 `--compact-schema=true` / `--compact-schema=false` argv 令牌，脱敏展示与执行形态同源；false 不可折叠成未配置。规范值、实际令牌和元数据版本参与既有确定性指纹。固定 4.3.5 解析器拒绝空格分离的 false，不能生成 `--compact-schema false`；其他开关继续沿用原语法。v7/v11 的 false 仍省略、true 仍为无值开关，重放指纹不变。
+
+MySQL retain-schema 对 false 的派生、true 冲突及独立 false 收缩规则归 `exportdomain.ResolveSchemaStrategy`；HTTP 入口仅装配领域输入，Agent 只执行已冻结 argv。只读历史预览不调用新转换，明确编辑保存后新修订选择 v12。权限分类继续根据实际专家参数结果判断：有普通分类的 v12 不自动要求专家能力，缺少分类的历史/异常记录沿用 v11 保守回退，不扩大权限。
+
+该变更使用官方已有元数据重建路径，没有任意 JVM 参数、Shell 拼装或输出 DDL 改写。工具与兼容页从同一生成器目录读取 v12，仍不提供激活/发布入口。三种数据格式和纯 DDL 的真实前缀证据见[本轮验收](evidence/export-retain-schema-2026-10-26.md)；不能外推 Oracle、多库、额外对象或完整门禁通过。

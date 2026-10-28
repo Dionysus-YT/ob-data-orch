@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 import { mockFacts } from './fixtures/facts'
+import { monitorNativeWindowErrors } from './fixtures/native-window-errors'
+
+const verifyNative = new WeakMap<Page, () => Promise<void>>()
+test.beforeEach(async ({ page }) => { verifyNative.set(page, await monitorNativeWindowErrors(page)) })
+test.afterEach(async ({ page }) => { await verifyNative.get(page)?.() })
 
 // 全部数据为合成夹具；不连接控制面、Agent 或数据库。
 const time = '2026-10-01T02:00:00Z'
@@ -100,7 +105,7 @@ test('行操作只来自服务端资格；取消经危险确认并提交写请�
   await expect(page.getByText('取消中', { exact: true })).toBeVisible()
 })
 
-test('历史名称、已删除对象、核对标识与空态表达', async ({ page }) => {
+test('历史名称、已删除对象、核对标识与空态表达', async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   let items: unknown[] = [task('deleted', { dataSourceName: undefined, dataSourceDeleted: true, nodeDeleted: true, reconciliationRequired: true, state: 'RUNNING', environment: undefined })]
   await page.route('**/api/v1/tasks/filter-options', route => route.fulfill({ json: { requestId: 'r', ...options } }))
@@ -113,8 +118,10 @@ test('历史名称、已删除对象、核对标识与空态表达', async ({ pa
   items = []
   await page.goto('/tasks?state=FAILED')
   await expect(page.getByText('没有符合条件的任务', { exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath('task-filtered-empty.png'), fullPage: false })
   await page.goto('/tasks')
   await expect(page.getByText('尚无可展示任务', { exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath('task-empty.png'), fullPage: false })
   await page.getByRole('button', { name: '新建任务' }).click()
   await expect(page.getByRole('menuitem', { name: '普通导入', exact: true })).not.toHaveAttribute('aria-disabled', 'true')
   await page.keyboard.press('Escape')

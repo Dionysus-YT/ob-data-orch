@@ -24,7 +24,6 @@ const columns: TableColumnsType<PrecheckTableRow> = [
   <section class="form-section">
     <h2>预检查与提交确认</h2>
     <section class="precheck-list" aria-label="预检查结果">
-      <p class="section-hint">进入本页后自动检查；独立项目继续执行，依赖项说明阻断原因。修正配置并保存后会重新检查。</p>
       <AAlert v-if="hasTemporalFormats" type="info" show-icon message="日期时间格式已完成参数校验；实际序列化结果需要导出时确认。" />
       <AAlert :type="precheckOverview.type" show-icon :message="precheckOverview.message" :description="precheckOverview.description">
         <template #action>

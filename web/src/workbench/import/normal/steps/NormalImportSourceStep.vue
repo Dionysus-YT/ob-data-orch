@@ -38,7 +38,7 @@ const environments = [{ value: '', label: '全部环境' }, ...['DEVELOPMENT', '
       </Form>
     </div>
     <Form layout="vertical" class="normal-import-fields">
-      <FormItem required :html-for="fieldPrefix + '-database'" :validate-status="fieldError('database') ? 'error' : undefined" :help="fieldError('database')" extra="可覆盖数据源默认值；不会发起数据库或对象探测。">
+      <FormItem required :html-for="fieldPrefix + '-database'" :validate-status="fieldError('database') ? 'error' : undefined" :help="fieldError('database')">
         <template #label><span>目标数据库 / Schema</span><NormalImportParameterHint name="database" /></template>
         <Input :id="fieldPrefix + '-database'" v-model:value="form.database" aria-label="目标数据库 / Schema" :disabled="!selectedSource" placeholder="填写目标数据库或 Schema" />
       </FormItem>

@@ -14,12 +14,12 @@ async function openExpertForm(page: Page, mode: 'MYSQL' | 'ORACLE', sys: 'AVAILA
   await page.goto('/exports/new')
   await page.getByRole('radio').first().check()
   await page.getByRole('button', { name: /^下一步：/ }).click()
-  await page.locator('.ant-select').filter({ has: page.getByRole('combobox', { name: /选择执行节点/ }) }).click()
+  await page.getByRole('radiogroup', { name: '导出内容' }).getByText('导出结构和数据', { exact: true }).click()
+  await page.locator('.export-node-select .ant-select').click()
   await page.getByText('合成执行节点 · Windows · x86_64').last().click()
   await page.getByRole('button', { name: '展开数据库列表' }).click()
   await page.getByText('finance_reporting', { exact: true }).last().click()
   await page.getByRole('radio', { name: '整库导出' }).check()
-  await page.getByRole('radiogroup', { name: '导出内容' }).getByText('导出结构和数据', { exact: true }).click()
   return source
 }
 
@@ -67,7 +67,7 @@ for (const mode of ['MYSQL', 'ORACLE'] as const) {
     await page.screenshot({ path: info.outputPath('expert-formats-narrow.png'), fullPage: true })
     await page.getByRole('button', { name: /^下一步：/ }).click()
     await page.getByRole('textbox', { name: '导出路径', exact: true }).fill('/E:/tmp/synthetic-expert-output')
-    await page.getByRole('button', { name: '创建草稿并进入预检查' }).click()
+    await page.getByRole('button', { name: '查看预检查与命令', exact: true }).click()
     await expect.poll(() => saved?.config.ddlBehavior).toEqual({ addExtraMessage: true, sequencePolicy: 'RESTART' })
     expect(saved?.config.filterConfig).toMatchObject({ weakRead: true, enableHiddenPk: true })
     const formats = saved?.config.dataFormat?.timestampFormats
@@ -75,7 +75,7 @@ for (const mode of ['MYSQL', 'ORACLE'] as const) {
     if (mode === 'MYSQL') expect(formats).toMatchObject({ timeValueFormat: 'HH:mm:ss', preserveZeroDatetime: true })
     else expect(formats).toMatchObject({ timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss', timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss', nlsDateFormat: 'YYYY-MM-DD HH24:MI:SS', nlsTimestampFormat: 'YYYY-MM-DD HH24:MI:SS', nlsTimestampTzFormat: 'YYYY-MM-DD HH24:MI:SS' })
     await page.getByRole('button', { name: '查看任务摘要', exact: true }).click()
-    await expect(page.locator('.configuration-summary')).toContainText('/E:/tmp/synthetic-expert-output')
+    await expect(page.getByRole('dialog', { name: '任务摘要', exact: true })).toContainText('/E:/tmp/synthetic-expert-output')
     expect(errors).toEqual([])
   })
 }

@@ -84,7 +84,7 @@ test('普通导入沿用导出的横向工作面，文件格式只提供 CSV、C
   await expect(selectedNode).toContainText('合成导入节点（已更名） · Windows · x86_64')
   await expect(selectedNode).not.toContainText(normalImportNode.id)
   await expect(page.getByText('输入位置', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('填写所选执行节点上、位于允许目录内的本地文件或目录路径。', { exact: false })).toBeVisible()
+  await expect(page.getByText('填写执行节点允许目录内的文件或目录。', { exact: true })).toBeVisible()
   await page.getByRole('radiogroup', { name: '导入内容', exact: true }).getByText('仅导入数据', { exact: true }).click()
   await page.locator('.ant-select').filter({ has: page.getByRole('combobox', { name: /^(?:\* )?数据格式(?: .+参数说明)?$/ }) }).click()
   const choices = page.locator('.ant-select-dropdown:visible .ant-select-item-option-content')

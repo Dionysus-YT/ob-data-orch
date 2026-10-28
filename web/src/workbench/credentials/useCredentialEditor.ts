@@ -38,6 +38,8 @@ export function useCredentialEditor(list: ReturnType<typeof useCredentialList>) 
   function closeEditor() {
     editorVersion++
     editorOpen.value = saving.value = false
+    // 关闭或切换编辑会话时撤下旧失败，重新打开不重放上一会话的错误。
+    list.feedback.value = ''
     editingID.value = null
     target = undefined
     resetForm()

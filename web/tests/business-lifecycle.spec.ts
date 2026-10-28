@@ -5,7 +5,9 @@ const time = '2026-01-01T00:00:00Z'
 const credential = (revision = 1) => ({ id: 'synthetic-credential', displayName: '合成凭据', provider: 'OSS', revision, currentRevision: revision, updatedAt: time })
 const template = { id: 'synthetic-template', taskType: 'OBDUMPER_EXPORT', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: '2026-01-01T00:00:00Z', updatedAt: time }
 async function navigate(page: Page, path: string) {
-  await page.evaluate(async path => { const modulePath = '/src/router/index.ts'; const { router } = await import(/* @vite-ignore */ modulePath); await router.push(path) }, path)
+  // 通过当前应用的导航链接切换，避免 HMR 后重新导入模块得到第二个路由实例。
+  await page.locator(`a[href="${path === '/settings' ? '/settings/platform' : path}"]`).first().dispatchEvent('click')
+  await expect(page).toHaveURL(path === '/settings' ? '/settings/platform' : path)
 }
 async function fill(page: Page) { await page.getByLabel('凭据名称', { exact: true }).fill('合成凭据'); await page.getByLabel('AccessKey', { exact: true }).fill('synthetic-access'); await page.getByLabel('SecretKey', { exact: true }).fill('synthetic-secret') }
 
@@ -48,8 +50,10 @@ test('凭据创建和轮换防重、版本及敏感输入清理，旧刷新不�
   await mockFacts(page); let row = credential(); let delayRead = false; const held: Route[] = []; const rotations: Route[] = []
   await page.route('**/api/v1/storage-credentials', route => { if (delayRead) held.push(route); else return route.fulfill({ json: { items: [row] } }) })
   await page.route('**/api/v1/storage-credentials/*:rotate', route => { rotations.push(route) })
-  await page.goto('/settings/storage-credentials'); await page.getByRole('button', { name: '轮换', exact: true }).click(); await fill(page)
+  await page.goto('/settings/storage-credentials'); await expect(page.getByRole('button', { name: '轮换', exact: true })).toBeVisible()
   delayRead = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await expect.poll(() => held.length).toBe(1)
+  // 构造列表刷新在途时打开编辑的竞态；抽屉打开后不再操作被遮罩的列表。
+  await page.getByRole('button', { name: '轮换', exact: true }).dispatchEvent('click'); await fill(page)
   await page.getByRole('button', { name: '确认轮换', exact: true }).click(); await expect.poll(() => rotations.length).toBe(1)
   const headers = rotations[0]!.request().headers(); expect(headers['if-match']).toBe('"rev-1"'); expect(Boolean(headers['idempotency-key'] && headers['x-csrf-token'])).toBe(true)
   const payload = rotations[0]!.request().postDataJSON(); expect(Boolean(payload.accessKey && payload.secretKey && payload.provider === 'OSS')).toBe(true)
@@ -91,6 +95,6 @@ test('模板改名、选择引用与新建草稿保持语义，离开后迟到�
   await page.getByRole('combobox', { name: /^数据源/ }).focus(); await page.keyboard.press('ArrowDown'); await page.getByText(source.displayName, { exact: true }).last().click(); await page.getByRole('combobox', { name: /^执行节点/ }).focus(); await page.keyboard.press('ArrowDown'); await page.getByText('合成节点 · Windows · x86_64', { exact: true }).click()
   await page.getByRole('button', { name: '创建草稿', exact: true }).click(); await expect.poll(() => drafts.length).toBe(1)
   expect(drafts[0]!.request().postDataJSON()).toEqual({ dataSourceId: source.id, nodeId: 'synthetic-node' }); await navigate(page, '/settings'); await drafts[0]!.fulfill({ json: { draftId: 'synthetic-late', templateId: 'synthetic-template', taskType: 'OBDUMPER_EXPORT' } }).catch(() => {})
-  await expect(page).toHaveURL(/\/settings$/); expect(drafts).toHaveLength(1); expect(errors).toEqual([])
+  await expect(page).toHaveURL(/\/settings\/platform$/); expect(drafts).toHaveLength(1); expect(errors).toEqual([])
   await navigate(page, '/templates'); await page.setViewportSize({ width: 640, height: 720 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: info.outputPath('template-return.png'), fullPage: true })
 })

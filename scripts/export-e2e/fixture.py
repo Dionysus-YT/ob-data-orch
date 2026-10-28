@@ -68,7 +68,8 @@ def main():
                     "FUNCTION": ["CREATE FUNCTION f_identity(value_arg INT) RETURNS INT DETERMINISTIC RETURN value_arg"],
                     "PROCEDURE": ["CREATE PROCEDURE p_identity(IN value_arg INT) SELECT value_arg"],
                     "SEQUENCE": ["CREATE SEQUENCE s_counter START WITH 17 INCREMENT BY 3 MAXVALUE 10000 NOCACHE"],
-                    "ZERO_DATETIME": ["CREATE TABLE zeros (id INT PRIMARY KEY,date_col DATE,datetime_col DATETIME)","INSERT INTO zeros VALUES (1,'0000-00-00','0000-00-00 00:00:00')"],
+                    # 保留零日期只适用于 NOT NULL 日期列；可空列的 JDBC NULL 必须仍按 NULL 验证。
+                    "ZERO_DATETIME": ["CREATE TABLE zeros (id INT PRIMARY KEY,date_col DATE NOT NULL,datetime_col DATETIME NOT NULL)","INSERT INTO zeros VALUES (1,'0000-00-00','0000-00-00 00:00:00')"],
                     "PARTITION": ["CREATE TABLE partitioned (id INT PRIMARY KEY,ascii_label VARCHAR(32)) PARTITION BY RANGE(id) (PARTITION p0 VALUES LESS THAN(3),PARTITION p1 VALUES LESS THAN MAXVALUE)","INSERT INTO partitioned VALUES (1,'a'),(2,'b'),(3,'c'),(4,'d')"],
                     "SUBPARTITION": ["CREATE TABLE subpartitioned (id INT PRIMARY KEY,ascii_label VARCHAR(32)) PARTITION BY RANGE(id) SUBPARTITION BY HASH(id) (PARTITION p0 VALUES LESS THAN(3) (SUBPARTITION sp00,SUBPARTITION sp01),PARTITION p1 VALUES LESS THAN MAXVALUE (SUBPARTITION sp10,SUBPARTITION sp11))","INSERT INTO subpartitioned VALUES (1,'a'),(2,'b'),(3,'c'),(4,'d')"],
                 }
@@ -79,7 +80,7 @@ def main():
                         capabilities[capability] = True
                     except pymysql.MySQLError:
                         capabilities[capability] = False
-                result = {"status":"CREATED","capabilities":capabilities,"richColumns":RICH_COLUMNS,"richRows":RICH_ROWS,"slowRows":50000}
+                result = {"status":"CREATED","capabilities":capabilities,"richColumns":RICH_COLUMNS,"richRows":RICH_ROWS,"slowRows":50000,"zeroColumnsNullable":False}
                 try:
                     cursor.execute("SELECT CURRENT_SCN()")
                     result["scn"] = str(cursor.fetchone()[0])
@@ -135,6 +136,9 @@ def main():
                     try:
                         cursor.execute("SELECT CAST(date_col AS CHAR),CAST(datetime_col AS CHAR) FROM " + quote(schema) + ".zeros ORDER BY id")
                         result["sourceZeroStrings"] = list(cursor.fetchall())
+                        cursor.execute("SELECT COLUMN_NAME,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='zeros' AND COLUMN_NAME IN ('date_col','datetime_col') ORDER BY COLUMN_NAME", (schema,))
+                        result["zeroColumns"] = list(cursor.fetchall())
+                        result["zeroColumnsNullable"] = any(row[1] == "YES" for row in result["zeroColumns"])
                     except pymysql.MySQLError:
                         result["sourceZeroStrings"] = []
                     try:

@@ -62,9 +62,9 @@
 | MX-036-CSV | 空表：CSV 保留空文件 | {"format":"CSV","table":"empty","retainEmptyFiles":true} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
 | MX-037-CSV | 空表：CSV 默认空表输出事实 | {"format":"CSV","table":"empty"} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
 | MX-036-CUT | 空表：CUT 保留空文件 | {"format":"CUT","table":"empty","retainEmptyFiles":true} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
-| MX-037-CUT | 空表：CUT 默认空表输出事实 | {"format":"CUT","table":"empty"} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
+| MX-037-CUT | 空表：CUT 默认空表无产物时失败关闭 | {"format":"CUT","table":"empty"} | 七项通过 → 工具退出 0 但无文件 → RESULT_VERIFICATION_FAILED；零文件/零字节、无待核对状态，不投影成功 | 通用前提 |
 | MX-036-SQL | 空表：SQL 保留空文件 | {"format":"SQL","table":"empty","retainEmptyFiles":true} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
-| MX-037-SQL | 空表：SQL 默认空表输出事实 | {"format":"SQL","table":"empty"} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
+| MX-037-SQL | 空表：SQL 默认空表无产物时失败关闭 | {"format":"SQL","table":"empty"} | 七项通过 → 工具退出 0 但无文件 → RESULT_VERIFICATION_FAILED；零文件/零字节、无待核对状态，不投影成功 | 通用前提 |
 | MX-040 | 筛选：where 过滤产生精确子集 | {"where":"id <= 2"} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
 | MX-041 | 筛选：包含列产生精确列集合 | {"include":["id","ascii_label"]} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |
 | MX-042 | 筛选：排除列产生精确列集合 | {"exclude":["notes"]} | 创建草稿 → 校验预览/指纹 → 七项通过 → 提交 → 真实终态 → 清单与完整内容 | 通用前提 |

@@ -156,6 +156,25 @@ test('返回修改后保存自动检查新修订，成功结果可提交并保�
   expect(errors).toEqual([])
 })
 
+test('输出字段错误只在字段下显示，定位焦点并保留修正后的预检查', async ({ page }, info) => {
+  const api = await openReview(page)
+  await api.enter()
+  await page.getByRole('button', { name: '修改执行与输出', exact: true }).first().click()
+  const path = page.getByRole('textbox', { name: '导出路径', exact: true })
+  await path.fill('synthetic-relative-output')
+  await page.getByRole('button', { name: '查看预检查与命令', exact: true }).click()
+  const message = '导出路径必须与所选节点平台匹配；Windows 使用 /E:/exports 形式。'
+  await expect(page.getByText(message, { exact: true })).toHaveCount(1)
+  await expect(page.locator('.ant-form-item-explain-error')).toHaveText(message)
+  await expect(path).toBeFocused()
+  await page.screenshot({ path: info.outputPath('export-path-field-error.png'), fullPage: true })
+  api.state.outcome = 'PASSED'
+  await path.fill('/E:/synthetic-corrected-output')
+  await page.getByRole('button', { name: '查看预检查与命令', exact: true }).click()
+  await expect(page.getByRole('button', { name: '提交并启动导出', exact: true })).toBeEnabled()
+  expect(api.savedConfig().outputConfig.filePath).toBe('/E:/synthetic-corrected-output')
+})
+
 test('工具环境失败时数据库组显示未执行且定位到节点步骤', async ({ page }) => {
   const fixture = await openReview(page)
   fixture.state.outcome = 'TOOL_FAILED'

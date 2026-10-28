@@ -4,11 +4,15 @@
 
 `cases.mjs` 是 172 项用例输入与预期的唯一目录，`browser-batch.mjs` 通过真实控制面完成草稿、唯一命令生成器、七项预检查、提交、Agent 领取和终态。`collect-browser.mjs` 独立核对本机文件、清单及内容，`browser-lifecycle.mjs` 覆盖幂等、失效、过期、取消、派生、模板、日志及权限。五步界面、视口和键盘通过 CUA 实际操作。缺少外部条件必须记录 BLOCKED/PARTIAL，不能算 PASS；不拦截应用 API 或使用假 Agent。
 
-本轮实际结果与产品缺陷以 `docs/03-technical/evidence/export-mysql-e2e-2026-10-14.md` 为准。用例覆盖不等于真实通过，旧的合成证据不能替代此记录。
+历史 172 项全矩阵结果保留在 `docs/03-technical/evidence/export-mysql-e2e-2026-10-14.md`，不得覆盖。2026-10-26 的运行时复验、测试预期纠正和剩余阻断见 `docs/03-technical/evidence/export-runtime-acceptance-2026-10-26.md`；本轮只有选定的 20 个代表场景，不是全矩阵重新通过。用例覆盖不等于真实通过，合成证据不能替代真实记录。
+
+2026-10-27 已通过新任务关闭上述 retain-schema 剩余失败，见[前缀修复验收](../../docs/03-technical/evidence/export-retain-schema-2026-10-26.md)。`validate.mjs` 的 `hasQualifiedCreateTable` 在 DDL_ONLY 及 DDL_AND_DATA 中核对实际 CREATE TABLE 的数据库/表目标，忽略注释和字符串中的同名文字，不能仅凭文件名或出现库名判通过。6 个新真实任务、3 个 API 反例与 1 个 Edge/CUA 联动场景独立计数，不把补测写入历史 172 项原始结果。清理前已经完成完整行集、DDL 目标、文件摘要和脱敏核对，清理后只复核保存的证据。
 
 ## 固定夹具
 
 夹具库名为 `odo_e2e_YYYYMMDD_<runId前12位>`，`odo_owner` 保存本次所有权标识。包括特殊值表、空表、无主键表、生成列表、1024 行拆分表、50000 行取消表、日期时间/零日期表、BLOB 表、一级/复合分区，以及可创建的视图、函数、过程和序列。分区预期行集由固定查询读取实际夹具；不读取业务表。
+
+零日期正例的 DATE/DATETIME 固定为 NOT NULL，`preserveZeroDatetime` 打开后必须保留零日期。检查器从本次自有库读取两列可空性，返回 `zeroColumnsNullable`；历史可空夹具必须另作为 NULL 分支核对，不能套用 NOT NULL 预期，也不能在缺少可空性证据时把 NULL 算通过。改变夹具定义后新建独立 owner 库，不修改既有夹具来掩盖初次结果。
 
 `fixture/main.go` 只读已有 SQLite 密文和受保护根密钥，在短进程内解密该 TEST 数据源，通过匿名 stdin 交给固定 Python 夹具程序。不通过 argv、环境变量、文件或输出传递密码，不修改产品 JDBC 探针。依赖 PyMySQL 1.2.3（MIT、纯 Python）仅安装到忽略的 `artifacts/e2e-mysql-deps`；无需增加产品依赖或跨平台运行时要求。
 
@@ -32,6 +36,8 @@ node --test scripts/export-e2e/cases.test.mjs
 每次只运行一个真实导出。每个场景使用已登记允许根目录下的本次专用子目录和独立日志目录。`MX-001` 专门验证未指定日志目录的默认行为，其余场景隔离日志，避免一个默认配置缺陷阻断所有参数验证。输出目录的 Windows 原生路径只用于本机核对；请求按现役 `/E:/...` 形式填写。
 
 SQL 非 SELECT、多语句、文件引用等负例止于草稿 API；即使服务端意外接受也不能继续预检查或提交。结果检查保留引用事实，区分 NULL 标记、字面字符串和空串，比较完整行集及重复行，核对真实清单/字节数，并解压后检查内容。不能只因退出码为 0 或文件非空就判成功。
+
+默认不保留空表文件的 CUT/SQL 场景使用 `TASK_FAILED_NO_OUTPUT`：必须核对退出 0、`RESULT_VERIFICATION_FAILED`、零文件/零字节、无待核对；显式 `retainEmptyFiles` 则必须有实际文件并通过零行内容核对。Snappy 校验器区分实际 Xerial v1 与 Hadoop framing，并对版本、截断、块长度和解压总量失败关闭；不得用错误帧格式把可解压的结果误判为产品失败。
 
 `--max-file-size` 按已确认契约验证进程总量上限与完整的源行子集，不误作分片；`--block-size` 独立验证文件拆分与全行集。`MX-002` 比较两个独立真实任务的业务命令摘要和完整内容摘要。未通过的整库任务不能只凭其中一张表或输出字节数宣称整库完成。
 

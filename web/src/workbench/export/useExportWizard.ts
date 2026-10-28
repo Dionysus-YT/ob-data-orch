@@ -39,13 +39,6 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     Boolean(selectedSource.value && ordinaryFormat.value && !formatOptionsMessage.value),
     Boolean(draftInput.value),
   ].flatMap((complete, index) => complete && index + 1 < activeStep.value ? [index + 1] : []))
-  const footerBaselineNote = computed(() => {
-    if (activeStep.value === 5) {
-      return canSubmit.value ? '提交后，所选执行节点将启动导出。' : (currentDraft.value ? '当前配置的必需检查通过且结果有效后可提交。' : '请返回第四步保存配置。')
-    }
-    if (currentStepError.value && (attemptedStep.value === activeStep.value || activeStep.value === 2)) return currentStepError.value
-    return activeStep.value === 4 ? '创建草稿时服务端会再次校验数据源和节点授权。' : '填写当前步骤后继续；进入下一步前会检查当前输入。'
-  })
 
   const canAdvance = computed(() => {
     if (activeStep.value === 1) return Boolean(selectedSource.value)
@@ -89,6 +82,11 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     if (activeStep.value === 3) return !ordinaryFormat.value ? draftValidationMessage.value : formatOptionsMessage.value
     if (activeStep.value === 4) return draftValidationMessage.value
     return ''
+  })
+  // 第四步具名字段已有 Form.Item 反馈；只有无法归属字段的问题使用步骤级提示。
+  const currentStepAlert = computed(() => {
+    const result = parameters.draftValidation.value
+    return activeStep.value === 4 && !result.valid && result.field ? '' : currentStepError.value
   })
 
   watch(activeStep, () => { attemptedStep.value = 0; parameters.cancelSourceChange() })
@@ -176,7 +174,7 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   const canSaveDraft = computed(() => !!references.selectedSource.value && !draftRouteInvalid.value && !draftSessionLoading.value && !lifecycle.creatingDraft.value && !lifecycle.submitting.value && !lifecycle.startingPrecheck.value && !lifecycle.precheckRunning.value && !lifecycle.previewingCommand.value && !lifecycle.draftLoadFailure.value)
   return {
     ...form, ...references, ...parameters, ...catalog, ...lifecycle, ...runtime, activeStep, titles,
-    footerBaselineNote, canAdvance, stepProgressPercent, completedSteps, footerLabel, currentStepError, fieldError, validationAttempt, draftRouteInvalid, draftSessionLoading, canSaveDraft,
+    canAdvance, stepProgressPercent, completedSteps, footerLabel, currentStepError, currentStepAlert, fieldError, validationAttempt, draftRouteInvalid, draftSessionLoading, canSaveDraft,
     outputPathPlaceholder, moveToStep, previousStep, nextStep,
   }
 }

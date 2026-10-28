@@ -5,13 +5,13 @@ import { computed } from 'vue'
 import OverviewAttention from './OverviewAttention.vue'
 import OverviewMyTasks from './OverviewMyTasks.vue'
 import OverviewNodes from './OverviewNodes.vue'
-import OverviewStatusBand from './OverviewStatusBand.vue'
+import OverviewMetrics from './OverviewMetrics.vue'
 import OverviewTrend from './OverviewTrend.vue'
 import { overviewRangeLabels, overviewTime } from './overviewPresentation'
 import { useOverview } from './useOverview'
 import './overview.css'
 
-const { range, snapshot, loading, refreshing, refreshCompleted, restricted, failure, stale, partial, currentTime, refresh } = useOverview()
+const { range, snapshot, loading, refreshing, refreshCompleted, restricted, failure, stale, partial, currentTime, refresh, invalidateAuthorization } = useOverview()
 // 读取期间所有重试入口一并禁用；方法入口仍由 useOverview 防重。
 const busy = computed(() => loading.value || refreshing.value)
 const refreshLabel = computed(() => busy.value ? '刷新中' : refreshCompleted.value ? '已刷新' : '刷新')
@@ -20,13 +20,13 @@ const refreshLabel = computed(() => busy.value ? '刷新中' : refreshCompleted.
 <template>
   <div class="orch-ui overview-workspace" :aria-busy="busy">
     <header class="orch-page-header overview-header">
-      <div class="orch-page-title"><h1>首页</h1><span class="orch-context-label">任务与执行节点运行事实</span></div>
+      <div class="orch-page-title"><h1>首页</h1></div>
       <div class="overview-header-actions">
         <div class="overview-freshness" aria-label="快照范围与时间" role="status">
-          <span>当前授权范围</span><span>显示时区 UTC（平台内置）</span>
+          <span>当前授权范围</span><span>UTC</span>
           <span v-if="snapshot">快照时间 {{ overviewTime(snapshot.snapshotAt) }}</span><span v-else>尚未取得可信快照</span>
           <ABadge v-if="stale" status="warning" text="数据已过期" /><ABadge v-else-if="refreshing" status="processing" text="更新中" />
-          <span v-if="!restricted">页面可见时每 30 秒自动刷新</span>
+          <span v-if="!restricted">每 30 秒自动刷新</span>
         </div>
         <AButton type="text" :loading="busy" :disabled="busy" @click="refresh"><template #icon><CheckCircleOutlined v-if="refreshCompleted" aria-hidden="true" /><ReloadOutlined v-else aria-hidden="true" /></template>{{ refreshLabel }}</AButton>
       </div>
@@ -43,14 +43,14 @@ const refreshLabel = computed(() => busy.value ? '刷新中' : refreshCompleted.
 
     <ASkeleton v-if="loading && !snapshot" class="content-card overview-section" active :paragraph="{ rows: 8 }" title aria-label="正在加载首页快照" />
     <template v-if="snapshot && !restricted">
-      <!-- DEC-060 关注优先：状态带 → 需要关注 → 我的任务 / 执行节点 → 趋势；单列时保持同一顺序。 -->
-      <OverviewStatusBand :snapshot="snapshot" :busy="busy" @retry="refresh" />
-      <OverviewAttention :section="snapshot.attention" :nodes="snapshot.nodes" :summary="snapshot.summary" :busy="busy" @retry="refresh" />
-      <div class="overview-pair">
-        <OverviewMyTasks :section="snapshot.myTasks" :busy="busy" @retry="refresh" />
-        <OverviewNodes :section="snapshot.nodes" :busy="busy" :current-time="currentTime" @retry="refresh" />
+      <!-- OCP 参考布局：四项指标 → 趋势 / 关注并列 → 任务与节点通栏；窄屏按 DOM 顺序阅读。 -->
+      <OverviewMetrics :snapshot="snapshot" :busy="busy" @retry="refresh" />
+      <div class="overview-analysis">
+        <OverviewTrend v-model:range="range" :section="snapshot.trend" :snapshot-range="snapshot.range" :snapshot-at="snapshot.snapshotAt" :busy="busy" @retry="refresh" @authorization-lost="invalidateAuthorization()" />
+        <OverviewAttention :section="snapshot.attention" :nodes="snapshot.nodes" :summary="snapshot.summary" :busy="busy" @retry="refresh" />
       </div>
-      <OverviewTrend v-model:range="range" :section="snapshot.trend" :snapshot-range="snapshot.range" :busy="busy" @retry="refresh" />
+      <OverviewMyTasks :section="snapshot.myTasks" :busy="busy" @retry="refresh" />
+      <OverviewNodes :section="snapshot.nodes" :busy="busy" :current-time="currentTime" @retry="refresh" />
     </template>
   </div>
 </template>

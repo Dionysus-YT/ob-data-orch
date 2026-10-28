@@ -16,12 +16,12 @@ const pathPlaceholder = computed(() => selectedNode.value?.platform === 'WINDOWS
     <Alert v-if="nodeFailure" type="error" show-icon :message="nodeFailure"><template #action><Button type="link" @click="loadNodes">重试</Button></template></Alert>
     <Form layout="vertical" class="normal-import-form">
       <div class="normal-import-fields">
-        <FormItem label="执行节点" required :html-for="fieldPrefix + '-node'" :validate-status="fieldError('nodeId') ? 'error' : undefined" :help="fieldError('nodeId')" extra="列表中的节点状态不代表普通导入预检查通过。">
+        <FormItem label="执行节点" required :html-for="fieldPrefix + '-node'" :validate-status="fieldError('nodeId') ? 'error' : undefined" :help="fieldError('nodeId')">
           <div class="normal-import-select-action"><Select :id="fieldPrefix + '-node'" v-model:value="form.nodeId" aria-label="执行节点" :loading="loadingNodes" placeholder="请选择执行节点" @dropdown-visible-change="open => open && !loadingNodes && loadNodes()"><SelectOption v-for="node in nodes" :key="node.id" :value="node.id" :disabled="!node.acceptsNewTasks">{{ node.displayName }} · {{ nodePlatformLabel(node.platform) }}{{ !node.acceptsNewTasks ? ' · 当前不可接收任务' : '' }}</SelectOption></Select><Button :loading="loadingNodes" @click="loadNodes">刷新</Button></div>
           <p v-if="!loadingNodes && !nodeFailure && !nodes.length" class="section-hint">当前授权范围内没有执行节点。</p>
         </FormItem>
       </div>
-      <FormItem required :html-for="fieldPrefix + '-file-path'" :validate-status="fieldError('filePath') ? 'error' : undefined" :help="fieldError('filePath')" extra="填写所选执行节点上、位于允许目录内的本地文件或目录路径。路径原样传递，由该节点检查文件是否存在、可读及匹配规则。">
+      <FormItem required :html-for="fieldPrefix + '-file-path'" :validate-status="fieldError('filePath') ? 'error' : undefined" :help="fieldError('filePath')" extra="填写执行节点允许目录内的文件或目录。">
         <template #label><span>文件或目录路径</span><NormalImportParameterHint name="file-path" /></template>
         <Input :id="fieldPrefix + '-file-path'" v-model:value="form.filePath" aria-label="文件或目录路径" :placeholder="pathPlaceholder" />
       </FormItem>

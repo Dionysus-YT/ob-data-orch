@@ -16,6 +16,7 @@ export function useLogRetention(api: LogRetentionApi, options: { onSaved: (text:
   let retry: { fingerprint: string; key: string } | undefined
   const current = (expected: number) => !disposed && expected === session
   const changed = computed(() => Boolean(policy.value && days.value !== policy.value.retentionDays))
+  const dirty = computed(() => editing.value && (changed.value || reason.value.trim().length > 0))
   const canEdit = computed(() => Boolean(policy.value && !loading.value && !saving.value && !stale.value && !forbidden.value))
   watch([days, reason], () => {
     if (saving.value) return
@@ -79,5 +80,5 @@ export function useLogRetention(api: LogRetentionApi, options: { onSaved: (text:
   }
   function reset() { invalidate(); policy.value = undefined; stale.value = true; forbidden.value = false; unconfirmed.value = false; failure.value = '' }
   onScopeDispose(() => { disposed = true; reset() })
-  return { policy, loading, saving, editing, stale, unconfirmed, failure, forbidden, days, reason, daysError, reasonError, confirmed, review, changed, canEdit, read, edit, cancel, reviewChange, cancelReview, save, reset }
+  return { policy, loading, saving, editing, stale, unconfirmed, failure, forbidden, days, reason, daysError, reasonError, confirmed, review, changed, dirty, canEdit, read, edit, cancel, reviewChange, cancelReview, save, reset }
 }

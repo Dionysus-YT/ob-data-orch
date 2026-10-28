@@ -5,7 +5,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw $errors[0] }
 # 仅载入校验和文件更新函数，不运行管理员检查或系统服务操作。
-foreach ($name in @('Test-ServiceExecutable','Resolve-ServiceAccountSID','Test-ServiceAccount','Initialize-Agent','Update-Launchers')) {
+foreach ($name in @('Test-ServiceExecutable','Resolve-ServiceAccountSID','Test-ServiceAccount','Initialize-Agent','Update-Launchers','Invoke-InitialAuditAccess')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $definition) { throw "找不到测试所需函数 $name。" }
     . ([scriptblock]::Create($definition.Extent.Text))
@@ -70,6 +70,52 @@ try {
     $source = Join-Path $testRoot 'source'
     $target = Join-Path $testRoot 'target'
     New-Item -ItemType Directory -Path $source,$target | Out-Null
+    # 首次审计授予只运行假程序，核验停止状态、显式确认、标准输入和失败传播。
+    $auditCalls = Join-Path $testRoot 'audit-calls.txt'
+    $auditInput = Join-Path $testRoot 'audit-input.txt'
+    $auditProgram = Join-Path $testRoot 'audit-fixture.cmd'
+    Set-Content -LiteralPath $auditProgram -Encoding ASCII -Value @"
+@echo off
+if not "%~1"=="-bootstrap-audit-access" exit /b 99
+more > "$auditInput"
+echo granted>>"$auditCalls"
+exit /b 0
+"@
+    function Read-Host { param([string]$Prompt, [switch]$AsSecureString)
+        if ($AsSecureString) { return ConvertTo-SecureString 'synthetic-audit-password' -AsPlainText -Force }
+        return $script:auditConfirmation
+    }
+    $script:auditConfirmation = 'GRANT_AUDIT_LOG admin'
+    foreach ($status in @('Running','StartPending','StopPending','')) {
+        $rejected = $false
+        try { Invoke-InitialAuditAccess $auditProgram $status } catch { $rejected = $true }
+        if (-not $rejected -or (Test-Path -LiteralPath $auditCalls)) { throw '活动或未知服务状态仍执行首次授予。' }
+    }
+    $script:auditConfirmation = 'cancel'
+    $rejected = $false
+    try { Invoke-InitialAuditAccess $auditProgram 'Stopped' } catch { $rejected = $true }
+    if (-not $rejected -or (Test-Path -LiteralPath $auditCalls)) { throw '未明确确认仍执行首次授予。' }
+    $script:auditConfirmation = 'GRANT_AUDIT_LOG admin'
+    Invoke-InitialAuditAccess $auditProgram 'Stopped'
+    if (@(Get-Content -LiteralPath $auditCalls).Count -ne 1) { throw '首次授予没有通过标准输入调用固定入口。' }
+    $auditLines = @(Get-Content -LiteralPath $auditInput | Where-Object { $_ -ne '' })
+    if ($auditLines.Count -ne 2 -or $auditLines[0] -ne 'synthetic-audit-password' -or $auditLines[1] -cne 'GRANT_AUDIT_LOG admin') { throw '首次授予未通过标准输入完整传递原口令和确认；不得传入 argv。' }
+    Set-Content -LiteralPath $auditProgram -Encoding ASCII -Value "@echo off`r`nexit /b 1"
+    $rejected = $false
+    try { Invoke-InitialAuditAccess $auditProgram 'Stopped' } catch { $rejected = $true }
+    if (-not $rejected) { throw '首次授予失败仍宣称完成。' }
+    $auditGuard = $ast.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -eq '$Action -eq ''AuditAccess'' -and $isAgent' }, $true)
+    $auditBranch = $ast.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -eq '$Action -eq ''AuditAccess''' }, $true)
+    if (-not $auditGuard -or -not $auditBranch) { throw '找不到首次审计授予的组件与安装限制。' }
+    $Action = 'AuditAccess'; $isAgent = $true
+    $rejected = $false
+    try { . ([scriptblock]::Create($auditGuard.Extent.Text)) } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Agent 可以进入首次审计授予。' }
+    $isAgent = $false; $service = $null
+    $rejected = $false
+    try { . ([scriptblock]::Create($auditBranch.Extent.Text)) } catch { $rejected = $true }
+    if (-not $rejected) { throw '未安装的控制面仍进入首次授予。' }
+    Remove-Item -Path Function:\Read-Host
     # 用假程序核验前台初始化，不读取真实注册码或启动系统服务。
     $initializationCalls = Join-Path $testRoot 'initialization-calls.txt'
     $initializationProgram = Join-Path $testRoot 'initialize-fixture.cmd'
@@ -202,7 +248,7 @@ exit /b 0
     foreach ($name in $required) {
         if ((Get-FileHash -LiteralPath (Join-Path $source $name)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $root $name)).Hash) { throw '新命名平台资源未完整部署。' }
     }
-    Write-Output 'PASS: 10 service path cases; 13 account SID cases; Agent initialization and re-registration lifecycle; launcher update; Agent and control-plane upgrade; missing launcher/platform rejection; configuration preserved'
+    Write-Output 'PASS: 10 service path cases; 13 account SID cases; 9 initial audit access cases; Agent initialization and re-registration lifecycle; launcher update; Agent and control-plane upgrade; missing launcher/platform rejection; configuration preserved'
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)
     $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar

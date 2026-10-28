@@ -98,12 +98,17 @@ export function useNormalImportWizard(deps: {
   watch(() => deps.route.query.draft, () => { void openDraftSession() }, { flush: 'sync' })
   function retryDraft() { if (!draft.loadingDraft.value && draft.draftLoadFailure.value) void openDraftSession() }
   function goToSources() { void deps.router.push('/data-sources') }
+  function goToNode() {
+    if (disposed) return
+    const id = form.nodeId
+    void deps.router.push(id ? { name: 'node-detail', params: { id } } : { name: 'nodes' })
+  }
   onMounted(() => { void openDraftSession() })
   onScopeDispose(() => { disposed = true })
   return {
     form, ...references, ...parameters, ...draft, ...review, ...automation, hasInputs, fieldPrefix: deps.fieldPrefix, titles: normalImportTitles, steps: normalImportSteps,
     activeStep, attemptedStep, validationAttempt, navigating, unsupportedDraft, currentStepIssues, currentStepError, completedSteps, stepProgressPercent,
-    footerLabel, moveToStep, nextStep, previousStep, fieldError, retryDraft, goToSources,
+    footerLabel, moveToStep, nextStep, previousStep, fieldError, retryDraft, goToSources, goToNode,
   }
 }
 

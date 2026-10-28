@@ -14,7 +14,7 @@ async function choose(page: Page, label: string, collapsed: boolean) {
   if (collapsed) {
     await trigger(page).click()
     await expect(submenu(page)).toBeVisible()
-    await expect(submenu(page).getByRole('menuitem')).toHaveCount(6)
+    await expect(submenu(page).getByRole('menuitem')).toHaveCount(3)
     await submenu(page).getByRole('menuitem', { name: label, exact: true }).click()
     await expect(submenu(page)).toHaveCount(0)
   } else await group(page).getByRole('link', { name: label, exact: true }).click()
@@ -43,7 +43,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
       await expect(trigger(page)).toBeFocused()
       await expect(page.locator('.ant-dropdown:visible')).toHaveCount(0)
     } else {
-      await expect(group(page).getByRole('link')).toHaveCount(6)
+      await expect(group(page).getByRole('link')).toHaveCount(3)
       await expect(group(page).locator('[aria-current="page"]')).toHaveCount(1)
       await trigger(page).click()
       await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
@@ -52,7 +52,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
       await trigger(page).click()
     }
     await page.screenshot({ path: info.outputPath(`system-navigation-${viewport.width}.png`), fullPage: false })
-    for (const [label, path] of [['平台设置', '/settings/platform'], ['调度策略', '/settings/scheduling'], ['安全策略', '/settings/security'], ['工具与兼容', '/settings/tools'], ['存储凭据', '/settings/storage-credentials'], ['权限配置', '/settings/access-control']] as const) {
+    for (const [label, path] of [['平台设置', '/settings/platform'], ['存储凭据', '/settings/storage-credentials'], ['权限配置', '/settings/access-control']] as const) {
       await choose(page, label, collapsed)
       await expect(page).toHaveURL(new RegExp(`${path}$`))
       await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()

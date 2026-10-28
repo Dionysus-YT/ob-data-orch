@@ -23,7 +23,7 @@ onBeforeUnmount(() => requests.abort())
 const route = useRoute()
 const wizard = reactive(useExportWizard({ api: browserApi(requests.signal), route, router: useRouter(), fieldPrefix: useId(), submitCancelID: useId() }))
 const { MessageContext } = useOperationMessage([{ content: toRef(wizard, 'operationNotice') }, { content: toRef(wizard, 'copyNotice') }])
-const { draftDirty, createdDraftID, activeStep, stepProgressPercent, moveToStep, creatingDraft, createDraft, attemptedStep, currentStepError, previousStep, footerBaselineNote, loadingSources, loadingNodes, canAdvance, nextStep, footerLabel, canStartPrecheck, submitting, startPrecheck, canSubmit, submitTask } = toRefs(wizard)
+const { draftDirty, createdDraftID, activeStep, stepProgressPercent, moveToStep, creatingDraft, createDraft, attemptedStep, currentStepAlert, previousStep, loadingSources, loadingNodes, canAdvance, nextStep, footerLabel, canStartPrecheck, submitting, startPrecheck, canSubmit, submitTask } = toRefs(wizard)
 const catalogOpen = ref(false), confirmLeave = ref(false)
 const frame = ref<InstanceType<typeof WizardFrame>>()
 let focusGeneration = 0
@@ -80,7 +80,7 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
       <AAlert v-if="wizard.draftLoadFailure" type="error" show-icon :message="wizard.draftLoadFailure"><template #action><AButton type="link" @click="wizard.loadCreatedDraft()">重试</AButton></template></AAlert>
       <AAlert v-if="wizard.draftSessionLoading && (wizard.loadingDraft || activeStep !== 1)" type="info" show-icon message="正在准备导出配置…" />
       <AAlert v-if="wizard.draftNotice && activeStep !== 5" type="info" show-icon :message="wizard.draftNotice" />
-      <AAlert v-if="attemptedStep === activeStep && currentStepError" class="export-step-error" type="error" show-icon :message="currentStepError" />
+      <AAlert v-if="attemptedStep === activeStep && currentStepAlert" class="export-step-error" type="error" show-icon :message="currentStepAlert" />
       <template v-if="(!wizard.draftSessionLoading || activeStep === 1 && !route.query.draft) && !wizard.draftLoadFailure && !wizard.draftRouteInvalid">
         <ExportSourceStep v-if="activeStep === 1" :model="wizard" />
 
@@ -101,7 +101,6 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
     <template #footer>
       <footer class="wizard-footer">
         <AButton :disabled="activeStep === 1 || creatingDraft" @click="previousStep">上一步</AButton>
-        <span class="wizard-baseline-note">{{ footerBaselineNote }}</span>
         <span class="footer-grow" />
         <AButton v-if="activeStep < 5" :loading="creatingDraft" :disabled="wizard.draftSessionLoading || wizard.draftRouteInvalid || !!wizard.draftLoadFailure || loadingSources || loadingNodes && activeStep === 4 || activeStep === 2 && !canAdvance" type="primary" @click="advance">{{ footerLabel }}</AButton>
         <div v-else class="footer-actions">

@@ -48,7 +48,7 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 - `OrchDangerConfirm`：明确对象、影响与动作；安全取消初始焦点，busy 阻止退出，关闭恢复触发点；不把打开确认等同于取得服务端资格。
 - Ant `FormItem`：字段 label、required、help/error、extra 和校验视觉均由 Ant FormItem 直接承担；领域校验和 API field error 只提供状态与文案，不再通过 Orch wrapper 绘制字段 UI。
 - `OrchSourceActions`：数据源领域行菜单，仅编辑/删除；服务端未知资格失败关闭，原因常显；方向键打开后等待真实布局聚焦，Up/Down/Home/End 跳过禁用项，ESC 关闭后返回行触发器。此适配补齐 Ant Vue 4.2.6 MenuItem 仅处理 Enter 的边界，不改变动作授权。
-- `OrchTaskStepRail` / `WizardFrame`：保留三类向导的原步骤与门禁，访问过步骤不表示配置已验证；完整摘要按需进入 Drawer。
+- `WizardFrame`：通过原生 Ant `Steps` 装配三类向导的步骤和进度；访问过步骤不表示配置已验证，完整摘要按需进入 Drawer。停用的自绘步骤栏已退出代码与维护入口。
 - Ant `Badge` / `ConnectionTestResult`：短状态由领域 tone 映射到 Ant Badge；连接测试结果继续作为 Feature Component 使用 Ant Alert/Spin 投影证据，不以 Ant 的交互状态推断连接可用性或执行成功。
 - Ant `Message` / `Alert`：统一遵守 [P0 状态与反馈规范](../../design-system/patterns/status-feedback.md)。`useOperationMessage` 仅共享原生 Message 的主题上下文、短时展示和销毁；结果及严重程度仍由各业务会话唯一持有，不接管请求、业务状态、导航或秘密。持续结果和字段校验直接消费 Ant Alert / Form.Item，不建立通知总线或基础包装。
 
@@ -225,7 +225,9 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 
 Ant component coverage：数据源基础控件使用 Button、Input/Textarea/InputPassword、Select、Checkbox、Switch、Form/FormItem、Table、Dropdown/Menu、Drawer、Modal、Badge、Tag、Alert、Skeleton、Spin、Empty、Collapse 和 message；主题由 ConfigProvider 提供。此页没有跨上下文通知生命周期，本次未为覆盖率人为增加 notification，测试结果仍在原编辑区持久展示。
 
-Native Consolidation coverage：`OrchField`、`OrchInspectorDrawer`、`OrchStatus` 已删除。数据源编辑、任务摘要和 Qualification fixture 直接使用 Ant `Drawer`；数据源、执行节点和存储凭据表单直接使用 Ant `FormItem`；短状态直接使用 Ant `Badge`。`useAntDrawerDialog` 是行为/a11y composable，不是视觉 wrapper。剩余 `OrchOperationalTable`、`OrchDangerConfirm`、`OrchSourceActions`、`OrchTaskStepRail` 均按 Feature Component / Product Behavior 记录，不能扩展为通用 UI 库。
+Native Consolidation coverage（当时验收范围）：`OrchField`、`OrchInspectorDrawer`、`OrchStatus` 已删除。数据源编辑、任务摘要和 Qualification fixture 直接使用 Ant `Drawer`；数据源、执行节点和存储凭据表单直接使用 Ant `FormItem`；短状态直接使用 Ant `Badge`。`useAntDrawerDialog` 是行为/a11y composable，不是视觉 wrapper。当时保留的 `OrchOperationalTable`、`OrchDangerConfirm`、`OrchSourceActions`、`OrchTaskStepRail` 按 Feature Component / Product Behavior 记录，不作为扩展通用 UI 库的依据。
+
+2026-10-27 现役维护修订：停用的 `OrchTaskStepRail` 及专属样式已删除；当前三类向导的唯一装配入口是 `WizardFrame` 内的 Ant `Steps`。上段旧组件清单仅保留历史验收事实，不再作为现役修改入口。
 
 remaining non-Ant implementations：结构化事实使用普通 HTML；长事实的原生 title 提示保留；产品布局、分页游标、焦点适配与领域逻辑不是重复基础组件。其他页面的历史空态/提示/折叠实现不属于本次数据源页范围，不能据本次结果声称全站 100% Ant。
 

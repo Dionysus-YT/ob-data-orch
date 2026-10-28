@@ -1,5 +1,22 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
 import { mockFacts } from './fixtures/facts'
+import { monitorNativeWindowErrors } from './fixtures/native-window-errors'
+
+const verifyNative = new WeakMap<Page, () => Promise<void>>()
+test.beforeEach(async ({ page }) => { verifyNative.set(page, await monitorNativeWindowErrors(page)) })
+test.afterEach(async ({ page }) => { await verifyNative.get(page)?.() })
+
+async function captureTaskPage(page: Page, info: TestInfo, name: string) {
+  // 全页捕获曾使 Chrome 短暂变为 1×1；逐视口保留首屏与页尾，不改变被验收的宽度。
+  const top = await page.evaluate(() => scrollY)
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.screenshot({ path: info.outputPath(name), fullPage: false })
+  if (await page.evaluate(() => document.documentElement.scrollHeight > innerHeight)) {
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    await page.screenshot({ path: info.outputPath(name.replace(/\.png$/, '-bottom.png')), fullPage: false })
+  }
+  await page.evaluate(value => window.scrollTo(0, value), top)
+}
 
 const time = '2026-01-01T00:00:00Z'
 const overview = (id: string, state = 'RUNNING') => ({ id, type: 'OBDUMPER_EXPORT', dataSourceId: `source-${id}`, nodeId: `node-${id}`, precheckId: `precheck-${id}`, submittedAt: time, derivationKind: 'REBUILD_FROM_CONFIG', parentTaskId: id === 'A' ? 'B' : 'A', presentation: { id, displayName: id, type: 'OBDUMPER_EXPORT', dataSourceId: `source-${id}`, nodeId: `node-${id}`, dataSourceDeleted: false, nodeDeleted: false, state, stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', ownedByCurrentUser: true, reconciliationRequired: false, cancelRequested: false, submittedAt: time, updatedAt: time, availableActions: ['COPY_COMMAND', 'VIEW_LOGS', ...(state === 'SUCCEEDED' ? ['SAVE_TEMPLATE', 'REBUILD_FROM_CONFIG'] : state === 'FAILED' ? ['REBUILD_FROM_CONFIG', 'RERUN_FROM_SCRATCH', 'CHECKPOINT_RESUME'] : ['CANCEL'])] } })
@@ -45,12 +62,12 @@ async function streamFacts(page: Page) {
   return page.evaluate(() => (window as unknown as { taskStreams: Array<{ url: string; closed: boolean }> }).taskStreams.map(({ url, closed }) => ({ url, closed })))
 }
 async function navigateTask(page: Page, id: string) {
-  // 调用真实路由器，只变更参数；不刷新页面，不通过 key 强制销毁实例掩盖隔离问题。
-  await page.evaluate(async id => {
-    const modulePath = '/src/router/index.ts'
-    const { router } = await import(/* @vite-ignore */ modulePath)
-    await router.push(`/tasks/${id}`)
+  // 合成会话在初次读取挂起时也要变更绑定；使用已挂载应用的公开 $router，不重新导入模块或销毁实例。
+  await page.evaluate(async taskId => {
+    const root = document.getElementById('app') as HTMLElement & { __vue_app__: { config: { globalProperties: { $router: { push(path: string): Promise<unknown> } } } } }
+    await root.__vue_app__.config.globalProperties.$router.push(`/tasks/${taskId}`)
   }, id)
+  await expect(page).toHaveURL(`/tasks/${id}`)
 }
 
 test('任务详情同实例切换隔离迟到读取和日志，刷新不叠加轮询，卸载关闭流', async ({ page }, info) => {
@@ -106,6 +123,8 @@ test('任务详情同实例切换隔离迟到读取和日志，刷新不叠加�
   await page.getByRole('tab', { name: '执行日志' }).click()
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await page.getByRole('button', { name: '刷新', exact: true }).click()
+  // 先等手动读取结束，再注入断线；在途读取的正常重连不能与断线断言争用。
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeEnabled()
   expect((await streamFacts(page)).length).toBe(2)
   await page.evaluate(() => {
     const streams = (window as unknown as { taskStreams: Array<{ onerror?: () => void }> }).taskStreams
@@ -126,7 +145,7 @@ test('任务详情同实例切换隔离迟到读取和日志，刷新不叠加�
   await page.screenshot({ path: info.outputPath('task-B-desktop.png'), fullPage: false })
   await page.setViewportSize({ width: 1280, height: 720 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  await page.screenshot({ path: info.outputPath('task-B-1280.png'), fullPage: true })
+  await captureTaskPage(page, info, 'task-B-1280.png')
   await page.getByRole('link', { name: '返回任务中心' }).click()
   await expect(page).toHaveURL(/\/tasks$/)
   const before = counts.B
@@ -148,7 +167,7 @@ test('详情页签方向键与 Home End 保持焦点、选中项和路由一致�
   await page.keyboard.press('Home'); await expect(first).toBeFocused(); await expect(first).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(page.getByRole('button', { name: '刷新', exact: true })).toContainText('已刷新')
-  await page.screenshot({ path: info.outputPath('task-detail-keyboard-refreshed.png'), fullPage: true })
+  await captureTaskPage(page, info, 'task-detail-keyboard-refreshed.png')
 })
 
 test('A 初始概览迟到和卸载中的读取不覆盖 B 或重新建立后台生命周期', async ({ page }) => {
@@ -267,8 +286,8 @@ test('五个 Tab 使用同一事实，日志过滤错误定位、过期、操作
   await page.getByRole('button', { name: '刷新日志' }).click(); await expect(page.getByText('日志已过保留期', { exact: true })).toBeVisible(); await expect(page.locator('.task-log-record')).toHaveCount(0)
   await page.getByRole('tab', { name: '操作记录' }).click(); await expect(page.getByText('提交任务', { exact: true })).toBeVisible(); await page.getByRole('button', { name: '加载更多' }).click(); await expect(page.getByText('保存模板', { exact: true })).toBeVisible(); expect(operationReads).toBe(2)
   await page.getByRole('tab', { name: '运行概览' }).click(); await expect(page.getByText('远端对象未逐项核验', { exact: true })).toBeVisible()
-  await page.screenshot({ path: info.outputPath('task-detail-overview.png'), fullPage: true })
-  await page.getByRole('tab', { name: '配置快照' }).click(); await page.screenshot({ path: info.outputPath('task-detail-snapshot.png'), fullPage: true })
+  await captureTaskPage(page, info, 'task-detail-overview.png')
+  await page.getByRole('tab', { name: '配置快照' }).click(); await captureTaskPage(page, info, 'task-detail-snapshot.png')
   expect(errors).toEqual([])
 })
 
@@ -302,11 +321,14 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     } } }))
     await page.goto('/tasks?scope=MINE')
     await expect(page.getByRole('link', { name: exported.displayName, exact: true })).toBeVisible()
+    const importType = page.locator('.task-type-cell').filter({ hasText: '普通导入' })
+    await expect(importType).toBeVisible()
+    expect(await importType.evaluate(element => element.getClientRects().length), '任务类型名称保持完整单行').toBe(1)
     const surfaceStyle = await page.locator('.orch-management').evaluate(element => {
       const style = getComputedStyle(element)
       return { background: style.backgroundColor, border: style.border, radius: style.borderRadius, shadow: style.boxShadow }
     })
-    await page.screenshot({ path: info.outputPath(`task-center-types-${viewport.width}.png`), fullPage: true })
+    await captureTaskPage(page, info, `task-center-types-${viewport.width}.png`)
     let overviewBounds: { x: number; width: number } | undefined
     for (const item of items) {
       await page.getByRole('link', { name: item.displayName, exact: true }).click()
@@ -336,10 +358,10 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
         await expect(surface.getByText('dump.ckpt', { exact: true })).toBeVisible()
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-      await page.screenshot({ path: info.outputPath(`task-detail-${item.type}-${viewport.width}.png`), fullPage: true })
+      await captureTaskPage(page, info, `task-detail-${item.type}-${viewport.width}.png`)
       await page.getByRole('tab', { name: '配置快照', exact: true }).click()
       await expect(surface.getByText(item.type === 'OBLOADER_NORMAL_IMPORT' ? '2 · 导入文件与格式' : '2 · 导出对象与内容', { exact: true })).toBeVisible()
-      await page.screenshot({ path: info.outputPath(`task-snapshot-${item.type}-${viewport.width}.png`), fullPage: true })
+      await captureTaskPage(page, info, `task-snapshot-${item.type}-${viewport.width}.png`)
       await page.getByRole('tab', { name: '执行日志', exact: true }).click()
       await page.getByRole('textbox', { name: '日志关键字' }).fill('persisted')
       await expect(page.locator('.task-log-record')).toHaveCount(1)

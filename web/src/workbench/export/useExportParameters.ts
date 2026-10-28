@@ -25,6 +25,11 @@ export function useExportParameters(deps: ExportForm & Pick<ExportReferences, 's
   } = deps
   type ExportMode = ExportContentKind | 'QUERY_RESULT' | ''
 
+  // MySQL 保留 Schema 需工具的元数据重建路径；正常交互清除冲突，恢复旧草稿则保留原值供校验。
+  watch([retainSchema, () => selectedSource.value?.compatibilityMode], ([retain, mode]) => {
+    if (!hydratingDerivedDraft.value && retain && mode === 'MYSQL') compactSchema.value = false
+  })
+
   const exportMode = computed<ExportMode>({
     get: () => !contentKind.value ? '' : scopeKind.value === 'QUERY_RESULT' ? 'QUERY_RESULT' : contentKind.value,
     set: (mode) => {

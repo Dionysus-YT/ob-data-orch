@@ -1489,6 +1489,9 @@ func TestExportDraftV6DDLBehaviorFlow(t *testing.T) {
 	handler := newGeneralizedFlowHandler(t, drafts, prechecks, tasks)
 	body := `{"configVersion":"v6","dataSourceId":"source-allowed","nodeId":"node-1","config":{"objectScope":{"database":"synthetic_db","scopeKind":"SPECIFIED","objectTypes":["TABLE"],"expressions":[{"name":"table_one"}]},"contentSelection":{"contentKind":"DDL_ONLY"},"outputConfig":{"outputKind":"LOCAL","filePath":"/E:/workespace/ob-data-orch/tmp/synthetic-output"},"ddlBehavior":{"dropObject":true,"retainSchema":true}}}`
 	previewBody, _ := runV6CapabilityFlow(t, handler, drafts, prechecks, tasks, body, "exi7-ddl")
+	if drafts.created.MetadataVersion != exportMetadataSchemaBoolean || !strings.Contains(previewBody, "--compact-schema=false") {
+		t.Fatal("MySQL 保留 Schema 未冻结显式结构策略")
+	}
 	if drafts.created.CapabilityVersion != "export-odp-ddl-v1" {
 		t.Fatalf("ddl behavior draft capability=%s", drafts.created.CapabilityVersion)
 	}

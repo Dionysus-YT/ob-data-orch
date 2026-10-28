@@ -54,7 +54,7 @@ watch(scopeSummary, () => {
       <h3>执行与输出</h3>
       <dl class="wizard-summary-facts">
         <div><dt>输出位置</dt><dd><code class="wizard-summary-path">{{ displayedDraftConfig.outputConfig.filePath }}</code></dd></div>
-        <div><dt>日志目录</dt><dd><code v-if="displayedDraftConfig.outputConfig.logPath" class="wizard-summary-path">{{ displayedDraftConfig.outputConfig.logPath }}</code><span v-else>继承工具默认</span></dd></div>
+        <div><dt>日志目录</dt><dd><code v-if="displayedDraftConfig.outputConfig.logPath" class="wizard-summary-path">{{ displayedDraftConfig.outputConfig.logPath }}</code><span v-else>由 Agent 受控采集</span></dd></div>
         <div v-if="displayedDraftConfig.outputConfig.outputKind !== 'LOCAL'"><dt>临时分块目录</dt><dd><code v-if="displayedDraftConfig.outputConfig.tmpPath" class="wizard-summary-path">{{ displayedDraftConfig.outputConfig.tmpPath }}</code><span v-else>尚未配置</span></dd></div>
       </dl>
       <AAlert v-if="displayedDraftConfig.outputConfig.skipCheckDir" class="wizard-summary-risk" type="warning" message="已跳过目录空性检查，存在覆盖风险" show-icon />

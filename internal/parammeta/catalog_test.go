@@ -82,6 +82,7 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 		"obdumper-4.3.5-slice-v9-combined-object-selection.json": {},
 		"obdumper-4.3.5-slice-v10-ddl-text-formats.json":         {},
 		"obdumper-4.3.5-slice-v11-expert-parameters.json":        {},
+		"obdumper-4.3.5-slice-v12-schema-boolean.json":           {},
 	}
 	for _, entry := range entries {
 		if _, ok := known[entry.Name()]; !ok {
@@ -97,6 +98,9 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 	}
 	if _, err := LoadExpertParameters(); err != nil {
 		t.Fatalf("LoadExpertParameters(): %v", err)
+	}
+	if _, err := LoadSchemaBoolean(); err != nil {
+		t.Fatalf("LoadSchemaBoolean(): %v", err)
 	}
 	if _, err := loadFromFS(resourceFiles, generalizedRevisionResource); err != nil {
 		t.Fatalf("embedded v7 revision is not loadable: %v", err)

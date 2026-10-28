@@ -104,6 +104,14 @@ func NewGeneralized() (*Generator, error) {
 	if err != nil {
 		return nil, err
 	}
+	schemaCatalog, err := parammeta.LoadSchemaBoolean()
+	if err != nil {
+		return nil, err
+	}
+	schemaGenerator, err := newGenerator(schemaCatalog)
+	if err != nil {
+		return nil, err
+	}
 	current.versions = map[string]*Generator{
 		current.metadataVersion:           current,
 		legacy.metadataVersion:            legacy,
@@ -111,6 +119,7 @@ func NewGeneralized() (*Generator, error) {
 		combinedGenerator.metadataVersion: combinedGenerator,
 		ddlTextGenerator.metadataVersion:  ddlTextGenerator,
 		expertGenerator.metadataVersion:   expertGenerator,
+		schemaGenerator.metadataVersion:   schemaGenerator,
 	}
 	return current, nil
 }
@@ -219,7 +228,7 @@ func (g *Generator) Generate(request Request) (Result, error) {
 			})
 			continue
 		}
-		if !present || (definition.ValueType == "flag" && field.Value.Kind == ValueBoolean && !field.Value.Boolean) {
+		if !present || (definition.ValueType == "flag" && !definition.ExplicitBoolean && field.Value.Kind == ValueBoolean && !field.Value.Boolean) {
 			state := StateUnset
 			if definition.RequiredWhen.Kind == "SLICE_SUBMISSION" {
 				state = StateBlocked
@@ -257,7 +266,7 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		})
 	}
 	// 新目录的 sys 依赖必须由唯一生成器复核；历史目录的规范化与指纹保持原样。
-	if g.metadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters" {
+	if g.metadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters" || g.metadataVersion == "obdumper-4.3.5-slice-v12-schema-boolean" {
 		activeFields := make(map[string]bool, len(normalized))
 		for _, field := range normalized {
 			activeFields[field.Name] = field.State == StateExplicit || field.State == StateDerived
@@ -322,8 +331,13 @@ func (g *Generator) Generate(request Request) (Result, error) {
 				display = append(display, renderExecutionParameter(definition, value)...)
 			}
 		} else {
-			argv = append(argv, displayParameterName(definition))
-			display = append(display, displayParameterName(definition))
+			token := displayParameterName(definition)
+			if definition.ExplicitBoolean {
+				// 4.3.5 的可选布尔值只接受等号语法，拆成两个令牌会被解析为多余参数。
+				token += "=" + strconv.FormatBool(*field.Value.Boolean)
+			}
+			argv = append(argv, token)
+			display = append(display, token)
 		}
 		tokenEvidence = append(tokenEvidence, TokenEvidence{
 			DefinitionID: definition.DefinitionID,

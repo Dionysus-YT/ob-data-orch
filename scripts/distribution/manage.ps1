@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([ValidateSet('Start','Stop','Upgrade','Status','Register')][string]$Action)
+param([ValidateSet('Start','Stop','Upgrade','Status','Register','AuditAccess')][string]$Action)
 
 $ErrorActionPreference = 'Stop'
 function Test-ServiceExecutable([string]$CommandLine, [string]$ExpectedPath) {
@@ -53,6 +53,20 @@ function Update-Launchers([string]$SourceDirectory, [string]$TargetDirectory) {
         }
     }
 }
+function Invoke-InitialAuditAccess([string]$ExecutablePath, [string]$ServiceStatus) {
+    # 沿用原账户和安装目录，授权操作不隐式停止、启动服务或改写身份配置。
+    if ($ServiceStatus -ne 'Stopped') { throw '请先选择“2 停止”并确认控制面停止，再执行首次审计授权。' }
+    Write-Host '仅为固定 admin 授予 CAP_AUDIT_LOG 审计读取，不增加业务对象权限。入口只可使用一次，撤权后不能重授。'
+    $confirmation = Read-Host '确认请输入 GRANT_AUDIT_LOG admin，其他输入取消'
+    if ($confirmation -cne 'GRANT_AUDIT_LOG admin') { throw '已取消首次审计授权。' }
+    $secret = Read-Host '现有 admin 密码（不会重置密码）' -AsSecureString
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+    try {
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        "$plain`n$confirmation" | & $ExecutablePath -bootstrap-audit-access
+        if ($LASTEXITCODE -ne 0) { throw '首次授权未确认完成，请核对上方结果。配置与身份须保留；服务保持停止。' }
+    } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer); $plain = $null; $secret.Dispose() }
+}
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -64,10 +78,12 @@ $executable = Join-Path $root $binary
 if (-not $Action) {
     Write-Host '1 启动（首次自动安装）  2 停止  3 升级  4 查看状态'
     if ($isAgent) { Write-Host '5 重新注册（关联到新节点）' }
+    else { Write-Host '6 首次授权 admin 审计读取（需先停止控制面）' }
     $choice = Read-Host '选择操作，直接回车启动'
-    $Action = switch ($choice) { '2' {'Stop'} '3' {'Upgrade'} '4' {'Status'} '5' {'Register'} default {'Start'} }
+    $Action = switch ($choice) { '2' {'Stop'} '3' {'Upgrade'} '4' {'Status'} '5' {'Register'} '6' {'AuditAccess'} default {'Start'} }
 }
 if ($Action -eq 'Register' -and -not $isAgent) { throw '重新注册仅适用于 Agent，请使用 Agent 原安装目录的启动入口。' }
+if ($Action -eq 'AuditAccess' -and $isAgent) { throw '首次审计授权仅适用于控制面，请使用控制面原安装目录的启动入口。' }
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw '请右键“启动.cmd”，选择“以管理员身份运行”；安装与服务操作需要本机管理员权限。'
@@ -99,6 +115,11 @@ function Stop-App {
 }
 if ($Action -eq 'Status') { if ($service) { $service | Format-Table Name,Status } else { Write-Host '尚未安装，选择启动完成首次安装。' }; exit }
 if ($Action -eq 'Stop') { Stop-App; Write-Host '服务已停止，配置与身份已保留。'; exit }
+if ($Action -eq 'AuditAccess') {
+    if (-not $service) { throw '控制面尚未安装，请先选择“1 启动”完成初始化，再正常停止服务。' }
+    Invoke-InitialAuditAccess $executable ((Get-Service -Name $name).Status.ToString())
+    exit
+}
 if ($Action -eq 'Register') {
     if (-not $service) { throw 'Agent 尚未安装，请选择“1 启动”完成首次注册与安装。' }
     Write-Host '请先在平台删除旧节点，再新建节点并生成未使用的注册码。此操作会停止服务并替换本机节点身份，保留安装目录、配置、信任和日志。'

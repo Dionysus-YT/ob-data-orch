@@ -72,6 +72,11 @@ export function useDirectLoadWizard(deps: { api: DirectLoadApi & DirectLoadRefer
   watch(() => deps.route.query.draft, () => { void openSession() }, { flush: 'sync' })
   onMounted(() => { void openSession(); void references.loadMetadata() })
   onScopeDispose(() => { disposed = true; session++; cancelApplicabilityConfirmation() })
-  return { form, ...references, ...draft, ...review, titles: directLoadTitles, reviewStep: directLoadReviewStep, input, issues, activeStep, attemptedStep, navigating, pendingSourceId, applicabilityConfirmationOpen, invalidDraftLink, currentIssues, completedSteps, stepProgressPercent, fieldError, moveToStep, nextStep, previousStep, selectSource, selectScenario, confirmSourceChange, cancelSourceChange, confirmApplicability, cancelApplicabilityConfirmation, goToSources: () => deps.router.push('/data-sources'), retryDraft: openSession }
+  function goToNode() {
+    if (disposed) return
+    const node = references.selectedNode.value
+    return deps.router.push(node ? { name: 'node-detail', params: { id: node.id } } : { name: 'nodes' })
+  }
+  return { form, ...references, ...draft, ...review, titles: directLoadTitles, reviewStep: directLoadReviewStep, input, issues, activeStep, attemptedStep, navigating, pendingSourceId, applicabilityConfirmationOpen, invalidDraftLink, currentIssues, completedSteps, stepProgressPercent, fieldError, moveToStep, nextStep, previousStep, selectSource, selectScenario, confirmSourceChange, cancelSourceChange, confirmApplicability, cancelApplicabilityConfirmation, goToNode, goToSources: () => deps.router.push('/data-sources'), retryDraft: openSession }
 }
 export type DirectLoadWizard = ReturnType<typeof useDirectLoadWizard>

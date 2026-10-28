@@ -1,8 +1,15 @@
-import { chromium, expect, test } from '@playwright/test'
+import { chromium, expect, test, type Page } from '@playwright/test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { toolCompatibility, toolsFixture, type ToolMode } from './fixtures/tool-compatibility'
+
+async function expandCatalogs(page: Page) {
+  await expect(page.getByRole('heading', { name: 'OBLOADER', exact: true })).toBeVisible()
+  for (const toggle of await page.getByRole('button', { name: /参数目录$/ }).all()) {
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+  }
+}
 
 for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 1024 }, { width: 1280, height: 720 }]) {
   test(`工具目录分组、只读边界与键盘刷新 ${viewport.width}×${viewport.height}`, async ({ page }, info) => {
@@ -10,7 +17,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     await page.setViewportSize(viewport); await page.goto('/settings/tools')
     await expect(page).toHaveTitle(/OB Data Orch/); await expect(page.getByRole('heading', { name: '工具与兼容', exact: true })).toBeVisible(); await expect(page.getByRole('heading', { name: 'OBDUMPER', exact: true })).toBeVisible()
     await expect(page.getByText('按任务配置选择，不设全平台单一活动版本', { exact: true })).toBeVisible()
-    await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible(); await expect(page.getByText('obloader-4.3.5-direct-v1', { exact: true })).toBeVisible()
+    await expandCatalogs(page); await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible(); await expect(page.getByText('obloader-4.3.5-direct-v1', { exact: true })).toBeVisible()
     const historical = page.locator('.ant-descriptions-item').filter({ has: page.getByText('仅历史重放', { exact: true }) }); await expect(historical.getByText('obdumper-4.3.5-slice-v6', { exact: true })).toBeVisible(); await expect(historical.getByText('obdumper-4.3.5-slice-v8-object-selection', { exact: true })).toBeVisible()
     const first = await page.getByText('obdumper-4.3.5-slice-v5', { exact: true }).boundingBox(), second = await page.getByText('obdumper-4.3.5-slice-v7', { exact: true }).boundingBox()
     expect(first).not.toBeNull(); expect(second).not.toBeNull(); expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height)
@@ -31,9 +38,9 @@ for (const mode of ['denied', 'error', 'invalid'] satisfies ToolMode[]) test(`�
 })
 
 test('工具刷新撤权后清除目录并可恢复', async ({ page }) => {
-  const model = await toolsFixture(page); await page.goto('/settings/tools'); await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible()
+  const model = await toolsFixture(page); await page.goto('/settings/tools'); await expandCatalogs(page); await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible()
   model.setMode('denied'); await page.getByRole('button', { name: '刷新工具状态' }).click(); await expect(page.getByRole('alert').filter({ hasText: '系统管理员' })).toBeVisible(); await expect(page.locator('.ant-descriptions')).toHaveCount(0)
-  model.setMode('ready'); await page.getByRole('button', { name: '刷新工具状态' }).click(); await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible(); expect(model.calls).toEqual(['GET', 'GET', 'GET'])
+  model.setMode('ready'); await page.getByRole('button', { name: '刷新工具状态' }).click(); await expandCatalogs(page); await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible(); expect(model.calls).toEqual(['GET', 'GET', 'GET'])
 })
 
 test('工具状态加载期间不显示旧版静态目标', async ({ page }, info) => {
@@ -58,7 +65,7 @@ test('工具状态原生 200% 下可阅读并键盘刷新', async ({ browserName
     await expect.poll(() => page.evaluate(() => devicePixelRatio)).toBe(before.ratio * 2)
     const cdp = await context.newCDPSession(page)
     let capture = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(info.outputPath('tools-native-200-top.png'), Buffer.from(capture.data, 'base64'))
-    await page.getByText('obdumper-4.3.5-slice-v11-expert-parameters', { exact: true }).scrollIntoViewIfNeeded()
+    await expandCatalogs(page); await page.getByText('obdumper-4.3.5-slice-v11-expert-parameters', { exact: true }).scrollIntoViewIfNeeded()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     capture = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(info.outputPath('tools-native-200-catalogs.png'), Buffer.from(capture.data, 'base64'))
     const refresh = page.getByRole('button', { name: '刷新工具状态' }); await refresh.focus(); await expect(refresh).toBeInViewport(); await page.keyboard.press('Enter'); await expect.poll(() => model.calls.length).toBe(2); await expect(refresh).not.toHaveClass(/ant-btn-loading/); await expect(refresh).toBeFocused()

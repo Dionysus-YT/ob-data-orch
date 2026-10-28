@@ -137,14 +137,16 @@ func Test权限专家分类来自领域结果而非元数据版本(t *testing.T)
 	}
 	ordinary := false
 	expert := true
-	for _, test := range []struct {
-		name string
-		flag *bool
-		want bool
-	}{{"普通日期", &ordinary, false}, {"专家参数", &expert, true}, {"历史未知", nil, true}} {
-		input := TaskSubmission{MetadataVersion: "obdumper-4.3.5-slice-v11-expert-parameters", ExpertConfigRequired: test.flag}
-		if submissionNeedsExpert(input) != test.want {
-			t.Fatal("版本覆盖了领域分类", test.name)
+	for _, version := range []string{"obdumper-4.3.5-slice-v11-expert-parameters", "obdumper-4.3.5-slice-v12-schema-boolean"} {
+		for _, test := range []struct {
+			name string
+			flag *bool
+			want bool
+		}{{"普通日期", &ordinary, false}, {"专家参数", &expert, true}, {"历史未知", nil, true}} {
+			input := TaskSubmission{MetadataVersion: version, ExpertConfigRequired: test.flag}
+			if submissionNeedsExpert(input) != test.want {
+				t.Fatal("版本覆盖了领域分类", test.name)
+			}
 		}
 	}
 	if err := database.withWrite(ctx, func(tx *sql.Tx) error {
@@ -159,6 +161,22 @@ func Test权限专家分类来自领域结果而非元数据版本(t *testing.T)
 		}
 		if !allowed {
 			t.Fatal("普通分类被新版元数据错误阻断")
+		}
+		for _, classification := range []struct {
+			expression string
+			want       bool
+		}{
+			{"?", true},
+			{"json_set(?, '$.expertConfig', json('true'))", false},
+			{"json_remove(?, '$.expertConfig')", false},
+		} {
+			query := `SELECT ` + taskPermissionEligibility("t") + ` FROM (SELECT 'permission-user' AS creator_subject_id,'source-1' AS data_source_id,'node-1' AS node_id,'OBDUMPER_EXPORT' AS task_type,'obdumper-4.3.5-slice-v12-schema-boolean' AS metadata_version,` + classification.expression + ` AS submitted_permission_scope_json) t`
+			if err := tx.QueryRowContext(ctx, query, raw).Scan(&allowed); err != nil {
+				return err
+			}
+			if allowed != classification.want {
+				t.Fatal("结构修订绕过专家权限或丢失普通分类")
+			}
 		}
 		return nil
 	}); err != nil {

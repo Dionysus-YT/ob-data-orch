@@ -39,6 +39,15 @@ export function useOverview(options: OverviewOptions = {}) {
     stopRefresh()
     loading.value = refreshing.value = false
   }
+  // 下钻读取与首页共用浏览器身份；任一入口确认失权时同步清除全页快照和在途等待。
+  function invalidateAuthorization(status: 401 | 403 = 403) {
+    if (disposed) return
+    invalidate()
+    snapshot.value = null
+    restricted.value = true
+    refreshCompleted.value = false
+    failure.value = status === 401 ? '登录状态已失效，请重新登录后查看首页。' : '当前身份没有可查看的首页范围，请核对账号与对象授权。'
+  }
   async function load(mode: 'initial' | 'manual' | 'auto' = 'manual') {
     // 方法入口防重，按钮 disabled 仅是交互反馈。
     if (disposed || loading.value || refreshing.value) return
@@ -61,9 +70,7 @@ export function useOverview(options: OverviewOptions = {}) {
       if (!active()) return
       const problem = error as Partial<ApiError>
       if (problem.status === 401 || problem.status === 403) {
-        snapshot.value = null
-        restricted.value = true
-        failure.value = problem.status === 401 ? '登录状态已失效，请重新登录后查看首页。' : '当前身份没有可查看的首页范围，请核对账号与对象授权。'
+        invalidateAuthorization(problem.status)
       } else {
         failure.value = problem.code === 'RESPONSE_INVALID' ? '首页快照无法校验，请核对网页与控制面版本后重试。' : '首页快照读取失败，请检查控制面状态后重试。'
       }
@@ -89,5 +96,5 @@ export function useOverview(options: OverviewOptions = {}) {
     failure.value = ''
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
   })
-  return { range, snapshot, loading, refreshing, refreshCompleted, restricted, failure, stale, partial, currentTime, refresh: () => load('manual') }
+  return { range, snapshot, loading, refreshing, refreshCompleted, restricted, failure, stale, partial, currentTime, refresh: () => load('manual'), invalidateAuthorization }
 }

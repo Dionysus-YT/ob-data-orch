@@ -6,6 +6,7 @@ const operations = {
   API_REJECTED: '创建请求得到 400/422；预检查、提交、工具执行均为零',
   PRECHECK_FAILED: '完整七项报告 → 指定项失败 → 独立项保留 → 提交被拒绝',
   TASK_FAILED: '七项通过 → 真实启动 → 非零退出和指定 SQL 错误日志；不得错判成功',
+  TASK_FAILED_NO_OUTPUT: '七项通过 → 工具退出 0 但无文件 → RESULT_VERIFICATION_FAILED；零文件/零字节、无待核对状态，不投影成功',
   OBSERVED: '记录工具终态与实际数据/文件行为；不外推为推荐组合或 PASS',
 }
 const workflows = {

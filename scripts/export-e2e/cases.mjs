@@ -52,7 +52,7 @@ for (const encoding of ['UTF-8', 'GBK', 'GB2312', 'GB18030', 'Big5', 'ISO-8859-1
 }
 for (const format of ['CSV', 'CUT', 'SQL']) {
   add(`MX-036-${format}`, '空表', `${format} 保留空文件`, { format, table: 'empty', retainEmptyFiles: true }, 'SUCCEEDED', { validator: 'EMPTY' })
-  add(`MX-037-${format}`, '空表', `${format} 默认空表输出事实`, { format, table: 'empty' }, 'SUCCEEDED', { validator: 'EMPTY' })
+  add(`MX-037-${format}`, '空表', format === 'CSV' ? `${format} 默认空表输出事实` : `${format} 默认空表无产物时失败关闭`, { format, table: 'empty' }, format === 'CSV' ? 'SUCCEEDED' : 'TASK_FAILED_NO_OUTPUT', { validator: 'EMPTY' })
 }
 
 add('MX-040', '筛选', 'where 过滤产生精确子集', { where: 'id <= 2' })

@@ -257,6 +257,7 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
   if ((timestampFormats.slice(0, 6).some(([, value]) => value !== '') || values.preserveZeroDatetime) && !supportsTimestampFormats(values)) {
     return { valid: false, message: '日期时间值格式仅支持 MySQL/Oracle 兼容模式的 CSV/CUT 数据导出。' }
   }
+  if (values.compatibilityMode === 'MYSQL' && values.retainSchema && values.compactSchema) return { valid: false, message: 'MySQL 保留 Schema 不能同时使用原生建表语句。' }
   if (values.compatibilityMode !== 'MYSQL' && (values.timeValueFormat || values.datetimeValueFormat || values.preserveZeroDatetime)) return { valid: false, message: 'TIME、DATETIME 和零日期保留仅适用于 MySQL 兼容模式。' }
   if ((values.timestampTzValueFormat || values.timestampLtzValueFormat || values.nlsDateFormat || values.nlsTimestampFormat || values.nlsTimestampTzFormat) && (values.compatibilityMode !== 'ORACLE' || values.contentKind === 'DDL_ONLY')) return { valid: false, message: 'TZ、LTZ 和 NLS 会话格式仅适用于 Oracle 数据导出。' }
   if (values.contentKind !== 'DDL_ONLY') {
@@ -403,7 +404,7 @@ function buildDDLBehavior(values: ExportDraftFormValues): DDLBehaviorOptions | u
   return {
     dropObject: values.dropObject || undefined,
     retainSchema: values.retainSchema || undefined,
-    compactSchema: compactSchema || undefined,
+    compactSchema: values.compatibilityMode === 'MYSQL' && values.retainSchema ? false : compactSchema || undefined,
     addExtraMessage: values.addExtraMessage || undefined,
     sequencePolicy: values.sequencePolicy || undefined,
   }

@@ -242,7 +242,7 @@ POS、Parquet、ORC、Avro 不出现在普通 V1 新建选择中。它们的历�
 | 页面能力 | 官方参数 | 规则 |
 |---|---|---|
 | 输出位置 | `-f / --file-path` | 必填；本地值是用户填写的本次任务完整绝对路径，平台不追加子目录；对象存储使用官方 URI |
-| 日志目录 | `--log-path` | 第四步常用区，与导出路径同级；可选，不指定时使用官方默认行为 |
+| 日志目录 | `--log-path` | 第四步常用区，与导出路径同级；可选，留空不发射该令牌，由 Agent 固定 console 配置受控采集任务日志；显式值保持原样 |
 | 目录非空处理 | `--skip-check-dir` | 第四步常用区显式复选项，仅本地输出展示；仅勾选时生成，并提示可能覆盖同名文件 |
 | 扁平目录 | `--no-nested-dir` | 第三步常用区；改变默认目录层级 |
 | 文件拆分 | `--block-size` | 第三步高级区；CSV/CUT/SQL 按 MB/ROW 校验 |
@@ -496,8 +496,8 @@ DDL 真实工具证据来源：[EX-I7 剩余参数记录（2026-08-11）](../03-
 | `--no-nested-dir` | 第三步其他选项 | 当前新建 CSV/CUT/SQL 数据内容；MySQL/Oracle | 可提交；不因本轮展示扩大到仅 DDL |
 | `--retain-empty-files` | 第三步其他选项 | 当前新建 CSV/CUT/SQL 数据内容；MySQL/Oracle | 可提交 |
 | `--drop-object` | 第三步其他选项 | 包含结构；两种模式；DDL 可与 CSV/CUT/SQL 组合 | 可提交，勾选后提示导入侧 DROP 风险 |
-| `--retain-schema` | 第三步其他选项 | 包含结构；两种模式；DDL 可与 CSV/CUT/SQL 组合 | 可提交 |
-| `--compact-schema` | 第三步其他选项 | 包含结构且整库或指定纯表；MySQL/Oracle | 可提交；现役本机 help/工具证据见 EX-I7，不扩展混合对象范围 |
+| `--retain-schema` | 第三步其他选项 | 包含结构；两种模式；DDL 可与 CSV/CUT/SQL 组合 | 可提交；MySQL 由 v12 派生 compact-schema=false，与原生 true 互斥，见下方 2026-10-27 修订 |
+| `--compact-schema` | 第三步其他选项 | 包含结构且整库或指定纯表；MySQL/Oracle | 可提交；MySQL 保留前缀时清除并禁用；其余资格沿用 EX-I7，不扩展混合对象范围 |
 | `--compress` | 第三步高级设置 | CSV/CUT/SQL 数据内容；MySQL/Oracle | 可提交，算法/等级联动 |
 | `--preserve-zero-datetime` | 第三步其他选项 | MySQL CSV/CUT 数据内容；Oracle/SQL/仅 DDL 隐藏 | v11 已接入；保留源零日期表达，真实零值输出仍待 EX-V1 |
 | `--snapshot` | 第三步其他选项 | 包含数据、对象范围；MySQL/Oracle；结果集隐藏 | 可提交，与闪回互斥 |
@@ -517,6 +517,12 @@ DDL 真实工具证据来源：[EX-I7 剩余参数记录（2026-08-11）](../03-
 本轮只调整前端位置、补齐受限入口与解释，三个 DDL 字段仍使用既有 ddlBehavior；受限入口无可写模型，不产生草稿字段、命令参数或已配置计数。切换仅数据时清除 DDL 活动值；紧凑 Schema 失去表 DDL 前提时清值。没有修改或发布参数元数据，也没有解除 EX-V1、sys 权限、隐藏主键或零日期的验证门禁。
 
 后续位置修订：弱读、使用隐藏主键、附加对象信息、排除生成列统一移到第三步其他选项，原有内容/范围/查询条件、禁用原因和服务端校验保持不变。“隐藏主键”与“使用隐藏主键”是同一 `--enable-hidden-pk` 参数，只有一个入口。排除生成列仍写入 filterConfig，第二步高级设置计数不包括该移出字段。
+
+## 2026-10-27 MySQL Schema 前缀联动
+
+固定 4.3.5 原生建表路径不补全 MySQL 的 Schema 前缀。正常交互勾选“保留 Schema 前缀”时清除并禁用“使用原生建表语句”，由领域规则及唯一生成器使用工具已有的元数据重建路径；取消保留前缀后恢复原生选项，未勾选继续继承工具默认。提示说明两者互斥及可能需要系统视图读取权限。恢复历史冲突配置不自动改值，保存前要求修正，服务端也拒绝冲突和 DATA_ONLY 残留。
+
+显式 false 仅用于 MySQL 保留前缀，不增加独立重建模式入口。Oracle 不派生 false。新配置或明确保存的修订使用 v12，历史预览/任务不改写；本条覆盖旧“compact-schema 未勾选继承默认”说明中的 MySQL 保留前缀组合。真实范围为 Windows/ODP/MySQL 的 DDL_ONLY 和 DDL_AND_DATA + CSV/CUT/SQL，见[验收](../03-technical/evidence/export-retain-schema-2026-10-26.md)；其他对象、平台和门禁保持原状态。
 
 ## 2026-10-08 其他选项名称与分类修订
 

@@ -142,6 +142,8 @@ Radius：control `4-6px`，surface `6-8px`。禁止 `16px+` 圆角、pill everyw
 
 Motion：Low Motion。优先 Ant 原生 motion；允许 Drawer、Collapse、Dropdown、Button wave 和 180-240ms 的 opacity / border / background 反馈。禁止 hover scale、全页 fade、staggered card、floating animation、parallax 和 glow pulse。
 
+2026-10-28 首页布局修订：按 DEC-066 / DEC-068，四项固定任务指标各自构成独立卡片，数值使用页标题字号的 1.5 倍。仅四卡允许同视角、透明背景的等距立体插画及既有 `foundation.surfaceShadow`，不将插画材质色变为业务状态色或全局 Token；其余分区保持平面。趋势使用细线、浅网格、底部图例，真实点仅在悬停/聚焦时强调；放大和只读任务分析使用 Ant Modal，图形和精确时间口径保持一致。不新增共享控件样式，其他页面继续按各自 Archetype 排版。
+
 ## 7. Ant Ownership
 
 Ant Design Vue 是唯一 Generic UI Component System。以下状态由 Ant 原生负责：
@@ -194,6 +196,7 @@ Design Token taxonomy 见 [tokens/README.md](tokens/README.md)。实现唯一值
 | `web/src/workbench/export/components/SqlQueryEditor.vue` | `.sql-query-in-icon` / `font-size` / `8px` | SQL 工具栏 IN 图形中的字形；不用于普通文本或输入区 |
 | `web/src/workbench/sources/SourceEditor.vue` | `.orch-environment-chip` / `font-size` / `12px` | Ant Select 选项内部的静态环境标记；元信息密度与现役页面一致 |
 | 同上 | `.orch-environment-chip--default` / `background` / `#f0f0f0` | 仅禁选的“默认”提示；不是已保存环境值或状态色 |
+| `internal/deployment/loginpage/login.css` | `--login-brand-blue` `#1f9dd4`、`--login-brand-green` `#17a138`；登录控件 40px 及手写输入/按钮/提示状态 | 认证前无 Ant 与前端资源；品牌色只用于标识纹样，控件按 Ant 现役视觉对齐，仅限登录页（[DEC-067](../docs/01-product/decisions.md#dec-067-登录页采用客户品牌标识)） |
 
 ## 9. Component Semantics
 

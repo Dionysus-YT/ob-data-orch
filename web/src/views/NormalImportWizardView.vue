@@ -79,7 +79,6 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
       <Alert v-if="wizard.draftFailure" type="error" show-icon :message="wizard.draftFailure"><template v-if="wizard.draftLoadFailure" #action><Button type="link" :loading="wizard.loadingDraft" @click="wizard.retryDraft">重试</Button></template></Alert>
       <Alert v-if="wizard.reviewFailure && wizard.activeStep !== wizard.steps.review" type="error" show-icon :message="wizard.reviewFailure" />
       <Alert v-if="wizard.loadingDraft" type="info" show-icon message="正在读取普通导入草稿…" />
-      <Alert v-if="wizard.attemptedStep === wizard.activeStep && wizard.currentStepError" type="error" show-icon :message="wizard.currentStepError" />
       <template v-if="!wizard.loadingDraft && !wizard.draftLoadFailure && !wizard.unsupportedDraft">
         <NormalImportSourceStep v-if="wizard.activeStep === wizard.steps.source" :model="wizard" />
         <NormalImportInputStep v-else-if="wizard.activeStep === wizard.steps.input" :model="wizard" />
@@ -92,10 +91,9 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
     <template #footer>
       <footer class="wizard-footer">
         <Button :disabled="wizard.rerunLocked || wizard.activeStep === 1 || wizard.navigating" @click="wizard.previousStep">上一步</Button>
-        <span :id="wizard.fieldPrefix + '-unavailable'" class="wizard-baseline-note">{{ wizard.rerunLocked ? '保留原配置重新检查；当前预检查与执行门禁通过后才能提交。' : '保存当前活动配置；完整预检查与执行门禁通过后才能提交。' }}</span>
         <span class="footer-grow" />
         <Button v-if="wizard.activeStep < wizard.steps.review" type="primary" :loading="wizard.navigating" :disabled="wizard.loadingDraft || wizard.unsupportedDraft || !!wizard.draftLoadFailure || wizard.loadingSources && wizard.activeStep === wizard.steps.source || wizard.loadingNodes && wizard.activeStep === wizard.steps.input" @click="advance">{{ wizard.footerLabel }}</Button>
-        <div v-else class="footer-actions"><Button :loading="wizard.checking || wizard.previewingCommand" :disabled="!wizard.canStartPrecheck" @click="wizard.retryReview">重新预检查</Button><Button type="primary" :loading="wizard.submitting" :disabled="!wizard.canSubmit" :aria-describedby="wizard.fieldPrefix + '-unavailable'" @click="wizard.submitTask()">提交并启动导入</Button></div>
+        <div v-else class="footer-actions"><Button :loading="wizard.checking || wizard.previewingCommand" :disabled="!wizard.canStartPrecheck" @click="wizard.retryReview">重新预检查</Button><Button type="primary" :loading="wizard.submitting" :disabled="!wizard.canSubmit" :aria-describedby="wizard.fieldPrefix + '-precheck-status'" @click="wizard.submitTask()">提交并启动导入</Button></div>
       </footer>
     </template>
   </WizardFrame>

@@ -124,7 +124,11 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 	// DDL 行为只随包含 DDL 的内容发射，适用性已在归一化阶段校验。
 	appendBool("--drop-object", input.DropObject)
 	appendBool("--retain-schema", input.RetainSchema)
-	appendBool("--compact-schema", input.CompactSchema)
+	if input.CompactSchemaValue != nil {
+		fields = append(fields, commandgen.FieldInput{Name: "--compact-schema", Source: commandgen.SourceUser, Value: commandgen.Value{Kind: commandgen.ValueBoolean, Boolean: *input.CompactSchemaValue}})
+	} else {
+		appendBool("--compact-schema", input.CompactSchema)
+	}
 	appendBool("--add-extra-message", input.AddExtraMessage)
 	appendString("--sequence-policy", strings.ToLower(input.SequencePolicy))
 	appendString("--file-path", input.FilePath)

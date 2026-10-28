@@ -77,7 +77,11 @@ export async function browserBatch(input) {
             fact(command.command === preview.command && command.redaction === 'PASSWORD_ONLY', 'FROZEN_COMMAND_MISMATCH')
             record.state = execution.state; record.exitCode = execution.exitCode; record.errorCode = execution.errorCode
             record.executionId = execution.executionId; record.plannedActualMatch = execution.plannedActualMatch; record.summary = execution.resultSummary
-            if (test.expected === 'TASK_FAILED') {
+            if (test.expected === 'TASK_FAILED_NO_OUTPUT') {
+              fact(execution.state === 'FAILED' && execution.exitCode === 0 && execution.errorCode === 'RESULT_VERIFICATION_FAILED' && execution.plannedActualMatch === 'MATCHED' && !execution.reconciliationRequired, 'EXPECTED_EMPTY_OUTPUT_REJECTION_MISSING')
+              fact(execution.resultSummary?.result === 'FAILED' && execution.resultSummary.fileCount === 0 && execution.resultSummary.totalBytes === 0 && execution.resultSummary.files.length === 0, 'EMPTY_OUTPUT_EVIDENCE_MISMATCH')
+              record.outcome = 'PASS'; record.negativeAssertion = 'EMPTY_OUTPUT_FAILS_CLOSED'
+            } else if (test.expected === 'TASK_FAILED') {
               fact(execution.state === 'FAILED' && Number.isInteger(execution.exitCode) && execution.exitCode !== 0, 'EXPECTED_TOOL_FAILURE_MISSING')
               const logs = await get(`/api/v1/tasks/${submitted.id}/logs`)
               fact(logs.items.some(log => /unknown column/i.test(log.message) && log.message.includes('missing_column')), 'EXPECTED_QUERY_FAILURE_MISSING')

@@ -49,16 +49,6 @@
   color: var(--ob-product-navigation-icon);
   font-size: var(--ob-component-field-helper-size);
 }
-.table-card strong {
-  display: block;
-  color: var(--ob-product-navigation-text);
-}
-.table-card small {
-  display: block;
-  margin-top: var(--ob-foundation-space-1);
-  color: var(--ob-color-disabled);
-  font-size: var(--ob-component-field-helper-size);
-}
 .status-dot {
   display: inline-block;
   width: 7px;
@@ -309,20 +299,36 @@
   color: var(--ob-color-form-secondary);
   font-size: var(--ob-component-field-helper-size);
 }
-.settings-sections {
-  display: grid;
-  gap: var(--ob-foundation-space-6);
-}
-.settings-sections > section + section {
-  padding-top: var(--ob-foundation-space-6);
-  border-top: 1px solid var(--ob-color-border);
-}
-.settings-sections > section { scroll-margin-top: calc(var(--ob-product-shell-header-height) + var(--ob-foundation-space-6)); }
 .settings-main h2 {
   margin: 0 0 var(--ob-foundation-space-3);
   color: var(--ob-color-form-text);
   font-size: var(--ob-product-typography-section-size);
 }
+/* 设置域共用平面分组：用途在左，事实与独立操作在右；窄屏先合并分组列。 */
+.settings-workspace { min-inline-size: 0; }
+.settings-domain { display: grid; gap: var(--ob-foundation-space-6); padding-top: var(--ob-foundation-space-2); min-inline-size: 0; overflow-wrap: anywhere; }
+.settings-domain-header, .settings-control-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ob-foundation-space-4); flex-wrap: wrap; min-inline-size: 0; }
+.settings-domain-header > div { flex: 1 1 280px; min-inline-size: 0; }
+.settings-domain-header h2 { margin-bottom: var(--ob-foundation-space-2); }
+.settings-domain-header p { margin: 0; }
+.settings-group { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--ob-foundation-space-8); padding-top: var(--ob-foundation-space-6); border-top: 1px solid var(--ob-color-border); min-inline-size: 0; scroll-margin-top: calc(var(--ob-product-shell-header-height) + var(--ob-foundation-space-6)); }
+.settings-group-label { min-inline-size: 0; }
+.settings-group-label h3, .settings-control-header h3, .settings-catalog h3 { margin: 0; color: var(--ob-color-form-text); font-size: var(--ob-product-typography-section-size); font-weight: var(--ob-product-typography-weight); }
+.settings-group-label p { margin: var(--ob-foundation-space-2) 0 0; color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-helper-size); line-height: 1.65; }
+.settings-group-body { display: grid; gap: var(--ob-foundation-space-4); min-inline-size: 0; }
+.settings-group-body > p { margin: 0; }
+.settings-control-header { align-items: center; }
+.settings-control-header > h3 { flex: 1 1 180px; }
+.settings-group form { max-inline-size: 640px; }
+.settings-form-block { max-inline-size: 720px; }
+.settings-number { inline-size: min(100%, 280px); }
+.settings-field-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ob-foundation-space-4); min-inline-size: 0; }
+.settings-details { min-inline-size: 0; }
+.settings-catalog { display: grid; gap: var(--ob-foundation-space-3); padding-top: var(--ob-foundation-space-4); border-top: 1px solid var(--ob-color-border); min-inline-size: 0; }
+@media (max-width: 1100px) {
+  .settings-group { grid-template-columns: minmax(0, 1fr); gap: var(--ob-foundation-space-4); }
+}
+@media (max-width: 800px) { .settings-field-grid { grid-template-columns: minmax(0, 1fr); } }
 .section-hint {
   margin: var(--ob-foundation-space-3) 0 0;
   color: var(--ob-color-form-secondary);
@@ -782,21 +788,6 @@ to {
   color: var(--ob-color-form-secondary);
   background: var(--ob-color-subtle);
 }
-.empty-state {
-  display: grid;
-  justify-items: center;
-  text-align: center;
-  max-width: none;
-  margin: 0;
-  padding: 64px var(--ob-foundation-space-6);
-  border: 1px solid var(--ob-color-border);
-  border-radius: var(--ob-component-table-radius);
-  background: var(--ob-color-surface);
-  box-shadow: var(--ob-foundation-surface-shadow);
-}
-.content-card .empty-state {
-  border: 0;
-}
 .empty-mark {
   margin-bottom: var(--ob-foundation-space-2);
   font-size: var(--ob-product-typography-title-size);
@@ -809,19 +800,6 @@ to {
   border-radius: var(--ob-component-control-management-radius);
   color: var(--ob-color-muted);
   background: var(--ob-color-subtle);
-}
-.empty-state h2 {
-  margin: 0 0 var(--ob-foundation-space-2);
-  color: var(--ob-color-form-text);
-  font-size: var(--ob-component-overlay-title-size);
-  font-weight: 500;
-}
-.empty-state p {
-  max-width: 580px;
-  margin: var(--ob-foundation-space-3) auto var(--ob-foundation-space-4);
-  color: var(--ob-color-form-secondary);
-  font-size: var(--ob-component-control-font-size);
-  line-height: 24px;
 }
 :is(.form-section h2) {
   color: var(--ob-color-form-text);
@@ -984,15 +962,6 @@ body {
   font-size: var(--ob-product-typography-title-size);
   font-weight: var(--ob-product-typography-weight);
   line-height: 32px;
-}
-.table-card {
-  overflow-x: auto;
-  border-radius: var(--ob-component-table-radius);
-  overflow: hidden;
-}
-:is(.table-card) {
-  overscroll-behavior-x: contain;
-  overflow-x: auto;
 }
 
 /* 三类向导共用事实、检查和只读命令的呈现；业务状态由各模块独立持有。 */

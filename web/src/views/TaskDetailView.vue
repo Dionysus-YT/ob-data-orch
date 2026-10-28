@@ -134,8 +134,8 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
           <ATabPane key="snapshot" tab="配置快照">
             <AAlert v-if="snapshotFailure" type="error" message="无法读取冻结配置" :description="snapshotFailure" show-icon><template #action><AButton @click="detail.loadSnapshot()">重试</AButton></template></AAlert>
             <template v-else-if="snapshot">
-              <p class="task-section-note">提交时的生效值保持冻结。历史快照未记录字段来源，统一标记“来源未记录”。</p>
-              <ADescriptions v-for="group in snapshotGroups" :key="group.key" :title="group.label" :column="{ xs: 1, sm: 2 }" size="small"><ADescriptionsItem v-for="field in group.fields" :key="field.key" :label="field.label"><div class="task-snapshot-field"><ATypographyParagraph class="task-snapshot-value" :content="field.value" :ellipsis="{ rows: 3, expandable: true, symbol: '展开' }" /><ATag class="task-origin">来源未记录</ATag></div></ADescriptionsItem></ADescriptions>
+              <p class="task-section-note">历史快照未记录各字段来源。</p>
+              <ADescriptions v-for="group in snapshotGroups" :key="group.key" :title="group.label" :column="{ xs: 1, sm: 2 }" size="small"><ADescriptionsItem v-for="field in group.fields" :key="field.key" :label="field.label"><div class="task-snapshot-field"><ATypographyParagraph class="task-snapshot-value" :content="field.value" :ellipsis="{ rows: 3, expandable: true, symbol: '展开' }" /></div></ADescriptionsItem></ADescriptions>
               <ADescriptions title="冻结证据" :column="{ xs: 1, sm: 2 }" size="small"><ADescriptionsItem label="工具版本">{{ snapshot.toolVersion }}</ADescriptionsItem><ADescriptionsItem label="参数元数据版本">{{ snapshot.metadataVersion }}</ADescriptionsItem><ADescriptionsItem label="能力版本">{{ snapshot.capabilityVersion }}</ADescriptionsItem><ADescriptionsItem label="配置指纹"><code>{{ snapshot.configFingerprint }}</code></ADescriptionsItem></ADescriptions>
             </template>
           </ATabPane>
@@ -183,7 +183,6 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
 .task-section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-3); }
 .task-section-heading h2 { font-size: var(--ob-product-typography-section-size); margin: 0; }
 .task-section-note, .task-operations p { color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
-.task-origin { margin-inline: var(--ob-foundation-space-2) 0; }
 .task-snapshot-field { min-width: 0; width: 100%; }
 .task-snapshot-value { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-evidence { max-width: 100%; padding: var(--ob-foundation-space-4); overflow: auto; background: var(--ob-color-subtle); font-family: var(--ob-foundation-font-mono); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-control-radius); }

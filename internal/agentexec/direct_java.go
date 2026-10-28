@@ -83,7 +83,7 @@ type DirectJavaProcess struct {
 
 // StartDirectJava 在写入不可覆盖的启动意图后直接启动包内 Java 主类。
 // Windows 启动参数按固定工具分别复刻 4.3.5 的官方脚本；官方脚本保持只读，
-// 任务级替换包括冻结 --mem 对应的堆，以及 execution 私有安全配置、原始日志和堆转储目录。
+// 任务级替换包括冻结 --mem 对应的堆，以及 execution 私有安全配置、日志出口、临时文件和堆转储目录。
 // 该函数仅建立本地进程边界；任务租约、秘密解析、日志脱敏和终态投影必须由上层完成。
 func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch DirectJavaLaunch) (*DirectJavaProcess, error) {
 	if err := validateDirectJavaLaunch(workspace, launch); err != nil {
@@ -100,6 +100,9 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	if launch.Tool == "OBLOADER_DIRECT_LOAD" {
 		profile, err = windowsDirectLoadReplicaArguments(workspace, launch.ToolHome, launch.SecurityConfiguration, javaUpdate)
 	}
+	if err == nil && (launch.Tool == "" || launch.Tool == "OBDUMPER") {
+		profile, err = applyExportDefaultLogging(workspace, profile, launch.BusinessArguments)
+	}
 	if err != nil {
 		return nil, ErrDirectJavaLaunchInvalid
 	}
@@ -107,13 +110,16 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	if err != nil {
 		return nil, err
 	}
-	if err := WriteStartIntent(workspace, launch.Intent); err != nil {
-		return nil, err
-	}
 	arguments := make([]string, 0, len(launch.JVMOptions)+len(profile)+len(launch.BusinessArguments)+3)
 	arguments = append(arguments, launch.JVMOptions...)
 	arguments = append(arguments, profile...)
 	arguments = append(arguments, launch.BusinessArguments...)
+	if !toolArgumentsRepresentable(arguments) {
+		return nil, ErrDirectJavaLaunchInvalid
+	}
+	if err := WriteStartIntent(workspace, launch.Intent); err != nil {
+		return nil, err
+	}
 	command := exec.CommandContext(ctx, launch.JavaPath, arguments...)
 	command.Dir = launch.ToolHome
 	command.Env = append([]string(nil), launch.Environment...)
@@ -187,11 +193,15 @@ func parseJava8Update(output []byte) (int, error) {
 }
 
 // windowsOBDumperReplicaArguments 按官方 Windows obdumper.bat 的默认分支形成结构化 argv。
-// Agent 不执行或改写批处理文件；安全配置、工具原生日志和 OOM 堆转储改落 execution 私有目录，
+// Agent 不执行或改写批处理文件；安全配置、默认原生日志、Java 临时文件和 OOM 堆转储改落 execution 私有目录，
 // 防止共享工具包目录承载密码相关材料或被并发任务互相覆盖。
 func windowsOBDumperReplicaArguments(workspace credential.Workspace, toolHome, securityConfiguration string, javaUpdate int) ([]string, error) {
 	if !filepath.IsAbs(toolHome) || strings.ContainsRune(toolHome, 0) || securityConfiguration == "" || javaUpdate < 0 {
 		return nil, errors.New("windows obdumper launch profile is invalid")
+	}
+	runtimeDirectory, err := controlledRuntimeDirectory(workspace)
+	if err != nil {
+		return nil, err
 	}
 	toolHome = filepath.Clean(toolHome)
 	configuration := func(name string) string { return filepath.Join(toolHome, "conf", name) }
@@ -216,9 +226,13 @@ func windowsOBDumperReplicaArguments(workspace credential.Workspace, toolHome, s
 		"-XX:MaxGCPauseMillis=50",
 		"-XX:+HeapDumpOnOutOfMemoryError",
 		"-XX:HeapDumpPath=" + workspace.RawLogDirectory(),
+		// Log4j 采用 JVM 缺省字符集；只设置管道编码不足以避免 Windows GBK 的微秒符号导致采集失败。
+		"-Dfile.encoding=UTF-8",
 		"-Dsun.stdout.encoding=UTF-8",
 		"-Dsun.stderr.encoding=UTF-8",
 		"-Dsecurity.configurationFile=" + securityConfiguration,
+		// JNI 库解包和 JVM 临时文件归当前任务所有，不依赖被裁剪环境中的 TEMP/TMP。
+		"-Djava.io.tmpdir=" + runtimeDirectory,
 		"-Dpicocli.usage.width=180",
 		"-Denable.parallel.write=false",
 		"-Dskip.tableName.check=false",
@@ -326,7 +340,7 @@ func validateDirectJavaLaunch(workspace credential.Workspace, launch DirectJavaL
 			return ErrDirectJavaLaunchInvalid
 		}
 	}
-	if !executionargv.Valid(launch.BusinessArguments) {
+	if !executionargv.Valid(launch.BusinessArguments) || !toolArgumentsRepresentable(launch.BusinessArguments) {
 		return ErrDirectJavaLaunchInvalid
 	}
 	if len(launch.Environment) == 0 || hasForbiddenEnvironment(launch.Environment) || !validDirectJavaOutput(launch.Output) {

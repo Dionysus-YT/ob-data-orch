@@ -23,7 +23,7 @@ func Test工具状态来自实际目录并区分导出选择和导入映射(t *t
 	if err != nil || item.Source != "BUILT_IN_CATALOGS" || item.LoadedAt.After(item.CapturedAt) || len(item.Tools) != 2 {
 		t.Fatal("工具状态无效")
 	}
-	loaders := []func() (*parammeta.Catalog, error){parammeta.LoadDefault, parammeta.LoadLegacyGeneralized, parammeta.LoadGeneralized, parammeta.LoadObjectSelection, parammeta.LoadCombinedObjectSelection, parammeta.LoadDDLTextFormats, parammeta.LoadExpertParameters}
+	loaders := []func() (*parammeta.Catalog, error){parammeta.LoadDefault, parammeta.LoadLegacyGeneralized, parammeta.LoadGeneralized, parammeta.LoadObjectSelection, parammeta.LoadCombinedObjectSelection, parammeta.LoadDDLTextFormats, parammeta.LoadExpertParameters, parammeta.LoadSchemaBoolean}
 	export := item.Tools[0].Modules[0]
 	if export.TaskType != "OBDUMPER_EXPORT" || export.MetadataSelection != "TASK_CONFIGURATION" || len(export.Catalogs) != len(loaders) {
 		t.Fatal("导出被误投影为单一活动元数据")

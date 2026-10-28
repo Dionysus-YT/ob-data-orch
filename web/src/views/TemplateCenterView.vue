@@ -31,10 +31,10 @@ function dateTime(value: string) {
 
 <template>
   <MessageContext />
-  <section class="page-heading task-heading"><div><h1>模板中心</h1><p>模板复用导出和普通导入的显式、非敏感配置；旁路导入尚未开放。由模板创建草稿时重新选择数据源与执行节点，并在向导中重新完成预检查与风险确认。</p></div></section>
-  <section class="filter-bar"><AButton :disabled="loading" @click="refresh"><template #icon><ReloadOutlined class="product-icon" :spin="loading" aria-hidden="true" /></template>{{ loading ? '刷新中…' : '刷新' }}</AButton></section>
-  <AAlert v-if="loadFailure" class="orch-feedback" type="error" message="操作未完成" :description="loadFailure" show-icon />
-  <section class="content-card table-card">
+  <header class="orch-page-header"><div class="orch-page-title"><h1>模板中心</h1></div></header>
+  <section class="orch-management" aria-label="模板工作面">
+    <div class="orch-table-meta"><h2>模板列表</h2><div class="orch-page-actions"><AButton :disabled="loading" @click="refresh"><template #icon><ReloadOutlined class="product-icon" :spin="loading" aria-hidden="true" /></template>{{ loading ? '刷新中…' : '刷新' }}</AButton></div></div>
+    <AAlert v-if="loadFailure" class="orch-feedback" type="error" message="操作未完成" :description="loadFailure" show-icon />
     <OrchOperationalTable :rows="templates" :columns="columns" row-key="id" label="模板列表" :loading="loading">
       <template #bodyCell="{ record: template, column }">
         <div v-if="column.key === 'c0'" class="template-name"><div v-if="renameID !== template.id" class="cell-stack"><strong :title="template.displayName">{{ template.displayName }}</strong><small>{{ taskTypeText(template.taskType) }} · {{ template.id }}</small></div><div v-else class="template-rename"><AInput v-model:value.trim="renameValue" aria-label="模板名称" /><AButton :disabled="Boolean(actionBusy)" type="primary" @click="confirmRename(template)">保存</AButton><AButton :disabled="Boolean(actionBusy)" @click="cancelRename">取消</AButton></div></div>
@@ -43,12 +43,11 @@ function dateTime(value: string) {
         <div v-else-if="column.key === 'c3'">{{ dateTime(template.updatedAt) }}</div>
         <div v-else-if="column.key === 'c4'" class="template-row-actions"><AButton :disabled="Boolean(actionBusy)" type="text" class="row-action" @click="startRename(template)"><template #icon><EditOutlined class="product-icon" aria-hidden="true" /></template>改名</AButton><AButton :disabled="Boolean(actionBusy)" type="text" class="row-action" @click="selectTemplate(template)"><template #icon><FileAddOutlined class="product-icon" aria-hidden="true" /></template>用模板新建草稿</AButton><AButton :disabled="Boolean(actionBusy)" type="text" danger class="row-action is-danger" @click="requestDelete(template)"><template #icon><DeleteOutlined class="product-icon" aria-hidden="true" /></template>删除</AButton></div>
       </template>
-      <template #empty><div v-if="loading">正在加载模板…</div><div v-else-if="templates.length === 0"><EmptyState title="尚无可展示模板" description="模板只从成功任务保存；列表不会显示凭据、节点、预检查、命令、日志或结果。" /></div></template>
+      <template #empty><div v-if="loading">正在加载模板…</div><div v-else-if="templates.length === 0"><EmptyState title="尚无可展示模板" description="在成功任务的详情页保存模板。" /></div></template>
     </OrchOperationalTable>
   </section>
   <section v-if="selectedTemplate" class="content-card template-draft-choices" aria-label="由模板创建草稿">
     <h2>由模板创建草稿：{{ selectedTemplate.displayName }}</h2>
-    <p class="section-hint">{{ taskTypeText(selectedTemplate.taskType) }} · 选择数据源与执行节点后创建草稿；预检查与风险确认须在向导中重新完成。</p>
     <p v-if="selectedTemplate.taskType === 'OBDUMPER_EXPORT'" class="section-hint">对象存储凭据须在导出向导中重新绑定。</p>
     <AAlert v-if="createDraftFailure" class="orch-feedback" type="error" message="无法创建草稿" :description="createDraftFailure" show-icon />
     <div class="template-choice-row">
@@ -59,7 +58,6 @@ function dateTime(value: string) {
     </div>
     <p v-if="!sourcesLoading && !createDraftFailure && (!eligibleSources.length || !nodes.length)" class="section-hint">当前授权范围内没有可用于该类型的完整绑定，请检查数据源与节点状态后刷新候选。</p>
   </section>
-  <p class="section-hint">使用模板一定创建新的可编辑草稿，并重新选择/确认数据源、节点、路径、权限与预检查。手工新建模板暂未提供，模板只从成功任务保存。</p>
   <OrchDangerConfirm :open="Boolean(pendingDelete)" :title="`删除模板：${pendingDelete?.displayName ?? ''}`" confirm-label="删除" destructive :busy="Boolean(actionBusy)" @confirm="confirmDelete" @cancel="cancelDelete"><p>删除后不可恢复；已创建的任务不受影响。</p></OrchDangerConfirm>
 </template>
 

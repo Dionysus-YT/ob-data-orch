@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, watch } from 'vue'
-import { Alert as AAlert, Badge as ABadge, Button as AButton, ConfigProvider, Input as AInput, Select as ASelect, Tag as ATag, type TableColumnsType } from 'ant-design-vue'
+import { Alert as AAlert, Badge as ABadge, Button as AButton, ConfigProvider, Empty as AEmpty, Input as AInput, Select as ASelect, Skeleton as ASkeleton, Tag as ATag, type TableColumnsType } from 'ant-design-vue'
 import { LeftOutlined, ReloadOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { browserApi } from '@/api/browser'
 import { permissionCapabilities, permissionRoles, type PermissionProfile } from '@/api/accessControl'
@@ -40,10 +40,10 @@ onMounted(() => { void list.read() })
   <ConfigProvider :theme="managementTheme">
     <div class="orch-ui">
       <MessageContext />
-      <header class="orch-page-header"><div class="orch-page-title"><h1>权限配置</h1><p class="orch-context-label">配置已认证用户的固定角色与明确对象范围，保存前核对权限差异。</p></div></header>
+      <header class="orch-page-header"><div class="orch-page-title"><h1>权限配置</h1></div></header>
       <section class="orch-management permission-workspace">
         <div class="orch-table-meta"><h2>用户权限</h2><AButton :loading="list.loading.value" @click="() => list.read()"><template #icon><ReloadOutlined class="product-icon" aria-hidden="true" /></template>刷新</AButton></div>
-        <AAlert v-if="list.failure.value" type="error" show-icon :message="list.failure.value" />
+        <AAlert v-if="list.failure.value" type="error" show-icon message="权限目录暂不可用" :description="list.failure.value" />
         <form class="orch-toolbar permission-filters" aria-label="用户权限筛选" @submit.prevent="list.apply">
           <AInput v-model:value="list.form.search" aria-label="登录标识或显示名称" placeholder="搜索登录标识或显示名称" :maxlength="128" allow-clear />
           <ASelect v-model:value="list.form.role" aria-label="固定角色筛选" :options="roleOptions" />
@@ -51,8 +51,8 @@ onMounted(() => { void list.read() })
           <ASelect v-model:value="list.form.capability" aria-label="独立能力筛选" :options="capOptions" />
           <AButton html-type="submit" type="primary" :loading="list.loading.value"><template #icon><SearchOutlined class="product-icon" aria-hidden="true" /></template>查询</AButton><AButton :disabled="!list.hasFilters.value" @click="list.clear">重置</AButton>
         </form>
-        <p class="permission-directory-note">账号信息只读；仅可修改其他用户的授权，当前登录用户的权限只读。</p>
-        <OrchOperationalTable :rows="rows" :columns="columns" row-key="id" :minimum-width="1155" :loading="list.loading.value" label="用户权限列表">
+        <!-- 目录未知时不构造空表事实；已有目录刷新保持原表格，身份失效由列表所有者撤下元信息。 -->
+        <OrchOperationalTable v-if="list.metadata.value && rows.length" :rows="rows" :columns="columns" row-key="id" :minimum-width="1155" :loading="list.loading.value" label="用户权限列表">
           <template #bodyCell="{ record, column }">
             <div v-if="column.key === 'subject'" class="permission-identity"><strong :title="record.subject.displayName">{{ record.subject.displayName }}</strong><span class="permission-login"><span :title="record.subject.login">{{ record.subject.login }}</span><ATag v-if="record.subject.id === list.currentSubjectId.value">当前用户</ATag></span></div>
             <ABadge v-else-if="column.key === 'status'" :status="record.subject.accountStatus === 'ACTIVE' ? 'success' : record.subject.accountStatus === 'DISABLED' ? 'default' : 'warning'" :text="accountLabels[record.subject.accountStatus]" />
@@ -62,8 +62,9 @@ onMounted(() => { void list.read() })
             <span v-else-if="column.key === 'modified'">{{ permissionTime(record.modifiedAt) }}</span>
             <AButton v-else-if="column.key === 'actions'" type="link" :disabled="!list.granted.value || editor.saving.value" :aria-label="`${record.editable ? '配置' : '查看'} ${record.subject.displayName} 的权限`" @click="event => openSubject(record.subject.id, event)">{{ record.editable ? '配置权限' : '查看权限' }}</AButton>
           </template>
-          <template #empty><div class="empty-state"><h2>{{ list.loading.value ? '正在读取用户权限' : list.failure.value ? '权限目录暂不可用' : list.hasFilters.value ? '没有匹配的用户' : '暂无已认证用户' }}</h2><p>{{ list.failure.value ? '请重试读取并核对当前身份的访问资格。' : '列表仅包含服务端当前授权范围内的可信主体。' }}</p></div></template>
         </OrchOperationalTable>
+        <AEmpty v-else-if="list.metadata.value && !list.loading.value && !list.failure.value" :image="AEmpty.PRESENTED_IMAGE_SIMPLE" :description="list.hasFilters.value ? '没有匹配的用户' : '暂无已认证用户'" />
+        <ASkeleton v-else-if="!list.failure.value" active :paragraph="{ rows: 4 }" role="status" aria-label="正在读取用户权限" />
         <footer class="orch-table-footer"><span>{{ list.granted.value ? `本页 ${list.items.value.length} 位用户` : '等待可信目录' }}</span><nav class="permission-pagination" aria-label="用户权限分页"><span>10 条/页</span><AButton type="text" aria-label="上一页" :disabled="!list.granted.value || !list.canPrevious.value" @click="list.previous"><template #icon><LeftOutlined class="product-icon" aria-hidden="true" /></template></AButton><span aria-live="polite">第 {{ list.pageNumber.value }} 页</span><AButton type="text" aria-label="下一页" :disabled="!list.granted.value || !list.canNext.value" @click="list.next"><template #icon><RightOutlined class="product-icon" aria-hidden="true" /></template></AButton></nav></footer>
       </section>
       <PermissionEditor :model="editor" :api="api" @denied="candidateDenied" @closed="restoreFocus" />
@@ -73,7 +74,6 @@ onMounted(() => { void list.read() })
 
 <style scoped>
 .permission-workspace { min-inline-size: 0; }
-.permission-directory-note { color: var(--ob-color-secondary); margin: 0; padding: 0 var(--ob-foundation-space-6) var(--ob-foundation-space-4); }
 .permission-filters { display: flex; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
 .permission-filters > .ant-input-affix-wrapper { flex: 1 1 230px; }
 .permission-filters > .ant-select { flex: 0 1 165px; min-inline-size: 145px; }

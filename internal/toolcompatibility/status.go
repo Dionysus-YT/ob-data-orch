@@ -49,7 +49,7 @@ func New(loadedAt time.Time) (*Service, error) {
 	if loadedAt.IsZero() || loadedAt.After(time.Now()) {
 		return nil, ErrUnavailable
 	}
-	loaders := []func() (*parammeta.Catalog, error){parammeta.LoadDefault, parammeta.LoadLegacyGeneralized, parammeta.LoadGeneralized, parammeta.LoadObjectSelection, parammeta.LoadCombinedObjectSelection, parammeta.LoadDDLTextFormats, parammeta.LoadExpertParameters, parammeta.LoadNormalImport, parammeta.LoadDirectLoad}
+	loaders := []func() (*parammeta.Catalog, error){parammeta.LoadDefault, parammeta.LoadLegacyGeneralized, parammeta.LoadGeneralized, parammeta.LoadObjectSelection, parammeta.LoadCombinedObjectSelection, parammeta.LoadDDLTextFormats, parammeta.LoadExpertParameters, parammeta.LoadSchemaBoolean, parammeta.LoadNormalImport, parammeta.LoadDirectLoad}
 	catalogs := make([]*parammeta.Catalog, len(loaders))
 	for i, load := range loaders {
 		catalog, err := load()
@@ -58,14 +58,15 @@ func New(loadedAt time.Time) (*Service, error) {
 		}
 		catalogs[i] = catalog
 	}
+	exportCatalogCount := len(catalogs) - 2
 	tools := []Tool{
 		{Tool: "OBDUMPER", SupportedVersions: []string{catalogs[0].ToolVersion()}, DefaultTargetVersion: catalogs[0].ToolVersion(), Modules: []Module{{TaskType: "OBDUMPER_EXPORT", MetadataSelection: "TASK_CONFIGURATION"}}},
-		{Tool: "OBLOADER", SupportedVersions: []string{catalogs[7].ToolVersion()}, DefaultTargetVersion: catalogs[7].ToolVersion(), Modules: []Module{{TaskType: "OBLOADER_NORMAL_IMPORT", MetadataSelection: "FIXED"}, {TaskType: "OBLOADER_DIRECT_LOAD", MetadataSelection: "FIXED"}}},
+		{Tool: "OBLOADER", SupportedVersions: []string{catalogs[exportCatalogCount].ToolVersion()}, DefaultTargetVersion: catalogs[exportCatalogCount].ToolVersion(), Modules: []Module{{TaskType: "OBLOADER_NORMAL_IMPORT", MetadataSelection: "FIXED"}, {TaskType: "OBLOADER_DIRECT_LOAD", MetadataSelection: "FIXED"}}},
 	}
 	for i, catalog := range catalogs {
 		tool, module := 0, 0
-		if i >= 7 {
-			tool, module = 1, i-7
+		if i >= exportCatalogCount {
+			tool, module = 1, i-exportCatalogCount
 		}
 		if catalog.Tool() != tools[tool].Tool || catalog.ToolVersion() != tools[tool].DefaultTargetVersion || catalog.MetadataVersion() == "" {
 			return nil, ErrUnavailable

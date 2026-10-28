@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router'
-import { Alert, Button, Checkbox, Descriptions, DescriptionsItem, Form, FormItem, Input, Modal, Select, Space, Spin } from 'ant-design-vue'
+import { Alert, Button, Checkbox, Collapse, CollapsePanel, Descriptions, DescriptionsItem, Form, FormItem, Input, Modal, RadioGroup, Space, Spin } from 'ant-design-vue'
 import { browserApi } from '@/api/browser'
 import { useOperationMessage } from '@/composables/useOperationMessage'
 import { useLogoutGuard } from '@/composables/useLogoutGuard'
@@ -13,8 +13,11 @@ const leaveOpen = ref(false)
 const state = useSchedulingCandidates(browserApi(), { onSaved: text => { success(text); void focusControl('[data-candidate-edit]') }, clearNotice: clear })
 const choices = Object.entries(candidateOrderNames).map(([value, label]) => ({ value, label }))
 async function focusControl(selector: string) { const expected = ++focusVersion; await nextTick(); if (expected === focusVersion) root.value?.querySelector<HTMLElement>(selector)?.focus() }
-function edit() { state.edit(); if (state.editing.value) void focusControl('[role="combobox"]') }
+function edit() { state.edit(); if (state.editing.value) void focusControl('input[type="radio"]:checked') }
 function cancel() { state.cancel(); if (!state.editing.value) void focusControl('[data-candidate-edit]') }
+function changeOrder(value: unknown) {
+  if (state.editing.value && !state.saving.value && !state.review.value && (value === 'EXISTING' || value === 'ONLINE_FIRST')) state.form.order = value
+}
 function review() { state.reviewChange(); if (state.fieldError.value) void focusControl('input[aria-label="候选顺序变更原因"]') }
 function canLeave(): boolean | Promise<boolean> { if (state.saving.value || pendingLeave) return false; if (!state.dirty.value) return true; state.cancelReview(); leaveOpen.value = true; return new Promise(resolve => { pendingLeave = resolve }) }
 function resolveLeave(allowed: boolean) { const resolve = pendingLeave; pendingLeave = undefined; leaveOpen.value = false; if (allowed) state.cancel(); resolve?.(allowed) }
@@ -26,24 +29,31 @@ onScopeDispose(() => { focusVersion++; window.removeEventListener('beforeunload'
 </script>
 
 <template>
-  <section ref="root" class="scheduling-candidates" aria-labelledby="candidate-order-title" :aria-busy="state.loading.value || state.saving.value">
+  <section ref="root" class="scheduling-candidates settings-form-block" aria-labelledby="candidate-order-title" :aria-busy="state.loading.value || state.saving.value">
     <MessageContext />
-    <h3 id="candidate-order-title">候选节点顺序</h3>
-    <Alert type="info" show-icon message="始终由用户显式选择节点" description="顺序只在下次读取三类任务候选时生效，已有选择保持不变。在线优先依据当前心跳，不代表环境、预算或任务预检查已经通过；同组保留原顺序。" />
+    <div class="settings-control-header">
+      <h3 id="candidate-order-title">候选节点顺序</h3>
+      <Space v-if="!state.editing.value" wrap><Button v-if="state.canEdit.value" data-candidate-edit @click="edit">编辑候选顺序</Button><Button type="text" :loading="state.loading.value" :disabled="state.saving.value" @click="state.read">刷新候选顺序</Button></Space>
+    </div>
     <Alert v-if="state.failure.value" type="error" show-icon :message="state.failure.value" />
     <div v-if="state.loading.value" role="status"><Spin size="small" /> 正在读取候选顺序…</div>
-    <Descriptions v-if="state.policy.value" :column="1">
-      <DescriptionsItem :label="state.stale.value || state.unconfirmed.value ? '最近读取的候选顺序' : '当前候选顺序'">{{ candidateOrderNames[state.policy.value.order] }}<span v-if="state.stale.value || state.unconfirmed.value">（当前值待核对）</span> · {{ state.policy.value.modifiedAt ? '平台设置' : '内置基线' }}</DescriptionsItem>
-      <DescriptionsItem label="节点选择方式">用户显式选择；不自动选中、提交或改派</DescriptionsItem>
-      <DescriptionsItem label="候选策略最近修改">{{ state.policy.value.modifiedAt ? `${state.policy.value.modifiedAt} · ${state.policy.value.modifiedBy}` : '尚无平台修改记录' }}</DescriptionsItem>
-      <DescriptionsItem label="候选策略版本">{{ state.policy.value.revision }} · 下次读取候选时生效，无需重启</DescriptionsItem>
-    </Descriptions>
-    <Form v-if="state.editing.value" :model="state.form" layout="vertical" :disabled="state.saving.value || Boolean(state.review.value)" @finish="review">
-      <FormItem label="候选顺序" name="order"><Select v-model:value="state.form.order" aria-label="候选顺序" :options="choices" /></FormItem>
-      <FormItem label="候选顺序变更原因" name="reason" :validate-status="state.fieldError.value ? 'error' : undefined" :help="state.fieldError.value || '1–200 字，请勿填写密码、令牌或密钥。'"><Input v-model:value="state.form.reason" aria-label="候选顺序变更原因" :maxlength="400" autocomplete="off" /></FormItem>
-      <Space wrap><Button type="primary" html-type="submit" :disabled="!state.changed.value">核对候选顺序</Button><Button @click="cancel">取消候选编辑</Button></Space>
+    <Form v-if="state.policy.value" :model="state.form" layout="vertical" :disabled="state.saving.value || Boolean(state.review.value)" @finish="review">
+      <FormItem :label="!state.editing.value && (state.stale.value || state.unconfirmed.value) ? '最近读取的候选顺序（当前值待核对）' : '候选顺序'" name="order" :help="state.editing.value ? '只影响下次读取的候选顺序，已有选择保持不变。' : undefined" :extra="state.editing.value ? '在线优先仅用于排序，不代表可执行；节点始终由用户显式选择。' : undefined">
+        <RadioGroup :value="state.editing.value ? state.form.order : state.policy.value.order" aria-label="候选顺序" :options="choices" :disabled="!state.editing.value || state.saving.value || Boolean(state.review.value)" @update:value="changeOrder" />
+      </FormItem>
+      <FormItem v-if="state.editing.value" label="候选顺序变更原因" name="reason" :validate-status="state.fieldError.value ? 'error' : undefined" :help="state.fieldError.value || '1–200 字，请勿填写密码、令牌或密钥。'"><Input v-model:value="state.form.reason" aria-label="候选顺序变更原因" placeholder="说明本次调整的原因" :maxlength="400" autocomplete="off" /></FormItem>
+      <Space v-if="state.editing.value" wrap><Button type="primary" html-type="submit" :disabled="!state.changed.value">核对候选顺序</Button><Button @click="cancel">取消候选编辑</Button></Space>
     </Form>
-    <Space v-else wrap><Button v-if="state.canEdit.value" data-candidate-edit @click="edit">编辑候选顺序</Button><Button :loading="state.loading.value" :disabled="state.saving.value" @click="state.read">刷新候选顺序</Button></Space>
+    <Collapse v-if="state.policy.value" ghost class="settings-details">
+      <CollapsePanel key="details" header="配置详情">
+        <Descriptions :column="1" size="small">
+          <DescriptionsItem :label="state.stale.value || state.unconfirmed.value ? '最近读取的候选顺序' : '当前候选顺序'">{{ candidateOrderNames[state.policy.value.order] }}<span v-if="state.stale.value || state.unconfirmed.value">（当前值待核对）</span> · {{ state.policy.value.modifiedAt ? '平台设置' : '内置基线' }}</DescriptionsItem>
+          <DescriptionsItem label="节点选择方式">用户显式选择；不自动选中、提交或改派</DescriptionsItem>
+          <DescriptionsItem label="候选策略最近修改">{{ state.policy.value.modifiedAt ? `${state.policy.value.modifiedAt} · ${state.policy.value.modifiedBy}` : '尚无平台修改记录' }}</DescriptionsItem>
+          <DescriptionsItem label="候选策略版本">{{ state.policy.value.revision }} · 下次读取候选时生效，无需重启</DescriptionsItem>
+        </Descriptions>
+      </CollapsePanel>
+    </Collapse>
     <Modal :open="Boolean(state.review.value)" title="核对候选顺序" :mask-closable="false" :closable="!state.saving.value" :keyboard="!state.saving.value" @cancel="state.cancelReview">
       <div v-if="state.review.value" class="scheduling-candidate-review">
         <Descriptions :column="1"><DescriptionsItem label="候选顺序">{{ candidateOrderNames[state.review.value.before.order] }} → {{ candidateOrderNames[state.review.value.payload.order] }}</DescriptionsItem><DescriptionsItem label="变更原因">{{ state.review.value.payload.reason }}</DescriptionsItem></Descriptions>
@@ -58,5 +68,4 @@ onScopeDispose(() => { focusVersion++; window.removeEventListener('beforeunload'
 
 <style scoped>
 .scheduling-candidates, .scheduling-candidate-review { display: grid; gap: var(--ob-foundation-space-4); min-inline-size: 0; overflow-wrap: anywhere; }
-.scheduling-candidates h3 { margin: 0; color: var(--ob-color-form-text); font-size: var(--ob-component-control-font-size); }
 </style>

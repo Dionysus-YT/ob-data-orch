@@ -7,6 +7,22 @@ const drawer = (page: Page) => page.locator('.ant-drawer-content').filter({ has:
 async function openEditor(page: Page) { await page.getByRole('button', { name: '配置 合成业务用户 的权限', exact: true }).click(); await expect(drawer(page)).toBeVisible(); await expect(drawer(page).getByRole('checkbox', { name: '普通用户', exact: true })).toBeChecked() }
 async function prepareSave(page: Page) { await drawer(page).getByRole('checkbox', { name: '系统管理员', exact: true }).check(); await drawer(page).getByRole('textbox', { name: '变更原因', exact: true }).fill('调整合成测试用户职责'); await drawer(page).getByRole('button', { name: '比较并保存' }).click(); await expect(page.getByRole('dialog').filter({ has: page.getByText('确认权限变更', { exact: true }) })).toBeVisible() }
 
+test('权限目录首次读取使用骨架，不提前显示空目录或挂载测宽表格', async ({ page }) => {
+  await permissionFixture(page)
+  let release = () => {}
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/access-control/subjects?*', async route => { await pending; return route.fallback() })
+  try {
+    await page.goto('/settings/access-control')
+    await expect(page.getByRole('status', { name: '正在读取用户权限', exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: '用户权限列表', exact: true })).toHaveCount(0)
+    await expect(page.getByText('暂无已认证用户', { exact: true })).toHaveCount(0)
+    release()
+    await expect(page.getByRole('button', { name: '配置 合成业务用户 的权限', exact: true })).toBeVisible()
+    await expect(page.getByRole('status', { name: '正在读取用户权限', exact: true })).toHaveCount(0)
+  } finally { release() }
+})
+
 test('权限旧回执只提示原提交，重新读取当前版本且不恢复旧角色', async ({ page }) => {
   await permissionFixture(page, 'replay'); await page.goto('/settings/access-control'); await openEditor(page); await prepareSave(page); await page.getByRole('button', { name: '确认保存', exact: true }).click(); await expect(page.getByText('已确认原请求的保存回执，当前权限以重新读取结果为准。')).toBeVisible(); const row = page.getByRole('row').filter({ has: page.getByText('合成业务用户', { exact: true }) }); await expect(row.getByText('数据源 0 · 节点 0 · 任务来源 0 · 模板 0')).toBeVisible(); await expect(row.getByText('系统管理员', { exact: true })).toHaveCount(0)
 })
@@ -75,9 +91,11 @@ test('原生 200% 缩放中保存、取消和确认保持可见并可键盘操�
     await expect(menu).toHaveCount(0)
     await expect(navigation).toBeFocused()
     for (const [label, path] of [['平台设置', '/settings/platform'], ['调度策略', '/settings/scheduling'], ['安全策略', '/settings/security'], ['工具与兼容', '/settings/tools']] as const) {
-      await navigation.focus()
-      await page.keyboard.press('ArrowDown')
-      await menu.getByRole('menuitem', { name: label, exact: true }).click()
+      if (label === '平台设置') {
+        await navigation.focus()
+        await page.keyboard.press('ArrowDown')
+        await menu.getByRole('menuitem', { name: label, exact: true }).click()
+      } else await page.getByRole('tab', { name: label, exact: true }).click()
       await expect(page).toHaveURL(new RegExp(`${path}$`))
       await expect(page.getByRole('heading', { name: label, exact: true })).toBeInViewport()
       await expect(page.getByRole('textbox')).toHaveCount(0)

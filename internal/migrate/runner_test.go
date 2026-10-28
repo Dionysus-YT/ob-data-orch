@@ -45,8 +45,8 @@ func TestApplyCreatesStrictSchema(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 41 {
-		t.Fatalf("迁移数量 = %d，期望 41", migrationCount)
+	if migrationCount != 42 {
+		t.Fatalf("迁移数量 = %d，期望 42", migrationCount)
 	}
 	for _, table := range []string{
 		"data_source_connection_test_runs",
@@ -558,7 +558,7 @@ func TestApplyRejectsChangedChecksum(t *testing.T) {
 		"0020_task_execution_cancellation.sql":                &fstest.MapFile{Data: twentiethMigration},
 	}
 	// 新增迁移仍纳入支持版本，保证本例实际验证旧迁移的校验和失败关闭。
-	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql", "0030_normal_import.sql", "0031_node_environment_inspection_authorization.sql", "0032_task_config_templates.sql", "0033_execution_progress.sql", "0034_direct_load.sql", "0035_subject_permissions.sql", "0036_ordinary_log_retention_policy.sql", "0037_platform_scheduling_policy.sql", "0038_platform_scheduling_timing.sql", "0039_scheduling_candidate_order.sql", "0040_log_query_positions.sql", "0041_audit_query_positions.sql"} {
+	for _, name := range []string{"0024_execution_resource_budget.sql", "0025_decouple_execution_node_history.sql", "0026_export_sys_precheck_binding.sql", "0027_task_display_facts.sql", "0028_log_retention_cleanup.sql", "0029_export_draft_deletion.sql", "0030_normal_import.sql", "0031_node_environment_inspection_authorization.sql", "0032_task_config_templates.sql", "0033_execution_progress.sql", "0034_direct_load.sql", "0035_subject_permissions.sql", "0036_ordinary_log_retention_policy.sql", "0037_platform_scheduling_policy.sql", "0038_platform_scheduling_timing.sql", "0039_scheduling_candidate_order.sql", "0040_log_query_positions.sql", "0041_audit_query_positions.sql", "0042_initial_audit_access.sql"} {
 		data, err := migrations.Files.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

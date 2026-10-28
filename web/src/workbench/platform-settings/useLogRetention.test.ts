@@ -14,6 +14,13 @@ function setup() {
 }
 function edit(model: ReturnType<typeof setup>['model'], days = 7) { model.edit(); model.days.value = days; model.reason.value = '合成期限调整'; model.reviewChange() }
 describe('普通日志设置的会话与事务', () => {
+  it('离开保护识别期限或原因变化，取消与重置清除未保存状态', async () => {
+    const { model } = setup(); await model.read(); model.edit(); expect(model.dirty.value).toBe(false)
+    model.reason.value = '合成离开保护'; expect(model.dirty.value).toBe(true)
+    model.cancel(); expect(model.dirty.value).toBe(false)
+    model.edit(); model.days.value = 60; expect(model.dirty.value).toBe(true)
+    model.reset(); expect(model.dirty.value).toBe(false)
+  })
   it('首次编辑不报错，修正已有错误立即更新字段反馈', async () => {
     const { model } = setup(); await model.read(); model.edit(); expect(model.reasonError.value).toBe(''); expect(model.daysError.value).toBe('')
     model.days.value = 6; model.reviewChange(); expect(model.daysError.value).toBeTruthy(); expect(model.reasonError.value).toBeTruthy()

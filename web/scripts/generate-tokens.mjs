@@ -14,8 +14,11 @@ function flatten(object, prefix) {
 const output = `/* 由 scripts/generate-tokens.mjs 从 tokens.ts 生成；禁止手工修改。 */\n:root {\n${[
   ...flatten(foundation, 'foundation'), ...flatten(semantic, 'color'), ...flatten(component, 'component'), ...flatten(product, 'product'),
 ].join('\n')}\n}\n`
-const path = fileURLToPath(new URL('../src/platform/tokens.css', import.meta.url))
-if (process.argv.includes('--check')) {
-  // Git 在 Windows 检出时可使用 CRLF；只忽略换行编码，值或声明漂移仍须阻断。
-  if (readFileSync(path, 'utf8').replaceAll('\r\n', '\n') !== output) throw new Error('Canonical Token CSS 未同步，请运行 npm run tokens:generate')
-} else writeFileSync(path, output)
+// 登录页在认证前由控制面独立渲染，不能加载需会话的前端资源；同一份 Token CSS 嵌入控制面，值源仍只有 tokens.ts。
+const paths = ['../src/platform/tokens.css', '../../internal/deployment/loginpage/tokens.css'].map((relative) => fileURLToPath(new URL(relative, import.meta.url)))
+for (const path of paths) {
+  if (process.argv.includes('--check')) {
+    // Git 在 Windows 检出时可使用 CRLF；只忽略换行编码，值或声明漂移仍须阻断。
+    if (readFileSync(path, 'utf8').replaceAll('\r\n', '\n') !== output) throw new Error(`Canonical Token CSS 未同步（${path}），请运行 npm run tokens:generate`)
+  } else writeFileSync(path, output)
+}

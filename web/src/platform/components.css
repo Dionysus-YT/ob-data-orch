@@ -16,7 +16,6 @@
 @media (max-width: 480px) { .product-header .navigation-toggle { display: inline-flex; } }
 .filter-bar label > .ant-select { min-width: 168px; }
 .tree-row > :is(.ant-input, .ant-select, .ant-input-affix-wrapper) { flex: 1 1 220px; min-width: 0; }
-.storage-credential-filter .ant-select { width: 100%; }
 .storage-credential-form .ant-select { width: 100%; }
 .task-pagination .ant-select { min-width: 84px; }
 .orch-action-reason { display: block; max-width: 240px; white-space: normal; color: var(--ob-color-secondary); font-size: var(--ob-component-field-helper-size); }
@@ -45,20 +44,14 @@
 .orch-operational-table .orch-mode { background: transparent; padding: 0; }
 .orch-confirmation .ant-modal-footer .ant-btn { min-width: 112px; height: var(--ob-component-action-confirm-height); }
 .orch-task-builder { display: grid; grid-template-columns: var(--ob-product-task-rail-width) minmax(0, 1fr); gap: var(--ob-foundation-space-6); align-items: start; }
-.orch-task-step-rail { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--ob-foundation-space-2); }
-.orch-task-step-rail li { display: flex; align-items: flex-start; gap: var(--ob-foundation-space-3); padding: var(--ob-foundation-space-3); color: var(--ob-color-secondary); border-left: 2px solid transparent; }
-.orch-task-step-rail li > span { width: var(--ob-foundation-space-6); height: var(--ob-foundation-space-6); border: 1px solid var(--ob-color-border-strong); border-radius: 50%; text-align: center; flex: none; }
-.orch-task-step-rail small { display: block; font-size: var(--ob-component-field-helper-size); }
-.orch-task-step-rail .is-current { color: var(--ob-color-primary); border-left-color: currentColor; background: var(--ob-color-selected); }
-.orch-task-step-rail .is-current > span { color: var(--ob-color-surface); background: var(--ob-color-primary); border-color: var(--ob-color-primary); }
 .orch-task-decision { min-width: 0; }
 .orch-task-context { display: flex; justify-content: flex-end; align-items: center; gap: var(--ob-foundation-space-3); margin-bottom: var(--ob-foundation-space-4); flex-wrap: wrap; }
 .orch-task-workspace { min-width: 0; padding: var(--ob-foundation-space-6); border: 1px solid var(--ob-color-border); border-radius: var(--ob-component-table-radius); background: var(--ob-color-surface); box-shadow: var(--ob-foundation-surface-shadow); }
 .orch-task-actions { grid-column: 2; position: sticky; bottom: 0; min-width: 0; background: var(--ob-color-page); z-index: 10; }
 .orch-task-summary { padding: var(--ob-foundation-space-6); }
 @media (max-width: 1440px) { .orch-task-builder { grid-template-columns: var(--ob-product-task-compact-rail-width) minmax(0, 1fr); } }
-@media (max-width: 800px) { .orch-task-builder { grid-template-columns: minmax(0, 1fr); } .orch-task-step-rail { grid-template-columns: repeat(3, minmax(0, 1fr)); } .orch-task-step-rail li { padding: var(--ob-foundation-space-2); } .orch-task-actions { grid-column: 1; } }
-@media (max-width: 480px) { .orch-task-step-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } .orch-task-workspace { padding: var(--ob-foundation-space-4); } }
+@media (max-width: 800px) { .orch-task-builder { grid-template-columns: minmax(0, 1fr); } .orch-task-actions { grid-column: 1; } }
+@media (max-width: 480px) { .orch-task-workspace { padding: var(--ob-foundation-space-4); } }
 :where(button, a, input, textarea, [tabindex]):focus-visible { outline: var(--ob-component-focus-width) solid var(--ob-color-primary); outline-offset: var(--ob-component-focus-offset); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; scroll-behavior: auto !important; }

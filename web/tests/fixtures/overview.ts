@@ -1,4 +1,10 @@
 import type { OverviewBucket, OverviewRange, OverviewSnapshot } from '../../src/api/overview'
+import type { TaskListItem } from '../../src/api/browser'
+
+/** 分析弹窗沿用正式任务列表投影，所有名称、对象与时间均为合成夹具。 */
+export function overviewAnalysisTask(id = 'synthetic-analysis', state = 'SUCCEEDED', finishedAt = new Date().toISOString()): TaskListItem {
+  return { id, type: 'OBDUMPER_EXPORT', displayName: `合成分析任务 · ${id}`, state, dataSourceId: 'synthetic-source', nodeId: 'synthetic-node', dataSourceName: '合成数据源', nodeName: '合成节点', dataSourceDeleted: false, nodeDeleted: false, ownedByCurrentUser: true, submittedAt: finishedAt, finishedAt, updatedAt: finishedAt, stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', reconciliationRequired: false, cancelRequested: false, availableActions: [] }
+}
 
 /** 只用于隔离页面和单元测试的合成事实，不进入正式页面或真实 API。 */
 export function overviewFixture(at = new Date(), range: OverviewRange = '24h'): OverviewSnapshot {

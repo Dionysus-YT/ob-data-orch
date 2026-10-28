@@ -510,7 +510,7 @@ describe('泛化导出草稿输入', () => {
     const ddlOnly = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', dropObject: true, retainSchema: true })
     expect(ddlOnly).toMatchObject({ valid: true })
     if (ddlOnly.valid) {
-      expect(ddlOnly.input.config.ddlBehavior).toEqual({ dropObject: true, retainSchema: true })
+      expect(ddlOnly.input.config.ddlBehavior).toEqual({ dropObject: true, retainSchema: true, compactSchema: false })
       expect(ddlOnly.input.config.dataFormat).toBeUndefined()
     }
     const ddlAndData = validateExportDraftInput({ ...completeValues, contentKind: 'DDL_AND_DATA', dropObject: true })
@@ -525,6 +525,13 @@ describe('泛化导出草稿输入', () => {
     if (dataOnlyClean.valid) {
       expect(dataOnlyClean.input.config.ddlBehavior).toBeUndefined()
     }
+  })
+
+  it('MySQL 保留 Schema 拒绝原生路径冲突，Oracle 不派生关闭值', () => {
+    expect(validateExportDraftInput({ ...completeValues, contentKind: 'DDL_ONLY', retainSchema: true, compactSchema: true })).toMatchObject({ valid: false, message: expect.stringContaining('不能同时') })
+    const oracle = validateExportDraftInput({ ...completeValues, compatibilityMode: 'ORACLE', contentKind: 'DDL_ONLY', retainSchema: true })
+    expect(oracle.valid).toBe(true)
+    if (oracle.valid) expect(oracle.input.config.ddlBehavior).toEqual({ retainSchema: true })
   })
 
   it('EX-I7 文件拆分：--block-size 接受正整数与 MB/ROW 后缀并随性能配置发送', () => {

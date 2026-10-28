@@ -7,7 +7,7 @@ import { importObjectLabels } from '../normalImportOptions'
 import type { NormalImportObjectsModel } from '../normalImportStepModels'
 
 const props = defineProps<{ model: NormalImportObjectsModel }>()
-const { form, fieldPrefix, traits, currentFormat, availableObjectTypes, objectSummary, selectScope, fieldError } = toRefs(props.model)
+const { form, fieldPrefix, traits, currentFormat, availableObjectTypes, selectScope, fieldError } = toRefs(props.model)
 </script>
 
 <template>
@@ -39,7 +39,6 @@ const { form, fieldPrefix, traits, currentFormat, availableObjectTypes, objectSu
             <Radio value="EXPLICIT">显式列名单</Radio>
           </RadioGroup>
         </FormItem>
-        <p class="section-hint">当前仅 CSV 支持官方自动列映射；CUT 和 SQL 可选择按列顺序、控制文件或显式列名单。</p>
         <FormItem v-if="currentFormat.mapping === 'CONTROL'" required :html-for="fieldPrefix + '-ctl'" :validate-status="fieldError('ctlPath') ? 'error' : undefined" :help="fieldError('ctlPath')"><template #label><span>控制文件目录</span><NormalImportParameterHint name="ctl-path" /></template><Input :id="fieldPrefix + '-ctl'" v-model:value="currentFormat.ctlPath" aria-label="控制文件目录" placeholder="执行节点上的绝对路径" /></FormItem>
         <div v-if="currentFormat.mapping === 'EXPLICIT'" class="normal-import-fields">
           <FormItem :html-for="fieldPrefix + '-include-columns'" :validate-status="fieldError('includeColumns') ? 'error' : undefined" :help="fieldError('includeColumns')"><template #label><span>包含列</span><NormalImportParameterHint name="include-column-names" /></template><Input :id="fieldPrefix + '-include-columns'" v-model:value="currentFormat.includeColumns" aria-label="包含列" :disabled="!!currentFormat.excludeColumns.trim() && !currentFormat.includeColumns.trim()" placeholder="按文件列顺序填写，大小写精确匹配" /></FormItem>
@@ -50,6 +49,5 @@ const { form, fieldPrefix, traits, currentFormat, availableObjectTypes, objectSu
       <WizardAdvancedSettings title="列条件" :configured-count="currentFormat.excludeDataTypes ? 1 : 0"><Form layout="vertical" class="normal-import-advanced-form"><FormItem :html-for="fieldPrefix + '-exclude-types'"><template #label><span>排除数据类型</span><NormalImportParameterHint name="exclude-data-types" /></template><Input :id="fieldPrefix + '-exclude-types'" v-model:value="currentFormat.excludeDataTypes" aria-label="排除数据类型" placeholder="沿用官方规则，留空不排除" /></FormItem></Form></WizardAdvancedSettings>
     </div>
     <Alert v-else type="info" show-icon :message="traits.hasDdl ? '当前内容不使用独立数据格式的列映射。' : '请先在导入文件与格式步骤选择 CSV、CUT 或 SQL。'" />
-    <Alert type="info" show-icon message="对象与映射尚未检查" :description="`当前范围：${objectSummary}。目标对象、列结构及文件匹配须由后续服务端检查核对。`" />
   </section>
 </template>

@@ -26,8 +26,9 @@ const (
 	combinedObjectMetadataVersion    = "obdumper-4.3.5-slice-v9-combined-object-selection"
 	ddlTextFormatsMetadataVersion    = "obdumper-4.3.5-slice-v10-ddl-text-formats"
 	expertParametersMetadataVersion  = "obdumper-4.3.5-slice-v11-expert-parameters"
+	schemaBooleanMetadataVersion     = "obdumper-4.3.5-slice-v12-schema-boolean"
 	// maxInheritanceDepth 限制清单继承链深度，避免循环或过长的依赖链。
-	maxInheritanceDepth = 6
+	maxInheritanceDepth = 7
 )
 
 // resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
@@ -43,13 +44,15 @@ type Rule struct {
 }
 
 type Definition struct {
-	DefinitionID     string   `json:"definitionId"`
-	ProductFieldID   string   `json:"productFieldId"`
-	LongName         string   `json:"longName"`
-	ShortName        string   `json:"shortName,omitempty"`
-	Category         string   `json:"category"`
-	Order            int      `json:"order"`
-	ValueType        string   `json:"valueType"`
+	DefinitionID   string `json:"definitionId"`
+	ProductFieldID string `json:"productFieldId"`
+	LongName       string `json:"longName"`
+	ShortName      string `json:"shortName,omitempty"`
+	Category       string `json:"category"`
+	Order          int    `json:"order"`
+	ValueType      string `json:"valueType"`
+	// ExplicitBoolean 为固定布尔选项保留 false，并以 --name=true/false 发射，不改变历史 flag。
+	ExplicitBoolean  bool     `json:"explicitBoolean,omitempty"`
 	AllowedValues    []string `json:"allowedValues,omitempty"`
 	Cardinality      string   `json:"cardinality"`
 	Activation       Rule     `json:"activation"`
@@ -96,6 +99,7 @@ type revisionManifest struct {
 
 type definitionOverride struct {
 	DefinitionID     string `json:"definitionId"`
+	ExplicitBoolean  bool   `json:"explicitBoolean,omitempty"`
 	ShortName        string `json:"shortName,omitempty"`
 	EmissionTarget   string `json:"emissionTarget"`
 	SecurityProperty string `json:"securityProperty,omitempty"`
@@ -151,6 +155,11 @@ func LoadDDLTextFormats() (*Catalog, error) {
 // LoadExpertParameters 加载 v11 专家参数目录，历史资源不原地修改。
 func LoadExpertParameters() (*Catalog, error) {
 	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v11-expert-parameters.json")
+}
+
+// LoadSchemaBoolean 加载固定结构策略布尔语法；v11 及之前目录继续原样重放。
+func LoadSchemaBoolean() (*Catalog, error) {
+	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v12-schema-boolean.json")
 }
 
 // LoadLegacyGeneralized 加载冻结的 v6 泛化目录，只用于重放升级前已经持久化的草稿。
@@ -350,6 +359,10 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 		if manifest.Inherits != "obdumper-4.3.5-slice-v10-ddl-text-formats.json" || manifest.CapabilityVersion != "" || len(manifest.CategoryOrder) == 0 || len(manifest.SourceDocuments) == 0 || len(manifest.Overrides) != 13 || len(manifest.Additions) != 4 {
 			return revisionManifest{}, errors.New("parameter metadata expert parameters revision is invalid")
 		}
+	case schemaBooleanMetadataVersion:
+		if manifest.Inherits != "obdumper-4.3.5-slice-v11-expert-parameters.json" || manifest.CapabilityVersion != "" || len(manifest.Overrides) != 1 || len(manifest.Additions) != 0 || len(manifest.SourceDocuments) == 0 {
+			return revisionManifest{}, errors.New("parameter metadata schema boolean revision is invalid")
+		}
 	default:
 		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 	}
@@ -384,6 +397,9 @@ func applyOverrides(raw *resource, overrides []definitionOverride) error {
 		raw.Definitions[index].EmissionTarget = override.EmissionTarget
 		raw.Definitions[index].SecurityProperty = override.SecurityProperty
 		raw.Definitions[index].ShortName = override.ShortName
+		if override.ExplicitBoolean {
+			raw.Definitions[index].ExplicitBoolean = true
+		}
 		if override.SupportState != "" {
 			if !oneOf(override.SupportState, "ENABLED", "VALIDATION_GATED") {
 				return fmt.Errorf("parameter metadata override %q has unsupported support state", override.DefinitionID)
@@ -427,7 +443,7 @@ func validateResource(raw resource) error {
 		if len(raw.Definitions) != 18 {
 			return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion, schemaBooleanMetadataVersion:
 		// v6/v7 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
 		if raw.CapabilityVersion != "" {
 			return errors.New("parameter metadata capability version is unsupported")
@@ -444,7 +460,7 @@ func validateResource(raw resource) error {
 		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
 			expectedDefinitions = 75
 		}
-		if raw.MetadataVersion == expertParametersMetadataVersion {
+		if raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion {
 			expectedDefinitions = 79
 		}
 		if len(raw.Definitions) != expectedDefinitions {
@@ -459,6 +475,9 @@ func validateResource(raw resource) error {
 	shortNames := make(map[string]struct{}, len(raw.Definitions))
 	orders := make(map[string]struct{}, len(raw.Definitions))
 	for _, definition := range raw.Definitions {
+		if definition.ExplicitBoolean && (raw.MetadataVersion != schemaBooleanMetadataVersion || definition.LongName != "--compact-schema" || definition.ValueType != "flag") {
+			return errors.New("parameter explicit boolean syntax is unsupported")
+		}
 		if definition.DefinitionID == "" || !strings.HasPrefix(definition.ProductFieldID, "EX-F") {
 			return fmt.Errorf("parameter %q has no stable product trace", definition.LongName)
 		}
@@ -555,7 +574,7 @@ func validateResource(raw resource) error {
 		}); err != nil {
 			return err
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion, schemaBooleanMetadataVersion:
 		// v6 已取证子集：EX-I2 六项 + EX-I3 的 CSV 序列化、压缩、文件布局、筛选与资源参数
 		// + EX-I4 的 CUT/SQL 数据格式及其专属序列化参数
 		// + EX-I4 POS 定版（2026-08-07 实测）的 --pos/--ctl-path 与 CUT 专属 --column-splitter
@@ -575,14 +594,14 @@ func validateResource(raw resource) error {
 			"--query-sql", "--where", "--snapshot", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
 		}
-		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || raw.MetadataVersion == expertParametersMetadataVersion {
+		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || (raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion) {
 			// 第二批仅四项已观察到可验收效果：MySQL DATE/DATETIME 格式、分区和类型排除。
 			enabled = append(enabled, "--date-value-format", "--datetime-value-format", "--partition", "--exclude-data-types")
 		}
-		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || raw.MetadataVersion == expertParametersMetadataVersion {
+		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || (raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion) {
 			enabled = append(enabled, "--function", "--procedure", "--sequence")
 		}
-		if raw.MetadataVersion == expertParametersMetadataVersion {
+		if raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion {
 			enabled = append(enabled, "--weak-read", "--enable-hidden-pk", "--add-extra-message", "--sequence-policy", "--preserve-zero-datetime", "--sys-user", "--sys-password",
 				"--time-value-format", "--timestamp-value-format", "--timestamp-tz-value-format", "--timestamp-ltz-value-format", "--nls-date-format", "--nls-timestamp-format", "--nls-timestamp-tz-format")
 		}
@@ -609,7 +628,7 @@ func validateResource(raw resource) error {
 	}
 	for _, definition := range raw.Definitions {
 		if definition.LongName == "--sys-password" {
-			if raw.MetadataVersion != expertParametersMetadataVersion || definition.ValueType != "secret-slot" || definition.Sensitivity != "SECRET" || definition.EmissionTarget != "SECURITY_FILE" || definition.SecurityProperty != "oceanbase.jdbc.sys.password" || definition.SourcePolicy != "SECURITY" {
+			if (raw.MetadataVersion != expertParametersMetadataVersion && raw.MetadataVersion != schemaBooleanMetadataVersion) || definition.ValueType != "secret-slot" || definition.Sensitivity != "SECRET" || definition.EmissionTarget != "SECURITY_FILE" || definition.SecurityProperty != "oceanbase.jdbc.sys.password" || definition.SourcePolicy != "SECURITY" {
 				return errors.New("sys password metadata must target the official security file")
 			}
 			continue
@@ -679,7 +698,7 @@ func validateRule(parameter string, rule Rule, allowed ...string) error {
 // v7 对已登记但尚未观察行为或缺少专用预检查的第二批参数继续失败关闭。
 func gatedNamesByVersion(metadataVersion string) []string {
 	switch metadataVersion {
-	case expertParametersMetadataVersion:
+	case expertParametersMetadataVersion, schemaBooleanMetadataVersion:
 		// 检查点继续仍只走 EX-I8 的冻结继续任务入口，不开放任意 retry 参数。
 		return []string{"--retry"}
 	case legacyGeneralizedMetadataVersion:

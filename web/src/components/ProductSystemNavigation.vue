@@ -7,14 +7,11 @@ import { Button, Dropdown, Menu, MenuItem, Tooltip } from 'ant-design-vue'
 const props = defineProps<{ collapsed: boolean }>()
 const route = useRoute(), router = useRouter()
 const items = [
-  { label: '平台设置', to: '/settings/platform' },
-  { label: '调度策略', to: '/settings/scheduling' },
-  { label: '安全策略', to: '/settings/security' },
-  { label: '工具与兼容', to: '/settings/tools' },
+  { label: '平台设置', to: '/settings/platform', paths: ['/settings/platform', '/settings/scheduling', '/settings/security', '/settings/tools'] },
   { label: '权限配置', to: '/settings/access-control' },
   { label: '存储凭据', to: '/settings/storage-credentials' },
 ]
-const activeItem = computed(() => items.filter(item => route.path === item.to || route.path.startsWith(`${item.to}/`)).sort((a, b) => b.to.length - a.to.length)[0])
+const activeItem = computed(() => items.find(item => (item.paths ?? [item.to]).some(path => route.path === path || route.path.startsWith(`${path}/`))))
 const expanded = ref(true), popupOpen = ref(false)
 const trigger = ref<{ $el: HTMLButtonElement }>(), menu = ref<HTMLElement>(), children = ref<HTMLElement>()
 let openIntent = false, disposed = false, sequence = 0, frame: number | undefined

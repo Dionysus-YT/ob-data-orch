@@ -2,7 +2,7 @@
 
 > 状态：**P0 Product IA / Shell / Archetype Source of Truth**
 >
-> 版本：4.0 · 2026-09-17
+> 版本：4.1 · 2026-10-28
 >
 > 适用范围：OB Data Orch 的产品信息架构、全局外壳、页面原型、导航关系、重大结构与变更控制。
 
@@ -56,16 +56,14 @@ OB Data Orch
 ├─ 运行与支持：任务中心、执行节点、日志中心
 └─ 系统管理（可展开的父级导航）
    ├─ 平台设置
-   ├─ 调度策略
-   ├─ 安全策略
-   ├─ 工具与兼容
+   │  └─ 页内分区：常规设置、调度策略、安全策略、工具与兼容
    ├─ 权限配置
    └─ 存储凭据
 ```
 
 Global Navigation 只负责产品模块切换。Task Step Rail、日志预设、对象筛选、模块内字段分组和行选择均为 Contextual UI，不得升级为全局导航。
 
-系统管理按 [DEC-061](../docs/01-product/decisions.md#dec-061-系统管理父子导航与模块边界) 和 [DEC-062](../docs/01-product/decisions.md#dec-062-系统设置拆分为四个独立配置域) 组织六个独立模块；父级只展开/收起，不承载聚合页面或混合保存。平台设置管理展示默认、任务命名及任务/普通日志保留；调度策略管理平台调度约束；安全策略管理安全基线和审计保留；工具与兼容管理工具和元数据基线。权限配置管理已有认证主体授权，存储凭据管理对象存储材料。完整导航使用缩进子项；48px 图标轨通过“系统管理”打开 Ant 子菜单，保留当前子项与键盘访问。
+系统管理按 [DEC-064](../docs/01-product/decisions.md#dec-064-平台设置收拢与分组重设计) 组织平台设置、权限配置、存储凭据三个子项；父级只展开/收起。平台设置通过四个页内 Tabs 分别承载常规设置、调度策略、安全策略、工具与兼容，各域仍独立读取、编辑和保存，不合成全页事务。常规设置管理展示默认、任务命名及任务/普通日志保留；其他三域的业务边界不变。权限配置管理已有认证主体授权，存储凭据管理对象存储材料。完整导航使用缩进子项；48px 图标轨通过“系统管理”打开 Ant 子菜单。四个设置域均高亮平台设置，保留当前项与键盘访问。
 
 ## 4. Product Shell
 
@@ -87,7 +85,7 @@ Global Navigation 只负责产品模块切换。Task Step Rail、日志预设、
 | Page Toolbar | Search、Filter、Create、Refresh、Bulk action、More | 属于页面，不放入 Product Header；Search → 高频筛选 → utilities |
 | Inspector | 移除后会明显妨碍当前主要判断 | 只展示当前选择或诊断的高价值事实；不是常驻 Shell |
 | Drawer | 编辑对象、连接测试、任务摘要、日志同来源上下文、窄屏 Inspector 替代 | 固定 Header、独立滚动 Body、可选固定 Footer |
-| Dialog / AlertDialog | 确认、冲突、未保存离开、不可逆或高风险动作 | 说明对象、影响、理由与确定动作；不承载普通编辑 |
+| Dialog / AlertDialog | 确认、冲突、未保存离开、不可逆或高风险动作；首页图表放大与定界只读下钻 | 确认说明对象、影响、理由与动作；首页只读弹窗按 DEC-068，保持焦点、原窗口和授权，不承载普通编辑 |
 | Fixed Action Footer | 长流程或需要持续主操作的页面 | 正文预留安全底距；不用于普通 CRUD 与详情页 |
 
 ## 5. Page Archetype System
@@ -96,14 +94,14 @@ Global Navigation 只负责产品模块切换。Task Step Rail、日志预设、
 
 | Archetype | Skeleton | Header / Toolbar | Secondary content | Drawer / Inspector / Footer | 使用场景 |
 | --- | --- | --- | --- | --- | --- |
-| Overview | 通栏状态带 → Attention（含摘要）→ 我的任务 / Runtime 节点 → 单一趋势 | 授权范围、freshness、Refresh utility | 有限下钻列表 | 默认无 Inspector；无固定 Footer | 首页 |
+| Overview | 四项独立指标卡 → 单一趋势 / Attention 并列 → 我的任务、Runtime 节点通栏 | 授权范围、freshness、Refresh utility | 有限下钻列表 | 默认无 Inspector；无固定 Footer | 首页 |
 | Management / Table | Header → FilterToolbar → Dense Table → pagination/state | Create + Search/Filter/Refresh | 行级 metadata 与 eligibility | 编辑/测试 Drawer；危险 Dialog | 数据源、模板、节点、凭据、权限配置 |
 | Task Builder | Task header → Step Rail → current-step workspace | saved/dirty state、Save Draft、当前步骤动作 | 当前选择的派生事实 | 条件 Inspector、Summary Drawer、Fixed Footer | 导出、普通导入、旁路导入 |
 | Task Operations | Header → FilterToolbar → scope bar → Task Table | Create / More、筛选与刷新 | 状态、阶段、可靠进度 | 默认无 Inspector；状态化行操作 | 任务中心 |
 | Diagnostic / Detail | 稳定对象头 → 事实分区 → 证据/日志/记录 | permitted action + Back | failure/reconciliation banner | 单对象日志内联；跨对象转日志中心 | 任务/节点详情 |
-| Settings | Header → one module workspace → optional field groups | Edit/Save current module，读写未接入时无保存入口 | 生效值、来源、时间、差异/影响；未接入时只说明边界 | 高影响确认 Dialog；无 Inspector | 平台设置、调度策略、安全策略、工具与兼容 |
+| Settings | Header → one module workspace → optional field groups | 页内 Tabs 切换配置域；Edit/Save current domain，读写未接入时无保存入口 | 生效值、来源、时间、差异/影响；未接入时只说明边界 | 高影响确认 Dialog；无 Inspector | 平台设置内的常规、调度、安全、工具与兼容 |
 
-四个设置配置域的职责、入口及当前只读边界见 [system-settings.md](pages/system-settings.md)。
+平台设置四个配置域的职责、页签入口及读写边界见 [system-settings.md](pages/system-settings.md)。
 
 Reference Page 对应关系：
 
@@ -121,10 +119,11 @@ Reference Page 对应关系：
 
 Overview 回答：需要关注什么、发生了什么变化、什么失败或被阻断、Runtime 是否健康、我的任务正在发生什么。
 
-- 任务指标与节点接收结论共享一条通栏状态带，不形成 independent KPI card system。
-- 受控摘要文本位于 Attention 标题行，失败与阻断事实紧随状态带，不另设独立摘要分区。
-- 视觉优先级：Failure / Blocked > Runtime Health > Running Tasks > Recent Activity > Trend。
+- 按 [DEC-066](../docs/01-product/decisions.md#dec-066-ocp-参考首页布局) 使用四张独立指标卡：运行中、等待调度、今日成功、今日失败；立体插画与轻阴影按 [DEC-068](../docs/01-product/decisions.md#dec-068-首页立体指标与独立趋势分析弹窗)。节点接收统计归节点区，不增加第五张指标卡。
+- 借鉴 OCP 的“顶部概览卡、并列信息区、通栏明细”布局：趋势与 Attention 在桌面并列；我的任务、执行节点各用一个通栏工作面。容器不足 1000px 时并列区按 DOM 顺序合为单列。
+- 受控摘要位于 Attention 正文顶部，失败与节点阻断事实紧随其后。首屏同时呈现指标、趋势和 Attention；过期、读取失败和权限变化仍优先通过明确反馈表达。
 - 只保留一张有明确事实口径的趋势；不做资源曲线、预测、健康分、拓扑或多图表 Dashboard。
+- 同一趋势可在独立 Ant Modal 放大或按时间桶下钻，两个视图互斥。分析弹窗复用现有授权任务列表、固定终态时间和分页；任务详情新标签页打开。主区仍是有限摘要，不在首页增加任务写操作、通用分析器或新的聚合接口。
 - 节点、我的任务、失败与异常均为有限列表，只提供查看和下钻。
 - Refresh 是 Utility Action，刷新可信快照而非发起业务操作。
 - 授权范围、更新时间、部分失败、过期、无数据、无权限和未采集保持明确且不同状态。
@@ -216,6 +215,14 @@ long technical identifier
 - **完成判定：** 各项使用“通过、不通过、未验证、无法验证、不适用”记录；有前端页面时三档视口检查必须实测。只有所有适用项通过，才可声明模块视觉验收通过及前端交付完成；未验证、无法验证或不通过项不得勾选。可分别报告已实现、合成验证通过和待验收范围，不把视觉验收外推为真实执行、部署或上线通过。验证沿用既有合成夹具、隔离环境和真实准入边界。
 
 ## 11. Change Control
+
+2026-10-28 用户进一步要求四卡具有 OCP 式立体感，趋势借鉴 OCP 细线、浅网格、底部图例，放大与下钻均独立弹出，并选择弹窗直接展示对应任务列表。按 DEC-068 仅为首页四卡允许生成的透明立体插画与既有 surfaceShadow；图形仍连接真实计数，命中区使用 Ant Button。结果分析通过既有 GET 任务列表读取选中半开窗口，关闭、切换和失权隔离旧会话；取代页内 Collapse 下钻，不改变 Shell、Token、API 定义或任务写权限。
+
+2026-10-28 按用户提供的客户标识及 [DEC-067](../docs/01-product/decisions.md#dec-067-登录页采用客户品牌标识) 重做登录页：品牌区 + 登录卡片左右分栏，标识蓝绿只用于页内纹样。登录页在 Shell 之外，规则见 [login.md](pages/login.md)；不修改 Shell、Archetype、Token 或其他页面。
+
+2026-10-28 用户指出当前首页约束不符合要求，明确要求参考已打开的 OCP 首页同步修订设计与实现，并选择继续使用四项既有任务指标。本轮以 [DEC-066](../docs/01-product/decisions.md#dec-066-ocp-参考首页布局) 取代 DEC-060 的状态带、分区顺序及任务/节点并排规则：四卡 → 趋势 / 关注并列 → 任务、节点各自通栏。分区使用独立标题栏和细边框；只消费既有 Token、Ant 与 Shell，业务授权、快照、指标及下钻口径不变。旧 Change Control 保留为历史记录，不继续约束首页现役骨架。
+
+2026-10-26 按用户明确要求将调度策略、安全策略、工具与兼容收进平台设置并重做界面。系统管理恢复三个子项，平台设置使用常规设置、调度策略、安全策略、工具与兼容四个原生 Ant 页签，旧深链接保持可用。设置分组采用用途说明与事实/操作两列，窄屏合并为单列；编辑及刷新紧邻所属标题，当前值先于生效说明。此项更新导航归属和 Settings 内部组织，不修改 Shell 几何、其他 Archetype、Token、权限、API 或各域独立事务；取代下条四页并列的现役入口，详见 [DEC-064](../docs/01-product/decisions.md#dec-064-平台设置收拢与分组重设计)。
 
 2026-10-23 按用户采纳的拆分评估及 [DEC-062](../docs/01-product/decisions.md#dec-062-系统设置拆分为四个独立配置域)，系统管理新增平台设置、调度策略、安全策略、工具与兼容四个独立配置域，取代系统设置四个横向分区。Settings Archetype 使用独立工作面及可选字段分组，权限配置明确归属已有 Management / Table。当前只完成页面/导航职责拆分，配置事实未接入时保持未知且不提供修改，工具先展示受控目标基线；不增加配置 API、存储表或发布能力。六个子项沿用原 Shell 几何、Ant 控件和 Token。
 

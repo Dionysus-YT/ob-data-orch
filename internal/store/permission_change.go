@@ -125,14 +125,12 @@ func (s *Store) ChangeSubjectPermissions(ctx context.Context, input accesscontro
 				}
 			}
 			result.Revision++
-			if _, err = tx.ExecContext(ctx, `INSERT INTO subject_permission_versions(subject_id,revision,modified_by,modified_at) VALUES(?,?,?,?) ON CONFLICT(subject_id) DO UPDATE SET revision=excluded.revision,modified_by=excluded.modified_by,modified_at=excluded.modified_at`, input.SubjectID, result.Revision, input.ActorID, utcText(input.At)); err != nil {
+			// 初始身份一旦经普通授权获得或撤销审计能力，也永久消耗部署首次授予入口。
+			auditConsumed := before.InitialAdministrator && (before.Assignment.HasCapability(accesscontrol.AuditLog) || input.Assignment.HasCapability(accesscontrol.AuditLog))
+			if _, err = tx.ExecContext(ctx, `INSERT INTO subject_permission_versions(subject_id,revision,modified_by,modified_at,audit_bootstrap_consumed) VALUES(?,?,?,?,?) ON CONFLICT(subject_id) DO UPDATE SET revision=excluded.revision,modified_by=excluded.modified_by,modified_at=excluded.modified_at,audit_bootstrap_consumed=MAX(subject_permission_versions.audit_bootstrap_consumed,excluded.audit_bootstrap_consumed)`, input.SubjectID, result.Revision, input.ActorID, utcText(input.At), auditConsumed); err != nil {
 				return err
 			}
-			// 授权变化使未提交草稿的旧证明失效，不改写任务快照或执行租约。
-			if _, err = tx.ExecContext(ctx, `UPDATE precheck_runs SET status='INVALIDATED',completed_at=? WHERE status IN ('PENDING','LEASED','SUCCEEDED') AND draft_id IN(SELECT draft_id FROM export_drafts WHERE owner_subject_id=?) AND NOT EXISTS(SELECT 1 FROM tasks WHERE tasks.precheck_id=precheck_runs.precheck_id)`, utcText(input.At), input.SubjectID); err != nil {
-				return err
-			}
-			if _, err = tx.ExecContext(ctx, `UPDATE data_source_connection_test_runs SET status='INVALIDATED',completed_at=? WHERE status IN ('PENDING','LEASED') AND creator_subject_id=?`, utcText(input.At), input.SubjectID); err != nil {
+			if err = invalidatePermissionEvidence(ctx, tx, input.SubjectID, input.At); err != nil {
 				return err
 			}
 		}
@@ -159,6 +157,15 @@ func (s *Store) ChangeSubjectPermissions(ctx context.Context, input accesscontro
 		return accesscontrol.ChangeResult{}, err
 	}
 	return result, err
+}
+
+// invalidatePermissionEvidence 复用普通授权和部署首次授予的失效边界，不改写任务快照或执行租约。
+func invalidatePermissionEvidence(ctx context.Context, tx *sql.Tx, subjectID string, at time.Time) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE precheck_runs SET status='INVALIDATED',completed_at=? WHERE status IN ('PENDING','LEASED','SUCCEEDED') AND draft_id IN(SELECT draft_id FROM export_drafts WHERE owner_subject_id=?) AND NOT EXISTS(SELECT 1 FROM tasks WHERE tasks.precheck_id=precheck_runs.precheck_id)`, utcText(at), subjectID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE data_source_connection_test_runs SET status='INVALIDATED',completed_at=? WHERE status IN ('PENDING','LEASED') AND creator_subject_id=?`, utcText(at), subjectID)
+	return err
 }
 
 func validPermissionReason(value string) error {

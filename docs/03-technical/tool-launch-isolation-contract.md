@@ -1,5 +1,11 @@
 # OBDUMPER 跨平台隔离启动入口契约
 
+> 2026-10-26 后续真实验收已完成当前选定场景，更新下条等待登录/零任务状态。默认/显式日志、压缩和完整整库内容已有实证；固定 JVM UTF-8 与 Windows Java 8 argv 无损往返保护已安装，实际不可表示参数在创建工具进程前拒绝。20 个代表场景 19 PASS、1 个 `retain-schema` 内容失败；历史全矩阵和完整门禁不提升，见[实际验收](evidence/export-runtime-acceptance-2026-10-26.md)。
+
+> 2026-10-26 后续安装：用户已授权真实验证，当前源码已按原入口安装并恢复两端，原身份、机器凭据、配置、CA 与授权保留。真实 Java 8/原 JAR 的 snappy、zstd 1/22 私有临时目录合成往返通过；平台任务尚因重启后缺少正常登录会话而未执行。不能由依赖检查推导默认日志或压缩任务可用，下条本地整改范围保留为当时记录，现役状态见[后续证据](evidence/export-runtime-real-2026-10-26.md)。
+
+> 2026-10-26 导出运行时整改（仅本地/合成验证）：未显式提供 `--log-path` 的 OBDUMPER 采用 execution 私有 `runtime/export-log4j2.xml`，配置固定且只写受控 stdout，避免官方 Routing 在输出目录先创建 `logs` 导致空目录检查失败。显式日志参数与业务 argv 保持原样，不隐式生成 `--skip-check-dir`。三类直接 Java 启动统一把 `java.io.tmpdir` 固定到当前 execution 私有 runtime；原生库能否加载仍须真实包与目标节点复验，不把合成临时文件测试当作 zstd/snappy 兼容证明。固定配置复用与篡改拒绝、临时文件清理及快速退出末尾日志排空均有隔离回归；见[本轮证据](evidence/export-runtime-closure-2026-10-26.md)。未安装服务或提升 EX-V1/G3/G4。
+
 > 2026-10-22 旁路日志隔离：Windows 固定 4.3.5 启动仍以已核验主 JAR 优先，排除当前工作目录。execution 私有 runtime 排他创建固定、逐字节校验的 `direct-load-log4j2.xml`，只向受控 stdout 输出；同一配置经 SOFA `logging.config.com.alipay.remoting` 供 Bolt 使用，runtime 仅在主包和 lib 后加入类路径用于该资源。官方 LoadClient 会覆盖全局 `logging.path`，不能只靠 JVM 默认目录防止 Bolt 写回输入目录；表客户端独立日志路径绑定私有 raw-logs。配置内容和资源名由平台固定，任务不能提供类、配置或路径。stdout 继续双层脱敏，私有文件沿用 execution 清理边界；普通导入/导出启动不变。
 
 > 2026-10-16 普通导入执行补充（替代下方 G2 状态）：独立开关和显式类型领取后只启动固定 `com.oceanbase.tools.loaddump.cmd.Obloader`。Windows 单独复刻 obloader.bat 的 fs.page/file.split/dry.run/rebalance.import 属性，不混入导出属性或旁路参数；共享的仅 JVM、安全材料与平台进程隔离。启动前复核冻结配置和文件，拒绝 sys/存储槽位；结果不采用输入计数，固定工具完成证据、受控退出及完整日志共同核对。`NormalImportProbe` v10 保持只读，`load.ckpt` 继续未接入。实际安装与验证见[执行证据](evidence/normal-import-execution-2026-10-16.md)。
@@ -167,11 +173,12 @@ environment
 
 - 默认 `-Xms4G -Xmx4G`；
 - Java 8u300 及以上使用 G1，以下使用 CMS；
-- 线程栈、Metaspace、无类卸载、暂停目标及 UTF-8 stdout/stderr 设置；
+- 线程栈、Metaspace、无类卸载、暂停目标及 UTF-8 stdout/stderr 设置；固定 `file.encoding=UTF-8`，使 Log4j 的缺省字符集与采集管道一致；用户明确的 `--file-encoding` 仍由业务参数决定数据文件编码；
 - `picocli.usage.width`、并行写、上传缓冲、SQL monitor、表定义相关的固定系统属性；
 - `tool.base.dir` 指向只读发布包；
-- `session.configurationFile` 和 log4j 配置指向发布包只读配置；
+- `session.configurationFile` 指向发布包只读配置；log4j 默认使用包内配置，未填写日志路径的导出与旁路导入采用平台固定的私有 console 配置；
 - `security.configurationFile` 和 `log4j.output` 改为 execution 私有路径；
+- `java.io.tmpdir` 固定为当前 execution 私有 `runtime/`，不依赖服务账户公共临时目录；
 - 主类固定为 `com.oceanbase.tools.loaddump.cmd.Obdumper`。
 
 启动配置必须逐项记录它与对应官方脚本的相同、覆盖和省略项。工具升级时先生成差异报告，再决定是否发布新配置，不能沿用旧配置猜测兼容。
@@ -182,9 +189,10 @@ environment
 - 保留包内 Windows Hadoop 目录属性；
 - 对 obproxy、decrypt 等 Windows 脚本已有属性保持原样，除非专项验证证明可以删除；
 - 业务参数通过 Windows 进程 API 的结构化参数边界传递，不经过 `.bat`；
+- Java 8 会将 Windows 命令行按系统活动代码页转换。启动前对业务参数及最终 JVM/业务 argv 做无最佳映射、无替代字符的严格往返检查；代码页未知、非法 UTF-8、NUL 或不可往返字符均以既有启动拒绝路径结束，不写启动意图、不创建工具进程。检查不转码、不修改冻结参数，不把 `file.encoding` 当作命令行 Unicode 支持；
 - 直接监管 Java 进程，因此不再把 `.bat=0` 作为执行事实。
 
-Agent 的 Windows 4.3.5 启动配置逐项复刻 `bin/windows/obdumper.bat` 的 Java 8 update/GC 分支、固定 JVM 参数、系统属性、类路径和主类；Agent 不修改、复制或替换官方脚本。仅有三项 execution 私有替换：`security.configurationFile`、`log4j.output` 与 OOM 堆转储路径必须位于当前任务私有目录，避免共享工具包目录承载秘密相关材料或发生并发覆盖。
+Agent 的 Windows 4.3.5 启动配置逐项复刻 `bin/windows/obdumper.bat` 的 Java 8 update/GC 分支、固定系统属性、类路径和主类；Agent 不修改、复制或替换官方脚本。固定覆盖包括已冻结 `--mem` 对应的堆、安全配置、原生日志、OOM 材料与 Java 临时目录；未填写日志路径的导出另采用私有 `export-log4j2.xml`，旁路采用既有私有配置。各任务资产必须位于当前 execution，配置内容和文件名不可由用户提供，已有文件必须为普通文件且逐字节匹配，目录或配置被替换时拒绝启动。用户显式 `--log-path` 继续原样进入唯一生成器的业务参数，不通过本修订增加文件采集权。
 
 ### 8.3 Linux 专属
 
@@ -219,7 +227,7 @@ LD_PRELOAD
 
 按平台允许的内容至少包括：
 
-- Windows：`SystemRoot`、`WINDIR`、由已登记 Java 可执行文件推导的 `JAVA_HOME`、execution 私有 TEMP/TMP、受控 Java/系统路径及经验证的本地库所需项；`HADOOP_HOME` 只从该 Windows Agent 的本机环境读取，必须是绝对目录且其 `bin/` 含 `hadoop.dll` 与 `winutils.exe`，随后仅将该 `bin/` 注入子进程路径；
+- Windows：`SystemRoot`、`WINDIR`、由已登记 Java 可执行文件推导的 `JAVA_HOME`、受控 Java/系统路径及经验证的本地库所需项；当前实现不继承 TEMP/TMP，Java 临时位置由固定 `-Djava.io.tmpdir` 绑定 execution 私有 runtime。`HADOOP_HOME` 只从该 Windows Agent 的本机环境读取，必须是绝对目录且其 `bin/` 含 `hadoop.dll` 与 `winutils.exe`，随后仅将该 `bin/` 注入子进程路径；
 - Linux：execution 私有 `TMPDIR`、必要 locale、由已登记 Java 可执行文件推导的 `JAVA_HOME`、受控 Java/本地库路径及目标系统验证后的最小项；不读取或注入 `HADOOP_HOME`；
 - 两端均不得在环境中放数据源密码、机器凭据、根密钥或任意用户 JVM 选项。
 
@@ -229,7 +237,7 @@ LD_PRELOAD
 
 - stdout/stderr 使用管道读取，先按已知密码槽位和密码形式键值规则脱敏，再进入本地待发送队列；
 - 不把未处理 stdout/stderr 重定向到普通日志文件；
-- OBDUMPER 自身通过 log4j 写文件的行为无法由管道替代，因此只允许写入 execution 私有 `tool-raw-log/`；
+- 未填写日志路径的导出使用平台固定 console 配置进入受控管道，不在输出目录创建默认 Routing 日志；显式日志参数沿用既有官方语义，不因此自动采集用户目录。独立 SDK 原生日志仍绑定 execution 私有原始材料目录，未知来源不自动上传；
 - `tool-raw-log/` 是受限的短时工具材料，不是产品日志，不进入普通查询、下载或备份；
 - Agent 从中读取增量内容，完成第一层脱敏后生成产品日志分段；
 - OBDUMPER 的组合用户名保留在产品日志中供人工连接诊断；密码原值和密码形式键值必须继续双层脱敏。工具原生日志在终态取证完成后仍按安全材料规则删除；删除失败进入清理告警和目录隔离；

@@ -45,7 +45,7 @@ const advancedHasError = computed(() => ['maxFileSize', 'thread', 'pageSize', 'p
           <AFormItem required :validate-status="fieldError('tmpPath') ? 'error' : undefined" :help="fieldError('tmpPath') || '预检查会验证此目录的可写性与可用空间。'">
             <template #label><span class="export-field-label">本地临时分块目录<ExportOptionHint label="本地临时分块目录" parameter="--tmp-path" description="对象存储 Multipart 上传使用的执行节点本地目录；预检查需要明确路径以检查可写性与可用空间。" /></span></template><AInput v-model:value.trim="tmpPath" aria-label="本地临时分块目录" aria-required="true" :placeholder="outputPathPlaceholder" autocomplete="off" />
           </AFormItem>
-          <AFormItem :validate-status="fieldError('storageCredentialId') ? 'error' : undefined" :help="fieldError('storageCredentialId')" :html-for="fieldPrefix + '-storage-credential'" extra="只保存凭据标识与修订，不在页面读取密钥。">
+          <AFormItem :validate-status="fieldError('storageCredentialId') ? 'error' : undefined" :help="fieldError('storageCredentialId')" :html-for="fieldPrefix + '-storage-credential'">
             <template #label>存储凭据（可选）</template>
             <AAlert v-if="storageCredentialLoadFailure" type="error" show-icon :message="storageCredentialLoadFailure"><template #action><AButton type="link" @click="loadStorageCredentials">重试</AButton></template></AAlert>
             <ASkeleton v-else-if="loadingStorageCredentials" active :paragraph="{ rows: 1 }" aria-label="正在加载存储凭据" />
@@ -54,14 +54,13 @@ const advancedHasError = computed(() => ['maxFileSize', 'thread', 'pageSize', 'p
         </template>
         <div class="export-format-panel export-parameter-field">
           <template v-if="outputKind === 'LOCAL'">
-            <AFormItem required :validate-status="fieldError('filePath') ? 'error' : undefined" :help="fieldError('filePath') || '平台原样传递此路径，不追加目录或转换平台格式。'">
-              <template #label><span class="export-field-label">导出路径<ExportOptionHint label="导出路径" parameter="--file-path" description="执行节点上的完整绝对输出路径；原样传递，不追加目录或转换平台格式。" /></span></template>
+            <AFormItem required :validate-status="fieldError('filePath') ? 'error' : undefined" :help="fieldError('filePath')">
+              <template #label><span class="export-field-label">导出路径<ExportOptionHint label="导出路径" parameter="--file-path" description="导出文件保存在所选节点的此目录。" /></span></template>
               <AInput v-model:value.trim="filePath" aria-label="导出路径" :placeholder="outputPathPlaceholder" autocomplete="off" />
             </AFormItem>
           </template>
-          <AAlert v-if="outputKind !== 'LOCAL'" type="warning" show-icon message="对象存储输出仍需端点连通性与凭据有效性预检查；未取得通过证据时不能提交。" />
-          <AFormItem :validate-status="fieldError('logPath') ? 'error' : undefined" :help="fieldError('logPath')" extra="留空时继承 OBDUMPER 默认日志目录。">
-            <template #label><span class="export-field-label">日志路径（可选）<ExportOptionHint label="日志路径" parameter="--log-path" description="指定工具日志目录；可选，留空继承工具默认目录，填写后检查可写性。" /></span></template><AInput v-model:value.trim="logPath" aria-label="日志路径" :placeholder="outputPathPlaceholder" autocomplete="off" />
+          <AFormItem :validate-status="fieldError('logPath') ? 'error' : undefined" :help="fieldError('logPath')" extra="留空自动采集日志，不在导出目录创建日志文件。">
+            <template #label><span class="export-field-label">日志路径（可选）<ExportOptionHint label="日志路径" parameter="--log-path" description="指定工具日志目录；留空由 Agent 受控采集，填写后检查目录可写性。" /></span></template><AInput v-model:value.trim="logPath" aria-label="日志路径" :placeholder="outputPathPlaceholder" autocomplete="off" />
           </AFormItem>
           <template v-if="outputKind === 'LOCAL'">
             <div class="export-option-control"><ACheckbox v-model:checked="skipCheckDir">跳过导出目录空性检查</ACheckbox><ExportOptionHint label="跳过导出目录空性检查" parameter="--skip-check-dir" description="允许向已有文件的导出目录写入，可能覆盖同名文件；仍检查路径可写性与可用空间。" /></div>

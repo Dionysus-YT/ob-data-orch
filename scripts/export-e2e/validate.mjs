@@ -104,13 +104,36 @@ function decodeSnappyHadoop(buffer) {
   return Buffer.concat(chunks)
 }
 
+// 官方 4.3.5 的 .sz 使用 Xerial 流，不能把其魔数当作 Hadoop 的解压长度。
+// 只接受已核验的 v1 头；块长、截断及累计解压字节均有界，损坏文件不能降级为通过。
+function decodeSnappyXerial(buffer) {
+  const magic = Buffer.from([0x82, 0x53, 0x4e, 0x41, 0x50, 0x50, 0x59, 0])
+  const limit = 64 * 1024 * 1024, chunks = []
+  let offset = 0, total = 0
+  while (offset < buffer.length) {
+    if (buffer.subarray(offset, offset + magic.length).equals(magic)) {
+      if (offset + 16 > buffer.length || buffer.readUInt32BE(offset + 8) !== 1 || buffer.readUInt32BE(offset + 12) !== 1) throw new Error('SNAPPY_FRAME_INVALID')
+      offset += 16
+      continue
+    }
+    if (offset + 4 > buffer.length) throw new Error('SNAPPY_FRAME_INVALID')
+    const size = buffer.readUInt32BE(offset); offset += 4
+    if (size < 1 || size > limit || offset + size > buffer.length) throw new Error('SNAPPY_FRAME_INVALID')
+    const block = decodeSnappyRaw(buffer.subarray(offset, offset + size))
+    offset += size; total += block.length
+    if (total > limit) throw new Error('SNAPPY_LIMIT')
+    chunks.push(block)
+  }
+  return Buffer.concat(chunks, total)
+}
+
 export function decompress(buffer, algorithm) {
   if (!algorithm) return buffer
   const options = { maxOutputLength: 64 * 1024 * 1024 }
   if (algorithm === 'gzip') return zlib.gunzipSync(buffer, options)
   if (algorithm === 'zlib') return zlib.inflateSync(buffer, options)
   if (algorithm === 'zstd') return zlib.zstdDecompressSync(buffer, options)
-  if (algorithm === 'snappy') return decodeSnappyHadoop(buffer)
+  if (algorithm === 'snappy') return buffer.subarray(0, 8).equals(Buffer.from([0x82, 0x53, 0x4e, 0x41, 0x50, 0x50, 0x59, 0])) ? decodeSnappyXerial(buffer) : decodeSnappyHadoop(buffer)
   throw new Error('COMPRESSION_UNSUPPORTED')
 }
 
@@ -189,7 +212,10 @@ async function validateMultipleCsv(test, context, files, summary) {
     odo_owner:{columns:['run_id'],rows:[[context.runId]]},
   }
   if(f.capabilities?.GENERATED)fixtureTables.generated_values={columns:['id','value_col','doubled'],rows:[[1,7,14],[2,9,18]]}
-  if(f.capabilities?.ZERO_DATETIME)fixtureTables.zeros={columns:['id','date_col','datetime_col'],rows:[[1,'0000-00-00','0000-00-00 00:00:00']]}
+  if(f.capabilities?.ZERO_DATETIME){
+    const preserve=p.timestampFormats?.preserveZeroDatetime&&f.zeroColumnsNullable===false
+    fixtureTables.zeros={columns:['id','date_col','datetime_col'],rows:[[1,preserve?'0000-00-00':null,preserve?'0000-00-00 00:00:00':null]]}
+  }
   for(const [name,capability] of [['partitioned','PARTITION'],['subpartitioned','SUBPARTITION']]){
     if(f.capabilities?.[capability])fixtureTables[name]={columns:['id','ascii_label'],rows:[[1,'a'],[2,'b'],[3,'c'],[4,'d']]}
   }
@@ -209,11 +235,32 @@ async function validateMultipleCsv(test, context, files, summary) {
       rows.push(...parsed.map(row=>row.map(cell=>!cell.quoted&&cell.value==='\\N'?null:cell.value)))
     }
     const expectedRows=expected.rows.map(row=>row.map(value=>value===null?null:String(value)))
-    assert.deepEqual(normalizeRows(rows),normalizeRows(expectedRows),'MULTI_TABLE_ROWS')
+    assert.deepEqual(normalizeRows(rows),normalizeRows(expectedRows),'MULTI_TABLE_ROWS_'+name.toUpperCase())
     digest.push(name+'\n'+normalizeRows(rows).join('\n'));count+=rows.length
   }
   assert.equal(seen.size,data.length,'MULTI_TABLE_UNEXPECTED_FILE')
   return {fileCount:files.length,dataFileCount:data.length,bytes:summary.totalBytes,rows:count,tablesVerified:names.length,contentVerified:true,contentHash:createHash('sha256').update(digest.sort().join('\n')).digest('hex')}
+}
+
+// hasQualifiedCreateTable 只核对固定夹具的 CREATE TABLE 目标，不把注释或字符串中的名称当作前缀证据。
+export function hasQualifiedCreateTable(text, database, table) {
+  const tokens = []
+  const lexical = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:''|\\[\s\S]|[^'\\])*'|`(?:``|[^`])*`|"(?:""|[^"])*"|[A-Za-z0-9_$]+|[^\s]/g
+  for (const match of text.matchAll(lexical)) {
+    const value = match[0]
+    if (value.startsWith('--') || value.startsWith('#') || value.startsWith('/*')) continue
+    const quote = value[0]
+    tokens.push({ kind: quote === "'" ? 'STRING' : quote === '`' || quote === '"' ? 'IDENTIFIER' : 'WORD', value: quote === '`' || quote === '"' ? value.slice(1, -1).replaceAll(quote + quote, quote) : value })
+  }
+  const keyword = (index, value) => tokens[index]?.kind === 'WORD' && tokens[index].value.toUpperCase() === value
+  const name = (index, value) => tokens[index]?.kind !== 'STRING' && tokens[index]?.value === value
+  for (let index = 0; index < tokens.length; index++) {
+    if ((index > 0 && tokens[index - 1].value !== ';') || !keyword(index, 'CREATE') || !keyword(index + 1, 'TABLE')) continue
+    let target = index + 2
+    if (keyword(target, 'IF') && keyword(target + 1, 'NOT') && keyword(target + 2, 'EXISTS')) target += 3
+    if (name(target, database) && tokens[target + 1]?.value === '.' && name(target + 2, table)) return true
+  }
+  return false
 }
 
 export async function validateOutput(test, context, summary) {
@@ -228,6 +275,11 @@ export async function validateOutput(test, context, summary) {
   const extension = format === 'CSV' ? '.csv' : format === 'CUT' ? '.dat' : '.sql'
   const dataFiles = files.filter(f => f.path.toLowerCase().includes(extension) && !f.path.toLowerCase().includes('.ddl.'))
   const ddlFiles = files.filter(f => /\.sql(?:$|\.)/i.test(f.path) && !/\.data\.sql/i.test(f.path))
+  if (p.retainSchema) {
+    const definitions = (await Promise.all(ddlFiles.map(async file => decode(await readFile(file.fullPath))))).join('\n;\n')
+    const tables = (p.objects ?? [[p.objectType ?? 'TABLE', p.object ?? p.table ?? 'rich']]).filter(([type]) => type === 'TABLE')
+    for (const [, table] of tables) assert.ok(hasQualifiedCreateTable(definitions, context.database, table), 'DDL_SCHEMA_MISSING')
+  }
   if (p.content === 'DDL_ONLY') {
     const text = (await Promise.all(ddlFiles.map(async file => decode(await readFile(file.fullPath))))).join('\n')
     assert.ok(/CREATE\s/i.test(text), 'DDL_CREATE_MISSING')
@@ -292,7 +344,8 @@ export async function validateOutput(test, context, summary) {
   } else if (table === 'zeros') {
     expectedColumns = ['id', 'date_col', 'datetime_col']
     if (!p.timestampFormats?.preserveZeroDatetime) return { fileCount: files.length, bytes: summary.totalBytes, observedZeroRows: rows, contentVerified: false }
-    expected = [['1', '0000-00-00', '0000-00-00 00:00:00']]
+    if (typeof context.fixture.zeroColumnsNullable !== 'boolean') throw new Error('ZERO_NULLABILITY_EVIDENCE_REQUIRED')
+    expected = context.fixture.zeroColumnsNullable ? [['1', null, null]] : [['1', '0000-00-00', '0000-00-00 00:00:00']]
   }
   if (p.where) expected = expected.filter(row => Number(row[0]) <= 2)
   if (p.include || p.exclude) {

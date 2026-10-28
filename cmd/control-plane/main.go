@@ -47,7 +47,14 @@ func run() error {
 	healthCheck := flag.Bool("health-check", false, "检查本机控制面 HTTPS 健康状态")
 	install := flag.Bool("install-service", false, "安装开机自启服务")
 	devWeb := flag.String("dev-web-url", "", "仅供本机开发启动器代理 Vite")
+	initialAudit := flag.Bool("bootstrap-audit-access", false, "仅从原安装入口显式完成一次审计读取授予")
 	flag.Parse()
+	if *initialAudit {
+		if *version || *initialize || *healthCheck || *install || *devWeb != "" || flag.NArg() != 0 {
+			return errors.New("首次审计授予不能与其他启动操作组合")
+		}
+		return deployment.BootstrapInitialAuditAccess(context.Background(), *data, os.Stdin, os.Stdout)
+	}
 	if *version {
 		info := buildinfo.Current()
 		fmt.Printf("OB Data Orch %s (%s)\n", info.Version, info.Commit)

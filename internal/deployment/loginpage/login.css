@@ -1,0 +1,390 @@
+/*
+ * 登录页样式：认证前由控制面独立渲染，不加载 Ant Design 与前端资源。
+ * 颜色、字体、尺寸只消费 tokens.css（由 tokens.ts 生成）；两项品牌色仅取自客户标识，
+ * 只用于标识纹样，不进入全局 Token，也不承担交互或状态语义（DEC-067）。
+ */
+:root {
+  --login-brand-blue: #1f9dd4;
+  --login-brand-green: #17a138;
+  --login-control-height: 40px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--ob-foundation-font-ui);
+  font-size: var(--ob-component-control-font-size);
+  line-height: var(--ob-component-control-line-height);
+  color: var(--ob-color-text);
+  background: var(--ob-color-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+.login {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(480px, 1fr);
+  min-height: 100vh;
+}
+
+/* 品牌区：白色工作面承接标识原有白底，与产品 Header 的白色顶栏一致。 */
+.login-brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 48px 64px 40px;
+  overflow: hidden;
+  background: var(--ob-color-surface);
+  border-right: 1px solid var(--ob-color-border);
+}
+
+.login-brand-logo {
+  position: relative;
+  z-index: 1;
+  display: block;
+  align-self: flex-start;
+  width: auto;
+  height: 57px;
+  margin-left: -4px;
+}
+
+/* 文案在标识下方的剩余高度内居中，并抵消标识高度，使其与右侧登录卡片视觉中线对齐。 */
+.login-brand-body {
+  position: relative;
+  z-index: 1;
+  max-width: 560px;
+  margin-block: auto;
+  padding: var(--ob-foundation-space-8) 0 57px;
+}
+
+.login-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--ob-foundation-space-3);
+  margin: 0 0 var(--ob-foundation-space-4);
+  font-family: var(--ob-foundation-font-mono);
+  font-size: var(--ob-component-table-metadata-size);
+  line-height: var(--ob-component-table-metadata-line-height);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ob-color-secondary);
+}
+
+/* 前导短线复用标识的蓝绿分割，作为品牌区唯一的文字级装饰。 */
+.login-eyebrow::before {
+  content: "";
+  flex: none;
+  width: 24px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--login-brand-blue) 0 50%, var(--login-brand-green) 50% 100%);
+}
+
+.login-product {
+  margin: 0;
+  font-size: clamp(36px, 2.5vw, 48px);
+  line-height: 1.2;
+  font-weight: var(--ob-product-typography-weight);
+  letter-spacing: normal;
+  color: var(--ob-color-text);
+}
+
+.login-positioning {
+  margin: var(--ob-foundation-space-3) 0 0;
+  font-size: 18px;
+  line-height: 28px;
+  color: var(--ob-color-secondary);
+}
+
+.login-capabilities {
+  display: flex;
+  margin: 40px 0 0;
+  padding: var(--ob-foundation-space-4) 0 0;
+  list-style: none;
+  background: var(--ob-color-surface);
+  border-top: 1px solid var(--ob-color-border);
+}
+
+.login-capabilities li {
+  display: grid;
+  gap: 2px;
+  padding: 0 var(--ob-foundation-space-8) 0 0;
+}
+
+.login-capabilities li + li {
+  padding-left: var(--ob-foundation-space-8);
+  border-left: 1px solid var(--ob-color-border);
+}
+
+.login-capability-name {
+  font-size: var(--ob-component-control-font-size);
+  line-height: var(--ob-component-control-line-height);
+  font-weight: var(--ob-product-typography-weight);
+  color: var(--ob-color-text);
+}
+
+.login-capability-tool {
+  font-family: var(--ob-foundation-font-mono);
+  font-size: var(--ob-component-table-metadata-size);
+  line-height: var(--ob-component-table-metadata-line-height);
+  color: var(--ob-color-muted);
+}
+
+/* 轨道纹样固定在品牌区右下角，按视口高度与区域宽度取较小值，避免压住文字。 */
+.login-motif {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: min(62%, 72vh);
+  aspect-ratio: 1;
+  pointer-events: none;
+}
+
+.login-motif-rings path {
+  fill: none;
+  stroke: var(--ob-color-border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.login-motif-rings .login-motif-radial {
+  stroke: var(--ob-color-border-strong);
+  stroke-dasharray: 2 6;
+}
+
+.login-motif-blue { fill: var(--login-brand-blue); }
+.login-motif-green { fill: var(--login-brand-green); }
+
+.login-motif-tracks path {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.login-motif-track-blue { stroke: var(--login-brand-blue); }
+.login-motif-track-green { stroke: var(--login-brand-green); }
+.login-motif-node-blue { fill: var(--login-brand-blue); }
+.login-motif-node-green { fill: var(--login-brand-green); }
+
+.login-motif-node-hollow {
+  fill: var(--ob-color-surface);
+  stroke: var(--ob-color-border-strong);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* 登录区：沿用产品页面底色与主工作面（白底、细边、浅阴影、8px 圆角）。 */
+.login-main {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 48px 32px;
+}
+
+.login-panel {
+  width: min(400px, 100%);
+  padding: 40px;
+  background: var(--ob-color-surface);
+  border: 1px solid var(--ob-color-border);
+  border-radius: var(--ob-component-table-radius);
+  box-shadow: var(--ob-foundation-surface-shadow);
+}
+
+.login-title {
+  margin: 0 0 var(--ob-foundation-space-6);
+  font-size: var(--ob-product-typography-title-size);
+  line-height: var(--ob-product-typography-title-line-height);
+  font-weight: var(--ob-product-typography-weight);
+}
+
+/* 失败反馈对齐 Ant Alert error：浅危险底、细边、图标与文字并列。 */
+.login-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ob-foundation-space-2);
+  margin: 0 0 20px;
+  padding: var(--ob-foundation-space-2) var(--ob-foundation-space-3);
+  background: var(--ob-foundation-danger-surface);
+  border: 1px solid var(--ob-foundation-danger-border);
+  border-radius: var(--ob-component-control-management-radius);
+}
+
+.login-alert .login-icon {
+  margin-top: 4px;
+  color: var(--ob-color-danger);
+}
+
+.login-field + .login-field { margin-top: 20px; }
+
+.login-label {
+  display: block;
+  margin-bottom: var(--ob-foundation-space-2);
+  font-size: var(--ob-component-field-label-size);
+  line-height: var(--ob-component-field-label-line-height);
+  color: var(--ob-color-form-text);
+}
+
+.login-input {
+  display: block;
+  width: 100%;
+  height: var(--login-control-height);
+  padding: 0 var(--ob-foundation-space-3);
+  font: inherit;
+  color: var(--ob-color-form-text);
+  background: var(--ob-color-surface);
+  border: 1px solid var(--ob-color-border-strong);
+  border-radius: var(--ob-component-control-management-radius);
+  outline: none;
+  transition: border-color var(--ob-component-motion-feedback-ms), box-shadow var(--ob-component-motion-feedback-ms);
+}
+
+.login-input:hover { border-color: var(--ob-color-primary-hover); }
+
+.login-input:focus {
+  border-color: var(--ob-color-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ob-color-primary) 12%, transparent);
+}
+
+.login-input-error,
+.login-input-error:hover { border-color: var(--ob-color-danger); }
+
+.login-input-error:focus {
+  border-color: var(--ob-color-danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ob-color-danger) 12%, transparent);
+}
+
+.login-password { position: relative; }
+.login-password .login-input { padding-right: 44px; }
+
+.login-reveal {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: var(--ob-component-action-icon-size);
+  height: var(--ob-component-action-icon-size);
+  padding: 0;
+  font-size: 16px;
+  color: var(--ob-color-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ob-component-control-radius);
+  cursor: pointer;
+  transition: color var(--ob-component-motion-feedback-ms), background var(--ob-component-motion-feedback-ms);
+}
+
+.login-reveal:hover {
+  color: var(--ob-color-secondary);
+  background: var(--ob-color-subtle);
+}
+
+.login-reveal:focus-visible {
+  outline: var(--ob-component-focus-width) solid var(--ob-color-primary);
+  outline-offset: 0;
+}
+
+.login-reveal[hidden] { display: none; }
+
+.login-caps {
+  min-height: var(--ob-component-field-helper-line-height);
+  margin: var(--ob-foundation-space-1) 0 0;
+  font-size: var(--ob-component-field-helper-size);
+  line-height: var(--ob-component-field-helper-line-height);
+  color: var(--ob-color-warning);
+}
+
+.login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ob-foundation-space-2);
+  width: 100%;
+  height: var(--login-control-height);
+  margin-top: var(--ob-foundation-space-2);
+  font: inherit;
+  color: var(--ob-color-surface);
+  background: var(--ob-color-primary);
+  border: 0;
+  border-radius: var(--ob-component-control-management-radius);
+  cursor: pointer;
+  transition: background var(--ob-component-motion-feedback-ms), opacity var(--ob-component-motion-feedback-ms);
+}
+
+.login-submit:hover { background: var(--ob-color-primary-hover); }
+.login-submit:active { background: var(--ob-color-primary-active); }
+
+.login-submit:focus-visible {
+  outline: var(--ob-component-focus-width) solid var(--ob-color-primary);
+  outline-offset: var(--ob-component-focus-offset);
+}
+
+.login-submit[aria-busy="true"] {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.login-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--ob-foundation-space-6) 0 0;
+  font-size: var(--ob-component-table-metadata-size);
+  line-height: var(--ob-component-field-helper-line-height);
+  color: var(--ob-color-muted);
+}
+
+.login-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+}
+
+.login-icon[hidden] { display: none; }
+
+.login-spinner { animation: login-spin 1s linear infinite; }
+
+@keyframes login-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1439px) {
+  .login-brand { padding: 40px 48px 32px; }
+  .login-brand-logo { height: 48px; }
+  .login-brand-body { padding-bottom: 48px; }
+}
+
+@media (max-height: 800px) {
+  .login-product { font-size: 36px; }
+  .login-capabilities { margin-top: var(--ob-foundation-space-8); }
+}
+
+/* 窄视口与 200% 缩放：品牌区收为顶部条带，纹样隐藏，登录表单保持完整可用。 */
+@media (max-width: 959px) {
+  .login {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .login-brand {
+    padding: var(--ob-foundation-space-6);
+    border-right: 0;
+    border-bottom: 1px solid var(--ob-color-border);
+  }
+
+  .login-brand-logo { height: 40px; }
+  .login-brand-body { margin-block: var(--ob-foundation-space-6) 0; padding: 0; }
+  .login-eyebrow { margin-bottom: var(--ob-foundation-space-2); }
+  .login-product { font-size: 28px; }
+  .login-positioning { font-size: var(--ob-component-control-font-size); line-height: var(--ob-component-control-line-height); }
+  .login-capabilities, .login-motif { display: none; }
+  .login-main { padding: var(--ob-foundation-space-8) var(--ob-foundation-space-4); }
+  .login-panel { padding: var(--ob-foundation-space-6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-spinner { animation: none; }
+  .login-input, .login-reveal, .login-submit { transition: none; }
+}

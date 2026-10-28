@@ -10,7 +10,7 @@
 | 命令集合 | `Dropdown` + `Menu` |
 | 行级更多操作 | More `Dropdown` |
 | 同级内容切换 | `Tabs` |
-| 线性任务流程 | Ant `Steps` 或 Product `OrchTaskStepRail` |
+| 线性任务流程 | `WizardFrame` 内的 Ant `Steps` |
 | 保持当前页面上下文的编辑 | `Drawer` |
 | 必须阻断当前流程的确认 | `Modal` |
 | 简短危险确认 | `Popconfirm` 或 `OrchDangerConfirm` |

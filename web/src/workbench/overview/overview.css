@@ -7,13 +7,13 @@
 .overview-freshness { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ob-foundation-space-1) var(--ob-foundation-space-3); color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .overview-feedback { display: grid; gap: var(--ob-foundation-space-2); }
 
-/* DEC-060：我的任务与执行节点并排 3:2；容器不足 1000px 时单列，DOM 顺序即阅读与优先级顺序。 */
-.overview-pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--ob-foundation-space-4); align-items: start; }
-@container overview (max-width: 999px) { .overview-pair { grid-template-columns: minmax(0, 1fr); } }
+/* 只将图形与短事实并列；两张明细表独占通栏，保留节点四维状态、原因与采样事实。 */
+.overview-analysis { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--ob-foundation-space-4); align-items: stretch; }
+@container overview (max-width: 999px) { .overview-analysis { grid-template-columns: minmax(0, 1fr); } }
 
 .overview-section { min-inline-size: 0; padding: var(--ob-foundation-space-6); }
 .overview-section h2 { margin: 0; color: var(--ob-color-text); font-size: var(--ob-product-typography-section-size); font-weight: var(--ob-product-typography-weight); line-height: var(--ob-product-typography-title-line-height); }
-.overview-section-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); min-inline-size: 0; margin-bottom: var(--ob-foundation-space-4); }
+.overview-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); min-inline-size: 0; margin: calc(-1 * var(--ob-foundation-space-6)) calc(-1 * var(--ob-foundation-space-6)) var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6); border-bottom: 1px solid var(--ob-color-border); }
 .overview-section-heading p { margin: var(--ob-foundation-space-1) 0 0; color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .overview-section-alert { margin-top: var(--ob-foundation-space-4); }
 .overview-object-link { min-inline-size: 0; max-inline-size: 100%; height: auto; padding-inline: 0; white-space: normal; overflow-wrap: anywhere; text-align: start; }
@@ -22,4 +22,5 @@
 
 @container overview (max-width: 760px) {
   .overview-section { padding: var(--ob-foundation-space-4); }
+  .overview-section-heading { margin: calc(-1 * var(--ob-foundation-space-4)) calc(-1 * var(--ob-foundation-space-4)) var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4); }
 }

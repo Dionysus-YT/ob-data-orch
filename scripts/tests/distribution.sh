@@ -178,3 +178,63 @@ EOF
     if [ "$scenario" != control-plane ]; then [ "$(cat "$root/agent-config.json")" = original-config ]; fi
     printf 'PASS: %s\n' "$scenario"
 done
+
+# 审计首次授予只走原控制面专用账户，所有终端和授权命令均为合成夹具。
+cat > "$test_root/bin/stty" <<'EOF'
+#!/bin/sh
+printf 'stty %s\n' "$*" >> "$EVENTS"
+if [ "$1" = -g ]; then printf 'synthetic-terminal-state\n'; fi
+EOF
+chmod +x "$test_root/bin/stty"
+for scenario in audit-success audit-failure audit-active audit-unknown audit-directory audit-account audit-uninstalled audit-non-root audit-agent audit-cancel; do
+    root="$test_root/$scenario/installed"
+    mkdir -p "$root/data"
+    cp "$script_dir/../distribution/start.sh" "$root/start.sh"
+    printf 'original-identity\n' > "$root/data/identity"
+    if [ "$scenario" = audit-agent ]; then printf 'original-agent-config\n' > "$root/agent-config.json"; fi
+    cat > "$root/control-plane" <<'EOF'
+#!/bin/sh
+printf 'audit-binary %s\n' "$*" >> "$EVENTS"
+[ "$*" = -bootstrap-audit-access ] || exit 99
+IFS= read -r password
+IFS= read -r confirmation
+[ "$password" = synthetic-audit-password ] || exit 98
+[ "$confirmation" = 'GRANT_AUDIT_LOG admin' ] || exit 97
+exit "$AUDIT_EXIT"
+EOF
+    chmod +x "$root/control-plane"
+    EVENTS="$test_root/$scenario/events"
+    SERVICE_ROOT="$root"
+    SERVICE_USER=ob-data-orch
+    SERVICE_STATE=inactive
+    SERVICE_MISSING=0
+    USER_ID=0
+    AUDIT_EXIT=0
+    confirmation='GRANT_AUDIT_LOG admin'
+    case "$scenario" in
+        audit-failure) AUDIT_EXIT=9 ;;
+        audit-active) SERVICE_STATE=active ;;
+        audit-unknown) SERVICE_STATE=unknown ;;
+        audit-directory) SERVICE_ROOT="$test_root/other" ;;
+        audit-account) SERVICE_USER=other-service ;;
+        audit-uninstalled) SERVICE_MISSING=1 ;;
+        audit-non-root) USER_ID=1000 ;;
+        audit-cancel) confirmation=cancel ;;
+    esac
+    export EVENTS SERVICE_ROOT SERVICE_USER SERVICE_STATE SERVICE_MISSING USER_ID AUDIT_EXIT
+    : > "$EVENTS"
+    status=0
+    printf '6\n%s\nsynthetic-audit-password\n' "$confirmation" | sh "$root/start.sh" > "$test_root/$scenario/output" 2>&1 || status=$?
+    if [ "$scenario" = audit-success ] || [ "$scenario" = audit-failure ]; then
+        grep -q '^audit-binary -bootstrap-audit-access$' "$EVENTS"
+        grep -q 'runuser -u ob-data-orch --' "$EVENTS"
+        if [ "$scenario" = audit-success ]; then [ "$status" -eq 0 ]; else [ "$status" -ne 0 ]; fi
+    else
+        [ "$status" -ne 0 ]
+        ! grep -q '^audit-binary' "$EVENTS"
+    fi
+    ! grep -q 'systemctl start\|systemctl stop' "$EVENTS"
+    ! grep -q synthetic-audit-password "$test_root/$scenario/output"
+    [ "$(cat "$root/data/identity")" = original-identity ]
+    printf 'PASS: %s\n' "$scenario"
+done

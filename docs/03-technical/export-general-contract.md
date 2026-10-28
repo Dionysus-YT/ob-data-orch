@@ -2,12 +2,26 @@
 
 > 文档状态：Export v1 技术 Canonical（EX-D2 产出持续维护）
 > 创建日期：2026-08-05
-> 最近更新：2026-10-17
+> 最近更新：2026-10-27
 > 依据：[开发任务地图](development-task-map.md) 第 5.2 节、[导出模块 Canonical](../02-design/export-module.md)
 > 关联契约：[API/SQLite](api-sqlite-data-contract.md)、[参数/命令](parameter-command-contract.md)、[Agent/状态](agent-task-state-contract.md)、[工具启动](tool-launch-isolation-contract.md)、[凭据/安全](credential-access-security-contract.md)、[日志/证据](log-collection-evidence-contract.md)
 > 安全说明：不记录真实端点、身份、密码、密钥、完整命令或工具原始输出
 
 ## 0. 文档目的
+
+### 2026-10-27 MySQL 保留 Schema 的结构策略
+
+固定 OBDUMPER 4.3.5 的 MySQL 原生路径使用 `SHOW CREATE TABLE`，不能补齐该结果中不存在的限定前缀。新建或明确更新包含结构的 MySQL 配置，在 `ddlBehavior.retainSchema=true` 时由领域规则派生 `compactSchema=false`，唯一生成器发射单令牌 `--compact-schema=false`；与 `--retain-schema` 一起选择工具已有的元数据重建路径。此路径可能需要系统视图读取权限，不能以普通对象可读预检查外推所有环境均可执行；失败沿用现有任务/日志证据规则，不改写输出 DDL。
+
+v12 继承 v11 的 79 项定义，仅 `compact-schema` 支持显式布尔发射；显式 true 使用 `--compact-schema=true`。未设置、显式 false 和 true 在新元数据中保持区别。独立的 `compactSchema=false` 本轮不开放，只允许上述 MySQL 保留前缀组合；DATA_ONLY 仍拒绝任何显式 compactSchema，MySQL 同时指定 retainSchema 与原生 true 在保存前拒绝。Oracle 保留前缀不派生 false，其他资格和专家参数权限不变。
+
+第三步正常勾选“保留 Schema 前缀”会清除并禁用“使用原生建表语句”；取消保留前缀后恢复可选，未勾选继承工具默认。恢复历史配置时不悄悄清除冲突，而由校验要求用户修正。原版本读取、命令预览及冻结任务不升级；明确 PATCH 保存新的结构策略修订时重选 v12，重新生成指纹并使旧预检失效。既有 HTTP 字段仍为可选 boolean，无新增路径或迁移。Windows/ODP/MySQL 的 DDL_ONLY 与 CSV/CUT/SQL 结构加数据实测范围及剩余门禁见[验收](evidence/export-retain-schema-2026-10-26.md)。
+
+### 2026-10-26 默认日志与 Java 临时材料
+
+未填写 `outputConfig.logPath` 时，唯一生成器继续省略 `--log-path`；Agent 的固定启动配置使用私有、逐字节校验的 console XML，任务日志沿用既有双层脱敏管道，不在导出目录创建默认路由日志。显式日志路径的预检查和原样传递保持不变，不自动开启目录空性跳过，也不授予用户日志目录采集权。三类直接 Java 启动的 `java.io.tmpdir` 固定为 execution 私有 runtime，临时原生材料沿用工作区清理。该修订不改 API、SQLite、业务 argv 或冻结版本。合成实现和真实复验分别见[本地证据](evidence/export-runtime-closure-2026-10-26.md)、[实际验收](evidence/export-runtime-acceptance-2026-10-26.md)；后者已验证 Windows 默认/显式日志、zstd/snappy 与完整整库结果，不改写 2026-10-14 历史结果，也不提升完整 EX-V1/G3/G4。
+
+固定 JVM 另设置 `file.encoding=UTF-8`，防止 Log4j 缺省 GBK 破坏日志采集；数据文件显式 `--file-encoding` 仍原样生效。Windows Java 8 参数先经系统活动代码页无损往返检查，不可表示时在工具进程创建前拒绝，不能用替换字符执行含义已变的查询。默认空表无任何产物时继续失败关闭；显式保留空文件须有可核对文件。零日期保留的真实断言区分已查证的可空列与 NOT NULL 列，不把可空列的 NULL 误报为 NOT NULL 零日期成功。
 
 ### 2026-10-17 未完成草稿与导入交互同步
 
@@ -624,6 +638,8 @@ type ExportConfigTemplate struct {
 - v5：18 个定义，冻结单表 CSV 基线。
 - v6：59 个定义，冻结的泛化历史版本，仅用于重放已持久化 v6 草稿和任务。
 - v7：在 v6 上新增 13 个定义，共 72 个定义；当前只新增启用 MySQL DATE/DATETIME 格式、分区筛选和类型排除。其余 9 个第二批定义保持 VALIDATION_GATED。
+- v11：专家参数版本，共 79 项；资格和固定 JDBC 依赖见 0.3，历史资源不可变。
+- v12 `schema-boolean`：继承 v11，仍为 79 项；仅 compact-schema 的显式布尔语法改变，适用范围和历史重放见本节开头的 2026-10-27 修订及[参数契约](parameter-command-contract.md#2026-10-27-v12-结构策略布尔值)。
 
 **运行时定义字段**（每个参数）：
 - `supportState`：ENABLED | VALIDATION_GATED | HIDDEN | BLOCKED
@@ -632,6 +648,7 @@ type ExportConfigTemplate struct {
 - `officialEvidence`：支撑该定义的契约、官方资料和受控验证引用
 - `capabilityVersions`：该参数适用的能力切片列表
 - `emissionTarget`：ARGV | SECURITY_FILE（从 v5 overrides 提升为定义级字段）
+- `explicitBoolean`：缺省 false；仅 v12 的 compact-schema flag 可为 true，以单个 `--compact-schema=true/false` 令牌保留显式值；其他定义或历史版本携带此标记失败关闭。
 
 **现行分类体系**（9 类）：
 

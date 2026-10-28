@@ -46,7 +46,7 @@ watch(restricted, value => { if (value) actions.invalidate() }, { flush: 'sync' 
 const middleCell = () => ({ style: { verticalAlign: 'middle' } })
 const columns: TableColumnsType<TaskListItem> = [
   { key: 'task', title: '任务', width: 230, customCell: middleCell },
-  { key: 'type', title: '类型', width: 80, align: 'center', customCell: middleCell },
+  { key: 'type', title: '类型', width: 96, align: 'center', customCell: middleCell },
   { key: 'source', title: '数据源 / 对象', width: 190, customCell: middleCell },
   { key: 'state', title: '状态 / 阶段', width: 130, align: 'center', customCell: middleCell },
   { key: 'progress', title: '进度', width: 90, align: 'center', customCell: middleCell },
@@ -68,9 +68,8 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
     <MessageContext />
     <div class="orch-ui task-workspace">
       <header class="orch-page-header task-heading">
-        <div class="orch-page-title"><h1>任务中心</h1><span class="orch-context-label">导入 / 导出</span></div>
+        <div class="orch-page-title"><h1>任务中心</h1></div>
       </header>
-      <p class="task-intro">定位授权范围内的任务并进入详情排障，列表不展开命令、完整参数或日志。</p>
 
       <AAlert v-if="failure && tasks.length" class="orch-feedback" type="error" message="刷新未完成" :description="`${failure} 当前仍展示上一次加载的任务。`" show-icon><template #action><AButton @click="list.refresh()">重试</AButton></template></AAlert>
       <AAlert v-if="actionFailure" class="orch-feedback" type="error" message="操作未完成" :description="actionFailure" show-icon />
@@ -92,7 +91,7 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
             <ASkeleton v-if="loading && !tasks.length" active :paragraph="{ rows: 6 }" class="task-loading" role="status" aria-label="正在读取授权任务" />
             <AAlert v-else-if="failure && !tasks.length" class="task-state" :type="restricted ? 'warning' : 'error'" :message="restricted ? '当前身份无权查看任务' : '无法加载任务列表'" :description="restricted ? '请联系管理员确认任务查看权限。' : failure" show-icon><template #action><AButton v-if="!restricted" @click="list.refresh()">重试</AButton></template></AAlert>
             <template v-else-if="!dateRangeError">
-              <OrchOperationalTable :rows="tasks" :columns="columns" :loading="loading || refreshing" row-key="id" :minimum-width="1370" :label="hasConditions ? '符合当前筛选条件的授权任务' : '当前授权范围内的任务'">
+              <OrchOperationalTable v-if="tasks.length" :rows="tasks" :columns="columns" :loading="loading || refreshing" row-key="id" :minimum-width="1386" :label="hasConditions ? '符合当前筛选条件的授权任务' : '当前授权范围内的任务'">
                 <template #bodyCell="{ record: task, column }">
                   <template v-if="column.key === 'task'">
                     <ATooltip :title="task.displayName"><RouterLink class="task-name" :to="{ name: 'task-detail', params: { id: task.id } }">{{ task.displayName }}</RouterLink></ATooltip>
@@ -121,11 +120,9 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
                     </div>
                   </template>
                 </template>
-                <template #empty>
-                  <EmptyState v-if="hasConditions" title="没有符合条件的任务" description="调整或清除筛选条件后重试。" action="清除筛选" @action="list.clearFilters()" />
-                  <EmptyState v-else title="尚无可展示任务" description="当前授权范围内没有已提交任务。"><RouterLink v-slot="{ href, navigate }" to="/exports/new" custom><AButton :href="href" type="primary" @click="navigate">新建导出任务</AButton></RouterLink></EmptyState>
-                </template>
               </OrchOperationalTable>
+              <EmptyState v-else-if="hasConditions" title="没有符合条件的任务" description="调整或清除筛选条件后重试。"><AButton @click="list.clearFilters()">清除筛选</AButton></EmptyState>
+              <EmptyState v-else title="尚无可展示任务" description="当前授权范围内没有已提交任务。"><RouterLink v-slot="{ href, navigate }" to="/exports/new" custom><AButton :href="href" @click="navigate">新建导出任务</AButton></RouterLink></EmptyState>
               <footer class="orch-table-footer task-footer">
                 <span>{{ totalPages === 0 ? '共 0 页' : `共 ${totalPages} 页` }}</span>
                 <nav class="task-pagination" aria-label="任务列表分页">
@@ -151,7 +148,6 @@ function rowAction(task: TaskListItem, action: string) { actions.request(task, a
 
 <style scoped>
 .task-workspace { min-width: 0; }
-.task-intro { margin: 0 0 var(--ob-foundation-space-4); color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .task-page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--ob-foundation-space-2); }
 .task-updated { color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .task-loading, .task-state { margin: var(--ob-foundation-space-6); }

@@ -1713,7 +1713,7 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 	// 附加定义信息与序列策略的对象资格由领域规则复验；sys 槽位只能从数据源事实派生。
 	normalized.SequencePolicy = ddl.SequencePolicy
 	normalized.AddExtraMessage = ddl.AddExtraMessage != nil && *ddl.AddExtraMessage
-	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) || (ddl.CompactSchema != nil && *ddl.CompactSchema) {
+	if (ddl.DropObject != nil && *ddl.DropObject) || (ddl.RetainSchema != nil && *ddl.RetainSchema) || ddl.CompactSchema != nil {
 		if normalized.ContentKind == "DATA_ONLY" {
 			return normalizedExportDraft{}, errors.New("v6 ddl behavior requires ddl content")
 		}
@@ -1723,6 +1723,10 @@ func normalizeExportConfigV6(config *store.ExportConfig, dataSourceID, nodeID st
 		normalized.DropObject = ddl.DropObject != nil && *ddl.DropObject
 		normalized.RetainSchema = ddl.RetainSchema != nil && *ddl.RetainSchema
 		normalized.CompactSchema = ddl.CompactSchema != nil && *ddl.CompactSchema
+		if ddl.CompactSchema != nil {
+			value := *ddl.CompactSchema
+			normalized.CompactSchemaValue = &value
+		}
 	}
 	// EX-I4：序列化选项按格式适用性校验；跨格式文本选项随 FORMAT_IN 激活，
 	// CSV/CUT 专属字段越界即失败关闭，防止命令生成器收到不可能的参数组合。
@@ -2492,8 +2496,14 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 	if rebindEditing {
 		metadataVersion = ""
 	}
+	// 写入新修订时重新选择结构语法；只读预览和冻结任务继续使用保存版本。
+	if normalized.CompactSchemaValue != nil || normalized.RetainSchema {
+		metadataVersion = ""
+	}
 	if normalized.NeedsExpertMetadata() {
-		metadataVersion = exportMetadataExpertParameters
+		if normalized.CompactSchemaValue == nil && !normalized.RetainSchema {
+			metadataVersion = exportMetadataExpertParameters
+		}
 	} else if normalized.TimestampFormats != (store.TimestampFormatConfig{}) {
 		if source, sourceErr := s.dataSource.GetDataSourceSummary(r.Context(), normalized.DataSourceID); sourceErr == nil && source.CompatibilityMode == "ORACLE" {
 			metadataVersion = exportMetadataExpertParameters
@@ -2802,6 +2812,7 @@ const (
 	exportMetadataCombinedObjects  = "obdumper-4.3.5-slice-v9-combined-object-selection"
 	exportMetadataDDLTextFormats   = "obdumper-4.3.5-slice-v10-ddl-text-formats"
 	exportMetadataExpertParameters = "obdumper-4.3.5-slice-v11-expert-parameters"
+	exportMetadataSchemaBoolean    = "obdumper-4.3.5-slice-v12-schema-boolean"
 )
 
 // errGeneralizedGeneratorUnavailable 表示泛化能力请求缺少对应的生成器依赖，必须失败关闭。
@@ -2894,6 +2905,13 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	if s.generalGenerator == nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errGeneralizedGeneratorUnavailable
 	}
+	if metadataVersion == exportMetadataSchemaBoolean || (metadataVersion == "" && input.NeedsSchemaBooleanMetadata(source.CompatibilityMode)) {
+		input, err = input.ResolveSchemaStrategy(source.CompatibilityMode)
+		if err != nil {
+			return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
+		}
+		metadataVersion = exportMetadataSchemaBoolean
+	}
 	generalizedFields, err := exportdomain.BuildGeneralizedFields(input)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
@@ -2912,6 +2930,8 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 		}
 	case exportMetadataExpertParameters:
 		requestBase.MetadataVersion = exportMetadataExpertParameters
+	case exportMetadataSchemaBoolean:
+		requestBase.MetadataVersion = exportMetadataSchemaBoolean
 	case exportMetadataV7:
 		requestBase.MetadataVersion = exportMetadataV7
 	case exportMetadataObjectSelection:

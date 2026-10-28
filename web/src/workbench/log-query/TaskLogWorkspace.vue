@@ -3,7 +3,7 @@ import { computed, reactive, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
-import { Alert as AAlert, Button as AButton, ConfigProvider, DatePicker, Empty as AEmpty, Form as AForm, FormItem as AFormItem, Input as AInput, Modal as AModal, Select as ASelect, SelectOption as ASelectOption, Space as ASpace, Tag as ATag, type TableColumnsType } from 'ant-design-vue'
+import { Alert as AAlert, Button as AButton, ConfigProvider, DatePicker, Empty as AEmpty, Form as AForm, FormItem as AFormItem, Input as AInput, Modal as AModal, Select as ASelect, SelectOption as ASelectOption, Skeleton as ASkeleton, Space as ASpace, Tag as ATag, type TableColumnsType } from 'ant-design-vue'
 import { LeftOutlined, ReloadOutlined, RightOutlined } from '@ant-design/icons-vue'
 import { browserApi } from '@/api/browser'
 import type { LogItem } from '@/api/logQuery'
@@ -35,7 +35,6 @@ const emptyMessage = computed(() => !model.page ? '选择时间与条件后查�
   <ConfigProvider :theme="managementTheme">
     <MessageContext />
     <div class="orch-ui log-query-workspace">
-      <p class="orch-context-label">查询有权任务的已脱敏日志，按接收时间倒序展示。任务实时日志可在任务详情中查看。</p>
       <section class="orch-management" aria-label="任务日志查询">
         <AForm name="log-query" :model="model.filters" layout="vertical" class="log-query-filters" @finish="state.run()">
           <AFormItem label="接收时间范围（UTC）" :validate-status="model.timeError ? 'error' : undefined" :help="model.timeError" class="log-query-range">
@@ -50,25 +49,26 @@ const emptyMessage = computed(() => !model.page ? '选择时间与条件后查�
         <AAlert v-if="model.actionFailure && !model.downloadOpen && !model.contextOpen" class="orch-feedback" type="error" show-icon :message="model.actionFailure" />
         <AAlert v-if="model.dirty && model.page" class="orch-feedback" type="info" show-icon message="筛选条件已修改，当前仍为上一次查询结果；请点击查询应用条件。" />
         <div class="orch-table-meta log-query-meta">
-          <div><h2>任务日志</h2><span class="orch-context-label">{{ model.page ? `本页 ${model.page.items.length} 条 · 快照 ${logTime(model.page.snapshotAt)}` : '默认最近 1 小时，首次进入不会自动跨任务查询' }}</span></div>
+          <div><h2>任务日志</h2><span v-if="model.page" class="orch-context-label">本页 {{ model.page.items.length }} 条 · 快照 {{ logTime(model.page.snapshotAt) }}</span></div>
           <ASpace wrap><AButton :disabled="!model.page || model.dirty || model.loading" aria-label="刷新日志快照" @click="state.run('refresh')"><template #icon><ReloadOutlined /></template>刷新</AButton><AButton :disabled="!model.canDownload" @click="state.requestDownload()">下载当前结果</AButton><AButton v-if="model.applied?.taskId" :disabled="!model.canDownload" @click="state.requestDownload(true)">下载完整任务日志</AButton></ASpace>
         </div>
-        <p v-if="model.applied" class="log-query-summary">{{ logTime(model.applied.from) }} 至 {{ logTime(model.applied.to) }} · {{ model.applied.taskId || '全部有权任务' }} · {{ logSourceLabel[model.applied.source] || '全部来源' }}<template v-if="model.applied.keyword"> · 包含“{{ model.applied.keyword }}”</template> · 已脱敏</p>
+        <p v-if="model.applied" class="log-query-summary">{{ logTime(model.applied.from) }} 至 {{ logTime(model.applied.to) }} · {{ model.applied.taskId || '全部有权任务' }} · {{ logSourceLabel[model.applied.source] || '全部来源' }}<template v-if="model.applied.keyword"> · 包含“{{ model.applied.keyword }}”</template></p>
         <AAlert v-if="model.page?.truncated" class="orch-feedback" type="warning" show-icon message="已达到 50000 条或 64 MiB 扫描限制，结果已截断，请缩小条件。" />
         <AAlert v-if="model.page?.expired" class="orch-feedback" type="warning" show-icon message="授权范围内存在已按保留策略清理的日志；当前结果不包含已清理内容。" />
         <AAlert v-if="model.page?.incomplete" class="orch-feedback" type="warning" show-icon message="本次扫描发现日志缺口或截断，已按采集事实保留标识。" />
-        <OrchOperationalTable :columns="columns" :rows="model.page?.items ?? []" row-key="token" label="脱敏任务日志结果" :loading="model.loading" :minimum-width="850">
-          <template #empty><AEmpty :description="emptyMessage" /></template>
+        <!-- 只挂载可信且非空的结果表；初始、空结果与读取失败不进入空表的横向尺寸测量。 -->
+        <OrchOperationalTable v-if="model.page?.items.length" :columns="columns" :rows="model.page.items" row-key="token" label="脱敏任务日志结果" :loading="model.loading" :minimum-width="850">
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'time'"><time class="log-query-time">{{ logTime(record.receivedAt) }}</time><span class="log-query-secondary">来源时间未取得 · 未标级别</span></template>
+            <template v-if="column.key === 'time'"><time class="log-query-time">{{ logTime(record.receivedAt) }}</time></template>
             <template v-else-if="column.key === 'task'"><RouterLink class="log-query-task" :to="{ name: 'task-detail', params: { id: record.taskId }, query: { tab: 'logs' } }">{{ record.taskId }}</RouterLink><span class="log-query-secondary">{{ logSourceLabel[record.source] }} · #{{ record.sequence }}</span></template>
             <template v-else-if="column.key === 'message'"><ATag v-if="record.kind !== 'LOG'" color="warning">{{ record.kind === 'GAP' ? '采集缺口' : '已截断' }}{{ record.integrityCode ? ` · ${record.integrityCode}` : '' }}</ATag><div class="log-query-message"><template v-for="(part, index) in logHighlights(logMessagePreview(record.message), model.applied?.keyword ?? '')" :key="index"><mark v-if="part.hit">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></div></template>
             <template v-else-if="column.key === 'actions'"><AButton type="link" :disabled="model.dirty || model.loading" @click="state.openContext(record)">查看上下文</AButton></template>
           </template>
         </OrchOperationalTable>
+        <ASkeleton v-else-if="model.loading" active :paragraph="{ rows: 4 }" role="status" aria-label="正在查询任务日志" />
+        <AEmpty v-else-if="!model.failure" :image="AEmpty.PRESENTED_IMAGE_SIMPLE" :description="emptyMessage" />
         <footer v-if="model.page" class="orch-table-footer log-query-footer"><span class="orch-context-label">已扫描 {{ model.page.scannedRecords }} 条 · {{ model.page.truncated ? '请收窄条件' : '数量仅代表已加载结果' }}</span><nav aria-label="日志结果分页"><AButton type="text" aria-label="上一页" :disabled="model.loading || model.dirty || !model.history.length" @click="state.run('previous')"><template #icon><LeftOutlined /></template></AButton><span>第 {{ model.history.length + 1 }} 页</span><AButton type="text" aria-label="下一页" :disabled="model.loading || model.dirty || !model.page.nextCursor" @click="state.run('next')"><template #icon><RightOutlined /></template></AButton></nav></footer>
       </section>
-      <p class="log-query-footnote">当前接入 OBDUMPER / OBLOADER 的受控工具输出。采集完整性以实际缺口和保留事实为准；跨来源时间相近不代表因果关系。节点、调度日志将在各自采集与权限接入后提供查询。</p>
     </div>
     <LogContextDrawer :model="model" />
     <AModal :open="model.downloadOpen" title="下载脱敏任务日志" ok-text="确认下载" cancel-text="取消" :confirm-loading="model.downloading" :closable="!model.downloading" :mask-closable="!model.downloading" :keyboard="!model.downloading" @ok="state.download" @cancel="state.cancelDownload">

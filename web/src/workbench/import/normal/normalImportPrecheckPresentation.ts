@@ -40,11 +40,6 @@ const reasons: Record<string, string> = {
   IMPORT_COLUMN_NAME_MISMATCH: '输入列名或显式列名单包含目标表中不存在的列。',
   IMPORT_REQUIRED_COLUMN_MISSING: '当前映射遗漏了没有默认值、非自增的必填目标列。',
 }
-const unconfiguredChecks: Record<string, string> = {
-  DATABASE_CONNECTIVITY: '当前节点尚未启用普通导入数据库连接检查，请更新 Agent 并核对本机只读 JDBC 检查配置。',
-  WRITE_ACCESS: '当前节点尚未启用普通导入写权限检查，请更新 Agent 并核对本机只读 JDBC 检查配置。',
-  INPUT_MAPPING: '当前节点尚未启用普通导入映射检查，请更新 Agent 并核对本机只读 JDBC 检查配置。',
-}
 
 // 只呈现固定证据码的安全说明；失效、等待和前置阻断优先于旧的单项通过结果。
 export function normalImportPrecheckPresentation(check: NormalImportCheck | null, result: CheckResult | undefined, expired: boolean) {
@@ -56,7 +51,7 @@ export function normalImportPrecheckPresentation(check: NormalImportCheck | null
   if (result.status === 'FAILED') return { status: 'error', text: '未通过', detail: reasons[result.evidenceCode] ?? '检查未通过，请核对对应配置后重新检查。' }
   if (result.evidenceCode === 'PRECHECK_BLOCKED_BY_TOOL') return { status: 'warning', text: '前置阻断，未执行', detail: '执行工具检查未通过，当前检查尚未执行；请先检查执行节点的工具环境。' }
   if (result.evidenceCode === 'PRECHECK_BLOCKED_BY_DATABASE') return { status: 'warning', text: '前置阻断，未执行', detail: '目标数据库连接检查未通过，当前检查尚未执行。' }
-  if (result.evidenceCode === 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED') return { status: 'warning', text: '未启用', detail: unconfiguredChecks[result.check] ?? '当前节点尚未启用普通导入的这项检查，请核对 Agent 版本与配置。' }
+  if (result.evidenceCode === 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED') return { status: 'warning', text: '未启用', detail: '节点未配置这项检查。' }
   return { status: 'warning', text: '无法确认', detail: reasons[result.evidenceCode] ?? '未能取得有效检查证据，请重试或核对节点状态。' }
 }
 
@@ -70,10 +65,12 @@ export function normalImportBlockingSummary(check: NormalImportCheck) {
   return [failed && `${failed} 项未通过`, blockedCount && `${blockedCount} 项因前置条件未执行`, unknown && `${unknown} 项无法确认`].filter(Boolean).join('，')
 }
 
-export function normalImportPrecheckFixAction(check: string, result: CheckResult | undefined) {
-  if (result?.evidenceCode === 'PRECHECK_BLOCKED_BY_TOOL' || check === 'TOOL_ENVIRONMENT') return { step: 2, label: '检查执行节点' }
-  if (result?.evidenceCode === 'PRECHECK_BLOCKED_BY_DATABASE' || ['DATABASE_CONNECTIVITY', 'WRITE_ACCESS'].includes(check)) return { step: 1, label: '检查数据源' }
-  if (check === 'NODE_RESOURCE') return { step: 4, label: '修改执行参数' }
-  if (check === 'INPUT_MAPPING') return { step: 3, label: '修改对象与映射' }
-  return { step: 2, label: '修改输入文件' }
+export function normalImportPrecheckFixAction(check: NormalImportCheck | null, result: CheckResult | undefined, expired: boolean) {
+  // 只为当前有效结果提供有证据的恢复入口；等待、失效和依赖阻断不提示修改无关配置。
+  if (!check || expired || ['PENDING', 'LEASED', 'INVALIDATED', 'EXPIRED'].includes(check.status) || !result || result.status === 'PASSED') return undefined
+  if (result.evidenceCode === 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED' || result.status === 'FAILED' && result.check === 'TOOL_ENVIRONMENT') return { target: 'NODE' as const, label: '查看执行节点' }
+  if (result.status !== 'FAILED') return undefined
+  const step = ['DATABASE_CONNECTIVITY', 'WRITE_ACCESS'].includes(result.check) ? 1 : result.check === 'NODE_RESOURCE' ? 4 : result.check === 'INPUT_MAPPING' ? 3 : 2
+  const label = step === 1 ? '检查数据源' : step === 4 ? '修改执行参数' : step === 3 ? '修改对象与映射' : '修改输入文件'
+  return { target: 'STEP' as const, step, label }
 }

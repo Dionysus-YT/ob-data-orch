@@ -5,10 +5,12 @@ import type { OverviewSection, OverviewTask } from '@/api/overview'
 import TaskProgress from '@/workbench/tasks/TaskProgress.vue'
 import { taskStateBadge, taskStateText, taskTypeText } from '@/workbench/tasks/taskStatePresentation'
 import { overviewTime } from './overviewPresentation'
+import { overviewTableComponents } from './overviewTable'
 
 defineProps<{ section: OverviewSection<readonly OverviewTask[]>; busy: boolean }>()
 const emit = defineEmits<{ retry: [] }>()
 const router = useRouter()
+const tableComponents = overviewTableComponents('我的重点任务')
 const columns = [
   { title: '任务', key: 'name', width: '40%' }, { title: '状态', key: 'state' }, { title: '进度 / 阶段', key: 'progress' }, { title: '更新时间（UTC）', key: 'time' },
 ]
@@ -20,8 +22,7 @@ const columns = [
       <div><h2 id="overview-my-tasks-title">我的任务</h2><p>仅本人创建 · 优先展示最近 24 小时失败、正在执行和等待任务</p></div>
       <AButton type="link" class="overview-object-link" @click="router.push({ name: 'tasks', query: { scope: 'MINE' } })">查看我的全部任务</AButton>
     </div>
-    <ATable v-if="section.status === 'READY'" :data-source="[...section.data]" :columns="columns" row-key="id" :pagination="false" :scroll="{ x: 600 }" aria-label="我的重点任务">
-      <template #emptyText><AEmpty :image="AEmpty.PRESENTED_IMAGE_SIMPLE" description="当前没有本人创建的重点任务" /></template>
+    <ATable v-if="section.status === 'READY' && section.data.length" :components="tableComponents" :data-source="[...section.data]" :columns="columns" row-key="id" :pagination="false" :scroll="{ x: 600 }">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'name'"><AButton type="link" class="overview-object-link" :title="record.displayName" @click="router.push({ name: 'task-detail', params: { id: record.id } })">{{ record.displayName }}</AButton><p class="overview-meta">{{ taskTypeText(record.type) }} · <span class="overview-identifier">{{ record.id }}</span></p></template>
         <template v-else-if="column.key === 'state'"><ABadge :status="taskStateBadge(record.state, record.reconciliationRequired)" :text="taskStateText(record.state)" /><ATag v-if="record.reconciliationRequired" color="warning">状态核对中</ATag></template>
@@ -29,6 +30,7 @@ const columns = [
         <span v-else-if="column.key === 'time'" class="overview-meta">{{ overviewTime(record.updatedAt) }}</span>
       </template>
     </ATable>
+    <AEmpty v-else-if="section.status === 'READY'" :image="AEmpty.PRESENTED_IMAGE_SIMPLE" description="当前没有本人创建的重点任务" />
     <AEmpty v-else-if="section.status === 'RESTRICTED'" :image="AEmpty.PRESENTED_IMAGE_SIMPLE" description="当前没有可查看的本人任务，请核对基础角色与授权范围。" />
     <AAlert v-else type="warning" show-icon message="我的任务暂不可用。"><template #action><AButton :disabled="busy" @click="emit('retry')">重试我的任务</AButton></template></AAlert>
   </section>

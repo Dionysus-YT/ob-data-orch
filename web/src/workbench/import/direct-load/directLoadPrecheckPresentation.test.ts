@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DirectLoadCheck } from '@/api/directLoad'
-import { directLoadCheckItems, directLoadPrecheckOverview, directLoadPrecheckProgress } from './directLoadPrecheckPresentation'
+import { directLoadCheckItems, directLoadCheckRecovery, directLoadPrecheckOverview, directLoadPrecheckProgress } from './directLoadPrecheckPresentation'
 
 function report(): DirectLoadCheck {
   return {
@@ -12,6 +12,18 @@ function report(): DirectLoadCheck {
 }
 
 describe('旁路预检查总览与步骤进度', () => {
+  it('探针未配置交给节点管理员处理，业务失败才返回配置，未知原因不猜测修正入口', () => {
+    const check: DirectLoadCheck = { ...report(), status: 'FAILED' }
+    const probe: DirectLoadCheck['results'][number] = { ...check.results[0]!, status: 'UNKNOWN', evidenceCode: 'DIRECT_LOAD_PROBE_NOT_CONFIGURED' }
+    expect(directLoadCheckRecovery(check, probe, false)).toBe('NODE_SETUP')
+    expect(directLoadCheckRecovery(check, { ...probe, status: 'FAILED', evidenceCode: 'DIRECT_LOAD_TABLE_NOT_FOUND' }, false)).toBe('CONFIGURATION')
+    expect(directLoadCheckRecovery(check, { ...probe, evidenceCode: 'SYNTHETIC_UNKNOWN' }, false)).toBeUndefined()
+    expect(directLoadCheckRecovery(check, check.results[0], false)).toBeUndefined()
+    expect(directLoadCheckRecovery(undefined, probe, false)).toBeUndefined()
+    expect(directLoadCheckRecovery(check, undefined, false)).toBeUndefined()
+    expect(directLoadCheckRecovery(check, probe, true)).toBeUndefined()
+    for (const status of ['PENDING', 'LEASED', 'EXPIRED', 'INVALIDATED'] as const) expect(directLoadCheckRecovery({ ...check, status }, probe, false)).toBeUndefined()
+  })
   it('未开始与等待保持信息提示，不继承旧成功或虚构检查进度', () => {
     expect(directLoadPrecheckOverview(undefined, false, false).type).toBe('info')
     expect(directLoadPrecheckProgress(undefined, false)).toBe(0)

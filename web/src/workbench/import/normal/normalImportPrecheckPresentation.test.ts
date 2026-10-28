@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NormalImportCheck } from '@/api/normalImport'
-import { normalImportBlockingSummary, normalImportPrecheckPresentation } from './normalImportPrecheckPresentation'
+import { normalImportBlockingSummary, normalImportPrecheckFixAction, normalImportPrecheckPresentation } from './normalImportPrecheckPresentation'
 
 function check(status: NormalImportCheck['status'] = 'FAILED'): NormalImportCheck {
   return { id: 'check', draftId: 'draft', draftRevision: 1, configFingerprint: 'a'.repeat(64), checkKind: 'NORMAL_IMPORT_PREFLIGHT', status, integrityStatus: 'COMPLETE', validUntil: '2099-01-01T00:00:00Z', executionEnabled: false, results: [] }
@@ -37,7 +37,7 @@ describe('普通导入预检查反馈', () => {
   it('未启用检查明确反馈 Agent 配置问题，不伪装连接或权限失败', () => {
     for (const name of ['DATABASE_CONNECTIVITY', 'WRITE_ACCESS', 'INPUT_MAPPING']) {
       const row = normalImportPrecheckPresentation(check(), { check: name, status: 'UNKNOWN', evidenceCode: 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED' }, false)
-      expect(row).toMatchObject({ status: 'warning', text: '未启用' }); expect(row.detail).toContain('只读 JDBC')
+      expect(row).toMatchObject({ status: 'warning', text: '未启用' }); expect(row.detail).toContain('节点未配置')
     }
   })
   it('等待和失效优先于旧通过事实，未知代码不作为原文展示', () => {
@@ -61,5 +61,22 @@ describe('普通导入预检查反馈', () => {
       { check: 'synthetic-extra', status: 'PASSED', evidenceCode: 'IMPORT_VERIFIED' },
     ]
     expect(normalImportBlockingSummary(report)).toBe('1 项未通过，1 项因前置条件未执行，3 项无法确认')
+  })
+  it('检查能力缺失与工具失败指向节点，业务失败指向对应配置', () => {
+    const report = check()
+    expect(normalImportPrecheckFixAction(report, { check: 'DATABASE_CONNECTIVITY', status: 'UNKNOWN', evidenceCode: 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED' }, false)).toEqual({ target: 'NODE', label: '查看执行节点' })
+    expect(normalImportPrecheckFixAction(report, { check: 'TOOL_ENVIRONMENT', status: 'FAILED', evidenceCode: 'TOOL_RUNTIME_INVALID' }, false)?.target).toBe('NODE')
+    expect(normalImportPrecheckFixAction(report, { check: 'WRITE_ACCESS', status: 'FAILED', evidenceCode: 'IMPORT_WRITE_INSERT_REQUIRED' }, false)).toMatchObject({ target: 'STEP', step: 1 })
+    expect(normalImportPrecheckFixAction(report, { check: 'INPUT_MAPPING', status: 'FAILED', evidenceCode: 'IMPORT_COLUMN_COUNT_MISMATCH' }, false)).toMatchObject({ target: 'STEP', step: 3 })
+    expect(normalImportPrecheckFixAction(report, { check: 'NODE_RESOURCE', status: 'FAILED', evidenceCode: 'IMPORT_JVM_HEAP_TOO_SMALL' }, false)).toMatchObject({ target: 'STEP', step: 4 })
+  })
+  it('等待、失效、通过、缺项和前置阻断不产生误导修正动作', () => {
+    const result: NormalImportCheck['results'][number] = { check: 'DATABASE_CONNECTIVITY', status: 'UNKNOWN', evidenceCode: 'NORMAL_IMPORT_PROBE_NOT_CONFIGURED' }
+    for (const status of ['PENDING', 'LEASED', 'INVALIDATED', 'EXPIRED'] as const) expect(normalImportPrecheckFixAction(check(status), result, false)).toBeUndefined()
+    expect(normalImportPrecheckFixAction(check(), result, true)).toBeUndefined()
+    expect(normalImportPrecheckFixAction(null, result, false)).toBeUndefined()
+    expect(normalImportPrecheckFixAction(check(), undefined, false)).toBeUndefined()
+    expect(normalImportPrecheckFixAction(check(), { ...result, status: 'PASSED' }, false)).toBeUndefined()
+    for (const evidenceCode of ['PRECHECK_BLOCKED_BY_TOOL', 'PRECHECK_BLOCKED_BY_DATABASE', 'DATABASE_CONNECTION_UNAVAILABLE']) expect(normalImportPrecheckFixAction(check(), { ...result, evidenceCode }, false)).toBeUndefined()
   })
 })

@@ -28,11 +28,11 @@ const columns: TableColumnsType<TaskDraftListItem> = [{ key: 'draft', title: '�
   <MessageContext />
   <section class="orch-management" aria-label="我的草稿">
     <div class="orch-table-meta draft-meta"><h2>我的草稿</h2><div class="draft-actions"><AButton type="text" :loading="refreshing" :disabled="loading || Boolean(busyId)" @click="drafts.load(true)"><template #icon><ReloadOutlined /></template>刷新草稿</AButton><TaskActionMenu :actions="['CREATE_EXPORT', 'CREATE_NORMAL_IMPORT', 'CREATE_DIRECT_LOAD']" label="新建任务" creation @select="action => navigate(action === 'CREATE_DIRECT_LOAD' ? '/imports/direct/new' : action === 'CREATE_NORMAL_IMPORT' ? '/imports/normal/new' : '/exports/new')" /></div></div>
-    <div class="draft-filters"><AInput :value="keywordInput" aria-label="草稿名称 / ID 关键字" placeholder="草稿名称 / ID" allow-clear :maxlength="128" class="draft-keyword" @update:value="value => updateKeyword(String(value))" /><p>只显示当前账号的未提交草稿；提交执行将进入向导重新预检查。</p></div>
+    <div class="draft-filters"><AInput :value="keywordInput" aria-label="草稿名称 / ID 关键字" placeholder="草稿名称 / ID" allow-clear :maxlength="128" class="draft-keyword" @update:value="value => updateKeyword(String(value))" /></div>
     <AAlert v-if="failure" class="orch-feedback" :type="restricted ? 'warning' : 'error'" :message="restricted ? '当前身份无法读取草稿' : '操作未完成'" :description="failure" show-icon><template #action><AButton v-if="!restricted" @click="drafts.load(true)">重试</AButton></template></AAlert>
     <ASkeleton v-if="loading && !items.length" active :paragraph="{ rows: 5 }" class="draft-loading" />
     <template v-else-if="!restricted">
-      <OrchOperationalTable :rows="items" :columns="columns" row-key="id" :minimum-width="910" label="当前账号的未提交草稿" :loading="loading || refreshing">
+      <OrchOperationalTable v-if="items.length" :rows="items" :columns="columns" row-key="id" :minimum-width="910" label="当前账号的未提交草稿" :loading="loading || refreshing">
         <template #bodyCell="{ record: item, column }">
           <template v-if="column.key === 'draft'"><ATooltip :title="item.displayName"><AButton type="link" class="draft-name" :disabled="!item.availableActions.includes('CONTINUE_EDIT')" @click="drafts.open(item)">{{ item.displayName }}</AButton></ATooltip><span class="draft-secondary"><code>{{ item.id }}</code> · {{ taskTypeText(item.type) }} · 修订 {{ item.revision }}</span><span v-if="item.sourceTaskId" class="draft-secondary">来源任务 {{ item.sourceTaskId }}</span></template>
           <template v-else-if="column.key === 'source'"><span>{{ item.dataSourceId }}</span><span class="draft-secondary">{{ item.nodeId || '未选择执行节点' }}</span></template>
@@ -40,8 +40,8 @@ const columns: TableColumnsType<TaskDraftListItem> = [{ key: 'draft', title: '�
           <template v-else-if="column.key === 'time'"><span>更新 {{ taskDateTimeText(item.updatedAt) }}</span><span class="draft-secondary">创建 {{ taskDateTimeText(item.createdAt) }}</span></template>
           <template v-else-if="column.key === 'actions'"><div class="draft-actions"><AButton v-if="item.availableActions.includes('CONTINUE_EDIT')" type="link" size="small" :disabled="Boolean(busyId)" @click="drafts.open(item)">继续编辑</AButton><TaskActionMenu :actions="item.availableActions.filter(action => action !== 'CONTINUE_EDIT')" :label="`${item.displayName} 草稿的更多操作`" :busy="Boolean(busyId)" @select="action => { if (action === 'SUBMIT') drafts.open(item, true); if (action === 'DELETE') drafts.requestDelete(item) }" /></div></template>
         </template>
-        <template #empty><EmptyState :title="drafts.keyword.value ? '没有符合条件的草稿' : '尚无未提交草稿'" :description="drafts.keyword.value ? '调整关键字后重试。' : '在导出或普通导入向导保存后，可在这里继续编辑。'" /></template>
       </OrchOperationalTable>
+      <EmptyState v-else :title="drafts.keyword.value ? '没有符合条件的草稿' : '尚无未提交草稿'" :description="drafts.keyword.value ? '调整关键字后重试。' : '在导出或普通导入向导保存后，可在这里继续编辑。'" />
       <footer class="orch-table-footer draft-footer"><span>共 {{ totalPages }} 页</span><nav class="draft-actions" aria-label="草稿列表分页"><label><span class="orch-sr-only">草稿每页显示</span><ASelect :value="drafts.limit.value" class="draft-page-size" :options="taskListPageSizes.map(value => ({ value, label: `${value} 条/页` }))" :disabled="loading || refreshing || Boolean(busyId)" aria-label="草稿每页显示" @change="value => drafts.updateFilters({ limit: Number(value) as TaskListPageSize })" /></label><AButton type="text" aria-label="草稿上一页" :disabled="loading || refreshing || Boolean(busyId) || !pageIndex" @click="drafts.previous()"><template #icon><LeftOutlined /></template></AButton><span>第 {{ pageIndex + 1 }} 页</span><AButton type="text" aria-label="草稿下一页" :disabled="loading || refreshing || Boolean(busyId) || !nextCursor" @click="drafts.next()"><template #icon><RightOutlined /></template></AButton></nav></footer>
     </template>
   </section>
@@ -52,7 +52,6 @@ const columns: TableColumnsType<TaskDraftListItem> = [{ key: 'draft', title: '�
 .draft-actions, .draft-filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
 .draft-meta { flex-wrap: wrap; gap: var(--ob-foundation-space-2); }
 .draft-filters { flex-wrap: wrap; padding: 0 var(--ob-foundation-space-4) var(--ob-foundation-space-4); }
-.draft-filters p { margin: 0; color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .draft-keyword { width: 260px; max-width: 100%; }
 .draft-name { display: block; max-width: 100%; height: auto; padding: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .draft-secondary { display: block; margin-top: var(--ob-foundation-space-1); color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); overflow-wrap: anywhere; }

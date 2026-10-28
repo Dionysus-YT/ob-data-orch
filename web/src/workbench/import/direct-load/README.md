@@ -21,11 +21,11 @@
 | `views/DirectLoadWizardView.vue` | 路由与 AbortController、Ant 装配、离开/卸载/退出登录保护、错误定位 |
 | `directLoadForm.ts` | 唯一表单、场景切换的默认 RPC 填写、当前格式活动投影、配置语义签名及恢复；无浏览器持久存储 |
 | `directLoadRules.ts` | 五步标题、旁路独立数据源资格、登记方式到场景的唯一映射、本地场景/格式/端口默认值、目录适用投影、单表与路径语法、本地校验 |
-| `directLoadPrecheckPresentation.ts` | 固定九项预检行、总览严重性与有效通过进度；不授予执行资格 |
+| `directLoadPrecheckPresentation.ts` | 固定九项预检行、总览严重性、有效通过进度和当前证据的修正入口；探针未配置只提示管理员处理，业务失败才返回输入，失效/等待/未知原因不沿用旧入口；不授予执行资格 |
 | `useDirectLoadReferences.ts` | 授权数据源/节点、名称/环境筛选及完整参数目录，独立请求代、失败和卸载清理 |
 | `useDirectLoadDraft.ts` | 草稿读取/保存、修订、dirty、保存期间编辑与路由会话 |
 | `useDirectLoadReview.ts` | 预览、检查轮询/过期、复制、独立名称与最终风险确认、提交防重 |
-| `useDirectLoadWizard.ts` | 能力组合、五步导航、入口阅读与来源清值确认及每配置一次自动准备 |
+| `useDirectLoadWizard.ts` | 能力组合、五步导航、入口阅读与来源清值确认及每配置一次自动准备；`goToNode` 将查看意图导航到当前节点，未选定时进入节点列表，沿用路由离开保护 |
 | `directLoadStepModels.ts` | 引用组合状态的类型端口；步骤没有 API 客户端 |
 | `steps/DirectLoadSourceStep.vue` | 首步授权来源列表和连接输入，仅消费已有模型；三模块共用 `wizard-source-*` 布局 |
 | `steps/` 其余组件 | 目标/文件/执行三步输入、最终检查和摘要，仅消费唯一模型与意图 |

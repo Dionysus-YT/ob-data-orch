@@ -7,11 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"html"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -119,7 +117,6 @@ func (b *Browser) handler(api http.Handler, webDirectory, packageDirectory, data
 		return nil, errors.New("网页安全令牌占位缺失，请重新构建安装包")
 	}
 	static := http.FileServer(http.Dir(webDirectory))
-	styles := strings.Join(regexp.MustCompile(`<link[^>]+href="/assets/[^"<>]+\.css"[^>]*>`).FindAllString(string(index), -1), "")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
@@ -134,7 +131,7 @@ func (b *Browser) handler(api http.Handler, webDirectory, packageDirectory, data
 			return
 		}
 		if r.URL.Path == "/login" {
-			b.login(w, r, styles)
+			b.login(w, r)
 			return
 		}
 		session, ok := b.session(r)
@@ -196,12 +193,11 @@ func (b *Browser) handler(api http.Handler, webDirectory, packageDirectory, data
 	}), nil
 }
 
-func (b *Browser) login(w http.ResponseWriter, r *http.Request, styles string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	message := ""
+// login 处理固定管理员登录；失败分支保留原状态码，并在同一登录页给出固定中文提示，便于直接重试。
+func (b *Browser) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		if !b.sameOrigin(r) {
-			http.Error(w, "请求来源无效", http.StatusForbidden)
+			renderLogin(w, http.StatusForbidden, "请求来源无效，请从平台地址重新打开登录页。", "")
 			return
 		}
 		b.mu.Lock()
@@ -215,25 +211,26 @@ func (b *Browser) login(w http.ResponseWriter, r *http.Request, styles string) {
 		b.mu.Unlock()
 		if !allowed {
 			w.Header().Set("Retry-After", "60")
-			http.Error(w, "尝试过于频繁，请稍后再试", http.StatusTooManyRequests)
+			renderLogin(w, http.StatusTooManyRequests, "尝试过于频繁，请 1 分钟后再试。", "")
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		if r.ParseForm() != nil {
-			http.Error(w, "登录信息无效", http.StatusBadRequest)
+			renderLogin(w, http.StatusBadRequest, "登录信息无效，请重新输入。", "")
 			return
 		}
+		username := r.PostForm.Get("username")
 		password := []byte(r.PostForm.Get("password"))
 		r.PostForm.Del("password")
 		r.Form.Del("password")
 		hash, err := passwordKey(password, b.settings.PasswordSalt)
 		credential.Zero(password)
-		valid := err == nil && subtle.ConstantTimeCompare(hash, b.settings.PasswordHash) == 1 && r.PostForm.Get("username") == "admin"
+		valid := err == nil && subtle.ConstantTimeCompare(hash, b.settings.PasswordHash) == 1 && username == "admin"
 		credential.Zero(hash)
 		if valid {
 			token, csrf := randomToken(), randomToken()
 			if token == "" || csrf == "" {
-				http.Error(w, "登录暂时不可用", 503)
+				renderLogin(w, http.StatusServiceUnavailable, "登录暂时不可用，请稍后重试。", username)
 				return
 			}
 			b.mu.Lock()
@@ -244,7 +241,7 @@ func (b *Browser) login(w http.ResponseWriter, r *http.Request, styles string) {
 			}
 			if len(b.sessions) >= 128 {
 				b.mu.Unlock()
-				http.Error(w, "有效会话过多", 503)
+				renderLogin(w, http.StatusServiceUnavailable, "当前有效会话过多，请稍后重试。", username)
 				return
 			}
 			b.sessions[token] = browserSession{csrf: csrf, expires: now.Add(12 * time.Hour)}
@@ -253,14 +250,14 @@ func (b *Browser) login(w http.ResponseWriter, r *http.Request, styles string) {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		w.WriteHeader(http.StatusUnauthorized)
-		message = "账户或密码不正确"
-	} else if r.Method != http.MethodGet {
+		renderLogin(w, http.StatusUnauthorized, "账户或密码不正确", username)
+		return
+	}
+	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登录 · OB Data Orch</title>` + styles + `<style>body{margin:0;background:var(--color-bg-page);color:var(--color-text-primary)}.login-workspace{max-width:440px;margin:12vh auto;padding:32px;background:var(--color-bg-surface);border:1px solid var(--color-border-default)}.login-workspace label{display:grid;gap:8px}.login-workspace input{width:100%;box-sizing:border-box;min-height:40px}.login-workspace h1{font-size:var(--text-page-title-size)}.login-workspace button{width:100%;margin-top:16px}@media(max-width:520px){.login-workspace{margin:32px 16px;padding:24px}}</style><body><main class="login-workspace"><h1>OB Data Orch</h1><p>登录以管理数据任务与执行节点。</p><p role="alert">` + html.EscapeString(message) + `</p><form method="post" action="/login"><p><label>账户 <input name="username" value="admin" autocomplete="username" required></label></p><p><label>密码 <input type="password" name="password" autocomplete="current-password" maxlength="256" required autofocus></label></p><button class="button button-primary" type="submit">登录</button></form></main></body></html>`))
+	renderLogin(w, http.StatusOK, "", "")
 }
 
 func randomToken() string {
