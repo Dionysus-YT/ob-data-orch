@@ -1,5 +1,5 @@
-import { TableOutlined, EyeOutlined } from '@ant-design/icons-vue'
-import { type DataSourceSummary } from '@/api/browser'
+import { TableOutlined, EyeOutlined, InboxOutlined, ThunderboltOutlined, CopyOutlined, AppstoreOutlined } from '@ant-design/icons-vue'
+import { type DataSourceSummary, type ExportObjectType } from '@/api/browser'
 
 export const fileEncodingChoices = [
   { value: '', label: 'UTF8（默认）' },
@@ -52,12 +52,22 @@ export const lineSeparatorChoices = [
 ]
 
 export const objectCategories = [
-  { type: 'TABLE', label: '表', icon: TableOutlined, glyph: '' },
-  { type: 'VIEW', label: '视图', icon: EyeOutlined, glyph: '' },
-  { type: 'FUNCTION', label: '函数', icon: null, glyph: 'fₓ' },
-  { type: 'PROCEDURE', label: '存储过程', icon: null, glyph: 'Pₓ' },
-  { type: 'SEQUENCE', label: '序列', icon: null, glyph: '¹²³' },
+  { type: 'TABLE', label: '表', icon: TableOutlined, glyph: '', oracleOnly: false },
+  { type: 'VIEW', label: '视图', icon: EyeOutlined, glyph: '', oracleOnly: false },
+  { type: 'FUNCTION', label: '函数', icon: null, glyph: 'fₓ', oracleOnly: false },
+  { type: 'PROCEDURE', label: '存储过程', icon: null, glyph: 'Pₓ', oracleOnly: false },
+  { type: 'PACKAGE', label: '程序包', icon: InboxOutlined, glyph: '', oracleOnly: true },
+  { type: 'TRIGGER', label: '触发器', icon: ThunderboltOutlined, glyph: '', oracleOnly: true },
+  { type: 'SYNONYM', label: '同义词', icon: CopyOutlined, glyph: '', oracleOnly: true },
+  { type: 'PUBLIC_SYNONYM', label: '公共同义词', icon: CopyOutlined, glyph: '', oracleOnly: true },
+  { type: 'TYPE', label: '类型', icon: AppstoreOutlined, glyph: '', oracleOnly: true },
+  { type: 'SEQUENCE', label: '序列', icon: null, glyph: '¹²³', oracleOnly: false },
 ] as const
+
+// createObjectTypeMap 为唯一类型目录初始化独立状态，避免新增分类遗漏缓存或恢复引用。
+export function createObjectTypeMap<T>(create: (type: ExportObjectType) => T): Record<ExportObjectType, T> {
+  return Object.fromEntries(objectCategories.map(({ type }) => [type, create(type)])) as Record<ExportObjectType, T>
+}
 
 export function precheckStatusLabel(status?: string) {
   return {

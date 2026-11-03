@@ -2,6 +2,8 @@ import { onScopeDispose, ref, shallowRef } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import { browserApi, taskDetailErrorMessage, type BrowserApi, type TaskListAction, type TaskListItem } from '@/api/browser'
 import { derivedDraftRoute, derivedTaskRoute } from './taskDerivationRoutes'
+import { withTemplateWriteDeadline } from '@/workbench/templates/templateWrites'
+import { templateNameError as validateTemplateName, templateWriteUncertain } from '@/workbench/templates/templateRules'
 
 export type TaskListActionApi = Pick<BrowserApi, 'cancelTask' | 'rebuildTaskDraft' | 'resumeTaskFromCheckpoint' | 'saveTaskTemplate' | 'getTaskCommandEvidence'>
 
@@ -30,6 +32,8 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
   const confirmation = shallowRef<{ readonly kind: TaskConfirmKind; readonly task: TaskListItem } | null>(null)
   const templateName = ref('')
   const templateNameError = ref('')
+  const templateResultUnknown = ref(false)
+  let templateRequest: { taskId: string; name: string; key: string } | undefined
   let disposed = false
   let sequence = 0
   onScopeDispose(() => { disposed = true; sequence++; controller.abort() })
@@ -45,6 +49,8 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
     confirmation.value = null
     templateName.value = ''
     templateNameError.value = ''
+    templateResultUnknown.value = false
+    templateRequest = undefined
     clearFeedback()
   }
 
@@ -55,13 +61,17 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
     if (action === 'COPY_COMMAND') { void copyCommand(task); return }
     templateName.value = ''
     templateNameError.value = ''
+    templateResultUnknown.value = false
+    templateRequest = undefined
     confirmation.value = { kind: action, task }
   }
 
-  function dismiss() { if (!busyTaskId.value) confirmation.value = null }
-  function updateTemplateName(value: string) { templateName.value = value; templateNameError.value = '' }
+  function dismiss() { if (!busyTaskId.value) { confirmation.value = null; templateName.value = ''; templateResultUnknown.value = false; templateRequest = undefined; clearFeedback() } }
+  function updateTemplateName(value: string) { if (templateResultUnknown.value) return; templateName.value = value; templateNameError.value = ''; templateRequest = undefined }
 
   async function run(task: TaskListItem, fallback: string, reload: boolean, operation: () => Promise<TaskActionOutcome>) {
+    const kind = confirmation.value?.kind
+    clearFeedback()
     const current = ++sequence
     const accepts = () => !disposed && current === sequence
     busyTaskId.value = task.id
@@ -72,10 +82,14 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
       if (!accepts()) return
       succeeded = true
       confirmation.value = null
+      if (kind === 'SAVE_TEMPLATE') { templateName.value = ''; templateResultUnknown.value = false; templateRequest = undefined }
       if (result.kind === 'NOTICE') notice.value = result.text
       else await deps.navigate(result.location)
     } catch (error) {
-      if (accepts()) failure.value = taskDetailErrorMessage(error, fallback)
+      if (accepts()) {
+        templateResultUnknown.value = kind === 'SAVE_TEMPLATE' && (templateResultUnknown.value || templateWriteUncertain(error))
+        failure.value = templateResultUnknown.value ? '保存结果待确认。可保持原请求重试，或刷新模板中心核对。' : taskDetailErrorMessage(error, fallback)
+      }
     } finally {
       if (accepts()) busyTaskId.value = ''
       // 写操作可能已被服务端接受；无论成功与否都重读列表，以服务端投影为准。
@@ -103,9 +117,11 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
       return run(task, '从检查点继续发起失败。', false, async () => ({ kind: 'NAVIGATE', location: derivedTaskRoute((await api.resumeTaskFromCheckpoint(task.id)).id) }))
     }
     const name = templateName.value.trim()
-    if (!name) { templateNameError.value = '请输入模板名称。'; return }
-    templateNameError.value = ''
-    return run(task, '保存模板失败。', false, async () => { await api.saveTaskTemplate(task.id, name); return { kind: 'NOTICE', text: `模板「${name}」已保存。` } })
+    templateNameError.value = validateTemplateName(name)
+    if (templateNameError.value) return
+    if (!templateRequest || templateRequest.taskId !== task.id || templateRequest.name !== name) templateRequest = { taskId: task.id, name, key: crypto.randomUUID() }
+    const key = templateRequest.key
+    return run(task, '保存模板失败。', false, async () => { await withTemplateWriteDeadline(() => api.saveTaskTemplate(task.id, name, key), controller.signal); return { kind: 'NOTICE', text: `模板「${name}」已保存。` } })
   }
 
   async function copyCommand(task: TaskListItem) {
@@ -123,5 +139,5 @@ export function useTaskListActions(deps: TaskListActionDependencies) {
     }
   }
 
-  return { busyTaskId, failure, notice, confirmation, templateName, templateNameError, updateTemplateName, request, confirm, dismiss, clearFeedback, invalidate }
+  return { busyTaskId, failure, notice, confirmation, templateName, templateNameError, templateResultUnknown, updateTemplateName, request, confirm, dismiss, clearFeedback, invalidate }
 }

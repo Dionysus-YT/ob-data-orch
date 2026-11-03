@@ -1,8 +1,10 @@
 # 通用导出模块技术契约
 
+> 2026-10-28 提交恢复：同一草稿修订只冻结一个新任务，换键/新预检查返回 `409 SUBMISSION_CONFLICT`。原键、原请求在当前授权复验后可返回原 taskId（HTTP 200、replayed=true），不要求已消费证明仍在有效期；未受理请求仍遵守完整预检查门禁。草稿与检查可选 submittedTaskId 仅用于恢复唯一已受理结果；响应未知时保留原提交意图，导航失败后只恢复导航。
+
 > 文档状态：Export v1 技术 Canonical（EX-D2 产出持续维护）
 > 创建日期：2026-08-05
-> 最近更新：2026-10-27
+> 最近更新：2026-11-02
 > 依据：[开发任务地图](development-task-map.md) 第 5.2 节、[导出模块 Canonical](../02-design/export-module.md)
 > 关联契约：[API/SQLite](api-sqlite-data-contract.md)、[参数/命令](parameter-command-contract.md)、[Agent/状态](agent-task-state-contract.md)、[工具启动](tool-launch-isolation-contract.md)、[凭据/安全](credential-access-security-contract.md)、[日志/证据](log-collection-evidence-contract.md)
 > 安全说明：不记录真实端点、身份、密码、密钥、完整命令或工具原始输出
@@ -124,7 +126,7 @@ ObjectScope {
 }
 
 ObjectType = TABLE | TABLE_GROUP | VIEW | TRIGGER | USER | ROLE
-           | SEQUENCE | SYNONYM | TYPE | TYPE_BODY | PACKAGE
+           | SEQUENCE | SYNONYM | PUBLIC_SYNONYM | TYPE | TYPE_BODY | PACKAGE
            | PACKAGE_BODY | FUNCTION | PROCEDURE
 
 ObjectExpression {
@@ -322,6 +324,16 @@ DerivedTaskRelation {
 - 不满足条件时不提供继续选项
 
 ---
+
+## 2026-11-02 Oracle 指定对象补齐
+
+Oracle 的完整分类为 TABLE、VIEW、FUNCTION、PROCEDURE、PACKAGE、TRIGGER、SYNONYM、PUBLIC_SYNONYM、TYPE、SEQUENCE；MySQL 仍为原五类。新五类仅在 DDL_ONLY / DDL_AND_DATA 活动，DATA_ONLY 仅接受 TABLE。对象名和类型共同确定选择，允许跨类型同名；内容切换仅改变活动集合，切回恢复原选择，换 Schema 清空旧选择。
+
+固定目录与精确预检查共用 `OracleObjectMetadata`：PACKAGE/TYPE/FUNCTION/PROCEDURE 查询 ALL_OBJECTS 并固定 OBJECT_TYPE，TRIGGER 查询 ALL_TRIGGERS，私有 SYNONYM 按 ALL_SYNONYMS.OWNER，PUBLIC_SYNONYM 按 PUBLIC/__public 与当前 TABLE_OWNER 绑定筛选。Schema 与精确名称全部绑定，Oracle 例程不依赖驱动 LIKE 转义或混合过程目录；MySQL 例程保持原 JDBC 路径。只读取元数据，不读取同义词目标、执行触发器或运行包/类型代码。每类失败保持不可用；Oracle ALL 成功必须返回十类，MySQL 必须五类；字节预算和租约不变。
+
+新增不可变 v13 继承 v12，共 84 项，新增 --package / --trigger / --synonym / --public-synonym / --type，仅绑定四种包含 DDL 的能力并依赖 --ddl。仅新建或明确保存含新增类型的完整配置选择 v13，历史目录和任务不升级；未完成草稿沿用 EDITING 占位版本，不能生成命令或预检查。不增加专家权限要求，专家配置仍按现有领域分类和冻结授权复验。包体、类型体不隐式加入本次选择。
+
+目录单类请求新增五种类型，0043 用独立受约束列 catalog_oracle_object_type 保存，保留旧列和历史迁移。浏览器与机器身份、CSRF、节点/数据源授权、幂等与失效门禁均沿用现役链路。合成平台链及 7 项真实 Oracle 固定工具组件输出已验证；Work 浏览器访问关闭，真实平台任务链仍归 EX-V1 待验证，不以组件结果代替平台端到端证明，见[本轮证据](evidence/export-oracle-objects-2026-11-02.md)。
 
 ## 2. 向后兼容策略
 
@@ -610,6 +622,8 @@ type SubmissionSnapshot struct {
 
 ### 4.3 ExportConfigTemplate（internal/store/types.go 新增）
 
+2026-11-02 现役模板端口沿用历史名称，并已通过 task_type 区分导出与普通导入；下方原型仅作导出结构设计追溯，当前完整字段以 [types.go](../../internal/store/types.go) 为准。浏览器只读取安全摘要，不返回 ConfigJSON。按 [DEC-069](../01-product/decisions.md#dec-069-模板中心按现役能力重定义)，本版不接入手工创建、复制、模板参数编辑或兼容服务，也不承诺第 1.6 节/快照原型中的完整模板来源版本链已持久化；页面及当前差距见[模板中心设计](../02-design/template-center-module.md)。本次实施仅在列表安全投影增加只读 availableActions 并同步 OpenAPI；存储端口和 SQLite 不变。两类模板保存/创建按精确名称或绑定计算幂等摘要，浏览器会话保留原键并区分结果未知与导航失败。
+
 ```go
 // ExportConfigTemplate 是从成功任务保存的导出配置模板。
 // 可用于创建新草稿，复用已验证的配置结构。
@@ -639,6 +653,7 @@ type ExportConfigTemplate struct {
 - v6：59 个定义，冻结的泛化历史版本，仅用于重放已持久化 v6 草稿和任务。
 - v7：在 v6 上新增 13 个定义，共 72 个定义；当前只新增启用 MySQL DATE/DATETIME 格式、分区筛选和类型排除。其余 9 个第二批定义保持 VALIDATION_GATED。
 - v11：专家参数版本，共 79 项；资格和固定 JDBC 依赖见 0.3，历史资源不可变。
+- v13 `oracle-objects`：继承 v12，84 项；新增五个 Oracle 对象参数，按本节 2026-11-02 规则选择，旧版本不改写。
 - v12 `schema-boolean`：继承 v11，仍为 79 项；仅 compact-schema 的显式布尔语法改变，适用范围和历史重放见本节开头的 2026-10-27 修订及[参数契约](parameter-command-contract.md#2026-10-27-v12-结构策略布尔值)。
 
 **运行时定义字段**（每个参数）：
@@ -648,7 +663,7 @@ type ExportConfigTemplate struct {
 - `officialEvidence`：支撑该定义的契约、官方资料和受控验证引用
 - `capabilityVersions`：该参数适用的能力切片列表
 - `emissionTarget`：ARGV | SECURITY_FILE（从 v5 overrides 提升为定义级字段）
-- `explicitBoolean`：缺省 false；仅 v12 的 compact-schema flag 可为 true，以单个 `--compact-schema=true/false` 令牌保留显式值；其他定义或历史版本携带此标记失败关闭。
+- `explicitBoolean`：缺省 false；仅 v12 及继承它的 v13 的 compact-schema flag 可为 true，以单个 `--compact-schema=true/false` 令牌保留显式值；其他定义或历史版本携带此标记失败关闭。
 
 **现行分类体系**（9 类）：
 

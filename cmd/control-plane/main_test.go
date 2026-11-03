@@ -56,6 +56,12 @@ func TestDevelopmentRestartPreservesDataAndTrust(t *testing.T) {
 		go func() { done <- serveWithDevelopment(ctx, directory, data, "http://127.0.0.1:15173") }()
 		ready := false
 		for attempt := 0; attempt < 400; attempt++ {
+			select {
+			case err := <-done:
+				cancel()
+				t.Fatalf("合成开发控制面在健康检查前退出: %v", err)
+			default:
+			}
 			if deployment.CheckHealth(data) == nil {
 				ready = true
 				break

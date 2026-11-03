@@ -42,7 +42,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
   test(`凭据单一工作面与抽屉会话 ${viewport.width}`, async ({ page }, info) => {
     const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
     await prepare(page); await page.setViewportSize(viewport); await page.goto('/settings/storage-credentials')
-    await expect(page).toHaveTitle(/OB Data Orch/)
+    await expect(page).toHaveTitle(/LDP/)
     await expect(page.getByRole('region', { name: '存储凭据列表', exact: true })).toBeVisible()
     await expect(page.locator('.orch-management')).toHaveCount(1)
     await page.screenshot({ path: info.outputPath('credential-list.png'), fullPage: true })

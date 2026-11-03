@@ -104,11 +104,13 @@ type Worker struct {
 	mu      sync.Mutex
 	running bool
 	active  *nodefacts.ActiveExecution
+	// 包内合成验证可注入离散时钟信号；正式装配始终使用固定 30 秒续租周期。
+	leaseRenewalTicks <-chan time.Time
 }
 
 // RunNext 领取、确认、解析唯一槽位、写入任务级安全材料、直接启动 Java，并上报事件与日志。
 // 无工作时 found=false；任务已经领取后任何错误都不会自动重新领取或再次启动。
-func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
+func (w *Worker) RunNext(ctx context.Context) (outcome Outcome, found bool, runErr error) {
 	if !w.enter() {
 		return Outcome{}, false, ErrInvalidConfiguration
 	}
@@ -117,14 +119,23 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		return Outcome{}, false, ErrInvalidConfiguration
 	}
 	queue := w.Runtime.SharedLogQueue
-	if w.Runtime.LogQueueRoot != "" {
+	if queue == nil {
 		var err error
-		if queue == nil {
-			queue, err = agentlogqueue.Open(w.Runtime.LogQueueRoot, agentlogqueue.DefaultMaxBytes)
+		root := w.Runtime.LogQueueRoot
+		if root == "" {
+			root = filepath.Join(w.Runtime.WorkspaceRoot, "log-queue")
 		}
-		if err != nil || flushQueuedLogs(ctx, queue, w.Protocol, w.BootID, "") != nil {
+		queue, err = agentlogqueue.Open(root, agentlogqueue.DefaultMaxBytes)
+		if err != nil {
 			return Outcome{}, false, ErrExecutionRejected
 		}
+	}
+	// 尾部补传独立于新任务准入；残留护栏不能阻止已有可靠队列重放。
+	if flushQueuedLogs(ctx, queue, w.Protocol, w.BootID, "") != nil {
+		return Outcome{}, false, ErrExecutionRejected
+	}
+	if err := credential.CheckWorkspaceRoot(w.Runtime.WorkspaceRoot); err != nil {
+		return Outcome{}, false, err
 	}
 	grant, found, err := w.Protocol.ClaimNextExecution(ctx, agentwire.ExecutionClaimNext{TaskType: w.TaskType, BootID: w.BootID, SentAt: w.now()})
 	if err != nil {
@@ -184,8 +195,24 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
-	cleanup := func() { _, _ = agentexec.CleanupSynthetic(workspace, true) }
-	defer cleanup()
+	cleanupReady := true
+	processStopped := true
+	var materialCleanupErr error
+	defer func() {
+		cleanupErr := materialCleanupErr
+		if cleanupErr != nil {
+			workspace.Isolate()
+		} else if processStopped {
+			_, cleanupErr = agentexec.CleanupStoppedExecution(workspace, cleanupReady)
+		} else {
+			workspace.Isolate()
+			cleanupErr = agentexec.ErrCleanupNotReady
+		}
+		if cleanupErr != nil {
+			outcome.Succeeded = false
+			runErr = errors.Join(runErr, cleanupErr)
+		}
+	}()
 	slot, err := w.Protocol.ResolveExecutionDatabaseConnection(ctx, agentwire.ExecutionSecretSlotRequest{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
@@ -203,6 +230,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 	defer material.Destroy()
 	paths, err := workspace.WriteSecurityMaterial(&material)
+	material.Destroy()
 	if err != nil {
 		_ = w.appendStartRejected(ctx, grant)
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
@@ -218,6 +246,7 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 		}
 		defer credential.Zero(storageContent)
 		confDir, err := workspace.WriteStorageConfiguration(storageContent)
+		credential.Zero(storageContent)
 		if err != nil {
 			_ = w.appendStartRejected(ctx, grant)
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
@@ -238,11 +267,14 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 	defer policy.Destroy()
 	logs := newLogUploader(ctx, w.Protocol, w.BootID, grant, queue, w.Runtime.LogQueueObserver)
+	logs.start()
+	defer logs.stop()
 	tool, parser := "", "direct-java-v1"
 	stdout, stderr := agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 1, ParserVersion: parser}, agentexec.DirectJavaLogStream{StreamID: grant.ExecutionID, SourceEpoch: 2, ParserVersion: parser}
 	terminal := &normalImportTerminal{}
 	directTerminal := &directLoadTerminal{}
-	sink := logs.append
+	exportResult := &exportTerminal{}
+	sink := func(record logstream.Record) error { exportResult.observe(record); return logs.append(record) }
 	if isImport {
 		// 解析只接收第一层脱敏后的固定工具管道；日志缺口或未知完成标记不能解锁成功。
 		tool, parser = "OBLOADER", "obloader-4.3.5-v1"
@@ -266,23 +298,49 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 		}
 	}
+	if !w.now().Before(grant.ExpiresAt) {
+		_ = w.appendStartRejected(ctx, grant)
+		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
+	}
 	process, err := agentexec.StartDirectJava(ctx, workspace, agentexec.DirectJavaLaunch{
-		Tool:   tool,
+		Tool: tool, LeaseExpiresAt: grant.ExpiresAt, Clock: w.now,
 		Intent: agentexec.StartIntent{ExecutionID: grant.ExecutionID, TaskID: grant.TaskID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, CreatedAt: w.now()},
 		BootID: w.BootID, JavaPath: w.Runtime.JavaPath, JavaSHA256: javaDigest, ToolHome: w.Runtime.ToolHome,
 		SecurityConfiguration: paths.SecurityConfiguration, BusinessArguments: append([]string(nil), grant.Argv...), Environment: toolEnvironment,
 		Output: agentexec.DirectJavaOutput{Policy: policy, Stdout: stdout, Stderr: stderr, Sink: sink},
 	})
+	// 启动器已克隆采集策略；父层不再需要秘密缓冲，避免网络事件等待延长其生命周期。
+	slot.Destroy()
+	policy.Destroy()
 	if err != nil {
 		// 已创建而监管未成立的进程不能被当作无进程；保留分配，等待租约核对。
 		if !errors.Is(err, agentexec.ErrDirectJavaProcessUncertain) {
 			_ = w.appendStartRejected(ctx, grant)
+		} else {
+			cleanupReady = false
+			processStopped = false
 		}
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, ErrExecutionRejected
 	}
+	cleanupReady = false
+	processStopped = false
+	stopRenewal := w.maintainExecutionLease(ctx, grant)
+	defer stopRenewal()
 	// 进程已经启动后，必须先等待其退出再清理任务级安全文件；即使事件网络上报失败也不能提前删除仍被 Java 使用的文件。
-	startedErr := w.appendEvent(ctx, grant, 3, "PROCESS_STARTED", map[string]any{"pid": process.Identity().PID, "startedAt": process.Identity().StartedAt.Format(time.RFC3339Nano), "executableDigest": process.Identity().ExecutableDigest, "bootId": process.Identity().BootID, "argvDigest": actualArgvDigest})
-	exited, exitCode, waitErr, cancelRequested, treeObserved := w.waitWithLeaseRenewal(ctx, grant, process)
+	startedResult := make(chan error, 1)
+	go func() {
+		startedResult <- w.appendEvent(ctx, grant, 3, "PROCESS_STARTED", map[string]any{"pid": process.Identity().PID, "startedAt": process.Identity().StartedAt.Format(time.RFC3339Nano), "executableDigest": process.Identity().ExecutableDigest, "bootId": process.Identity().BootID, "argvDigest": actualArgvDigest})
+	}()
+	exited, exitCode, waitErr, cancelRequested, treeObserved := w.waitWithExecutionControl(ctx, grant, process)
+	processStopped = exited && (!cancelRequested || treeObserved)
+	// 已排空管道并确认停止后先清秘密，再做可能阻塞的退出/结果网络上报。
+	if processStopped {
+		if err := workspace.CleanupMaterials(); err != nil {
+			materialCleanupErr = agentexec.ErrCleanupFailed
+		}
+	}
+	// 进程监管和秘密清理不等待启动事件网络响应，但退出事件仍必须排在启动确认之后。
+	startedErr := <-startedResult
 	if startedErr != nil {
 		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, startedErr
 	}
@@ -305,117 +363,18 @@ func (w *Worker) RunNext(ctx context.Context) (Outcome, bool, error) {
 	}
 	nextSequence++
 	if isImport {
-		return w.finishNormalImport(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, treeObserved, terminal, logs)
+		outcome, found, runErr = w.finishNormalImport(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, treeObserved, terminal, logs)
+		cleanupReady = runErr == nil || errors.Is(runErr, ErrExecutionFailed)
+		return outcome, found, runErr
 	}
 	if isDirect {
-		return w.finishDirectLoad(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, directTerminal, logs)
+		outcome, found, runErr = w.finishDirectLoad(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, directTerminal, logs)
+		cleanupReady = runErr == nil || errors.Is(runErr, ErrExecutionFailed)
+		return outcome, found, runErr
 	}
-	if cancelRequested {
-		if err := w.appendEvent(ctx, grant, nextSequence, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED", "errorCode": agentwire.ExecutionErrorCancelledByRequest}); err != nil {
-			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
-		}
-		nextSequence++
-		fileCount, totalBytes, files, _ := executionOutputFacts(executionPaths, localOutputPath)
-		fileEvidence := make([]map[string]any, 0, len(files))
-		for _, file := range files {
-			fileEvidence = append(fileEvidence, map[string]any{"path": file.Path, "size": file.Size})
-		}
-		checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
-		if err := w.appendEvent(ctx, grant, nextSequence, "RESULT_FACTS_OBSERVED", map[string]any{
-			"result": "FAILED", "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
-			"checkpointPresent": checkpoint, "errorCode": agentwire.ExecutionErrorCancelledByRequest,
-		}); err != nil {
-			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
-		}
-		if !treeObserved {
-			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
-		}
-		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, nil
-	}
-	if waitErr != nil || exitCode != 0 {
-		errorCode := agentwire.ExecutionErrorProcessExitNonZero
-		if waitErr != nil {
-			errorCode = agentwire.ExecutionErrorProcessWaitFailed
-		}
-		if err := w.appendEvent(ctx, grant, 5, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "FAILED", "errorCode": errorCode}); err != nil {
-			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
-		}
-		// EX-I8：失败路径同样上报结果事实与 dump.ckpt 存在性（作为失败终态后的迟到事实，
-		// 由控制面按同一租约与连续序号接受）；这是失败任务检查点继续资格的唯一起点事实。
-		fileCount, totalBytes, files, _ := executionOutputFacts(executionPaths, localOutputPath)
-		fileEvidence := make([]map[string]any, 0, len(files))
-		for _, file := range files {
-			fileEvidence = append(fileEvidence, map[string]any{"path": file.Path, "size": file.Size})
-		}
-		checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
-		if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", map[string]any{
-			"result": "FAILED", "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
-			"checkpointPresent": checkpoint, "errorCode": errorCode,
-		}); err != nil {
-			return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
-		}
-		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, CheckpointPresent: checkpoint}, true, ErrExecutionFailed
-	}
-	if err := w.appendEvent(ctx, grant, 5, "TOOL_TERMINAL_OBSERVED", map[string]any{"terminal": "SUCCEEDED"}); err != nil {
-		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
-	}
-	fileCount, totalBytes, files, outputOK := executionOutputFacts(executionPaths, localOutputPath)
-	result := "FAILED"
-	if outputOK && (executionPaths.StorageOutput || localOutputVerified(grant.Argv, fileCount, totalBytes, files)) {
-		result = "VERIFIED"
-	}
-	fileEvidence := make([]map[string]any, 0, len(files))
-	for _, file := range files {
-		fileEvidence = append(fileEvidence, map[string]any{"path": file.Path, "size": file.Size})
-	}
-	// EX-I8 结果与失败事实：结果事实与 dump.ckpt 存在性合并为同一事件上报。
-	// 结果事实事件会触发任务终态转换与租约释放，检查点事实必须随它一起到达；
-	// 失败任务的检查点继续资格由控制面依据该事实与冻结快照共同判定。
-	checkpoint := executionCheckpointPresent(executionPaths, localOutputPath)
-	resultEvidence := map[string]any{
-		"result": result, "fileCount": fileCount, "totalBytes": totalBytes, "files": fileEvidence,
-		"checkpointPresent": checkpoint,
-	}
-	if result == "FAILED" {
-		resultEvidence["errorCode"] = agentwire.ExecutionErrorResultVerification
-	}
-	if err := w.appendEvent(ctx, grant, 6, "RESULT_FACTS_OBSERVED", resultEvidence); err != nil {
-		return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}, true, err
-	}
-	return Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID, Succeeded: result == "VERIFIED", FileCount: fileCount, TotalBytes: totalBytes, CheckpointPresent: checkpoint}, true, nil
-}
-
-// localOutputVerified 在受控进程退出 0、固定工具成功终态之后复核本地文件事实。
-// CSV/CUT/SQL 的纯数据空集合可以生成零字节文件；不能把字节数零等同于执行失败。
-// 无文件、DDL 或非文本格式的零字节输出仍失败关闭，不改变对象存储的独立证据规则。
-func localOutputVerified(argv []string, count, bytes uint64, files []outputFileFact) bool {
-	if count == 0 {
-		return false
-	}
-	if bytes > 0 {
-		return true
-	}
-	extension := ""
-	for _, value := range argv {
-		if value == "--ddl" {
-			return false
-		}
-		switch value {
-		case "--csv":
-			extension = ".csv"
-		case "--cut":
-			extension = ".dat"
-		case "--sql":
-			extension = ".sql"
-		}
-	}
-	// 清单或检查点本身不能证明已生成文本结果，零字节例外要求真实数据文件。
-	for _, file := range files {
-		if extension != "" && strings.HasSuffix(strings.ToLower(file.Path), extension) {
-			return true
-		}
-	}
-	return false
+	outcome, found, runErr = w.finishExport(ctx, grant, nextSequence, exitCode, waitErr, cancelRequested, treeObserved, executionPaths, localOutputPath, exportResult, logs)
+	cleanupReady = runErr == nil || errors.Is(runErr, ErrExecutionFailed)
+	return outcome, found, runErr
 }
 
 func (w *Worker) appendStartRejected(ctx context.Context, grant agentwire.ExecutionGrant) error {
@@ -435,9 +394,40 @@ func (w *Worker) appendEvent(ctx context.Context, grant agentwire.ExecutionGrant
 	return w.Protocol.AppendExecutionEvent(ctx, agentwire.ExecutionEvent{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, EventID: eventID, EventSeq: sequence, EventType: eventType, Evidence: evidence, SentAt: w.now()})
 }
 
-// waitWithLeaseRenewal 在受控进程存活期间定期续期，避免长导出因初始短租约到期而失去结果归属。
-// 续期失败会在下一周期重试；无论网络状态如何都先回收已启动进程，防止清理安全材料时破坏运行中的 Java。
-func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.ExecutionGrant, process *agentexec.DirectJavaProcess) (bool, int, error, bool, bool) {
+// maintainExecutionLease 把同一租约的既有续期覆盖到进程、日志收尾和最后状态事件。
+// 失败沿用下一周期重试；调用方取消后仍先回收已启动进程，Worker 返回时停止并收回续租协程。
+func (w *Worker) maintainExecutionLease(ctx context.Context, grant agentwire.ExecutionGrant) func() {
+	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	ticks := w.leaseRenewalTicks
+	var ticker *time.Ticker
+	if ticks == nil {
+		ticker = time.NewTicker(30 * time.Second)
+		ticks = ticker.C
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if ticker != nil {
+			defer ticker.Stop()
+		}
+		for {
+			select {
+			case <-renewCtx.Done():
+				return
+			case _, ok := <-ticks:
+				if !ok || renewCtx.Err() != nil {
+					return
+				}
+				_ = w.Protocol.RenewExecutionLease(renewCtx, agentwire.ExecutionLeaseRenewal{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
+}
+
+// waitWithExecutionControl 将租约续期移出进程等待，只保留退出与取消轮询。
+// 无论网络状态如何都先回收已启动进程，防止清理安全材料时破坏运行中的 Java。
+func (w *Worker) waitWithExecutionControl(ctx context.Context, grant agentwire.ExecutionGrant, process *agentexec.DirectJavaProcess) (bool, int, error, bool, bool) {
 	type waitResult struct {
 		exited bool
 		code   int
@@ -448,8 +438,6 @@ func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.Execu
 		exited, code, err := process.Wait()
 		completed <- waitResult{exited: exited, code: code, err: err}
 	}()
-	renewTicker := time.NewTicker(30 * time.Second)
-	defer renewTicker.Stop()
 	pollTicker := time.NewTicker(2 * time.Second)
 	defer pollTicker.Stop()
 	cancelRequested := false
@@ -458,8 +446,6 @@ func (w *Worker) waitWithLeaseRenewal(ctx context.Context, grant agentwire.Execu
 		select {
 		case result := <-completed:
 			return result.exited, result.code, result.err, cancelRequested, treeObserved
-		case <-renewTicker.C:
-			_ = w.Protocol.RenewExecutionLease(ctx, agentwire.ExecutionLeaseRenewal{BootID: w.BootID, ExecutionID: grant.ExecutionID, LeaseID: grant.LeaseID, LeaseEpoch: grant.LeaseEpoch, EnvelopeDigest: grant.EnvelopeDigest, SentAt: w.now()})
 		case <-pollTicker.C:
 			// 旁路服务端提交阶段的取消语义尚未核验，不能借共享轮询强杀并承诺回滚。
 			if grant.TaskType == directload.TaskType {
@@ -728,6 +714,11 @@ const maxOutputFilePath = 512
 // outputFacts 只读枚举输出目录内的事实：常规文件数量、总字节数与受限相对路径清单。
 // 符号链接、读取失败或超限都返回 ok=false，不把未验证事实当作可靠结果。
 func outputFacts(path string) (uint64, uint64, []outputFileFact, bool) {
+	return scanOutputFacts(path, nil)
+}
+
+// scanOutputFacts 在有界清单之外继续检查每一个文件，结果资格不受前 100 项截断影响。
+func scanOutputFacts(path string, observe func(outputFileFact)) (uint64, uint64, []outputFileFact, bool) {
 	var count, bytes uint64
 	var files []outputFileFact
 	err := filepath.WalkDir(path, func(current string, entry fs.DirEntry, err error) error {
@@ -756,12 +747,16 @@ func outputFacts(path string) (uint64, uint64, []outputFileFact, bool) {
 			return errors.New("output byte count overflow")
 		}
 		bytes += size
+		relative, err := filepath.Rel(path, current)
+		if err != nil || relative == "" || len(relative) > maxOutputFilePath || strings.ContainsAny(relative, "\x00\r\n") {
+			return errors.New("output file path is invalid")
+		}
+		fact := outputFileFact{Path: filepath.ToSlash(relative), Size: size}
+		if observe != nil {
+			observe(fact)
+		}
 		if len(files) < maxOutputFileFacts {
-			relative, err := filepath.Rel(path, current)
-			if err != nil || relative == "" || len(relative) > maxOutputFilePath || strings.ContainsAny(relative, "\x00\r\n") {
-				return errors.New("output file path is invalid")
-			}
-			files = append(files, outputFileFact{Path: filepath.ToSlash(relative), Size: size})
+			files = append(files, fact)
 		}
 		return nil
 	})
@@ -799,154 +794,4 @@ func checkpointPresent(outputPath string) bool {
 	}
 	_ = file.Close()
 	return true
-}
-
-type logUploader struct {
-	// gapped 表示正文曾因容量丢弃，不能用仍可见的完成标记断言完整成功。
-	gapped   bool
-	ctx      context.Context
-	protocol Protocol
-	bootID   string
-	grant    agentwire.ExecutionGrant
-	mu       sync.Mutex
-	previous map[int64]string
-	queue    *agentlogqueue.Queue
-	observer LogQueueObserver
-}
-
-func newLogUploader(ctx context.Context, protocol Protocol, bootID string, grant agentwire.ExecutionGrant, queue *agentlogqueue.Queue, observer LogQueueObserver) *logUploader {
-	return &logUploader{ctx: ctx, protocol: protocol, bootID: bootID, grant: grant, previous: make(map[int64]string), queue: queue, observer: observer}
-}
-func (u *logUploader) append(record logstream.Record) error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	// 只解析已完成第一层脱敏的管道记录；结构化事实随同一可靠批次持久化和重放。
-	record.Progress = logstream.ParseProgress(record)
-	batch := logstream.Batch{StreamID: record.StreamID, SourceEpoch: record.SourceEpoch, FirstSeq: record.SourceSeq, LastSeq: record.SourceSeq, PreviousDigest: u.previous[record.SourceEpoch], PolicyVersion: record.PolicyVersion, Records: []logstream.Record{record}}
-	sealed, err := logstream.SealBatch(batch)
-	if err != nil {
-		return err
-	}
-	entry := agentlogqueue.Entry{ExecutionID: u.grant.ExecutionID, LeaseID: u.grant.LeaseID, LeaseEpoch: u.grant.LeaseEpoch, EnvelopeDigest: u.grant.EnvelopeDigest, Batch: sealed}
-	if u.queue != nil {
-		position := queuePosition(entry)
-		if u.observer != nil {
-			if err := u.observer.BeforeEnqueue(u.ctx, position); err != nil {
-				return err
-			}
-		}
-		if err := u.queue.Enqueue(entry); err != nil {
-			if !errors.Is(err, agentlogqueue.ErrFull) {
-				return err
-			}
-			if flushQueuedLogs(u.ctx, u.queue, u.protocol, u.bootID, "") == nil {
-				if retryErr := u.queue.Enqueue(entry); retryErr == nil {
-					err = nil
-				} else {
-					err = retryErr
-				}
-			}
-			if err != nil {
-				if !errors.Is(err, agentlogqueue.ErrFull) {
-					return err
-				}
-				return u.enqueueLocalSpoolLimitGap(record)
-			}
-		}
-		if err := recordQueueEvidence(u.queue, agentlogqueue.EvidenceEnqueued, entry); err != nil {
-			return err
-		}
-		if u.observer != nil {
-			if err := u.observer.AfterEnqueue(u.ctx, position); err != nil {
-				return err
-			}
-		}
-		if err := flushQueuedLogs(u.ctx, u.queue, u.protocol, u.bootID, entry.Batch.Digest); err == nil && u.observer != nil {
-			if err := u.observer.AfterConfirmation(u.ctx, position); err != nil {
-				return err
-			}
-		}
-	} else if err := u.protocol.AppendExecutionLog(u.ctx, agentwire.ExecutionLogBatch{BootID: u.bootID, ExecutionID: entry.ExecutionID, LeaseID: entry.LeaseID, LeaseEpoch: entry.LeaseEpoch, EnvelopeDigest: entry.EnvelopeDigest, Batch: entry.Batch, SentAt: time.Now().UTC()}); err != nil {
-		return err
-	}
-	u.previous[record.SourceEpoch] = sealed.Digest
-	return nil
-}
-
-// enqueueLocalSpoolLimitGap 在正文批次无法持久化时保存同一来源的无正文缺口。
-// 缺口成功入队后继续排空工具来源；若连缺口都不能持久化则返回错误，由上层以失败关闭处理。
-func (u *logUploader) enqueueLocalSpoolLimitGap(record logstream.Record) error {
-	u.gapped = true
-	return u.queue.EnqueueGap(agentlogqueue.GapEntry{
-		ExecutionID: u.grant.ExecutionID, LeaseID: u.grant.LeaseID, LeaseEpoch: u.grant.LeaseEpoch, EnvelopeDigest: u.grant.EnvelopeDigest,
-		Gap: logstream.GapNotice{
-			StreamID: record.StreamID, SourceKind: record.SourceKind, SourceEpoch: record.SourceEpoch,
-			FirstSeq: record.SourceSeq, LastSeq: record.SourceSeq, ReasonCode: "LOCAL_SPOOL_LIMIT",
-			PolicyVersion: record.PolicyVersion, ParserVersion: record.ParserVersion,
-		},
-	})
-}
-
-func queuePosition(entry agentlogqueue.Entry) LogQueuePosition {
-	return LogQueuePosition{
-		StreamID:    entry.Batch.StreamID,
-		SourceEpoch: entry.Batch.SourceEpoch,
-		FirstSeq:    entry.Batch.FirstSeq,
-		LastSeq:     entry.Batch.LastSeq,
-		BatchDigest: entry.Batch.Digest,
-	}
-}
-
-// 多个隔离 Worker 共享私有可靠队列，重放与确认必须串行，防止双重删除或回执错位。
-var queuedLogReplayMu sync.Mutex
-
-func flushQueuedLogs(ctx context.Context, queue *agentlogqueue.Queue, protocol Protocol, bootID, newlyEnqueuedDigest string) error {
-	queuedLogReplayMu.Lock()
-	defer queuedLogReplayMu.Unlock()
-	items, err := queue.PendingItems()
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if item.Gap != nil {
-			gap := item.Gap
-			if err := protocol.AppendExecutionLogGap(ctx, agentwire.ExecutionLogGap{BootID: bootID, ExecutionID: gap.ExecutionID, LeaseID: gap.LeaseID, LeaseEpoch: gap.LeaseEpoch, EnvelopeDigest: gap.EnvelopeDigest, Gap: gap.Gap, SentAt: time.Now().UTC()}); err != nil {
-				return err
-			}
-			if err := queue.Acknowledge(item.Token); err != nil {
-				return err
-			}
-			continue
-		}
-		entry := item.Entry
-		evidenceType := agentlogqueue.EvidenceRecoveryReplayAttempt
-		if newlyEnqueuedDigest != "" && entry.Batch.Digest == newlyEnqueuedDigest {
-			evidenceType = agentlogqueue.EvidenceUploadAttempt
-		} else if newlyEnqueuedDigest != "" {
-			evidenceType = agentlogqueue.EvidenceRetryAttempt
-		}
-		if err := recordQueueEvidence(queue, evidenceType, *entry); err != nil {
-			return err
-		}
-		if err := protocol.AppendExecutionLog(ctx, agentwire.ExecutionLogBatch{BootID: bootID, ExecutionID: entry.ExecutionID, LeaseID: entry.LeaseID, LeaseEpoch: entry.LeaseEpoch, EnvelopeDigest: entry.EnvelopeDigest, Batch: entry.Batch, SentAt: time.Now().UTC()}); err != nil {
-			if evidenceErr := recordQueueEvidence(queue, agentlogqueue.EvidenceUploadFailed, *entry); evidenceErr != nil {
-				return evidenceErr
-			}
-			return err
-		}
-		if err := recordQueueEvidence(queue, agentlogqueue.EvidenceControlPlaneConfirmed, *entry); err != nil {
-			return err
-		}
-		if err := queue.Acknowledge(item.Token); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func recordQueueEvidence(queue *agentlogqueue.Queue, evidenceType agentlogqueue.EvidenceType, entry agentlogqueue.Entry) error {
-	return queue.RecordEvidence(agentlogqueue.Evidence{
-		Type: evidenceType, StreamID: entry.Batch.StreamID, SourceEpoch: entry.Batch.SourceEpoch, FirstSeq: entry.Batch.FirstSeq,
-		LastSeq: entry.Batch.LastSeq, BatchDigest: entry.Batch.Digest, OccurredAt: time.Now().UTC(),
-	})
 }

@@ -7,6 +7,7 @@ import { hydrateNormalImport, normalImportConfigSignature } from './normalImport
 export function useNormalImportDraft(deps: {
   api: NormalImportApi; form: NormalImportForm; input: Readonly<Ref<NormalImportConfig>>
   bindRoute(id: string): Promise<unknown>
+  canWrite?(): boolean
 }) {
   const currentDraft = ref<NormalImportDraft | null>(null)
   const loadingDraft = ref(false), savingDraft = ref(false), bindingDraftRoute = ref(false)
@@ -41,7 +42,7 @@ export function useNormalImportDraft(deps: {
     } finally { if (!disposed && request === epoch) loadingDraft.value = false }
   }
   async function saveDraft(): Promise<NormalImportDraft | null> {
-    if (disposed || loadingDraft.value || savingDraft.value || !deps.input.value.dataSourceId) return null
+    if (disposed || loadingDraft.value || savingDraft.value || deps.canWrite?.() === false || !deps.input.value.dataSourceId) return null
     if (rerunLocked.value && currentDraft.value && normalImportConfigSignature(currentDraft.value.config) !== normalImportConfigSignature(deps.input.value)) {
       draftFailure.value = '从头重新执行保留原配置；如需修改，请从来源任务选择“基于原配置新建”。'
       return null

@@ -1,5 +1,23 @@
 # MySQL 本地导出端到端用例
 
+## Oracle 十类对象的固定真实验证
+
+2026-11-02 增量见[真实验证证据](../../docs/03-technical/evidence/export-oracle-objects-2026-11-02.md)。`OracleExportObjectsFixture.java` 和 `fixture/oracle_objects.go` 只用于明确授权的既有 TEST Oracle / ODP 源；源码中固定源身份、连接器摘要和动作，不接收 SQL、端点或额外授权。夹具在当前 Schema 创建本轮独占前缀的十类对象、两行数据与所有权表；公共同义词全局检查冲突，清理同时验证所有权和目标。`-database` 仍采用统一 runId 格式作为本轮标识，不会创建 Oracle Schema。
+
+Java 夹具使用 Java 8 `javac -encoding UTF-8 -source 8 -target 8` 编译至忽略目录 `artifacts/oracle-export-fixture-tools/classes`，Go 辅助进程以 `CGO_ENABLED=0 go build -trimpath -o artifacts/oracle-export-fixture-tools/fixture.exe ./scripts/export-e2e/fixture` 构建。新增固定动作如下：
+
+- `oracle-export-create` / `oracle-export-inspect` / `oracle-export-cleanup`：创建、核对和清理当前所有权的固定对象，不替换既有对象。
+- `oracle-export-jdbc`：使用当前内嵌产品探针读取十类目录、检查冻结对象及固定缺失对象；失败时只分解本轮对象，不输出其他目录。
+- `oracle-export-component-{package,trigger,synonym,public-synonym,type,mixed-ddl,mixed-csv}`：七个串行固定工具场景，复用唯一命令生成器、私有加密材料、生产受控进程与脱敏采集；组件的启动截止点来自辅助进程两分钟时限，不形成平台租约/任务证明。
+
+每个动作都必须使用新所有权 runId、匹配的 `odo_e2e_YYYYMMDD_<前12位>` 标识以及本机现有只读数据目录。输出为允许根目录下 `ob-data/odo-oracle-<前12位>/component-<场景>`；已存在的场景目录拒绝覆盖。密码不进入 argv 或环境。辅助输出必须先通过既有 `import-oracle-audit` 的匿名 stdin 核对，未知时不得落盘。
+
+`oracle-objects-validate.mjs` 读取忽略的 `artifacts/oracle-export-current-run.txt` 指针、`run.json` 和 `fixture-component-*.json`，独立解析实际 CREATE 类型/名称及同义词目标，完整核对 CSV 表头和两行值，保存结果文件大小与 SHA-256。官方 `DELIMITER $$`、注释/字符串排除、包体与包定义、公共同义词边界由 `node --test scripts/export-e2e/oracle-objects-validate.test.mjs` 覆盖。`.MANIFEST.bin` 只记元数据；不会代替内容或结果文件。
+
+该路径的证据 scope 是 `FIXED_TOOL_COMPONENT`，不能冒充本文件下面的真实浏览器草稿、七项平台预检查、提交和 Agent 领取链。2026-11-02 浏览器工具因 Work 本地浏览器访问关闭而拒绝访问，没有绕过登录或读取浏览器会话。内容核对和秘密扫描成功后，保存回执/摘要、核对所有权清理夹具，再清理精确所属的输出；清理后不能重跑内容检查器验证已不存在的文件。
+
+## MySQL 既有矩阵
+
 范围为用户授权的非生产 `test-mysql` / ODP / MySQL 数据源、Windows AMD64 节点及本地输出。矩阵覆盖普通 V1 的 CSV、CUT、SQL；POS、PARQUET、ORC、AVRO 只验证普通向导门控，不启动这些历史格式。对象存储不在本轮授权范围内。
 
 `cases.mjs` 是 172 项用例输入与预期的唯一目录，`browser-batch.mjs` 通过真实控制面完成草稿、唯一命令生成器、七项预检查、提交、Agent 领取和终态。`collect-browser.mjs` 独立核对本机文件、清单及内容，`browser-lifecycle.mjs` 覆盖幂等、失效、过期、取消、派生、模板、日志及权限。五步界面、视口和键盘通过 CUA 实际操作。缺少外部条件必须记录 BLOCKED/PARTIAL，不能算 PASS；不拦截应用 API 或使用假 Agent。

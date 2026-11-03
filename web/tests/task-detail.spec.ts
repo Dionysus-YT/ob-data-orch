@@ -20,7 +20,7 @@ async function captureTaskPage(page: Page, info: TestInfo, name: string) {
 
 const time = '2026-01-01T00:00:00Z'
 const overview = (id: string, state = 'RUNNING') => ({ id, type: 'OBDUMPER_EXPORT', dataSourceId: `source-${id}`, nodeId: `node-${id}`, precheckId: `precheck-${id}`, submittedAt: time, derivationKind: 'REBUILD_FROM_CONFIG', parentTaskId: id === 'A' ? 'B' : 'A', presentation: { id, displayName: id, type: 'OBDUMPER_EXPORT', dataSourceId: `source-${id}`, nodeId: `node-${id}`, dataSourceDeleted: false, nodeDeleted: false, state, stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', ownedByCurrentUser: true, reconciliationRequired: false, cancelRequested: false, submittedAt: time, updatedAt: time, availableActions: ['COPY_COMMAND', 'VIEW_LOGS', ...(state === 'SUCCEEDED' ? ['SAVE_TEMPLATE', 'REBUILD_FROM_CONFIG'] : state === 'FAILED' ? ['REBUILD_FROM_CONFIG', 'RERUN_FROM_SCRATCH', 'CHECKPOINT_RESUME'] : ['CANCEL'])] } })
-const execution = (state = 'RUNNING', checkpointPresent = false) => ({ state, executionId: 'synthetic-execution', reconciliationRequired: false, stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', updatedAt: time, resultSummary: state === 'SUCCEEDED' ? { result: 'VERIFIED', fileCount: 1, totalBytes: 1024, files: [{ path: 'synthetic.csv', size: 1024 }], checkpointPresent, observedAt: time } : state === 'FAILED' ? { result: 'FAILED', fileCount: 0, totalBytes: 0, files: [], checkpointPresent, observedAt: time } : undefined })
+const execution = (state = 'RUNNING', checkpointPresent = false) => ({ state, executionId: 'synthetic-execution', reconciliationRequired: false, stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', outputLocation: { kind: 'LOCAL', redaction: 'KIND_ONLY' }, updatedAt: time, resultSummary: state === 'SUCCEEDED' ? { result: 'VERIFIED', fileCount: 1, totalBytes: 1024, files: [{ path: 'synthetic.csv', size: 1024 }], checkpointPresent, observedAt: time } : state === 'FAILED' ? { result: 'FAILED', fileCount: 0, totalBytes: 0, files: [], checkpointPresent, observedAt: time } : undefined })
 const log = (message: string) => ({ sourceSeq: 1, receivedAt: time, kind: 'STDOUT', integrityCode: 'COMPLETE', message })
 
 async function mockTask(page: Page, getState: (id: string) => string = () => 'RUNNING') {
@@ -69,6 +69,42 @@ async function navigateTask(page: Page, id: string) {
   }, id)
   await expect(page).toHaveURL(`/tasks/${id}`)
 }
+
+test('远端结果的 null 文件事实保持未知，本地 null 结果失败关闭', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await mockTask(page, () => 'SUCCEEDED')
+  await page.route('**/api/v1/tasks/*/execution', route => {
+    const remote = new URL(route.request().url()).pathname.includes('/A/')
+    return route.fulfill({ json: { item: { ...execution('SUCCEEDED'), outputLocation: { kind: remote ? 'S3' : 'LOCAL', redaction: 'KIND_ONLY' }, resultSummary: { result: 'VERIFIED', fileCount: null, totalBytes: null, files: null, checkpointPresent: false, observedAt: time } } } })
+  })
+  await page.goto('/tasks/A')
+  await expect(page.getByText('远端对象未逐项核验', { exact: true })).toBeVisible()
+  for (const label of ['文件数', '字节数']) await expect(page.locator('.ant-descriptions-item').filter({ has: page.getByText(label, { exact: true }) }).locator('.ant-descriptions-item-content')).toHaveText('—')
+  await expect(page.getByRole('button', { name: /展开文件清单/ })).toHaveCount(0)
+  await navigateTask(page, 'B')
+  await expect(page.getByText('无法读取执行事实', { exact: true })).toBeVisible()
+  await expect(page.getByText('远端对象未逐项核验', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('文件数', { exact: true })).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('两类导入无输出位置仍保留完成结论且不显示导出文件证据', async ({ page }) => {
+  await mockTask(page, () => 'SUCCEEDED')
+  await page.route('**/api/v1/tasks/*', route => {
+    const id = new URL(route.request().url()).pathname.split('/')[4]!, type = id === 'A' ? 'OBLOADER_NORMAL_IMPORT' : 'OBLOADER_DIRECT_LOAD'
+    const task = overview(id, 'SUCCEEDED')
+    return route.fulfill({ json: { item: { ...task, type, presentation: { ...task.presentation, type } } } })
+  })
+  await page.route('**/api/v1/tasks/*/execution', route => route.fulfill({ json: { item: { ...execution('SUCCEEDED'), outputLocation: undefined, resultSummary: { result: 'VERIFIED', fileCount: 0, totalBytes: 0, files: [], checkpointPresent: false, observedAt: time } } } }))
+  for (const id of ['A', 'B']) {
+    await page.goto(`/tasks/${id}`)
+    await expect(page.getByText('导入完成证据已核验', { exact: true })).toBeVisible()
+    await expect(page.getByText('文件数', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('字节数', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /展开文件清单/ })).toHaveCount(0)
+  }
+})
 
 test('任务详情同实例切换隔离迟到读取和日志，刷新不叠加轮询，卸载关闭流', async ({ page }, info) => {
   const errors: string[] = []
@@ -221,7 +257,7 @@ for (const [label, suffix, step] of [
   })
 }
 
-test('成功任务保存模板，切换任务后旧派生写响应不得强制导航', async ({ page }) => {
+test('成功任务保存模板，切换任务后旧派生写响应不得强制导航', async ({ page }, info) => {
   await mockTask(page, () => 'SUCCEEDED')
   let writes = 0
   await page.route('**/api/v1/tasks/A:save-template', async route => {
@@ -232,6 +268,8 @@ test('成功任务保存模板，切换任务后旧派生写响应不得强制�
   await page.goto('/tasks/A')
   await page.getByRole('button', { name: '保存为模板', exact: true }).click()
   await page.getByRole('textbox', { name: '模板名称' }).fill(' 合成模板 ')
+  await expect(page.getByRole('dialog', { name: '保存为模板' })).toContainText('使用时重新选择数据源和节点并完成预检查。')
+  await page.screenshot({ path: info.outputPath('save-template.png'), fullPage: false })
   await page.getByRole('dialog', { name: '保存为模板' }).getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.locator('.ant-message').getByText('模板「合成模板」已保存。', { exact: true })).toBeVisible()
   await expect(page.locator('.task-failure-actions .ant-alert-success')).toHaveCount(0)
@@ -265,7 +303,7 @@ test('五个 Tab 使用同一事实，日志过滤错误定位、过期、操作
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   await mockTask(page, () => 'SUCCEEDED')
   let logReads = 0, operationReads = 0
-  await page.route('**/api/v1/tasks/A/execution', route => route.fulfill({ json: { item: { ...execution('SUCCEEDED'), plannedActualMatch: 'MATCHED', outputLocation: { kind: 'S3', redaction: 'KIND_ONLY' } } } }))
+  await page.route('**/api/v1/tasks/A/execution', route => route.fulfill({ json: { item: { ...execution('SUCCEEDED'), plannedActualMatch: 'MATCHED', outputLocation: { kind: 'S3', redaction: 'KIND_ONLY' }, resultSummary: { ...execution('SUCCEEDED').resultSummary, fileCount: null, totalBytes: null, files: null } } } }))
   await page.route('**/api/v1/tasks/A/logs*', route => { logReads++; return route.fulfill({ json: logReads > 1 ? { items: [], integrity: 'EXPIRED' } : { items: [log('normal'), { ...log('[ERROR] synthetic error'), sourceSeq: 2, kind: 'STDERR' }], integrity: 'COMPLETE' } }) })
   await page.route('**/api/v1/tasks/A/operations*', route => { operationReads++; const cursor = new URL(route.request().url()).searchParams.get('cursor'); return route.fulfill({ json: { items: [{ id: cursor ? 'operation-2' : 'operation-1', actorType: 'SUBJECT', actorName: '合成用户', action: cursor ? 'TASK_TEMPLATE_SAVED' : 'TASK_SUBMITTED', result: 'SUCCEEDED', occurredAt: time }], nextCursor: cursor ? null : 'operation-cursor' } }) })
   await page.goto('/tasks/A')

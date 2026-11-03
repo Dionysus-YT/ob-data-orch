@@ -1,5 +1,7 @@
 # 参数元数据资源
 
+- `obdumper-4.3.5-slice-v13-oracle-objects.json`：继承 v12，共 84 项；新增五个 Oracle DDL 对象参数，公共同义词对应独立 `--public-synonym`。模式与对象可见性由领域层和固定探针复验，新参数只能参与包含 DDL 的四种能力并依赖 `--ddl`；历史版本与包体/类型体边界不变。见[契约](../../../docs/03-technical/export-general-contract.md#2026-11-02-oracle-指定对象补齐)。
+
 本目录保存首条切片的不可变参数元数据及兼容修订：
 
 - `obdumper-4.3.5-slice-v1.json`：DEV-02 发布的原始基线，不再原地修改；

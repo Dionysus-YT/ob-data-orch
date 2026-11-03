@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,7 @@ func TestBrowserLoginCSRFAndMachineIsolation(t *testing.T) {
 	login := func(password, origin string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest("POST", settings.PublicURL+"/login", strings.NewReader(url.Values{"username": {"admin"}, "password": {password}}.Encode()))
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Accept", "application/json")
 		request.Header.Set("Origin", origin)
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -143,7 +145,7 @@ func TestBrowserLoginCSRFAndMachineIsolation(t *testing.T) {
 	}
 }
 
-// 登录页须自包含：认证前不能引用需会话的网页资源；失败回显只含固定提示与转义后的账户名，不含口令。
+// 登录页须自包含；仅显示固定失败提示，不预填或回显账户与口令。
 func TestLoginPageSelfContainedAndFailureFeedback(t *testing.T) {
 	settings := testSettings(t)
 	browser, err := NewBrowser(settings)
@@ -165,6 +167,15 @@ func TestLoginPageSelfContainedAndFailureFeedback(t *testing.T) {
 	if strings.Contains(page, `href="/assets/`) || strings.Contains(page, `src="/assets/`) || strings.Contains(page, `role="alert"`) {
 		t.Fatal("首次打开登录页不得引用需会话资源或预置错误提示")
 	}
+	if strings.Contains(page, `value="admin"`) || strings.Contains(page, `value="synthetic-`) {
+		t.Fatal("初始登录页不得预填账户或口令")
+	}
+	// 所有登录图片必须随页面内嵌，避免认证前依赖受保护资源或向外部暴露访问事实。
+	for _, image := range regexp.MustCompile(`<img\b[^>]*\bsrc="([^"]+)"`).FindAllStringSubmatch(page, -1) {
+		if !strings.HasPrefix(image[1], "data:image/png;base64,") && !strings.HasPrefix(image[1], "data:image/jpeg;base64,") {
+			t.Fatal("登录页图片不得引用外部或需会话的资源")
+		}
+	}
 	post := func(form url.Values, origin string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest("POST", settings.PublicURL+"/login", strings.NewReader(form.Encode()))
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -178,14 +189,14 @@ func TestLoginPageSelfContainedAndFailureFeedback(t *testing.T) {
 	if failed.Code != 401 || !strings.Contains(body, "账户或密码不正确") || !strings.Contains(body, `role="alert"`) || !strings.Contains(body, `aria-invalid="true"`) {
 		t.Fatalf("登录失败未给出页面内反馈：%d", failed.Code)
 	}
-	if strings.Contains(body, "<script>x</script>") || !strings.Contains(body, "&lt;script&gt;x&lt;/script&gt;") {
-		t.Fatal("回填账户名未转义")
+	if strings.Contains(body, "<script>x</script>") || strings.Contains(body, "&lt;script&gt;x&lt;/script&gt;") {
+		t.Fatal("失败页面不得回填输入的账户名")
 	}
 	if strings.Contains(body, "synthetic-wrong-secret") {
 		t.Fatal("登录失败页回显了口令")
 	}
-	if long := post(url.Values{"username": {strings.Repeat("a", 65)}, "password": {"x"}}, settings.PublicURL); !strings.Contains(long.Body.String(), `value="admin"`) {
-		t.Fatal("超长账户名不得回填")
+	if long := post(url.Values{"username": {strings.Repeat("a", 65)}, "password": {"x"}}, settings.PublicURL); strings.Contains(long.Body.String(), `value="admin"`) || strings.Contains(long.Body.String(), strings.Repeat("a", 65)) {
+		t.Fatal("超长账户名不得回填或回退为预填管理员")
 	}
 	if forbidden := post(url.Values{"username": {"admin"}, "password": {"x"}}, "https://other.example.test"); forbidden.Code != 403 || !strings.Contains(forbidden.Body.String(), "请求来源无效") {
 		t.Fatalf("跨来源登录未以登录页拒绝：%d", forbidden.Code)

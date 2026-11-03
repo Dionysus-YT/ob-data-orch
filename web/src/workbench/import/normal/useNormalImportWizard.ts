@@ -21,7 +21,7 @@ export function useNormalImportWizard(deps: {
   const references = useNormalImportReferences(form, deps.api)
   const parameters = useNormalImportParameters(form, references)
   const input = computed(() => normalImportDraftInput(parameters.configuration.value))
-  const draft = useNormalImportDraft({ api: deps.api, form, input, bindRoute: id => deps.router.replace({ query: { ...deps.route.query, draft: id } }) })
+  const draft = useNormalImportDraft({ api: deps.api, form, input, bindRoute: id => deps.router.replace({ query: { ...deps.route.query, draft: id } }), canWrite: (): boolean => !review.submissionLocked.value })
   watch(parameters.configurationSignature, draft.invalidateDraftBinding, { flush: 'sync' })
   const hasInputs = draft.draftDirty
   const review = useNormalImportReview({
@@ -36,7 +36,7 @@ export function useNormalImportWizard(deps: {
   const navigating = ref(false)
   let disposed = false
   const activeStep = computed(() => {
-    if (draft.rerunLocked.value) return normalImportSteps.review
+    if (draft.rerunLocked.value || review.submissionLocked.value) return normalImportSteps.review
     const value = Number(deps.route.query.step ?? 1)
     return Number.isInteger(value) && value >= normalImportSteps.source && value <= normalImportSteps.review ? value : normalImportSteps.source
   })
@@ -64,6 +64,7 @@ export function useNormalImportWizard(deps: {
   const footerLabel = computed(() => activeStep.value === normalImportSteps.execution ? '查看预检查与命令' : `下一步：${normalImportTitles[activeStep.value] ?? ''}`)
 
   async function moveToStep(step: number) {
+    if (review.submissionLocked.value) return
     if (draft.rerunLocked.value && step !== normalImportSteps.review) return
     if (disposed || navigating.value || !Number.isInteger(step) || step < normalImportSteps.source || step > normalImportSteps.review || step === activeStep.value) return
     navigating.value = true

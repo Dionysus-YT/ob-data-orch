@@ -20,7 +20,7 @@ func seedTaskListFixture(t *testing.T) *Store {
 		{"task-beta", "subject-1", "customers"},
 		{"task-gamma", "subject-other", "private_table"},
 	} {
-		submission := validTaskSubmission(spec.id)
+		submission := independentTaskProof(t, s, validTaskSubmission(spec.id))
 		submission.CreatorSubjectID, submission.AuditActorID = spec.creator, spec.creator
 		submission.SnapshotJSON = `{"database":"synthetic_db","table":"` + spec.table + `","scopeKind":"SPECIFIED"}`
 		submission.SubmittedAt = testTime.Add(time.Duration(index+3) * time.Minute)

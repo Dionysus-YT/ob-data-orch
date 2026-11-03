@@ -148,8 +148,25 @@ func Test普通导入检查清单冻结证据与失效(t *testing.T) {
 					t.Fatal("文件发现可用于提交", err)
 				}
 			} else {
-				if err = s.SubmitTask(ctx, submission); err != nil {
+				if _, err = s.SubmitTaskIdempotent(ctx, submission, "synthetic-normal-submit", testFingerprint); err != nil {
 					t.Fatal("冻结普通导入任务", err)
+				}
+				duplicate := submission
+				duplicate.TaskID = "normal-duplicate"
+				if _, err = s.SubmitTaskIdempotent(ctx, duplicate, "synthetic-normal-new-key", testFingerprint); !errors.Is(err, ErrTaskSubmissionConflict) {
+					t.Fatal("换键重复冻结普通导入", err)
+				}
+				replay, replayErr := s.LookupTaskSubmission(ctx, TaskSubmissionLookup{SubjectID: "subject-1", TaskType: importdomain.TaskType, DraftID: w.ID, DraftRevision: 1, PrecheckID: create.PrecheckID, IdempotencyKey: "synthetic-normal-submit", RequestDigest: testFingerprint})
+				if replayErr != nil || !replay.Replayed || replay.TaskID != submission.TaskID {
+					t.Fatal("普通导入未找回原任务", replayErr)
+				}
+				recoveredCheck, readErr := s.GetNormalImportCheck(ctx, create.PrecheckID, "subject-1")
+				if readErr != nil || recoveredCheck.SubmittedTaskID != submission.TaskID {
+					t.Fatal("检查未投影普通导入任务", readErr)
+				}
+				recoveredDraft, readErr := s.GetNormalImportDraft(ctx, w.ID, "subject-1")
+				if readErr != nil || recoveredDraft.SubmittedTaskID != submission.TaskID {
+					t.Fatal("草稿未投影普通导入任务", readErr)
 				}
 				summary, readErr := s.GetTaskSummary(ctx, submission.TaskID)
 				if readErr != nil || summary.TaskType != importdomain.TaskType || summary.Database != c.Database || summary.ResultSummary != nil {

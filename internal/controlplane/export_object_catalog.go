@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"ob-data-orch/internal/catalogresult"
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/identity"
 	"ob-data-orch/internal/store"
 )
@@ -145,7 +146,7 @@ func validExportCatalogRequest(request exportObjectCatalogRequest) bool {
 	if request.ObjectType == "DATABASE" {
 		return request.Database == ""
 	}
-	return (request.ObjectType == "ALL" || request.ObjectType == "TABLE" || request.ObjectType == "VIEW" || request.ObjectType == "FUNCTION" || request.ObjectType == "PROCEDURE" || request.ObjectType == "SEQUENCE") && validCatalogInput(request.Database, 256, false)
+	return (request.ObjectType == "ALL" || exportobject.Supported(request.ObjectType)) && validCatalogInput(request.Database, 256, false)
 }
 
 // getExportObjectCatalogQuery 仅向发起者和当前仍可读取该数据源的主体返回短时对象名结果。

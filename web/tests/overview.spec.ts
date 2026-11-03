@@ -9,7 +9,7 @@ const verifyNative = new WeakMap<Page, () => Promise<void>>()
 test.beforeEach(async ({ page }) => { verifyNative.set(page, await monitorNativeWindowErrors(page)) })
 test.afterEach(async ({ page }) => { await verifyNative.get(page)?.() })
 
-type Mode = 'ready' | 'empty' | 'partial' | 'error' | 'denied' | 'invalid' | 'stale' | 'long' | 'task-restricted'
+type Mode = 'ready' | 'empty' | 'quiet' | 'partial' | 'error' | 'denied' | 'invalid' | 'stale' | 'long' | 'task-restricted'
 async function fixture(page: Page, initial: Mode = 'ready') {
   let mode = initial, calls = 0, taskMode: 'ready' | 'denied' | 'error' = 'ready'
   const requests: string[] = []
@@ -27,10 +27,24 @@ async function fixture(page: Page, initial: Mode = 'ready') {
           myTasks: { status: 'READY', data: [] }, attention: { status: 'READY', data: { from: new Date(Date.now() - 86400000).toISOString(), to: item.snapshotAt, coverage: 'TASK_FACTS_ONLY', items: [] } } }
       }
       if (mode === 'partial') item = { ...item, summary: '快照数据不完整，任务趋势和异常事实暂不可用。', trend: { status: 'UNAVAILABLE' }, attention: { status: 'UNAVAILABLE' } }
+      if (mode === 'quiet') {
+        item = { ...item, summary: '当前授权范围内，1 个执行节点当前不能接收新任务。', metrics: { status: 'READY', data: { running: 0, waiting: 0, todaySucceeded: 0, todayFailed: 0 } },
+          trend: { status: 'READY', data: item.trend.status === 'READY' ? item.trend.data.map(bucket => ({ ...bucket, total: 0, succeeded: 0, failed: 0 })) : [] }, myTasks: { status: 'READY', data: [] },
+          nodes: item.nodes.status === 'READY' ? { status: 'READY', data: { total: 1, unavailable: 1, items: item.nodes.data.items.filter(node => !node.acceptsNewTasks) } } : item.nodes,
+          attention: item.attention.status === 'READY' ? { ...item.attention, data: { ...item.attention.data, items: item.attention.data.items.filter(entry => entry.kind === 'NODE_UNAVAILABLE') } } : item.attention }
+      }
       if (mode === 'task-restricted') item = { ...item, summary: '当前任务范围不可见，仅展示已授权的节点事实。', metrics: { status: 'RESTRICTED' }, trend: { status: 'RESTRICTED' }, myTasks: { status: 'RESTRICTED' }, attention: { status: 'RESTRICTED' } }
       if (mode === 'long' && item.myTasks.status === 'READY' && item.nodes.status === 'READY') {
-        item = { ...item, myTasks: { status: 'READY', data: item.myTasks.data.map(task => ({ ...task, displayName: '合成超长中文技术任务名称'.repeat(7), id: `synthetic-${'x'.repeat(100)}-${task.id}` })) },
+        const tasks = item.myTasks.data
+        item = { ...item, myTasks: { status: 'READY', data: Array.from({ length: 5 }, (_, index) => ({ ...tasks[index % tasks.length]!, displayName: `合成任务 ${index + 1} · ${'合成超长中文技术任务名称'.repeat(7)}`, id: `synthetic-${'x'.repeat(100)}-${index}` })) },
           nodes: { ...item.nodes, data: { ...item.nodes.data, items: item.nodes.data.items.map(node => ({ ...node, displayName: '合成超长执行节点名称'.repeat(7) })) } } }
+        if (item.attention.status === 'READY') {
+          const [failed, node] = item.attention.data.items
+          item = { ...item, attention: { status: 'READY', data: { ...item.attention.data, items: [
+            ...Array.from({ length: 4 }, (_, index) => ({ ...failed!, objectId: `synthetic-long-failed-${index}`, displayName: `合成关注 ${index + 1} · ${'合成超长关注任务名称'.repeat(7)}` })),
+            { ...node!, displayName: '合成超长执行节点名称'.repeat(7) },
+          ] } } }
+        }
       }
       return route.fulfill({ json: { requestId: 'synthetic-overview-request', item: mode === 'invalid' ? { ...item, secret: 'synthetic-invalid-field' } : item } })
     }
@@ -55,7 +69,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     await page.setViewportSize(viewport)
     const model = await fixture(page)
     await page.goto('/')
-    await expect(page).toHaveTitle(/OB Data Orch/)
+    await expect(page).toHaveTitle(/LDP/)
     await expect(page.getByRole('heading', { name: '首页', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '今日失败任务 2 个，查看任务' })).toBeVisible()
     await expect(page.getByText('100%', { exact: true })).toBeVisible()
@@ -66,22 +80,48 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     expect(await nodeTable.evaluate(table => { const viewport = table.closest('.ant-table-content')!; return viewport.scrollWidth <= viewport.clientWidth }), '节点摘要的完整事实无需横向滚动').toBe(true)
     await expect(page.locator('vite-error-overlay')).toHaveCount(0)
     await expect(page.getByRole('status', { name: '快照范围与时间' }).getByText('UTC', { exact: true })).toBeVisible()
-    await expect(page.getByRole('checkbox', { name: '终态总数' })).toBeChecked()
-    await expect(page.locator('.overview-trend-chart circle')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '终态总数' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.overview-trend-point')).toHaveCount(0)
     await page.locator('.overview-trend-hit').first().focus()
-    const point = await page.locator('.overview-trend-chart circle').first().boundingBox()
+    const point = await page.locator('.overview-trend-point').first().boundingBox()
     expect(Math.abs(point!.width - point!.height), '响应式图形保留圆形数据点比例').toBeLessThan(0.5)
-    await page.getByRole('checkbox', { name: '成功', exact: true }).uncheck()
+    const canvas = await page.locator('.overview-trend-canvas').boundingBox()
+    const path = await page.locator('svg g.trend-total .trend-line').getAttribute('d')
+    const origin = /^M([\d.-]+),([\d.-]+)/.exec(path!)!
+    expect(path).toContain(' C')
+    expect(Math.abs(point!.x + point!.width / 2 - canvas!.x - Number(origin[1]) / 760 * canvas!.width), '圆形标记与实际曲线的横坐标一致').toBeLessThan(0.5)
+    expect(Math.abs(point!.y + point!.height / 2 - canvas!.y - Number(origin[2]) / 212 * canvas!.height), '圆形标记与实际曲线的纵坐标一致').toBeLessThan(0.5)
+    await expect(page.getByRole('tooltip').getByText('终态总数', { exact: true })).toBeVisible()
+    await expect(page.getByRole('tooltip')).toContainText('点击查看该时段任务')
+    const focusedReading = await page.getByRole('tooltip').innerText()
+    await page.locator('.overview-trend-hit').nth(1).hover()
+    await expect(page.getByRole('tooltip')).toHaveCount(1)
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByRole('tooltip')).toHaveCount(1)
+    await expect(page.getByRole('tooltip')).toHaveText(focusedReading, { useInnerText: true })
+    await page.mouse.move(0, 0)
+    // 等待 Ant 退出动画结束，再断言唯一的当前读数，避免旧提示的短暂 DOM 影响定位。
+    await expect(page.getByRole('tooltip')).toHaveCount(1)
+    await expect(page.getByRole('tooltip')).toHaveText(focusedReading, { useInnerText: true })
+    await page.screenshot({ path: info.outputPath(`overview-tooltip-${viewport.width}.png`), fullPage: false })
+    await page.getByRole('button', { name: '成功', exact: true }).click()
+    await expect(page.getByRole('button', { name: '成功', exact: true })).toHaveAttribute('aria-pressed', 'false')
     await expect(page.locator('svg g.trend-succeeded')).toHaveCount(0)
-    await page.getByRole('checkbox', { name: '成功', exact: true }).check()
+    await page.getByRole('button', { name: '成功', exact: true }).click()
     await page.getByText('最近 7 天', { exact: true }).click()
     await expect.poll(() => model.requests.some(request => request.includes('/api/v1/overview?range=7d'))).toBe(true)
     await expect(page.locator('.overview-trend-chart')).toHaveAttribute('data-bucket-count', '7')
     await expect(page.locator('.overview-trend-hit')).toHaveCount(7)
+    expect(await page.getByRole('region', { name: '任务结果趋势内容', exact: true }).evaluate(element => element.scrollHeight <= element.clientHeight), '常规视口完整呈现曲线、图例和时间窗口').toBe(true)
     await page.getByRole('button', { name: '刷新', exact: true }).click()
     await expect(page.getByRole('button', { name: '已刷新', exact: true })).toBeVisible()
     expect(model.requests.every(request => request.startsWith('GET '))).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await page.getByRole('button', { name: '查看趋势统计口径', exact: true }).focus()
+    await expect(page.getByRole('tooltip')).toHaveCount(1)
+    await expect(page.getByRole('tooltip')).toContainText('终态总数包含成功、失败和已取消')
+    await page.getByRole('heading', { name: '首页', exact: true }).click()
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
     // 先记录真实首屏；全页截图不能证明固定外壳中的首屏布局。
     await page.getByRole('heading', { name: '首页', exact: true }).scrollIntoViewIfNeeded()
     await page.screenshot({ path: info.outputPath(`overview-${viewport.width}.png`), fullPage: false })
@@ -102,6 +142,131 @@ test('首页任务范围受限与读取失败分开表达，不显示可信零�
   await page.screenshot({ path: info.outputPath('overview-task-restricted.png'), fullPage: true })
 })
 
+test('可信空态保留固定区域并突出节点阻断，过期与未知采样不会表现为实时值', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 1024 })
+  await fixture(page, 'quiet')
+  await page.goto('/')
+  const tasks = page.getByRole('region', { name: '我的任务', exact: true })
+  const attention = page.getByRole('region', { name: '需要关注', exact: true })
+  await expect(tasks.getByRole('table')).toHaveCount(0)
+  await expect(tasks.getByText('当前没有本人创建的重点任务')).toBeVisible()
+  await expect(attention.getByText('当前授权范围内，1 个执行节点当前不能接收新任务。', { exact: true })).toBeVisible()
+  await expect(attention).not.toContainText('今日失败 0')
+  const nodeTable = page.getByRole('table', { name: '执行节点摘要', exact: true })
+  await expect(nodeTable).toContainText('历史采样（已过期）')
+  expect((await tasks.boundingBox())!.height).toBe(360)
+  expect((await page.locator('.overview-metric-card').first().boundingBox())!.height).toBeLessThan(136)
+  const clock = page.getByRole('status', { name: '快照范围与时间' }).getByText(/\d{2}:\d{2}:\d{2} 更新/)
+  await clock.focus()
+  await expect(page.getByRole('tooltip')).toContainText(/快照时间 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/)
+  await page.getByText('今日成功任务', { exact: true }).focus()
+  await expect(page.getByRole('tooltip').last()).toContainText('按 UTC 自然日及任务终态时间统计')
+  await page.getByRole('heading', { name: '首页', exact: true }).click()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath('overview-quiet-1440.png'), fullPage: false })
+
+  await page.route('**/api/v1/overview?*', route => {
+    const source = overviewFixture()
+    const item: OverviewSnapshot = { ...source, nodes: source.nodes.status === 'READY' ? { status: 'READY', data: { ...source.nodes.data, items: source.nodes.data.items.map((node, index) => {
+      if (index !== 0) return node
+      const { observedAt, cpuUsagePercent, memoryUsagePercent, ...withoutSample } = node
+      void observedAt
+      void cpuUsagePercent
+      void memoryUsagePercent
+      return withoutSample
+    }) } } : source.nodes }
+    return route.fulfill({ json: { requestId: 'synthetic-unknown-sample', item } })
+  })
+  await page.reload()
+  const rows = page.getByRole('table', { name: '执行节点摘要', exact: true })
+  await expect(rows.getByRole('row').filter({ hasText: '合成离线执行节点' })).toContainText('采样时间未知')
+  await expect(rows.getByRole('row').filter({ hasText: '合成离线执行节点' })).toContainText('CPU 未采集')
+  await expect(rows.getByRole('row').filter({ hasText: '合成正常执行节点' })).not.toContainText('已过期')
+  await expect(rows.getByRole('row').filter({ hasText: '合成正常执行节点' })).not.toContainText('采样时间未知')
+})
+
+test('摘要区在空态、长内容、失败和受限往返时保持高度及区域间距', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 1024 })
+  const model = await fixture(page)
+  await page.goto('/')
+  const geometry = () => page.locator('.overview-section').evaluateAll(elements => elements.map(element => {
+    const { height, top, bottom } = element.getBoundingClientRect()
+    return { height, top, bottom }
+  }))
+  await expect(page.getByRole('table', { name: '我的重点任务', exact: true })).toBeVisible()
+  const initial = await geometry()
+  expect(initial.slice(0, 3).map(box => box.height)).toEqual([420, 420, 360])
+  for (const mode of ['quiet', 'long', 'partial', 'task-restricted', 'ready'] as const) {
+    model.setMode(mode)
+    const previousCalls = model.calls
+    await page.getByRole('button', { name: /^(刷新|已刷新)$/, exact: true }).click()
+    await expect.poll(() => model.calls).toBeGreaterThan(previousCalls)
+    await expect(page.locator('.overview-workspace')).toHaveAttribute('aria-busy', 'false')
+    const boxes = await geometry()
+    expect(boxes.slice(0, 3).map(box => box.height), mode).toEqual(initial.slice(0, 3).map(box => box.height))
+    expect(boxes[0]!.top, mode).toBe(boxes[1]!.top)
+    expect(boxes[2]!.top - boxes[0]!.bottom, mode).toBe(16)
+    expect(boxes[3]!.top - boxes[2]!.bottom, mode).toBe(16)
+    if (mode === 'quiet') await page.screenshot({ path: info.outputPath('overview-fixed-empty-1440.png'), fullPage: false })
+    if (mode === 'long') await page.screenshot({ path: info.outputPath('overview-fixed-long-1440.png'), fullPage: false })
+  }
+  const trend = page.getByRole('region', { name: '任务结果趋势', exact: true })
+  for (const label of ['终态总数', '成功', '失败']) await trend.getByRole('button', { name: label, exact: true }).click()
+  await expect(trend.getByRole('status')).toContainText('所有系列已隐藏')
+  expect((await trend.boundingBox())!.height).toBe(initial[0]!.height)
+  for (const label of ['终态总数', '成功', '失败']) await trend.getByRole('button', { name: label, exact: true }).click()
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await trend.scrollIntoViewIfNeeded()
+  const trendBody = page.getByRole('region', { name: '任务结果趋势内容', exact: true })
+  expect(await trendBody.evaluate(element => element.scrollHeight <= element.clientHeight), '大屏图表不再因宽度增加而挤出时间窗口').toBe(true)
+  await page.setViewportSize({ width: 400, height: 1024 })
+  await trend.scrollIntoViewIfNeeded()
+  const title = trend.getByRole('heading', { name: '任务结果趋势', exact: true })
+  const titleBox = await title.boundingBox()
+  expect(await trendBody.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await trendBody.focus()
+  await page.keyboard.press('End')
+  await expect.poll(() => trendBody.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  await expect(trendBody.locator('.overview-trend-window')).toBeInViewport({ ratio: 1 })
+  await expect(trend.getByRole('button', { name: '查看对应任务' })).toBeInViewport({ ratio: 1 })
+  expect((await title.boundingBox())!.y).toBe(titleBox!.y)
+  expect((await trend.boundingBox())!.height).toBe(initial[0]!.height)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: info.outputPath('overview-trend-scrolled-400.png'), fullPage: false })
+})
+
+for (const width of [1440, 720]) {
+  test(`首页 ${width}px 长内容在区域内滚动，标题和操作保持可见`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 1024 })
+    await fixture(page, 'long')
+    await page.goto('/')
+    for (const name of ['需要关注', '我的任务']) {
+      const section = page.getByRole('region', { name, exact: true })
+      const body = page.getByRole('region', { name: `${name}内容`, exact: true })
+      await section.scrollIntoViewIfNeeded()
+      const heading = section.getByRole('heading', { name, exact: true })
+      const headingBox = await heading.boundingBox()
+      expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+      await body.focus()
+      await page.keyboard.press('End')
+      await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+      const last = name === '我的任务' ? body.getByRole('button', { name: /^合成任务 5/ }) : body.getByText('Agent 当前离线', { exact: true })
+      await expect(last).toBeInViewport({ ratio: 1 })
+      await expect(heading).toBeInViewport({ ratio: 1 })
+      expect((await heading.boundingBox())!.y).toBe(headingBox!.y)
+      if (name === '我的任务') await expect(section.getByRole('button', { name: '查看我的全部任务' })).toBeInViewport({ ratio: 1 })
+      await page.screenshot({ path: info.outputPath(`overview-${name}-scrolled-${width}.png`), fullPage: false })
+      await page.keyboard.press('Home')
+      await expect.poll(() => body.evaluate(element => element.scrollTop)).toBe(0)
+      await body.hover()
+      await page.mouse.wheel(0, 2000)
+      await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+      expect((await section.boundingBox())!.height).toBe(name === '我的任务' ? 360 : 420)
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+}
+
 test('OCP 参考结构：四张指标卡、趋势与关注并列、通栏明细保留同一快照', async ({ page }) => {
   await fixture(page)
   await page.goto('/')
@@ -117,7 +282,7 @@ test('OCP 参考结构：四张指标卡、趋势与关注并列、通栏明细�
   expect(tasks!.width).toBe(nodes!.width)
   expect(nodes!.y).toBeGreaterThan(tasks!.y)
   const attention = page.getByRole('region', { name: '需要关注', exact: true })
-  await expect(attention.getByText('当前授权范围内今日失败 2 个', { exact: false })).toBeVisible()
+  await expect(attention.getByText('今日失败 2 个任务', { exact: false })).toBeVisible()
   await expect(attention.getByText('Agent 当前离线', { exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '执行节点', exact: true }).getByRole('table')).toBeVisible()
   await page.getByRole('button', { name: '不可接收节点 1 个，可见 2 个，查看执行节点' }).click()
@@ -176,7 +341,7 @@ test('趋势绘图与 Ant 命中区分离，键盘在独立弹窗按同一桶和
 test('趋势范围分析弹窗带入完整终态窗口且不附加状态', async ({ page }) => {
   const model = await fixture(page)
   await page.goto('/')
-  await page.getByRole('button', { name: '下钻分析', exact: true }).click()
+  await page.getByRole('button', { name: '查看对应任务', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '任务结果分析' })).toBeVisible()
   await expect.poll(() => model.requests.some(request => request.includes('/api/v1/tasks?') && request.includes('finishedFrom=') && request.includes('finishedTo=') && !request.includes('state='))).toBe(true)
   await expect(page).toHaveURL(/\/$/)
@@ -189,9 +354,9 @@ test('趋势放大是独立弹窗，图例同步、焦点被约束且关闭返�
   const dialog = page.getByRole('dialog', { name: '任务结果趋势 · 放大', exact: true })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('heading', { name: '任务结果趋势 · 放大' })).toBeFocused()
-  await dialog.getByRole('checkbox', { name: '成功', exact: true }).uncheck()
+  await dialog.getByRole('button', { name: '成功', exact: true }).click()
   await expect(dialog.locator('g.trend-succeeded')).toHaveCount(0)
-  await dialog.getByRole('checkbox', { name: '成功', exact: true }).check()
+  await dialog.getByRole('button', { name: '成功', exact: true }).click()
   for (let index = 0; index < 32; index++) { await page.keyboard.press('Tab'); expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true) }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: info.outputPath('overview-expanded-dialog.png'), fullPage: false })
@@ -208,10 +373,10 @@ test('分析弹窗关闭重开后迟到任务不覆盖新会话', async ({ page 
     if (reads === 1) { await pending; return route.fulfill({ json: { items: [overviewAnalysisTask('late-old')], totalPages: 1 } }) }
     return route.fulfill({ json: { items: [overviewAnalysisTask('latest-visible')], totalPages: 1 } })
   })
-  await page.goto('/'); await page.getByRole('button', { name: '下钻分析', exact: true }).click()
+  await page.goto('/'); await page.getByRole('button', { name: '查看对应任务', exact: true }).click()
   await expect(page.getByLabel('正在读取分析任务')).toBeVisible()
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0)
-  await page.getByRole('button', { name: '下钻分析', exact: true }).click()
+  await page.getByRole('button', { name: '查看对应任务', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '任务结果分析', exact: true })
   await expect(dialog.getByRole('link', { name: /latest-visible/ })).toBeVisible()
   release()
@@ -258,7 +423,7 @@ test('趋势弹窗快速开关与放大转分析保持单一窗口，时间筛�
 
 test('分析刷新失败保留可信行，授权失效同步清理全页快照与弹窗', async ({ page }) => {
   const model = await fixture(page); await page.goto('/')
-  await page.getByRole('button', { name: '下钻分析', exact: true }).click()
+  await page.getByRole('button', { name: '查看对应任务', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '任务结果分析', exact: true })
   await expect(dialog.getByRole('table', { name: '趋势下钻任务列表' })).toBeVisible()
   model.setTaskMode('error'); await dialog.getByRole('button', { name: '刷新列表', exact: true }).click()
@@ -274,7 +439,7 @@ test('分析刷新失败保留可信行，授权失效同步清理全页快照�
 test('分析可信空结果保留窗口和筛选，不挂空表或误报失败', async ({ page }, info) => {
   await fixture(page)
   await page.route('**/api/v1/tasks?*', route => route.fulfill({ json: { items: [], totalPages: 0 } }))
-  await page.goto('/'); await page.getByRole('button', { name: '下钻分析', exact: true }).click()
+  await page.goto('/'); await page.getByRole('button', { name: '查看对应任务', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '任务结果分析', exact: true })
   await expect(dialog.getByText('该时段与状态下暂无可查看的任务')).toBeVisible()
   await expect(dialog.getByRole('table')).toHaveCount(0)
@@ -400,15 +565,15 @@ test('首页原生 200% 缩放下刷新和趋势键盘操作可达', async ({ br
     await expect(page.getByRole('button', { name: '已刷新', exact: true })).toBeInViewport()
     await page.getByText('最近 7 天', { exact: true }).click()
     await expect(page.locator('.overview-trend-chart')).toHaveAttribute('data-bucket-count', '7')
-    const series = page.getByRole('checkbox', { name: '成功', exact: true })
+    const series = page.getByRole('button', { name: '成功', exact: true })
     await series.focus()
     await page.keyboard.press('Space')
-    await expect(series).not.toBeChecked()
+    await expect(series).toHaveAttribute('aria-pressed', 'false')
     await page.keyboard.press('Space')
-    await expect(series).toBeChecked()
+    await expect(series).toHaveAttribute('aria-pressed', 'true')
     await page.getByRole('heading', { name: '任务结果趋势', exact: true }).scrollIntoViewIfNeeded()
     await page.locator('.overview-trend-hit').first().focus()
-    const point = await page.locator('.overview-trend-chart circle').first().boundingBox()
+    const point = await page.locator('.overview-trend-point').first().boundingBox()
     expect(Math.abs(point!.width - point!.height), '原生 200% 缩放不拉伸数据点').toBeLessThan(0.5)
     const session = await context.newCDPSession(page)
     const capture = await session.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
@@ -421,7 +586,7 @@ test('首页原生 200% 缩放下刷新和趋势键盘操作可达', async ({ br
     const expanded = await session.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
     await writeFile(info.outputPath('overview-expanded-native-200-percent.png'), Buffer.from(expanded.data, 'base64'))
     await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0); await expect(enlarge).toBeFocused()
-    const analyze = page.getByRole('button', { name: '下钻分析', exact: true })
+    const analyze = page.getByRole('button', { name: '查看对应任务', exact: true })
     await analyze.focus(); await page.keyboard.press('Enter')
     const analysis = page.getByRole('dialog', { name: '任务结果分析', exact: true })
     await expect(analysis.getByRole('heading', { name: '任务结果分析' })).toBeFocused()

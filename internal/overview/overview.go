@@ -294,21 +294,46 @@ func BuildNodes(items []Node) Nodes {
 	return result
 }
 
-// Describe 只总结本次可信分区；部分失败或范围受限时明确缺口，不生成运行正常结论。
+// Describe 只总结本次可信分区，优先呈现异常并省略零计数；不从有限列表推算总量或生成平台健康结论。
 func Describe(snapshot Snapshot) string {
 	parts := []string{}
-	if snapshot.Metrics.Status == "READY" && snapshot.Metrics.Data != nil {
-		m := snapshot.Metrics.Data
-		parts = append(parts, fmt.Sprintf("当前授权范围内今日失败 %d 个、运行中 %d 个、等待调度 %d 个任务", m.TodayFailed, m.Running, m.Waiting))
+	if snapshot.Metrics.Status == "UNAVAILABLE" || snapshot.Trend.Status == "UNAVAILABLE" || snapshot.Nodes.Status == "UNAVAILABLE" || snapshot.MyTasks.Status == "UNAVAILABLE" || snapshot.Attention.Status == "UNAVAILABLE" {
+		parts = append(parts, "快照数据不完整，部分分区暂不可用")
 	}
-	if snapshot.Nodes.Status == "READY" && snapshot.Nodes.Data != nil {
+	metricsReady := snapshot.Metrics.Status == "READY" && snapshot.Metrics.Data != nil
+	if metricsReady && snapshot.Metrics.Data.TodayFailed > 0 {
+		parts = append(parts, fmt.Sprintf("今日失败 %d 个任务", snapshot.Metrics.Data.TodayFailed))
+	} else if snapshot.Attention.Status == "READY" && snapshot.Attention.Data != nil {
+		// 今日计数为零仍可能有昨日的最近 24 小时失败，只表达已知存在，不把有限条目数当总数。
+		for _, item := range snapshot.Attention.Data.Items {
+			if item.Kind == "TASK_FAILED" {
+				parts = append(parts, "最近 24 小时存在失败任务")
+				break
+			}
+		}
+	}
+	if snapshot.Nodes.Status == "READY" && snapshot.Nodes.Data != nil && snapshot.Nodes.Data.Unavailable > 0 {
 		parts = append(parts, fmt.Sprintf("%d 个执行节点当前不能接收新任务", snapshot.Nodes.Data.Unavailable))
 	}
-	if snapshot.Metrics.Status == "UNAVAILABLE" || snapshot.Trend.Status == "UNAVAILABLE" || snapshot.Nodes.Status == "UNAVAILABLE" || snapshot.MyTasks.Status == "UNAVAILABLE" || snapshot.Attention.Status == "UNAVAILABLE" {
-		parts = append([]string{"快照数据不完整，部分分区暂不可用"}, parts...)
+	if metricsReady {
+		if snapshot.Metrics.Data.Waiting > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个任务等待调度", snapshot.Metrics.Data.Waiting))
+		}
+		if snapshot.Metrics.Data.Running > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个任务运行中", snapshot.Metrics.Data.Running))
+		}
+	}
+	if snapshot.Metrics.Status == "RESTRICTED" {
+		parts = append(parts, "任务指标范围不可见")
 	}
 	if snapshot.Nodes.Status == "RESTRICTED" {
 		parts = append(parts, "执行节点范围不可见")
 	}
-	return strings.Join(parts, "；") + "。"
+	if len(parts) == 0 {
+		if metricsReady && snapshot.Nodes.Status == "READY" && snapshot.Nodes.Data != nil && snapshot.Attention.Status == "READY" && snapshot.Attention.Data != nil {
+			return "当前可见事实中未发现最近任务失败或节点接收异常。"
+		}
+		return "当前可用事实不足，需核对任务与节点状态。"
+	}
+	return "当前授权范围内，" + strings.Join(parts, "；") + "。"
 }

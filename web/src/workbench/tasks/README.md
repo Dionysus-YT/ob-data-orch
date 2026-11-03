@@ -1,5 +1,11 @@
 # 任务模块维护索引
 
+2026-11-02 模板保存仍由 useTaskListActions 与 TaskActionDialogs 承载，不使用旧 useTaskActions 兼容入口。名称按 UTF-8 256 字节校验；未决写入保留精确名称和原键，30 秒界面等待超时不表示服务端回滚，重试沿用原请求并冻结名称，成功清输入及旧错误。模板保存弹窗只显示来源身份与配置排除边界，不把来源执行节点误作模板内容；会话失效终止界面等待并清理计时器。具体范围与证据见[模板中心维护索引](../templates/README.md)。
+
+2026-10-28 远端结果证据：API 按服务端输出类型严格解析摘要。OSS/S3/COS/OBS 的文件数、字节数和清单必须同时为 `null`；不接受旧远端零值冒充事实，历史兼容由控制面投影完成。本地仍要求数值和数组，显式 `UNAVAILABLE` 位置不接受摘要。普通与旁路导入沿用无输出位置的完成证据，页面不展示导出文件事实。详情对远端显示未知且不展开清单；API 负例及 `tests/task-detail.spec.ts` 验证空值、失配和会话切换。
+
+2026-10-28 日志分页修复：`useTaskLogs` 优先按 `nextCursor` 补齐固定快照，完成后才开启实时流或使用 `lastReliableCursor` 增量；终态同样完整补页。后页失败保留页游标与已读日志，重试不跳过未读记录；循环游标失败关闭。分页成功、失败、过期、授权失效与 finally 沿用详情会话绑定，A → B → A 和卸载均不能复活旧页。`taskDetailLifecycle.test.ts` 覆盖 201 条终态日志、后页失败重试、去重和上述失效负例；后端增量响应须保留固定快照的剩余页游标。
+
 2026-10-24 调度首批：执行响应可在 `WAITING_SCHEDULE` 且未分配执行时携带固定 `schedulingWaitReason`；`api/taskExecutionFacts.ts` 严格校验，`useTaskDetail.ts` 沿用唯一执行事实，详情运行概览以条件 Descriptions 字段展示。不增加本地调度状态、横幅、独立读取或订阅，不从固定原因推断其他领取条件通过。完整权限和计数边界见[调度契约](../../../../docs/03-technical/scheduling-policy-contract.md)。
 
 2026-10-20 按 DEC-056，旁路改为独立五步：`taskDerivationRoutes` 的从头执行及 `useTaskDraftList` 的提交/只读恢复统一进入第五步。重建仍从第一步编辑；旧旁路最终步链接在旁路能力内兼容到第五步。六个冻结证据分组保持原协议，不代表现役页面步数，也不据此改写历史快照。

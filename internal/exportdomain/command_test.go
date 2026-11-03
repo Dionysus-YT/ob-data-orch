@@ -93,7 +93,7 @@ func TestBuildGeneralizedFieldsRejectsUnsupportedShape(t *testing.T) {
 	for name, input := range map[string]Draft{
 		"未知范围":   {ScopeKind: "UNKNOWN", ContentKind: "DATA_ONLY", Format: "CSV"},
 		"未知内容":   {ScopeKind: "ALL", ContentKind: "UNKNOWN", Format: "CSV"},
-		"未知对象类型": {ScopeKind: "SPECIFIED", ObjectType: "TRIGGER", Objects: []string{"item"}, ContentKind: "DDL_ONLY"},
+		"未知对象类型": {ScopeKind: "SPECIFIED", ObjectType: "UNSUPPORTED", Objects: []string{"item"}, ContentKind: "DDL_ONLY"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := BuildGeneralizedFields(input)

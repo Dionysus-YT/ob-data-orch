@@ -137,7 +137,7 @@ func Test权限专家分类来自领域结果而非元数据版本(t *testing.T)
 	}
 	ordinary := false
 	expert := true
-	for _, version := range []string{"obdumper-4.3.5-slice-v11-expert-parameters", "obdumper-4.3.5-slice-v12-schema-boolean"} {
+	for _, version := range []string{"obdumper-4.3.5-slice-v11-expert-parameters", "obdumper-4.3.5-slice-v12-schema-boolean", "obdumper-4.3.5-slice-v13-oracle-objects"} {
 		for _, test := range []struct {
 			name string
 			flag *bool

@@ -15,10 +15,10 @@
 | 项目 | 实际基线 |
 | --- | --- |
 | Node / npm | 24.16.0 / 11.13.0 |
-| Vue / Vue Router | 3.5.40 / 5.2.0 |
+| Vue / Vue Router | 3.5.44 / 5.2.0 |
 | TypeScript / vue-tsc | 6.0.3 / 3.3.7 |
-| Vite / plugin-vue | 8.1.5 / 6.0.8 |
-| Vitest | 4.1.11 |
+| Vite / plugin-vue | 8.1.6 / 6.0.8 |
+| Vitest | 4.1.12 |
 | Ant Design Vue | 4.2.6，实际项目 Qualification 通过 |
 | Playwright | 1.63.0；系统 Chrome 回归，隔离 Chromium 扩展验证原生缩放 |
 
@@ -26,7 +26,13 @@
 
 Ant Design Vue（MIT）用于替代自研 Primitive，避免继续维护第三套基础交互；不选择 React 或继续扩建自研基础库。Playwright（Apache-2.0）只作为开发依赖提供真实浏览器验收。产物仍是平台无关的静态资源，不引入安装端 Node、CGO 或新后台服务。
 
-本次平台安全补丁独立核验：Vitest 4.1.10 → 4.1.11，更新兼容范围内的 brace-expansion、nanoid、PostCSS 传递依赖，未使用强制或主版本升级；`npm audit` 为 0 漏洞。后续仍按上述独立升级流程执行。
+2026-10-28 平台安全补丁独立核验：Vue 3.5.40 → 3.5.44、Vite 8.1.5 → 8.1.6、Vitest 4.1.11 → 4.1.12，并更新兼容的 `postcss-selector-parser`、`source-map-js`。Monaco 0.57.0 固定引用受影响的 DOMPurify 3.4.15，因此用仅限该依赖的 override 固定到 3.4.17；不降级 Monaco 或执行强制主版本升级。核心包沿用 MIT；DOMPurify 为 MPL-2.0 OR Apache-2.0，source-map-js 为 BSD-3-Clause，仍仅形成跨平台静态资源或本地开发工具，不新增服务端运行依赖。升级与在线审计、类型/单测/构建及四参考页回归的实际结果见[整体审查修复记录](evidence/project-review-fixes-2026-10-28.md)。后续 Monaco 原生采用安全版本并通过同级回归后才移除此 override。
+
+## 页面加载与登录性能
+
+页面组件在 `web/src/router/index.ts` 通过字面量动态导入按路由加载。登录后的首页只加载外壳、首页及实际复用的依赖；向导、详情、管理和设置页面在进入对应路由时加载，不提前挂载或发起业务请求。原路径、查询、重定向及离开守卫保持各自唯一职责，不引入第二套加载状态或缓存。
+
+`tests/startup.spec.ts` 验证其他页面无法下载时首页仍能显示，并在导航后正常加载导出页、选择数据源和前进；四代表页与系统管理导航回归覆盖直接访问和子路由。2026-11-03 的请求量、构建产物、登录耗时及验证边界见[登录首屏性能记录](evidence/login-startup-performance-2026-11-03.md)。密码派生、认证与服务端会话规则不因前端加载优化改变。
 
 ## Token 与样式架构
 
@@ -42,7 +48,8 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 
 ## 产品组件契约
 
-- `ProductHeader` / `ProductShell`：退出事务由 Header 唯一持有；`useLogoutGuard` 只在当前 Shell 内协调已注册的页面离开守卫及注销后的整页卸载许可。导出、普通导入、数据源编辑与节点编辑继续拥有各自 dirty / busy / 确认状态，公共协调器不复制表单或建立事件总线。编辑会话卸载取消旧确认，迟到结果不得批准新会话；请求失败保留输入和原生刷新保护。验证入口为 `useLogoutGuard.test.ts` 与 `tests/logout-guard.spec.ts`。
+- `ProductHeader` / `ProductShell`：2026-11-02 按用户当前账户菜单要求，Header 只装配；`ProductAccountMenu` 唯一持有用户名、菜单与退出事务，`ProductPasswordDialog` 唯一持有短时密码及修改事务，请求全部进入 `api/account.ts`。两者都是产品外壳的账户基础设施，不要求业务页消费者，也不归属权限配置业务。`useLogoutGuard` 只在当前 Shell 内协调已注册的页面离开守卫及成功后的整页卸载许可；退出和改密均复用它。导出、普通导入、数据源编辑与节点编辑继续拥有各自 dirty / busy / 确认状态，公共协调器不复制表单或建立事件总线。编辑会话卸载取消旧确认，迟到结果不得批准新会话；请求失败保留业务输入和原生刷新保护。验证入口为 `useLogoutGuard.test.ts`、`api/account.test.ts`、`tests/account-menu.spec.ts` 与 `tests/logout-guard.spec.ts`。
+- 2026-11-03 账户呈现按 OCP 参考修订，状态边界沿用上条。用户随后明确只有用户名的个人设置页没有独立价值，已移除其路由、视图和菜单项；当前身份只由 `ProductAccountMenu` 展示，菜单仅保留改密与退出。不为资料编辑、AccessKey 或账号管理预建页面、共享状态或新接口；`api/account.ts` 的会话读取仍用于缺少 Header 注入用户名时的恢复。
 - `OrchOperationalTable`：Feature Composition，只接收调用方提供的授权事实与列模型，禁用 Ant 内置分页；排序、筛选、Cursor、总数和版本均由原领域/API 流程负责。
 - Ant `Drawer` + `useAntDrawerDialog`：页面直接使用 Ant Drawer；关闭只是意图，由页面执行 dirty / busy / 异步测试守卫。`useAntDrawerDialog` 只补齐 Ant Vue 4.2.6 未转发的 ARIA、焦点约束和关闭后焦点恢复，不接管 Drawer 视觉、结构、动画或默认关闭按钮。
 - `OrchDangerConfirm`：明确对象、影响与动作；安全取消初始焦点，busy 阻止退出，关闭恢复触发点；不把打开确认等同于取得服务端资格。
@@ -82,7 +89,7 @@ Ant selector 例外：4.2.6 未提供对应 token 的 Table 36/42px 行高与分
 | 业务反向依赖 | `workbench/` 不依赖 `views/`、`router/`，含类型依赖 |
 | 公共与平台/API 边界 | 公共 components/composables 不依赖具体业务、页面或路由；platform 不依赖业务/API/UI；api 不依赖业务/UI/平台实现 |
 | 循环值依赖 | 全生产图的静态导入、再导出、字面量动态导入、index、require；类型边不判作运行时循环 |
-| 请求与订阅 | fetch/XMLHttpRequest/EventSource/WebSocket 及常见网络客户端只能经 api；识别全局属性、别名与解构，局部同名绑定不误判。既有 ProductHeader `/logout` 是准确文件/端点的认证例外，不豁免业务请求 |
+| 请求与订阅 | fetch/XMLHttpRequest/EventSource/WebSocket 及常见网络客户端只能经 api；识别全局属性、别名与解构，局部同名绑定不误判。账户请求也统一进入 `api/account.ts`，旧 Header `/logout` 的精确例外已无现役请求 |
 | 向导步骤 | API 类型端口可引用，运行时 API 客户端依赖失败 |
 
 人工 REVIEW 覆盖跨 `workbench/<feature>/` 业务依赖、公共能力仅单业务使用、复杂页面多类直接 API/异步生命周期、非字面量动态依赖，以及 >400 总行或 >300 脚本行。跨业务值/类型导入、再导出与字面量动态引用均提示能力所有者、真实复用依据及状态边界；合理复用不因方向被禁止，循环值依赖仍失败。阈值只辅助复核，CLI 不据此失败。公共外壳 ProductShell/Header 是应用基础设施，不要求两个业务消费者。判断状态副本、规则语义、反射调用、动态路径与完整权限仍需源码复核和行为测试；静态通过不证明业务等价、无秘密或真实能力可用。当前 5 个规模信号及模板复用导出资格的复核见第四阶段记录，不添加机械 max-lines 门禁或宽泛模块豁免。

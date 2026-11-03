@@ -1223,6 +1223,8 @@ type SubmissionSnapshot struct {
 // ExportDraft 是首条 CSV 导出链路可持久化的非敏感草稿投影。
 // 它不保存密码、密文、秘密槽位解析结果或可执行进程信息。
 type ExportDraft struct {
+	// SubmittedTaskID 仅用于恢复当前修订已受理的唯一结果，不授予执行权限。
+	SubmittedTaskID   string
 	DraftID           string
 	OwnerSubjectID    string
 	DataSourceID      string

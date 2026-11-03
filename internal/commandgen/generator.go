@@ -53,8 +53,8 @@ func NewDefault() (*Generator, error) {
 	return newGenerator(catalog)
 }
 
-// NewGeneralized 构建现行 v7 泛化生成器，并加载只用于历史草稿重放的冻结 v6 目录。
-// 新请求默认由调用方声明 v7；只有携带已冻结 v6 metadataVersion 的请求才会分派到旧目录。
+// NewGeneralized 加载 v7 及各受控增量目录，由调用方声明精确版本，不静默升级历史草稿。
+// v6 与 v8 只用于冻结重放；Oracle 新对象通过独立 v13 保持其他目录原样。
 func NewGeneralized() (*Generator, error) {
 	catalog, err := parammeta.LoadGeneralized()
 	if err != nil {
@@ -112,7 +112,16 @@ func NewGeneralized() (*Generator, error) {
 	if err != nil {
 		return nil, err
 	}
+	oracleCatalog, err := parammeta.LoadOracleObjects()
+	if err != nil {
+		return nil, err
+	}
+	oracleGenerator, err := newGenerator(oracleCatalog)
+	if err != nil {
+		return nil, err
+	}
 	current.versions = map[string]*Generator{
+		oracleGenerator.metadataVersion:   oracleGenerator,
 		current.metadataVersion:           current,
 		legacy.metadataVersion:            legacy,
 		objectGenerator.metadataVersion:   objectGenerator,
@@ -266,7 +275,7 @@ func (g *Generator) Generate(request Request) (Result, error) {
 		})
 	}
 	// 新目录的 sys 依赖必须由唯一生成器复核；历史目录的规范化与指纹保持原样。
-	if g.metadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters" || g.metadataVersion == "obdumper-4.3.5-slice-v12-schema-boolean" {
+	if g.metadataVersion == "obdumper-4.3.5-slice-v11-expert-parameters" || g.metadataVersion == "obdumper-4.3.5-slice-v12-schema-boolean" || g.metadataVersion == "obdumper-4.3.5-slice-v13-oracle-objects" {
 		activeFields := make(map[string]bool, len(normalized))
 		for _, field := range normalized {
 			activeFields[field.Name] = field.State == StateExplicit || field.State == StateDerived
@@ -499,7 +508,7 @@ func normalizeValue(definition parammeta.Definition, value Value, platform Platf
 // 每个名称必须非空、不超过 256 字符且不含逗号与通配符。
 func validateObjectNameList(longName, value, capability string) string {
 	switch longName {
-	case "--table", "--view", "--exclude-table":
+	case "--table", "--view", "--exclude-table", "--function", "--procedure", "--sequence", "--package", "--trigger", "--synonym", "--public-synonym", "--type":
 	default:
 		return ""
 	}

@@ -49,7 +49,7 @@ func New(loadedAt time.Time) (*Service, error) {
 	if loadedAt.IsZero() || loadedAt.After(time.Now()) {
 		return nil, ErrUnavailable
 	}
-	loaders := []func() (*parammeta.Catalog, error){parammeta.LoadDefault, parammeta.LoadLegacyGeneralized, parammeta.LoadGeneralized, parammeta.LoadObjectSelection, parammeta.LoadCombinedObjectSelection, parammeta.LoadDDLTextFormats, parammeta.LoadExpertParameters, parammeta.LoadSchemaBoolean, parammeta.LoadNormalImport, parammeta.LoadDirectLoad}
+	loaders := []func() (*parammeta.Catalog, error){parammeta.LoadDefault, parammeta.LoadLegacyGeneralized, parammeta.LoadGeneralized, parammeta.LoadObjectSelection, parammeta.LoadCombinedObjectSelection, parammeta.LoadDDLTextFormats, parammeta.LoadExpertParameters, parammeta.LoadSchemaBoolean, parammeta.LoadOracleObjects, parammeta.LoadNormalImport, parammeta.LoadDirectLoad}
 	catalogs := make([]*parammeta.Catalog, len(loaders))
 	for i, load := range loaders {
 		catalog, err := load()

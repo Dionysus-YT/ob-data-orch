@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CheckCircleOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { Alert as AAlert, Badge as ABadge, Button as AButton, Skeleton as ASkeleton } from 'ant-design-vue'
+import { Alert as AAlert, Badge as ABadge, Button as AButton, Skeleton as ASkeleton, Tooltip as ATooltip } from 'ant-design-vue'
 import { computed } from 'vue'
 import OverviewAttention from './OverviewAttention.vue'
 import OverviewMyTasks from './OverviewMyTasks.vue'
@@ -24,9 +24,9 @@ const refreshLabel = computed(() => busy.value ? '刷新中' : refreshCompleted.
       <div class="overview-header-actions">
         <div class="overview-freshness" aria-label="快照范围与时间" role="status">
           <span>当前授权范围</span><span>UTC</span>
-          <span v-if="snapshot">快照时间 {{ overviewTime(snapshot.snapshotAt) }}</span><span v-else>尚未取得可信快照</span>
+          <ATooltip v-if="snapshot" :title="`快照时间 ${overviewTime(snapshot.snapshotAt)} UTC`" :trigger="['hover', 'focus']"><span tabindex="0">{{ overviewTime(snapshot.snapshotAt).slice(11) }} 更新</span></ATooltip><span v-else>尚未取得可信快照</span>
           <ABadge v-if="stale" status="warning" text="数据已过期" /><ABadge v-else-if="refreshing" status="processing" text="更新中" />
-          <span v-if="!restricted">每 30 秒自动刷新</span>
+          <ATooltip v-if="!restricted" title="每 30 秒自动刷新" :trigger="['hover', 'focus']"><span tabindex="0">自动刷新</span></ATooltip>
         </div>
         <AButton type="text" :loading="busy" :disabled="busy" @click="refresh"><template #icon><CheckCircleOutlined v-if="refreshCompleted" aria-hidden="true" /><ReloadOutlined v-else aria-hidden="true" /></template>{{ refreshLabel }}</AButton>
       </div>

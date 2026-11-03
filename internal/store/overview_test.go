@@ -12,7 +12,7 @@ import (
 
 func seedOverviewTask(t *testing.T, database *Store, id, subject, state string, at time.Time) {
 	t.Helper()
-	input := validTaskSubmission(id)
+	input := independentTaskProof(t, database, validTaskSubmission(id))
 	input.CreatorSubjectID, input.AuditActorID, input.RequestID = subject, subject, "request-"+id
 	input.SnapshotJSON = `{"database":"synthetic","table":"` + id + `"}`
 	if err := database.SubmitTask(context.Background(), input); err != nil {

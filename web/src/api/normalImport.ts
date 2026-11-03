@@ -8,6 +8,7 @@ export interface NormalImportConfig {
   compatMysql?: boolean; compatMysqlVersion?: '' | 'mysql56' | 'mysql57' | 'mysql80'; replaceData?: boolean; replaceObject?: boolean; cleanup: 'NONE' | 'TRUNCATE' | 'DELETE'
 }
 export interface NormalImportDraft {
+  submittedTaskId?: string
   id: string; revision: number; configVersion: 'normal-import-v1'; config: NormalImportConfig; configFingerprint: string; executionEnabled: boolean
   sourceTaskId?: string; sourceDerivation?: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
 }
@@ -18,6 +19,7 @@ export interface NormalImportManifest {
   files: { path: string; kind: 'DATA' | 'DDL'; object: string; size: number; modified: string; sha256: string }[]
 }
 export interface NormalImportCheck {
+  submittedTaskId?: string
   id: string; draftId: string; draftRevision: number; configFingerprint: string
   checkKind: 'NORMAL_IMPORT_FILES' | 'NORMAL_IMPORT_PREFLIGHT'
   status: 'PENDING' | 'LEASED' | 'SUCCEEDED' | 'FAILED' | 'INVALIDATED' | 'EXPIRED'
@@ -35,13 +37,13 @@ export interface NormalImportApi {
   previewNormalImportCommand(draft: NormalImportDraft): Promise<NormalImportCommand>
   startNormalImportCheck(draft: NormalImportDraft, filesOnly: boolean): Promise<string>
   getNormalImportCheck(id: string): Promise<NormalImportCheck>
-  submitNormalImport(draft: NormalImportDraft, checkId: string, confirmedConfigFingerprint?: string, taskName?: string): Promise<string>
+  submitNormalImport(draft: NormalImportDraft, checkId: string, confirmedConfigFingerprint?: string, taskName?: string, idempotencyKey?: string): Promise<string>
 }
 
 type ObjectValue = Record<string, unknown>
 interface Transport {
   read(path: string): Promise<ObjectValue>
-  write(path: string, body: unknown, revision?: number, method?: string): Promise<ObjectValue>
+  write(path: string, body: unknown, revision?: number, method?: string, idempotencyKey?: string): Promise<ObjectValue>
 }
 const base = '/api/v1/normal-import-drafts'
 const digest = /^[a-f0-9]{64}$/
@@ -82,7 +84,7 @@ function parseDraft(raw: ObjectValue): NormalImportDraft {
   const sourceTaskId = raw.sourceTaskId === undefined || raw.sourceTaskId === '' ? undefined : identifier(raw.sourceTaskId)
   const sourceDerivation = raw.sourceDerivation === undefined || raw.sourceDerivation === '' ? undefined : raw.sourceDerivation
   if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH' || Boolean(sourceTaskId) !== Boolean(sourceDerivation)) invalid()
-  return { id: identifier(raw.id), revision: integer(raw.revision, 1), configVersion: raw.configVersion, config: parseConfig(raw.config), configFingerprint: fingerprint(raw.configFingerprint), executionEnabled: raw.executionEnabled, ...(sourceTaskId ? { sourceTaskId, sourceDerivation: sourceDerivation as NormalImportDraft['sourceDerivation'] } : {}) }
+  return { id: identifier(raw.id), revision: integer(raw.revision, 1), configVersion: raw.configVersion, config: parseConfig(raw.config), configFingerprint: fingerprint(raw.configFingerprint), executionEnabled: raw.executionEnabled, ...(raw.submittedTaskId === undefined ? {} : { submittedTaskId: identifier(raw.submittedTaskId) }), ...(sourceTaskId ? { sourceTaskId, sourceDerivation: sourceDerivation as NormalImportDraft['sourceDerivation'] } : {}) }
 }
 function parseManifest(raw: unknown): NormalImportManifest | undefined {
   if (raw === null || raw === undefined) return undefined
@@ -114,7 +116,7 @@ function parseCheck(value: ObjectValue): NormalImportCheck {
   const inputManifest = parseManifest(value.inputManifest)
   if (value.status === 'SUCCEEDED' && (value.integrityStatus !== 'COMPLETE' || results.some(item => item.status !== 'PASSED') || !inputManifest)) invalid()
   const validUntil = string(value.validUntil); if (!Number.isFinite(Date.parse(validUntil))) invalid()
-  return { id: identifier(value.id), draftId: identifier(value.draftId), draftRevision: integer(value.draftRevision, 1), configFingerprint: fingerprint(value.configFingerprint), checkKind: kind, status: value.status as NormalImportCheck['status'], integrityStatus: string(value.integrityStatus), validUntil, executionEnabled: value.executionEnabled, results, inputManifest }
+  return { id: identifier(value.id), draftId: identifier(value.draftId), draftRevision: integer(value.draftRevision, 1), configFingerprint: fingerprint(value.configFingerprint), checkKind: kind, status: value.status as NormalImportCheck['status'], integrityStatus: string(value.integrityStatus), validUntil, executionEnabled: value.executionEnabled, results, inputManifest, ...(value.submittedTaskId === undefined ? {} : { submittedTaskId: identifier(value.submittedTaskId) }) }
 }
 
 function validEvidence(check: string, status: string, code: string): boolean {
@@ -149,6 +151,6 @@ export function createNormalImportApi(transport: Transport): NormalImportApi {
     },
     async startNormalImportCheck(draft, filesOnly) { return identifier((await transport.write(`${path(draft)}:${filesOnly ? 'discover-files' : 'precheck'}`, {}, draft.revision)).id) },
     async getNormalImportCheck(id) { return parseCheck(await transport.read(`/api/v1/normal-import-prechecks/${encodeURIComponent(id)}`)) },
-    async submitNormalImport(draft, precheckId, confirmedConfigFingerprint, taskName) { return identifier((await transport.write(`${path(draft)}:submit`, { precheckId, ...(confirmedConfigFingerprint ? { confirmedConfigFingerprint } : {}), ...(taskName?.trim() ? { taskName: taskName.trim() } : {}) }, draft.revision)).id) },
+    async submitNormalImport(draft, precheckId, confirmedConfigFingerprint, taskName, idempotencyKey) { return identifier((await transport.write(`${path(draft)}:submit`, { precheckId, ...(confirmedConfigFingerprint ? { confirmedConfigFingerprint } : {}), ...(taskName?.trim() ? { taskName: taskName.trim() } : {}) }, draft.revision, 'POST', idempotencyKey)).id) },
   }
 }

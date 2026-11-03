@@ -1,4 +1,5 @@
 import { ref, computed, watch, onScopeDispose } from 'vue'
+import { isNavigationFailure } from 'vue-router'
 import { type ExportDraft, type CommandPreview, type Precheck, exportDraftErrorMessage } from '@/api/browser'
 import { groupPrecheckRows, precheckBlockingSummary, precheckChecksForOutput, precheckResultBlocksSubmission } from './exportPrecheckPresentation'
 import type { ExportForm } from './exportForm'
@@ -46,10 +47,16 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   let copyEpoch = 0
   let submissionEpoch = 0, autoPreviewVersion = -1
   const submittedTaskID = ref('')
+  const submissionUncertain = ref(false)
+  const openingSubmittedTask = ref(false)
+  // 同一次确认冻结草稿、证明和幂等键；未知结果只能重放原意图，不能再次创建。
+  let submissionIntent: { draft: ExportDraft; precheckId: string; key: string } | undefined
+  const submissionLocked = computed(() => submitting.value || submissionUncertain.value || !!submittedTaskID.value)
   const persistence = useExportDraftPersistence({ ...deps, resetReview,
-    busy: computed(() => submitting.value || startingPrecheck.value || precheckRunning.value || previewingCommand.value),
+    busy: computed(() => submissionLocked.value || startingPrecheck.value || precheckRunning.value || previewingCommand.value),
   })
   const { currentDraft, createdDraftID, creatingDraft, loadingDraft, draftFailure, draftLoadFailure, draftNotice, operationNotice, draftDirty, formVersion, createDraft, loadDerivedDraft, loadCreatedDraft, clearDraftState, invalidateDraftState } = persistence
+  watch(() => currentDraft.value?.submittedTaskId, id => { if (id) { submittedTaskID.value = id; submissionUncertain.value = false } }, { flush: 'sync' })
 
   function resetReview() {
     previewEpoch++; precheckStartEpoch++; copyEpoch++; submissionEpoch++
@@ -58,7 +65,9 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
     stopPrecheckPolling()
     commandPreview.value = null; activePrecheck.value = null; precheckID.value = ''
     commandPreviewFailure.value = copyNotice.value = copyFailure.value = precheckFailure.value = submissionFailure.value = ''
-    submitConfirmationOpen.value = false; submittedTaskID.value = ''
+    submitConfirmationOpen.value = false; submittedTaskID.value = disposed ? '' : currentDraft.value?.submittedTaskId ?? ''
+    submissionUncertain.value = false; submissionIntent = undefined
+    openingSubmittedTask.value = false
   }
 
   const displayedDraftConfig = computed(() => currentDraft.value?.config)
@@ -137,11 +146,19 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
       && commandPreview.value.configFingerprint === draft.configFingerprint
       && precheckRows.value.every(row => row.result?.status === 'PASSED'))
   })
-  const canSubmit = computed(() => precheckReadyForSubmission.value && !submitting.value && !startingPrecheck.value && !precheckRunning.value)
+  const canSubmit = computed(() => {
+    if (disposed || submitting.value || submittedTaskID.value || startingPrecheck.value || precheckRunning.value) return false
+    const draft = currentDraft.value
+    // 原请求已可能提交时，证明过期不阻止按同一键恢复回执；服务端仍复验当前授权。
+    if (submissionUncertain.value && submissionIntent) return draft?.id === submissionIntent.draft.id && draft.revision === submissionIntent.draft.revision && draft.configFingerprint === submissionIntent.draft.configFingerprint
+    return precheckReadyForSubmission.value
+  })
   const canStartPrecheck = computed(() => Boolean(currentDraft.value && currentDraft.value.draftState !== 'EDITING' && commandPreview.value && !draftDirty.value
-    && !loadingDraft.value && !creatingDraft.value && !startingPrecheck.value && !precheckRunning.value && !submitting.value))
+    && !loadingDraft.value && !creatingDraft.value && !startingPrecheck.value && !precheckRunning.value && !submissionLocked.value))
 
   const precheckOverview = computed<{ type: 'info' | 'success' | 'warning' | 'error'; message: string; description: string }>(() => {
+    if (submittedTaskID.value) return { type: 'success', message: '任务已提交', description: '可查看已创建任务；再次打开不会重复提交。' }
+    if (submissionUncertain.value) return { type: 'warning', message: '提交结果尚未确认', description: '请核对原提交结果；核对期间保留原配置，请勿另建相同任务。' }
     if (draftDirty.value) return { type: 'warning', message: '配置已变化，原检查结果已失效', description: '请保存当前配置；补齐必填项后将自动准备预检查。' }
     if (currentDraft.value?.draftState === 'EDITING') return { type: 'info', message: '草稿尚未完成配置', description: '已保存当前输入；补齐前四步后才能生成命令并预检查。' }
     if (draftLoadFailure.value) return { type: 'error', message: '无法读取草稿', description: draftLoadFailure.value }
@@ -169,7 +186,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   // 保存仅持久化输入；进入第五步才准备命令，每个版本自动尝试一次，失败保留显式重试。
   watch([activeStep, currentDraft, draftDirty, creatingDraft, loadingDraft, previewingCommand, hydratingDerivedDraft], () => {
     const draft = currentDraft.value
-    if (disposed || activeStep.value !== 5 || !draft || draft.draftState === 'EDITING' || draftDirty.value || creatingDraft.value || loadingDraft.value || previewingCommand.value || hydratingDerivedDraft.value || commandPreview.value || autoPreviewVersion === formVersion.value) return
+    if (disposed || submissionLocked.value || activeStep.value !== 5 || !draft || draft.draftState === 'EDITING' || draftDirty.value || creatingDraft.value || loadingDraft.value || previewingCommand.value || hydratingDerivedDraft.value || commandPreview.value || autoPreviewVersion === formVersion.value) return
     autoPreviewVersion = formVersion.value
     void loadCommandPreview(draft)
   }, { immediate: true, flush: 'post' })
@@ -213,7 +230,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   }
 
   async function loadCommandPreview(draft = currentDraft.value) {
-    if (disposed || !draft || draft.draftState === 'EDITING' || draftDirty.value) return
+    if (disposed || submissionLocked.value || !draft || draft.draftState === 'EDITING' || draftDirty.value) return
     const epoch = ++previewEpoch
     previewingCommand.value = true
     commandPreview.value = null
@@ -289,19 +306,55 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   async function confirmSubmitTask() {
     if (disposed || !currentDraft.value || !activePrecheck.value || !canSubmit.value) return
     const request = ++submissionEpoch, version = formVersion.value
+    if (!submissionIntent) {
+      try { submissionIntent = { draft: JSON.parse(JSON.stringify(currentDraft.value)), precheckId: activePrecheck.value.id, key: crypto.randomUUID() } }
+      catch { submissionFailure.value = '无法生成安全提交标识，请刷新后重试。'; return }
+    }
+    const intent = submissionIntent
     submitting.value = true
     submissionFailure.value = ''
     try {
-      const taskID = await api.submitExportDraft(currentDraft.value, activePrecheck.value.id)
+      const taskID = await api.submitExportDraft(intent.draft, intent.precheckId, intent.key)
       if (disposed || request !== submissionEpoch || version !== formVersion.value) return
       submitConfirmationOpen.value = false
       submittedTaskID.value = taskID
-      await router.push(`/tasks/${encodeURIComponent(taskID)}`)
+      submissionUncertain.value = false
+      await openSubmittedTask()
     } catch (error) {
-      if (!disposed && request === submissionEpoch) submissionFailure.value = exportDraftErrorMessage(error, '任务未能提交；请重新读取预检查后重试。')
+      if (disposed || request !== submissionEpoch) return
+      let rejection = error
+      try {
+        const observed = await api.getPrecheck(intent.precheckId)
+        if (disposed || request !== submissionEpoch) return
+        if (observed.id === intent.precheckId && observed.draftId === intent.draft.id && observed.draftRevision === intent.draft.revision && observed.configFingerprint === intent.draft.configFingerprint && observed.submittedTaskId) {
+          submittedTaskID.value = observed.submittedTaskId; submissionUncertain.value = false; submitConfirmationOpen.value = false
+          await openSubmittedTask(); return
+        }
+      } catch (readError) {
+        if (readError && typeof readError === 'object' && 'status' in readError && [401, 403, 404].includes(Number(readError.status))) rejection = readError
+      }
+      if (disposed || request !== submissionEpoch) return
+      const status = rejection && typeof rejection === 'object' && 'status' in rejection ? Number(rejection.status) : 0
+      if ([400, 401, 403, 404, 409, 412, 422].includes(status)) {
+        resetReview()
+        autoPrecheckVersion = autoPreviewVersion = formVersion.value
+        submissionFailure.value = '提交被拒绝，请核对权限和当前配置后重新预检查。'
+      } else {
+        submissionUncertain.value = true
+        submissionFailure.value = '提交结果尚未确认。核对将复用原提交，请勿另建相同任务。'
+      }
     } finally {
       if (!disposed && request === submissionEpoch) submitting.value = false
     }
+  }
+
+  async function openSubmittedTask() {
+    if (disposed || !submittedTaskID.value || openingSubmittedTask.value) return
+    const request = submissionEpoch, id = submittedTaskID.value
+    openingSubmittedTask.value = true
+    try { if (isNavigationFailure(await router.push(`/tasks/${encodeURIComponent(id)}`))) throw new Error('任务导航未完成。') }
+    catch { if (!disposed && request === submissionEpoch && submittedTaskID.value === id) submissionFailure.value = '任务已提交，页面跳转未完成，请点击“查看已创建任务”重试。' }
+    finally { if (!disposed && request === submissionEpoch) openingSubmittedTask.value = false }
   }
 
   async function pollPrecheck(id: string) {
@@ -353,7 +406,7 @@ export function useExportDraftLifecycle(deps: ExportForm & Pick<ExportReferences
   }
 
   return {
-    ...persistence, submittedTaskID,
+    ...persistence, submittedTaskID, submissionUncertain, submissionLocked, openingSubmittedTask, openSubmittedTask,
     draftFailure, draftNotice, operationNotice, creatingDraft, createdDraftID, currentDraft, draftDirty, loadingDraft,
     draftLoadFailure, commandPreview, previewingCommand, commandPreviewFailure, activePrecheck, precheckID,
     startingPrecheck, precheckFailure, submitting, submissionFailure, submitConfirmationOpen,

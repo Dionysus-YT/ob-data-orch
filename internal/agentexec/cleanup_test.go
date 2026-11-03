@@ -76,3 +76,36 @@ func Test清理遇到残留时隔离而不伪造成功(t *testing.T) {
 		t.Fatalf("隔离目录被错误删除: %v", statErr)
 	}
 }
+
+func Test进程已停止时未完成事件只保留恢复证据不保留秘密(t *testing.T) {
+	root := t.TempDir()
+	w, err := credential.CreateWorkspace(root, "synthetic-stopped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := credential.GenerateStorageConfiguration("S3", []byte("synthetic-access"), []byte("synthetic-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer credential.Zero(content)
+	dir, err := w.WriteStorageConfiguration(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteStartIntent(w, validStartIntent()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = CleanupStoppedExecution(w, false)
+	if !errors.Is(err, ErrCleanupNotReady) {
+		t.Fatal("事件未完成却清除了恢复证据", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "core-site.xml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("恢复证据延长了存储秘密生命周期", err)
+	}
+	if _, found, err := ReadStartIntent(w); err != nil || !found {
+		t.Fatal("待核对事件的启动意图丢失", err)
+	}
+	if err := credential.CheckWorkspaceRoot(root); !errors.Is(err, credential.ErrWorkspaceResidual) {
+		t.Fatal("待恢复工作区没有阻断", err)
+	}
+}

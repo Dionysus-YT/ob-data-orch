@@ -249,6 +249,6 @@ describe('任务列表行操作', () => {
     expect(s.api.saveTaskTemplate).not.toHaveBeenCalled()
     s.actions.templateName.value = ' 合成模板 '
     await s.actions.confirm()
-    expect(s.api.saveTaskTemplate).toHaveBeenCalledWith('t', '合成模板')
+    expect(s.api.saveTaskTemplate).toHaveBeenCalledWith('t', '合成模板', expect.any(String))
   })
 })

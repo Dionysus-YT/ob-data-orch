@@ -387,7 +387,12 @@ export interface ExecutionNodeEnrollment {
 }
 
 export type ExportScopeKind = 'ALL' | 'SPECIFIED' | 'QUERY_RESULT'
-export type ExportObjectType = 'TABLE' | 'VIEW' | 'FUNCTION' | 'PROCEDURE' | 'SEQUENCE'
+export const exportObjectTypes = ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'PACKAGE', 'TRIGGER', 'SYNONYM', 'PUBLIC_SYNONYM', 'TYPE', 'SEQUENCE'] as const
+export type ExportObjectType = typeof exportObjectTypes[number]
+
+export function isExportObjectType(value: unknown): value is ExportObjectType {
+  return typeof value === 'string' && (exportObjectTypes as readonly string[]).includes(value)
+}
 export type ExportContentKind = 'DATA_ONLY' | 'DDL_ONLY' | 'DDL_AND_DATA'
 // EX-I4/EX-I5：数据格式单选；CSV/CUT/POS/SQL 为文本格式，PARQUET/ORC/AVRO 为结构化格式（2026-08-07 接入）。
 export type ExportDataFormatKind = 'CSV' | 'CUT' | 'POS' | 'SQL' | 'PARQUET' | 'ORC' | 'AVRO'
@@ -569,6 +574,7 @@ export interface ExportDraftInput {
 }
 
 export interface ExportDraft {
+  readonly submittedTaskId?: string
   readonly draftState?: 'EDITING' | 'READY'
   readonly sourceTaskId?: string
   readonly sourceDerivation?: 'REBUILD_FROM_CONFIG' | 'RERUN_FROM_SCRATCH'
@@ -606,6 +612,7 @@ export interface CommandPreview {
 }
 
 export interface Precheck {
+  readonly submittedTaskId?: string
   readonly id: string
   readonly draftId: string
   readonly draftRevision: number
@@ -655,6 +662,8 @@ export interface TaskDerivedResume {
 }
 
 // ExportConfigTemplateItem 是模板列表的安全投影；配置 JSON 不进入浏览器。
+export type TemplateAction = 'CREATE_DRAFT' | 'RENAME' | 'DELETE'
+
 export interface ExportConfigTemplateItem {
   readonly id: string
   readonly displayName: string
@@ -664,6 +673,7 @@ export interface ExportConfigTemplateItem {
   readonly revision: number
   readonly createdAt: string
   readonly updatedAt: string
+  readonly availableActions?: readonly TemplateAction[]
 }
 
 export interface ConfigTemplateItem extends ExportConfigTemplateItem { readonly taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'> }
@@ -735,9 +745,10 @@ export interface TaskExecution {
 
 export interface TaskResultSummary {
   readonly result: 'VERIFIED' | 'FAILED'
-  readonly fileCount: number
-  readonly totalBytes: number
-  readonly files: readonly { readonly path: string; readonly size: number }[]
+  // 远端对象尚无逐项清单证据时三项均为 null，不能将未知展示为零文件。
+  readonly fileCount: number | null
+  readonly totalBytes: number | null
+  readonly files: readonly { readonly path: string; readonly size: number }[] | null
   readonly checkpointPresent: boolean
   readonly observedAt: string
 }
@@ -875,7 +886,7 @@ export interface BrowserApi extends NormalImportApi, DirectLoadApi, OverviewApi,
   previewExportCommand(draft: ExportDraft): Promise<CommandPreview>
   startPrecheck(draft: ExportDraft): Promise<string>
   getPrecheck(precheckId: string): Promise<Precheck>
-  submitExportDraft(draft: ExportDraft, precheckId: string): Promise<string>
+  submitExportDraft(draft: ExportDraft, precheckId: string, idempotencyKey?: string): Promise<string>
   listStorageCredentials(): Promise<StorageCredentialListItem[]>
   createStorageCredential(input: StorageCredentialWrite): Promise<StorageCredentialListItem>
   rotateStorageCredential(storageCredentialId: string, revision: number, input: StorageCredentialWrite): Promise<StorageCredentialListItem>
@@ -894,8 +905,8 @@ export interface BrowserApi extends NormalImportApi, DirectLoadApi, OverviewApi,
   listConfigTemplates(): Promise<ConfigTemplateItem[]>
   renameConfigTemplate(templateId: string, revision: number, displayName: string): Promise<number>
   deleteConfigTemplate(templateId: string, revision: number): Promise<void>
-  createTaskDraftFromTemplate(templateId: string, dataSourceId: string, nodeId: string, taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'>): Promise<{ draftId: string; taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'> }>
-  saveTaskTemplate(taskId: string, displayName: string): Promise<string>
+  createTaskDraftFromTemplate(templateId: string, dataSourceId: string, nodeId: string, taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'>, idempotencyKey?: string): Promise<{ draftId: string; taskType: Exclude<SupportedTaskType, 'OBLOADER_DIRECT_LOAD'> }>
+  saveTaskTemplate(taskId: string, displayName: string, idempotencyKey?: string): Promise<string>
   renameExportConfigTemplate(templateId: string, revision: number, displayName: string): Promise<number>
   deleteExportConfigTemplate(templateId: string, revision: number): Promise<void>
   createDraftFromTemplate(templateId: string, dataSourceId: string, nodeId: string): Promise<string>
@@ -964,7 +975,7 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     }),
     ...createNormalImportApi({
       read: path => request(options, path, { method: 'GET' }),
-      write: (path, body, revision, method = 'POST') => request(options, path, writeRequest(options, body, revision, method, true)),
+      write: (path, body, revision, method = 'POST', idempotencyKey) => request(options, path, writeRequest(options, body, revision, method, true, idempotencyKey)),
     }),
     async listDataSources() {
       const body = await request(options, '/api/v1/data-sources', { method: 'GET' })
@@ -1132,8 +1143,8 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
       const body = await request(options, `/api/v1/prechecks/${encodeURIComponent(precheckId)}`, { method: 'GET' })
       return parsePrecheck(requiredObject(body, 'item'))
     },
-    async submitExportDraft(draft, precheckId) {
-      const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draft.id)}:submit`, writeRequest(options, { precheckId }, draft.revision, 'POST', true))
+    async submitExportDraft(draft, precheckId, idempotencyKey) {
+      const body = await request(options, `/api/v1/export-drafts/${encodeURIComponent(draft.id)}:submit`, writeRequest(options, { precheckId }, draft.revision, 'POST', true, idempotencyKey))
       return requiredString(body, 'id')
     },
     async listStorageCredentials() {
@@ -1242,13 +1253,13 @@ export function createBrowserApi(options: BrowserApiOptions): BrowserApi {
     async deleteConfigTemplate(templateId, revision) {
       await request(options, `/api/v1/config-templates/${encodeURIComponent(templateId)}`, writeRequest(options, {}, revision, 'DELETE', false))
     },
-    async createTaskDraftFromTemplate(templateId, dataSourceId, nodeId, taskType) {
-      const body = await request(options, `/api/v1/config-templates/${encodeURIComponent(templateId)}:create-draft`, writeRequest(options, { dataSourceId, nodeId }))
+    async createTaskDraftFromTemplate(templateId, dataSourceId, nodeId, taskType, idempotencyKey) {
+      const body = await request(options, `/api/v1/config-templates/${encodeURIComponent(templateId)}:create-draft`, writeRequest(options, { dataSourceId, nodeId }, undefined, 'POST', true, idempotencyKey))
       if (requiredString(body, 'templateId') !== templateId || requiredString(body, 'taskType') !== taskType) throw localError('RESPONSE_INVALID', '控制面返回了与模板类型不一致的草稿。')
       return { draftId: requiredString(body, 'draftId'), taskType }
     },
-    async saveTaskTemplate(taskId, displayName) {
-      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:save-template`, writeRequest(options, { displayName }))
+    async saveTaskTemplate(taskId, displayName, idempotencyKey) {
+      const body = await request(options, `/api/v1/tasks/${encodeURIComponent(taskId)}:save-template`, writeRequest(options, { displayName }, undefined, 'POST', true, idempotencyKey))
       const id = requiredString(body, 'id')
       if (requiredString(body, 'sourceTaskId') !== taskId) {
         throw localError('RESPONSE_INVALID', '控制面返回了与请求不一致的模板。')
@@ -1450,7 +1461,7 @@ function parseDataSourceConnectionTestRequest(value: Record<string, unknown>): D
 function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportObjectCatalogQuery {
   const status = parseDataSourceConnectionTestStatus(value)
   const objectType = requiredString(value, 'objectType')
-  if (objectType !== 'DATABASE' && objectType !== 'ALL' && objectType !== 'TABLE' && objectType !== 'VIEW' && objectType !== 'FUNCTION' && objectType !== 'PROCEDURE' && objectType !== 'SEQUENCE') throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
+  if (objectType !== 'DATABASE' && objectType !== 'ALL' && !isExportObjectType(objectType)) throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
   const database = objectType === 'DATABASE' ? requiredStringAllowEmpty(value, 'database') : requiredString(value, 'database')
   if (objectType === 'DATABASE' && database !== '') throw localError('RESPONSE_INVALID', '控制面返回了无效数据库查询范围。')
   const objects = requiredStringList(value, 'objects')
@@ -1461,7 +1472,8 @@ function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportOb
   if (objectType !== 'DATABASE' && requiredBoolean(value, 'truncated')) throw localError('RESPONSE_INVALID', '对象目录不完整，请更新执行节点后重试。')
   const rawGroups = value.groups ?? []
   if (!Array.isArray(rawGroups)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
-  const types: ExportObjectType[] = ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE']
+  // MySQL 保留五类目录；Oracle 的完整目录包含十类，旧 Agent 缺类由当前会话复验。
+  const types: readonly ExportObjectType[] = rawGroups.length === 5 ? ['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE'] : exportObjectTypes
   const groups = rawGroups.map((raw, index): ExportObjectCatalogGroup => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
     const row = raw as Record<string, unknown>
@@ -1470,10 +1482,10 @@ function parseExportObjectCatalogQuery(value: Record<string, unknown>): ExportOb
     const truncated = requiredBoolean(row, 'truncated')
     const unavailable = requiredBoolean(row, 'unavailable')
     if (truncated) throw localError('RESPONSE_INVALID', '对象目录不完整，请更新执行节点后重试。')
-    if (type !== types[index] || new Set(names).size !== names.length || names.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name)) || (unavailable && (names.length > 0 || truncated))) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
+    if (!isExportObjectType(type) || type !== types[index] || new Set(names).size !== names.length || names.some((name) => !name || name.length > 256 || /[*,\r\n\0]/.test(name)) || (unavailable && (names.length > 0 || truncated))) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
     return { objectType: type, objects: names, truncated, unavailable }
   })
-  if ((objectType === 'ALL' && status === 'SUCCEEDED' && (groups.length !== 5 || objects.length > 0)) || (objectType !== 'ALL' && groups.length > 0) || (status !== 'SUCCEEDED' && groups.length > 0)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
+  if ((objectType === 'ALL' && status === 'SUCCEEDED' && ((groups.length !== 5 && groups.length !== exportObjectTypes.length) || objects.length > 0)) || (objectType !== 'ALL' && groups.length > 0) || (status !== 'SUCCEEDED' && groups.length > 0)) throw localError('RESPONSE_INVALID', '控制面返回的分类目录无效。')
   return {
     id: requiredString(value, 'id'), status, dataSourceId: requiredString(value, 'dataSourceId'),
     nodeId: requiredString(value, 'nodeId'), database, objectType,
@@ -1924,6 +1936,7 @@ function parseExportDraft(value: Record<string, unknown>): ExportDraft {
   if (sourceDerivation !== undefined && sourceDerivation !== 'REBUILD_FROM_CONFIG' && sourceDerivation !== 'RERUN_FROM_SCRATCH') throw localError('RESPONSE_INVALID', '草稿来源无效。')
   if ((sourceTaskId === undefined) !== (sourceDerivation === undefined)) throw localError('RESPONSE_INVALID', '草稿来源不一致。')
   return {
+    ...(value.submittedTaskId === undefined ? {} : { submittedTaskId: requiredString(value, 'submittedTaskId') }),
     ...(draftState ? { draftState } : {}),
     ...(sourceTaskId && sourceDerivation ? { sourceTaskId, sourceDerivation } : {}),
     id: requiredString(value, 'id'),
@@ -1959,7 +1972,7 @@ function parseDraftInput(value: Record<string, unknown>, editing = false): Gener
       const objectType = expression['objectType']
       if (typeof name !== 'string' || !name) throw localError('RESPONSE_INVALID', '控制面返回了无效对象名称。')
       if (schema !== undefined && typeof schema !== 'string') throw localError('RESPONSE_INVALID', '控制面返回了无效对象 Schema。')
-      if (objectType !== undefined && objectType !== 'TABLE' && objectType !== 'VIEW' && objectType !== 'FUNCTION' && objectType !== 'PROCEDURE' && objectType !== 'SEQUENCE') throw localError('RESPONSE_INVALID', '控制面返回了无效表达式类型。')
+      if (objectType !== undefined && !isExportObjectType(objectType)) throw localError('RESPONSE_INVALID', '控制面返回了无效表达式类型。')
       expressions.push({ name, ...(schema === undefined ? {} : { schema }), ...(objectType === undefined ? {} : { objectType }) })
     }
   }
@@ -1968,7 +1981,7 @@ function parseDraftInput(value: Record<string, unknown>, editing = false): Gener
   if (objectTypesRaw !== undefined && objectTypesRaw !== null) {
     if (!Array.isArray(objectTypesRaw)) throw localError('RESPONSE_INVALID', '控制面返回了无效对象类型。')
     for (const item of objectTypesRaw) {
-      if (item !== 'TABLE' && item !== 'VIEW' && item !== 'FUNCTION' && item !== 'PROCEDURE' && item !== 'SEQUENCE') throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的对象类型。')
+      if (!isExportObjectType(item)) throw localError('RESPONSE_INVALID', '控制面返回了尚未支持的对象类型。')
       objectTypes.push(item)
     }
   }
@@ -2235,6 +2248,7 @@ function optionalDraftBoolean(value: Record<string, unknown>, field: string): bo
 
 function parsePrecheck(value: Record<string, unknown>): Precheck {
   return {
+    ...(value.submittedTaskId === undefined ? {} : { submittedTaskId: requiredString(value, 'submittedTaskId') }),
     id: requiredString(value, 'id'),
     draftId: requiredString(value, 'draftId'),
     draftRevision: requiredNumber(value, 'draftRevision'),
@@ -2281,6 +2295,9 @@ function requiredPrecheckResults(value: Record<string, unknown>, field: string):
 // parseExportConfigTemplateItem 按白名单解析模板列表投影：配置 JSON 不进入页面状态。
 function parseExportConfigTemplateItem(value: unknown): ExportConfigTemplateItem {
   const item = asRecord(value)
+  const actions = item['availableActions']
+  // 老服务没有动作事实时仅允许读摘要；未知或畸形事实不能恢复写入口。
+  if (actions !== undefined && (!Array.isArray(actions) || actions.some(action => !['CREATE_DRAFT', 'RENAME', 'DELETE'].includes(action)) || new Set(actions).size !== actions.length)) throw localError('RESPONSE_INVALID', '模板操作资格无法校验。')
   return {
     id: requiredString(item, 'id'),
     displayName: requiredString(item, 'displayName'),
@@ -2290,6 +2307,7 @@ function parseExportConfigTemplateItem(value: unknown): ExportConfigTemplateItem
     revision: requiredNumber(item, 'revision'),
     createdAt: requiredString(item, 'createdAt'),
     updatedAt: requiredString(item, 'updatedAt'),
+    availableActions: (actions ?? []) as TemplateAction[],
   }
 }
 
@@ -2373,8 +2391,9 @@ function parseTaskCommandEvidence(value: Record<string, unknown>): TaskCommandEv
 }
 
 function parseTaskExecution(value: Record<string, unknown>): TaskExecution {
+  const facts = parseTaskExecutionFacts(value)
   return {
-    ...parseTaskExecutionFacts(value),
+    ...facts,
     state: requiredString(value, 'state'),
     executionId: optionalString(value, 'executionId'),
     reconciliationRequired: requiredBoolean(value, 'reconciliationRequired'),
@@ -2382,7 +2401,7 @@ function parseTaskExecution(value: Record<string, unknown>): TaskExecution {
     startedAt: optionalString(value, 'startedAt'),
     finishedAt: optionalString(value, 'finishedAt'),
     updatedAt: requiredString(value, 'updatedAt'),
-    resultSummary: parseTaskResultSummary(value['resultSummary']),
+    resultSummary: parseTaskResultSummary(value['resultSummary'], facts.outputLocation?.kind),
   }
 }
 
@@ -2396,11 +2415,18 @@ function containsResultPathControlBreak(value: string): boolean {
 
 // parseTaskResultSummary 按白名单解析结果摘要：result 枚举、非负整数与受限相对路径清单；
 // 缺省（未执行/未上报）返回 undefined，越界响应失败关闭。
-function parseTaskResultSummary(value: unknown): TaskResultSummary | undefined {
+function parseTaskResultSummary(value: unknown, outputKind?: NonNullable<TaskExecution['outputLocation']>['kind']): TaskResultSummary | undefined {
   if (value === undefined || value === null) return undefined
   const summary = asRecord(value)
   const result = requiredString(summary, 'result')
   if (result !== 'VERIFIED' && result !== 'FAILED') throw localError('RESPONSE_INVALID', '控制面返回了无效结果结论。')
+  // 控制面负责将历史远端零值投影成未知；浏览器不接受假零值或混合的文件证据。
+  if (outputKind && ['OSS', 'S3', 'COS', 'OBS'].includes(outputKind)) {
+    if (summary.fileCount !== null || summary.totalBytes !== null || summary.files !== null) throw localError('RESPONSE_INVALID', '控制面返回了未核验的远端结果数量。')
+    return { result, fileCount: null, totalBytes: null, files: null, checkpointPresent: requiredBoolean(summary, 'checkpointPresent'), observedAt: requiredString(summary, 'observedAt') }
+  }
+  // 导入不携带输出位置，仍沿用原完成证据；显式位置不可用时不能接受导出文件摘要。
+  if (outputKind === 'UNAVAILABLE') throw localError('RESPONSE_INVALID', '控制面返回了缺少输出位置证据的结果。')
   const fileCount = requiredNumber(summary, 'fileCount')
   const totalBytes = requiredNumber(summary, 'totalBytes')
   if (!Number.isSafeInteger(fileCount) || fileCount < 0 || !Number.isSafeInteger(totalBytes) || totalBytes < 0) {

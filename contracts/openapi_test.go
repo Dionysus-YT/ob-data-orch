@@ -31,6 +31,7 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 		"/api/v1/access-control/subjects/{subjectId}":             {"get", "patch"},
 		"/api/v1/access-control/candidates":                       {"get"},
 		"/api/v1/session":                                         {"get"},
+		"/api/v1/session/password":                                {"post"},
 		"/api/v1/overview":                                        {"get"},
 		"/api/v1/execution-nodes":                                 {"get", "post"},
 		"/api/v1/execution-nodes/{nodeId}":                        {"get", "patch", "delete"},
@@ -141,8 +142,8 @@ func TestOpenAPICoversConfirmedOperations(t *testing.T) {
 			assertSecurityDomain(t, path, operation)
 		}
 	}
-	if operationCount != 126 {
-		t.Fatalf("操作数量 = %d，期望 126", operationCount)
+	if operationCount != 127 {
+		t.Fatalf("操作数量 = %d，期望 127", operationCount)
 	}
 }
 

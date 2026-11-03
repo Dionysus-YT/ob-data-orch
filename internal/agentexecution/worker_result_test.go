@@ -1,6 +1,7 @@
 package agentexecution
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,55 @@ import (
 
 	"ob-data-orch/internal/agentwire"
 )
+
+func Test导出结果只接受对应格式并分别验证结构与数据(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		argv  []string
+		files []outputFileFact
+		want  bool
+	}{
+		{"仅检查点", []string{"--csv"}, []outputFileFact{{Path: "dump.ckpt", Size: 10}}, false},
+		{"仅日志", []string{"--csv"}, []outputFileFact{{Path: "logs/export.log", Size: 10}}, false},
+		{"错误格式", []string{"--csv"}, []outputFileFact{{Path: "table.dat", Size: 10}}, false},
+		{"结构缺失", []string{"--ddl", "--csv"}, []outputFileFact{{Path: "table.csv", Size: 10}}, false},
+		{"结构空文件", []string{"--ddl"}, []outputFileFact{{Path: "table-schema.sql"}}, false},
+		{"结构独立", []string{"--ddl"}, []outputFileFact{{Path: "table-schema.sql", Size: 10}}, true},
+		{"结构和空数据", []string{"--ddl", "--csv", "--retain-empty-files"}, []outputFileFact{{Path: "table-schema.sql", Size: 10}, {Path: "table.csv"}}, true},
+		{"SQL结构不能冒充数据", []string{"--sql"}, []outputFileFact{{Path: "table-schema.sql", Size: 10}}, false},
+		{"压缩数据", []string{"--csv", "--compress", "--compression-algo", "gzip"}, []outputFileFact{{Path: "table.csv.gz", Size: 10}}, true},
+		{"压缩算法不匹配", []string{"--csv", "--compress"}, []outputFileFact{{Path: "table.csv.gz", Size: 10}}, false},
+		{"结构化空文件", []string{"--par"}, []outputFileFact{{Path: "table.parquet"}}, false},
+		{"结构化数据", []string{"--par"}, []outputFileFact{{Path: "table.parquet", Size: 10}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var bytes uint64
+			for _, file := range tc.files {
+				bytes += file.Size
+			}
+			if got := localOutputVerified(tc.argv, uint64(len(tc.files)), bytes, tc.files); got != tc.want {
+				t.Fatal("格式结果资格错误", got)
+			}
+		})
+	}
+}
+
+func Test导出结果资格检查覆盖清单截断后的文件(t *testing.T) {
+	root := t.TempDir()
+	for index := 0; index < maxOutputFileFacts; index++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("a-%03d.log", index)), []byte("synthetic"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "z-result.csv"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	r := exportRequirements([]string{"--csv"})
+	count, _, files, ok := scanOutputFacts(root, r.observe)
+	if !ok || count != maxOutputFileFacts+1 || len(files) != maxOutputFileFacts || !r.verified() {
+		t.Fatal("清单截断错误地隐藏合法结果")
+	}
+}
 
 // TestEmptyTextOutputVerification 验证真实空集合文件事实，不以空目录或 DDL 零字节冒充结果。
 func TestEmptyTextOutputVerification(t *testing.T) {

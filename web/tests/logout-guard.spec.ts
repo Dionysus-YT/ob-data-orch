@@ -15,6 +15,7 @@ test.afterEach(async ({ page }, info) => {
 })
 
 async function fixture(page: Page, response: (route: Route) => Promise<void> = route => route.fulfill({ status: 204 })) {
+  await page.context().grantPermissions(['local-network-access'], { origin: 'http://127.0.0.1:15174' })
   let posts = 0
   const nativeDialogs: string[] = [], pageErrors: string[] = []
   const consoleErrors: string[] = []
@@ -28,6 +29,7 @@ async function fixture(page: Page, response: (route: Route) => Promise<void> = r
   await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort())
   await page.route('**/api/v1/**', route => {
     const path = new URL(route.request().url()).pathname
+    if (path === '/api/v1/session') return route.fulfill({ json: { username: 'admin' } })
     if (path === '/api/v1/data-sources') return route.fulfill({ json: { items: normalImportSources } })
     if (path === '/api/v1/execution-nodes') return route.fulfill({ json: { items: [normalImportNode] } })
     if (path === '/api/v1/storage-credentials') return route.fulfill({ json: { items: [] } })
@@ -44,6 +46,12 @@ async function fixture(page: Page, response: (route: Route) => Promise<void> = r
   return { posts: () => posts, nativeDialogs, pageErrors }
 }
 
+const accountButton = (page: Page) => page.getByRole('button', { name: /^(当前用户 |账户菜单)/ })
+async function chooseLogout(page: Page) {
+  await expect(page.locator('#main-workspace').getByRole('heading', { level: 1 })).toBeVisible()
+  await accountButton(page).click()
+  await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
+}
 async function dirtyWizard(page: Page, kind: 'normal' | 'export' = 'normal') {
   await page.goto(kind === 'normal' ? '/imports/normal/new' : '/exports/new')
   await expect(page.getByRole('heading', { name: kind === 'normal' ? '新建普通导入任务' : '新建导出任务', exact: true })).toBeVisible()
@@ -55,7 +63,7 @@ for (const kind of ['normal', 'export'] as const) {
   test(`${kind} 退出复用离开确认，取消保留输入，确认后只注销一次且无原生二次提示`, async ({ page }, info) => {
     const observed = await fixture(page)
     await dirtyWizard(page, kind)
-    await page.getByRole('link', { name: '退出登录', exact: true }).click()
+    await chooseLogout(page)
     const leave = page.getByRole('dialog', { name: kind === 'normal' ? '离开普通导入配置？' : '离开导出配置？', exact: true })
     await expect(leave).toBeVisible()
     await expect(leave.getByRole('button', { name: '继续配置', exact: true })).toBeFocused()
@@ -69,7 +77,7 @@ for (const kind of ['normal', 'export'] as const) {
     await expect(leave).toBeVisible()
     expect(observed.posts()).toBe(0)
     await leave.getByRole('button', { name: '继续配置', exact: true }).click()
-    await page.getByRole('link', { name: '退出登录', exact: true }).click()
+    await chooseLogout(page)
     await leave.getByRole('button', { name: '放弃配置并离开', exact: true }).click()
     await expect(page.getByRole('heading', { name: '合成登录页', exact: true })).toBeVisible()
     expect(observed.posts()).toBe(1)
@@ -83,7 +91,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     const observed = await fixture(page, route => route.fulfill({ status: 503 }))
     await page.setViewportSize(viewport)
     await dirtyWizard(page)
-    await page.getByRole('link', { name: '退出登录', exact: true }).click()
+    await chooseLogout(page)
     await page.getByRole('dialog', { name: '离开普通导入配置？', exact: true }).getByRole('button', { name: '放弃配置并离开', exact: true }).click()
     const failure = page.getByRole('dialog', { name: '退出登录未完成', exact: true })
     await expect(failure.getByRole('alert')).toContainText('暂无法确认退出登录结果')
@@ -103,7 +111,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
 test('干净页面直接退出，未触发业务确认或原生提示', async ({ page }) => {
   const observed = await fixture(page)
   await page.goto('/imports/normal/new')
-  await page.getByRole('link', { name: '退出登录', exact: true }).click()
+  await chooseLogout(page)
   await expect(page).toHaveURL(/\/login$/)
   expect(observed.posts()).toBe(1)
   expect(observed.nativeDialogs).toEqual([])
@@ -114,7 +122,7 @@ test('缺少 CSRF 不发送退出请求且保留刷新保护', async ({ page }) 
   const observed = await fixture(page)
   await dirtyWizard(page)
   await page.evaluate(() => document.querySelector('meta[name="ob-data-orch-csrf-token"]')?.remove())
-  await page.getByRole('link', { name: '退出登录', exact: true }).click()
+  await chooseLogout(page)
   await page.getByRole('dialog', { name: '离开普通导入配置？', exact: true }).getByRole('button', { name: '放弃配置并离开', exact: true }).click()
   const failure = page.getByRole('dialog', { name: '退出登录未完成', exact: true })
   await expect(failure).toContainText('未发送退出请求')
@@ -129,8 +137,8 @@ test('注销请求期间重复触发不重发，会话已失效时正常进入�
   const waiting = new Promise<void>(resolve => { release = resolve })
   const observed = await fixture(page, async route => { await waiting; await route.fulfill({ status: 401 }) })
   await dirtyWizard(page)
-  const logout = page.getByRole('link', { name: '退出登录', exact: true })
-  await logout.click()
+  const logout = accountButton(page)
+  await chooseLogout(page)
   await page.getByRole('dialog', { name: '离开普通导入配置？', exact: true }).getByRole('button', { name: '放弃配置并离开', exact: true }).click()
   await expect.poll(observed.posts).toBe(1)
   await expect(logout).toHaveAttribute('aria-busy', 'true')
@@ -147,7 +155,7 @@ test('网络失败可以重试，重试沿用当前编辑会话且不会重复�
   let attempts = 0
   const observed = await fixture(page, route => ++attempts === 1 ? route.abort('failed') : route.fulfill({ status: 204 }))
   await dirtyWizard(page)
-  await page.getByRole('link', { name: '退出登录', exact: true }).click()
+  await chooseLogout(page)
   const leave = page.getByRole('dialog', { name: '离开普通导入配置？', exact: true })
   await leave.getByRole('button', { name: '放弃配置并离开', exact: true }).click()
   const failure = page.getByRole('dialog', { name: '退出登录未完成', exact: true })
@@ -167,13 +175,13 @@ test('数据源标准页保留外壳与控件，干净会话直接退出', async
   await expect(page.getByRole('heading', { name: '数据源管理', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '新建数据源', exact: true })).toBeVisible()
   await page.screenshot({ path: info.outputPath('source-standard-1920.png') })
-  await page.getByRole('link', { name: '退出登录', exact: true }).click()
+  await chooseLogout(page)
   await expect(page.getByRole('heading', { name: '合成登录页', exact: true })).toBeVisible()
   expect(observed.posts()).toBe(1)
   expect(observed.nativeDialogs).toEqual([])
 })
 
-test('退出失败弹窗在原生 200% 缩放下可读、键盘可达且返回触发点', async ({ browserName }, info) => {
+test('账户改密与退出失败弹窗在原生 200% 缩放下可读、键盘可达且返回触发点', async ({ browserName }, info) => {
   test.setTimeout(180000)
   expect(browserName).toBe('chromium')
   const extension = fileURLToPath(new URL('./fixtures/zoom-extension', import.meta.url))
@@ -194,8 +202,23 @@ test('退出失败弹窗在原生 200% 缩放下可读、键盘可达且返回�
       await api.tabs.setZoom(target.id, 2)
     })
     await expect.poll(() => page.evaluate(() => devicePixelRatio)).toBe(ratio * 2)
-    const logout = page.getByRole('link', { name: '退出登录', exact: true })
-    await logout.click()
+    await accountButton(page).click()
+    await expect(page.getByRole('menuitem', { name: '修改密码', exact: true })).toBeEnabled()
+    await page.getByRole('menuitem', { name: '修改密码', exact: true }).click()
+    const password = page.getByRole('dialog', { name: '修改密码', exact: true })
+    await expect(password.getByLabel('当前密码', { exact: true })).toBeFocused()
+    await expect(password.getByRole('button', { name: '确定', exact: true })).toBeInViewport()
+    for (let index = 0; index < 8; index++) { await page.keyboard.press('Tab'); expect(await password.evaluate(element => element.contains(document.activeElement))).toBe(true) }
+    // 原生缩放下 Playwright 的 CSS 视口截图可能裁掉设备像素，使用 CDP 保存完整实际视口。
+    const passwordSession = await context.newCDPSession(page)
+    const passwordCapture = await passwordSession.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+    await writeFile(info.outputPath('password-native-200.png'), Buffer.from(passwordCapture.data, 'base64'))
+    await passwordSession.detach()
+    await page.keyboard.press('Escape')
+    await expect(password).not.toBeVisible()
+    await expect(accountButton(page)).toBeFocused()
+    const logout = accountButton(page)
+    await chooseLogout(page)
     await page.getByRole('dialog', { name: '离开普通导入配置？', exact: true }).getByRole('button', { name: '放弃配置并离开', exact: true }).click()
     const failure = page.getByRole('dialog', { name: '退出登录未完成', exact: true })
     await expect(failure.getByRole('button', { name: '留在当前页', exact: true })).toBeInViewport()
@@ -217,6 +240,8 @@ test('退出失败弹窗在原生 200% 缩放下可读、键盘可达且返回�
     expect(health.get(page)?.pageErrors).toEqual([])
     expect(health.get(page)?.consoleErrors).toEqual([])
     await expect(page.locator('vite-error-overlay')).toHaveCount(0)
-    await info.attach('browser-environment', { body: JSON.stringify({ browser: context.browser()?.version(), nativeZoom: 2, url: page.url() }), contentType: 'application/json' })
+    const environment = JSON.stringify({ browser: context.browser()?.version(), nativeZoom: 2, url: page.url() })
+    await info.attach('browser-environment', { body: environment, contentType: 'application/json' })
+    await writeFile(info.outputPath('browser-environment.json'), environment)
   } finally { await context.close() }
 })

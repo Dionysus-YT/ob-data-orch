@@ -8,7 +8,7 @@ import { mockFacts } from './fixtures/facts'
 async function openReview(page: Page, storage = false) {
   await mockFacts(page)
   const source = DATA_SOURCE_UI_FIXTURES[0]!
-  const state = { starts: 0, reads: 0, revision: 1, outcome: 'DIRECTORY_FAILED', pending: false, rejectNext: false, rejectReadAt: 0 }
+  const state = { starts: 0, reads: 0, revision: 1, outcome: 'DIRECTORY_FAILED', pending: false, rejectNext: false, rejectReadAt: 0, submittedTaskId: '', loseSubmitResponse: false, submitKeys: [] as string[] }
   let config: GeneralizedExportConfig = {
     objectScope: { database: 'synthetic_database', scopeKind: 'SPECIFIED', objectTypes: ['TABLE'], expressions: [{ objectType: 'TABLE', name: 'synthetic_table' }] },
     contentSelection: { contentKind: 'DATA_ONLY' },
@@ -18,7 +18,12 @@ async function openReview(page: Page, storage = false) {
   const fingerprint = () => `synthetic-review-fingerprint-${state.revision}`
   await page.route('**/api/v1/export-drafts/**', async route => {
     const path = new URL(route.request().url()).pathname
-    if (path.endsWith(':preview-command')) {
+    if (path.endsWith(':submit')) {
+      state.submitKeys.push(route.request().headers()['idempotency-key']!)
+      state.submittedTaskId = 'synthetic-recovered-export-task'
+      if (state.loseSubmitResponse) { state.loseSubmitResponse = false; await route.abort('connectionreset') }
+      else await route.fulfill({ status: 201, json: { id: state.submittedTaskId } })
+    } else if (path.endsWith(':preview-command')) {
       await route.fulfill({ json: { command: 'obdumper --csv --table synthetic_table -p ****** --file-path /E:/synthetic-output --file-encoding UTF-8 --date-value-format yyyy-MM-dd --datetime-value-format "yyyy-MM-dd HH:mm:ss" --thread 8 --fetch-size 1000', configFingerprint: fingerprint() } })
     } else if (path.endsWith(':precheck')) {
       state.starts++
@@ -31,7 +36,7 @@ async function openReview(page: Page, storage = false) {
         config = (route.request().postDataJSON() as { config: GeneralizedExportConfig }).config
         state.revision++
       }
-      await route.fulfill({ json: { item: { id: 'synthetic-review-draft', dataSourceId: source.id, nodeId: 'synthetic-node', revision: state.revision, configVersion: 'v6', config: { config }, configFingerprint: fingerprint() } } })
+      await route.fulfill({ json: { item: { id: 'synthetic-review-draft', dataSourceId: source.id, nodeId: 'synthetic-node', revision: state.revision, configVersion: 'v6', config: { config }, configFingerprint: fingerprint(), ...(state.submittedTaskId ? { submittedTaskId: state.submittedTaskId } : {}) } } })
     }
   })
   await page.route('**/api/v1/prechecks/**', async route => {
@@ -64,6 +69,7 @@ async function openReview(page: Page, storage = false) {
       id: route.request().url().split('/').at(-1), draftId: 'synthetic-review-draft', draftRevision: state.revision,
       configFingerprint: fingerprint(), nodeId: 'synthetic-node', status: state.pending ? 'PENDING' : results.every(result => result.status === 'PASSED') ? 'SUCCEEDED' : 'FAILED',
       integrityStatus: 'COMPLETE', validUntil: '2099-01-01T00:00:00Z', results,
+      ...(state.submittedTaskId ? { submittedTaskId: state.submittedTaskId } : {}),
     } } })
   })
   return {
@@ -72,6 +78,26 @@ async function openReview(page: Page, storage = false) {
     async enter() { await page.goto('/exports/new?draft=synthetic-review-draft&step=5') },
   }
 }
+
+test('导出提交已受理但响应中断时找回同一任务，刷新草稿不再创建提交意图', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  const fixture = await openReview(page)
+  fixture.state.outcome = 'PASSED'; fixture.state.loseSubmitResponse = true
+  await fixture.enter()
+  await page.getByRole('button', { name: '提交并启动导出', exact: true }).click()
+  await page.getByRole('dialog', { name: '确认提交导出任务', exact: true }).getByRole('button', { name: '确认提交并启动导出', exact: true }).click()
+  await expect(page).toHaveURL(/\/tasks\/synthetic-recovered-export-task$/)
+  expect(fixture.state.submitKeys).toHaveLength(1)
+  expect(fixture.state.submitKeys[0]).toMatch(/^[0-9a-f-]{36}$/)
+  const checks = fixture.state.starts
+  await fixture.enter()
+  await expect(page.getByRole('button', { name: '查看已创建任务', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '保存草稿', exact: true })).toBeDisabled()
+  expect(fixture.state.starts).toBe(checks)
+  expect(fixture.state.submitKeys).toHaveLength(1)
+  expect(errors).toEqual([])
+})
 
 function captureErrors(page: Page) {
   const errors: string[] = []
@@ -91,7 +117,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     const fixture = await openReview(page)
     await fixture.enter()
     await expect(page).toHaveURL(/\/exports\/new\?.*step=5/)
-    await expect(page).toHaveTitle(/OB Data Orch/)
+    await expect(page).toHaveTitle(/LDP/)
     await expect(page.getByRole('heading', { name: '预检查与提交确认' })).toBeVisible()
     await expect(page.locator('vite-error-overlay')).toHaveCount(0)
     await expect(page.getByText('预检查未通过', { exact: true })).toHaveCount(1)

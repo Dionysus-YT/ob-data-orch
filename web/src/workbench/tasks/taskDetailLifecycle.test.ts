@@ -54,6 +54,57 @@ function setup(overrides: Partial<BrowserApi> = {}) {
 }
 
 describe('任务详情会话与读取隔离', () => {
+  it('终态日志自动补齐 200 条后的固定快照，再使用增量游标刷新', async () => {
+    const records = Array.from({ length: 201 }, (_, index) => ({ ...log(`合成记录 ${index + 1}`), sourceSeq: index + 1 }))
+    const read = vi.fn<BrowserApi['getTaskLogs']>()
+      .mockResolvedValueOnce({ items: records.slice(0, 200), nextCursor: 'page-2', lastReliableCursor: 'after-200', integrity: 'COMPLETE' })
+      .mockResolvedValueOnce({ items: records.slice(200), lastReliableCursor: 'after-201', integrity: 'COMPLETE' })
+      .mockResolvedValue({ items: [], lastReliableCursor: 'after-201', integrity: 'COMPLETE' })
+    const s = setup({ getTaskLogs: read, getTaskExecution: vi.fn(async id => execution(id, 'FAILED')) })
+    await settle()
+    expect(s.state.logs.value).toHaveLength(201)
+    expect(read.mock.calls.slice(0, 2)).toEqual([['A', undefined, undefined], ['A', 'page-2', undefined]])
+    expect(s.streams).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(read).toHaveBeenCalledTimes(2)
+    await s.state.loadLogs()
+    expect(read).toHaveBeenLastCalledWith('A', undefined, 'after-201')
+  })
+
+  it('后页失败保留页游标，补齐前不开流，重试不跳到增量也不重复记录', async () => {
+    const read = vi.fn<BrowserApi['getTaskLogs']>()
+      .mockResolvedValueOnce({ items: [log('首条')], nextCursor: 'page-2', lastReliableCursor: 'after-1', integrity: 'COMPLETE' })
+      .mockRejectedValueOnce(new Error('合成后页不可用'))
+      .mockResolvedValueOnce({ items: [log('首条'), { ...log('末条'), sourceSeq: 2 }], lastReliableCursor: 'after-2', integrity: 'COMPLETE' })
+    const s = setup({ getTaskLogs: read }); await settle()
+    expect(s.state.logs.value).toHaveLength(1)
+    expect(s.state.logFailure.value).not.toBe('')
+    expect(s.streams).toHaveLength(0)
+    await s.state.loadLogs()
+    expect(read).toHaveBeenLastCalledWith('A', 'page-2', undefined)
+    expect(s.state.logs.value.map(item => item.message)).toEqual(['首条', '末条'])
+    expect(s.streams).toHaveLength(1)
+    expect(s.state.logFailure.value).toBe('')
+  })
+
+  it.each(['失权', '过期', '卸载', 'A→B→A'] as const)('分页期间%s使旧页、游标、后续读取和流失效', async mode => {
+    const held = deferred<TaskLogPage>()
+    const read = vi.fn<BrowserApi['getTaskLogs']>()
+      .mockResolvedValueOnce({ items: [log('旧首条')], nextCursor: 'old-next', lastReliableCursor: 'old-after', integrity: 'COMPLETE' })
+      .mockReturnValueOnce(held.promise)
+      .mockImplementation(async id => logPage(`current-${id}`))
+    const s = setup({ getTaskLogs: read }); await settle()
+    if (mode === '卸载') s.scope.stop()
+    if (mode === 'A→B→A') { s.id.value = 'B'; await settle(); s.id.value = 'A'; await settle() }
+    if (mode === '失权') held.reject({ status: 403 })
+    else held.resolve(mode === '过期' ? { items: [], integrity: 'EXPIRED' } : { items: [log('旧末条')], nextCursor: 'stale-next', lastReliableCursor: 'stale-after', integrity: 'COMPLETE' })
+    await settle()
+    expect(read.mock.calls.some(call => call[1] === 'stale-next')).toBe(false)
+    expect(s.state.logs.value.some(item => item.message === '旧末条')).toBe(false)
+    if (mode === '失权' || mode === '过期') { expect(s.state.logs.value).toEqual([]); expect(s.state.logCursor.value).toBeUndefined(); expect(s.streams).toHaveLength(0) }
+    if (mode === 'A→B→A') expect(s.state.logCursor.value).toBe('cursor-current-A')
+  })
+
   it('手动刷新加入唯一在途链并反馈完成，任务切换隔离旧刷新结果', async () => {
     const s = setup(); await settle()
     const held = deferred<TaskExecution>()

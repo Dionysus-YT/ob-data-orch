@@ -1,5 +1,6 @@
 import { isStructuredFormat } from '@/api/browser'
 import type { CompressionAlgo, CsvOptions, CsvQuoteMode, CutOptions, DDLBehaviorOptions, ExportContentKind, ExportDataFormatKind, ExportDraftInput, ExportObjectType, ExportOutputKind, ExportScopeKind, FilterOptions, GeneralizedExportConfig, PerformanceOptions, StorageCredentialReference, TimestampFormatsOptions } from '@/api/browser'
+import { objectCategories } from './exportPresentation'
 
 // ExportDraftFormValues 是导出向导对象、内容、格式与输出步骤的页面状态。
 // 校验通过后构造当前泛化草稿请求；服务端仍会按能力矩阵再次失败关闭。
@@ -182,8 +183,9 @@ export function validateExportDraftInput(values: ExportDraftFormValues): ExportD
       }
     }
     if (selections.some((item) => item.objectType !== 'TABLE') && values.contentKind === 'DATA_ONLY') {
-      return { valid: false, message: '视图、函数、存储过程和序列只能导出对象定义（仅 DDL），不能导出数据。' }
+      return { valid: false, message: '视图、函数、存储过程、程序包、触发器、同义词、公共同义词、类型和序列只能导出对象定义（仅 DDL），不能导出数据。' }
     }
+    if (values.compatibilityMode !== 'ORACLE' && selections.some((item) => objectCategories.some((category) => category.type === item.objectType && category.oracleOnly))) return { valid: false, message: '程序包、触发器、同义词、公共同义词和类型仅适用于 Oracle 兼容模式。' }
   }
   if (values.scopeKind === 'ALL' && values.excludeTables.length > 0 && values.contentKind === 'DDL_ONLY') {
     return { valid: false, message: '排除表仅在导出含表数据或 DDL + 数据时使用。' }

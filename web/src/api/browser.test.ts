@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { browserApi, createBrowserApi, dataSourceErrorMessage, executionNodeErrorMessage, exportDraftErrorMessage, taskDetailErrorMessage, type FetchLike } from './browser'
+import { browserApi, createBrowserApi, exportObjectTypes, dataSourceErrorMessage, executionNodeErrorMessage, exportDraftErrorMessage, taskDetailErrorMessage, type ExportDraft, type FetchLike } from './browser'
+import type { NormalImportDraft } from './normalImport'
 
 function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
   const calls: Array<{ path: string; init: RequestInit }> = []
@@ -15,6 +16,52 @@ function apiWith(response: Response, csrfToken = 'synthetic-csrf-token') {
 }
 
 describe('浏览器 API 客户端', () => {
+  it('完整读取 Oracle 十类目录，缺类、乱序和不可用对象泄露均失败关闭', async () => {
+    const groups = exportObjectTypes.map(objectType => ({ objectType, objects: ['synthetic_same_name'], unavailable: false, truncated: false }))
+    const item = { id: 'synthetic-oracle-catalog', dataSourceId: 'synthetic-source', nodeId: 'synthetic-node', database: 'synthetic_schema', objectType: 'ALL', status: 'SUCCEEDED', objects: [], groups, truncated: false, validUntil: '2099-01-01T00:00:00Z' }
+    await expect(apiWith(Response.json({ item })).api.getExportObjectCatalogQuery(item.id)).resolves.toMatchObject({ groups })
+    for (const invalid of [groups.slice(1), [...groups].reverse(), groups.map(group => group.objectType === 'PACKAGE' ? { ...group, unavailable: true } : group)]) {
+      await expect(apiWith(Response.json({ item: { ...item, groups: invalid } })).api.getExportObjectCatalogQuery(item.id)).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    }
+    for (const objectType of ['PACKAGE', 'TRIGGER', 'SYNONYM', 'PUBLIC_SYNONYM', 'TYPE']) {
+      await expect(apiWith(Response.json({ item: { ...item, objectType, objects: ['synthetic_same_name'], groups: [] } })).api.getExportObjectCatalogQuery(item.id)).resolves.toMatchObject({ objectType })
+    }
+  })
+
+  it('远端结果严格保留未知文件证据，本地与未知位置不能接受 null 或伪造零值', async () => {
+    const base = { state: 'SUCCEEDED', reconciliationRequired: false, stageEvidence: 'UNAVAILABLE', progressEvidence: 'UNAVAILABLE', updatedAt: '2026-01-01T00:00:00Z' }
+    const summary = { result: 'VERIFIED', fileCount: null, totalBytes: null, files: null, checkpointPresent: false, observedAt: base.updatedAt }
+    for (const kind of ['OSS', 'S3', 'COS', 'OBS']) {
+      const item = { ...base, outputLocation: { kind, redaction: 'KIND_ONLY' }, resultSummary: summary }
+      await expect(apiWith(Response.json({ item })).api.getTaskExecution('task')).resolves.toMatchObject({ resultSummary: summary })
+      for (const changed of [{ fileCount: 0 }, { totalBytes: 0 }, { files: [] }, { fileCount: 0, totalBytes: 0, files: [] }, { fileCount: 1, totalBytes: 10, files: [{ path: 'synthetic.csv', size: 10 }] }]) {
+        await expect(apiWith(Response.json({ item: { ...item, resultSummary: { ...summary, ...changed } } })).api.getTaskExecution('task')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+      }
+    }
+    const local = { ...base, outputLocation: { kind: 'LOCAL', redaction: 'KIND_ONLY' }, resultSummary: { ...summary, fileCount: 1, totalBytes: 10, files: [{ path: 'synthetic.csv', size: 10 }] } }
+    await expect(apiWith(Response.json({ item: local })).api.getTaskExecution('task')).resolves.toMatchObject({ resultSummary: local.resultSummary })
+    for (const field of ['fileCount', 'totalBytes', 'files']) await expect(apiWith(Response.json({ item: { ...local, resultSummary: { ...local.resultSummary, [field]: null } } })).api.getTaskExecution('task')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    const unavailable = { kind: 'UNAVAILABLE', redaction: 'UNAVAILABLE' }
+    await expect(apiWith(Response.json({ item: { ...local, outputLocation: unavailable } })).api.getTaskExecution('task')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+    await expect(apiWith(Response.json({ item: { ...base, outputLocation: unavailable } })).api.getTaskExecution('task')).resolves.toMatchObject({ resultSummary: undefined })
+    await expect(apiWith(Response.json({ item: { ...local, outputLocation: undefined } })).api.getTaskExecution('task')).resolves.toMatchObject({ resultSummary: local.resultSummary })
+  })
+  it('导出与普通导入均使用提交意图指定的原幂等键，并保留修订与 CSRF', async () => {
+    for (const kind of ['export', 'normal']) {
+      const s = apiWith(Response.json({ id: 'created-task' })), saved = { id: 'draft', revision: 3 }
+      if (kind === 'export') await s.api.submitExportDraft(saved as ExportDraft, 'check', 'fixed-synthetic-intent-key')
+      else await s.api.submitNormalImport(saved as NormalImportDraft, 'check', undefined, undefined, 'fixed-synthetic-intent-key')
+      const headers = new Headers(s.calls[0]!.init.headers)
+      expect(headers.get('Idempotency-Key')).toBe('fixed-synthetic-intent-key')
+      expect(headers.get('If-Match')).toBe('"rev-3"')
+      expect(headers.get('X-CSRF-Token')).toBe('synthetic-csrf-token')
+    }
+  })
+  it('导出证明回执恢复已提交任务且拒绝无效标识', async () => {
+    const item = { id: 'check', draftId: 'draft', draftRevision: 1, configFingerprint: 'synthetic-fingerprint', nodeId: 'node', status: 'SUCCEEDED', integrityStatus: 'COMPLETE', validUntil: '2099-01-01T00:00:00Z', results: ['DATABASE_CONNECTIVITY', 'OBJECT_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'OUTPUT_PATH', 'OUTPUT_EMPTY', 'AVAILABLE_SPACE'].map(check => ({ check, status: 'PASSED', evidenceCode: 'SYNTHETIC_OK' })) }
+    expect(await apiWith(Response.json({ item: { ...item, submittedTaskId: 'accepted-task' } })).api.getPrecheck('check')).toMatchObject({ submittedTaskId: 'accepted-task' })
+    for (const submittedTaskId of [null, 42, '']) await expect(apiWith(Response.json({ item: { ...item, submittedTaskId } })).api.getPrecheck('check')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
   it('任务选择显式请求平台候选顺序，节点管理保持原读取', async () => {
     const selection = apiWith(new Response(JSON.stringify({ items: [] })))
     await selection.api.listExecutionNodes({ forTaskSelection: true }); expect(selection.calls[0]?.path).toBe('/api/v1/execution-nodes?candidateOrder=platform')

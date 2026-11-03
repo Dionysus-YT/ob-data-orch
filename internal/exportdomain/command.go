@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"ob-data-orch/internal/commandgen"
+	"ob-data-orch/internal/exportobject"
 )
 
 // BuildGeneralizedFields 将已归一化的泛化草稿映射为命令生成器字段。
@@ -54,7 +55,7 @@ func BuildGeneralizedFields(input Draft) ([]commandgen.FieldInput, error) {
 					return nil, errors.New("export draft object type is unsupported")
 				}
 			}
-			for _, objectType := range []string{"TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE"} {
+			for _, objectType := range exportobject.Types() {
 				if names := input.ObjectsByType[objectType]; len(names) != 0 {
 					appendString(objectParameterName(objectType), strings.Join(names, ","))
 				}
@@ -259,6 +260,16 @@ func objectParameterName(objectType string) string {
 		return "--procedure"
 	case "SEQUENCE":
 		return "--sequence"
+	case "PACKAGE":
+		return "--package"
+	case "TRIGGER":
+		return "--trigger"
+	case "SYNONYM":
+		return "--synonym"
+	case "PUBLIC_SYNONYM":
+		return "--public-synonym"
+	case "TYPE":
+		return "--type"
 	default:
 		return "--table"
 	}

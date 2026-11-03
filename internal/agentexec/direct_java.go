@@ -51,6 +51,10 @@ type DirectJavaLaunch struct {
 	BusinessArguments     []string
 	Environment           []string
 	Output                DirectJavaOutput
+	// LeaseExpiresAt 是本次已确认租约的截止点；版本探测和进程创建前均须仍有效。
+	LeaseExpiresAt time.Time
+	// Clock 仅替换本机时钟以便隔离验证；缺省使用当前时间。
+	Clock func() time.Time
 }
 
 // DirectJavaLogStream 是一个来源固定的工具管道流标识。
@@ -84,10 +88,13 @@ type DirectJavaProcess struct {
 // StartDirectJava 在写入不可覆盖的启动意图后直接启动包内 Java 主类。
 // Windows 启动参数按固定工具分别复刻 4.3.5 的官方脚本；官方脚本保持只读，
 // 任务级替换包括冻结 --mem 对应的堆，以及 execution 私有安全配置、日志出口、临时文件和堆转储目录。
-// 该函数仅建立本地进程边界；任务租约、秘密解析、日志脱敏和终态投影必须由上层完成。
+// 该函数复验启动截止点；任务租约续租、秘密解析和终态投影仍由上层完成。
 func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch DirectJavaLaunch) (*DirectJavaProcess, error) {
 	if err := validateDirectJavaLaunch(workspace, launch); err != nil {
 		return nil, err
+	}
+	if !launch.leaseValid(ctx) {
+		return nil, ErrDirectJavaLaunchInvalid
 	}
 	javaUpdate, err := readJava8Update(ctx, launch.JavaPath, launch.Environment)
 	if err != nil {
@@ -117,6 +124,9 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	if !toolArgumentsRepresentable(arguments) {
 		return nil, ErrDirectJavaLaunchInvalid
 	}
+	if !launch.leaseValid(ctx) {
+		return nil, ErrDirectJavaLaunchInvalid
+	}
 	if err := WriteStartIntent(workspace, launch.Intent); err != nil {
 		return nil, err
 	}
@@ -138,6 +148,12 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 	stderr, err := command.StderrPipe()
 	if err != nil {
 		return nil, ErrDirectJavaStartFailed
+	}
+	if !launch.leaseValid(ctx) {
+		_ = stdout.Close()
+		_ = stderr.Close()
+		_ = controller.close()
+		return nil, ErrDirectJavaLaunchInvalid
 	}
 	if err := command.Start(); err != nil {
 		_ = controller.close()
@@ -164,6 +180,14 @@ func StartDirectJava(ctx context.Context, workspace credential.Workspace, launch
 		outputDone: outputDone,
 		controller: controller,
 	}, nil
+}
+
+func (launch DirectJavaLaunch) leaseValid(ctx context.Context) bool {
+	now := time.Now
+	if launch.Clock != nil {
+		now = launch.Clock
+	}
+	return ctx.Err() == nil && !launch.LeaseExpiresAt.IsZero() && now().Before(launch.LeaseExpiresAt)
 }
 
 // readJava8Update 复刻 Windows 官方脚本按 Java 8 update 版本选择 CMS 或 G1 的分支。

@@ -5,7 +5,7 @@ import { overlayTheme } from '@/platform/theme'
 import { component } from '@/platform/tokens'
 import { activateModal } from './modalFocus'
 
-const props = withDefaults(defineProps<{ open: boolean; title: string; confirmLabel?: string; cancelLabel?: string; destructive?: boolean; busy?: boolean }>(), { confirmLabel: '确认', cancelLabel: '取消', destructive: false, busy: false })
+const props = withDefaults(defineProps<{ open: boolean; title: string; confirmLabel?: string; cancelLabel?: string; destructive?: boolean; busy?: boolean; confirmDisabled?: boolean }>(), { confirmLabel: '确认', cancelLabel: '取消', destructive: false, busy: false, confirmDisabled: false })
 const emit = defineEmits<{ cancel: []; confirm: [] }>()
 const cancelButton = ref<{ $el: HTMLButtonElement }>()
 const id = useId()
@@ -28,7 +28,7 @@ watch([() => props.open, cancelButton], async ([open], _previous, cleanup) => {
   <ConfigProvider :theme="overlayTheme">
     <Modal :open="open" :title="title" :width="component.overlay.confirmWidth" :closable="!busy" :mask-closable="false" :keyboard="!busy" :focus-trigger-after-close="true" :destroy-on-close="true" class="orch-confirmation" :aria-describedby="id" @cancel="!busy && emit('cancel')">
       <div :id="id" class="orch-confirmation-body"><slot /></div>
-      <template #footer><Button ref="cancelButton" :disabled="busy" @click="emit('cancel')">{{ cancelLabel }}</Button><Button :type="destructive ? 'default' : 'primary'" :danger="destructive" :loading="busy" :disabled="busy" @click="emit('confirm')">{{ confirmLabel }}</Button></template>
+      <template #footer><Button ref="cancelButton" :disabled="busy" @click="emit('cancel')">{{ cancelLabel }}</Button><Button :type="destructive ? 'default' : 'primary'" :danger="destructive" :loading="busy" :disabled="busy || confirmDisabled" @click="emit('confirm')">{{ confirmLabel }}</Button></template>
     </Modal>
   </ConfigProvider>
 </template>

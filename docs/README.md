@@ -20,6 +20,7 @@ OB Data Orch 是 OB Loader/Dumper 4.3.5 的轻量可视化编排平台。按当�
 | 某项能力有什么验证证据 | [验证记录索引](03-technical/README.md#evidence) | 区分合成验证、Windows 实测和正式发布 |
 | 普通导入保存、文件与预检查做到哪 | [普通导入技术契约](03-technical/normal-import-contract.md) | [普通导入维护索引](../web/src/workbench/import/normal/README.md)；真实执行与恢复仍受门禁约束 |
 | 旁路导入配置、单表文件与独立预检查 | [旁路导入技术契约](03-technical/direct-load-contract.md) | [旁路前端维护索引](../web/src/workbench/import/direct-load/README.md)；[单机真实 API 验收](03-technical/evidence/direct-load-standalone-repair-2026-10-22.md)，范围以任务地图为准 |
+| 模板中心当前范围、页面与检查 | [模板中心重设计](02-design/template-center-module.md) | [页面 P1](../design-system/pages/template-center.md)、[维护索引](../web/src/workbench/templates/README.md)、[本地验收](03-technical/evidence/template-center-2026-11-02.md)；区分本地实现、安装及真实业务复验 |
 
 首次了解项目，读“产品范围 → 任务地图 → 当前相关模块”即可。字段矩阵供实现和验收时查阅，不是入门必读。
 

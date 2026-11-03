@@ -12,6 +12,7 @@ import (
 
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/catalogresult"
+	"ob-data-orch/internal/exportobject"
 )
 
 var (
@@ -185,6 +186,7 @@ func (w *Worker) validGrant(identity agentwire.AgentIdentity, grant agentwire.Da
 	}
 	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
 		if grant.VerificationSource != agentwire.DataSourceConnectionTestAgentJDBC || !validCatalogGrantScope(binding.CatalogDatabase, binding.CatalogObjectType) ||
+			(exportobject.Supported(binding.CatalogObjectType) && !exportobject.ValidForMode(binding.CatalogObjectType, binding.CatalogCompatibilityMode)) ||
 			(binding.CatalogCompatibilityMode != "MYSQL" && binding.CatalogCompatibilityMode != "ORACLE") ||
 			len(binding.CatalogKeyword) > 100 ||
 			binding.SysCredentialRevision != 0 || binding.SysCredentialID != "" {
@@ -211,7 +213,7 @@ func validCatalogGrantScope(database, objectType string) bool {
 	if objectType == "DATABASE" {
 		return database == ""
 	}
-	return (objectType == "ALL" || objectType == "TABLE" || objectType == "VIEW" || objectType == "FUNCTION" || objectType == "PROCEDURE" || objectType == "SEQUENCE") && database != ""
+	return (objectType == "ALL" || exportobject.Supported(objectType)) && database != ""
 }
 
 // testOutcome 将来源固定到唯一可接受的结果集合，避免运行器将异常文本或任意结果写入控制面。
@@ -276,7 +278,7 @@ func validJDBCOutcome(grant agentwire.DataSourceConnectionTestGrant, outcome Out
 		if outcome.SysVerificationStatus != agentwire.DataSourceConnectionTestSysNotConfigured || (grant.Binding.CatalogObjectType == "DATABASE" && len(outcome.CatalogObjects) > 100) ||
 			(grant.Binding.CatalogObjectType != "DATABASE" && outcome.CatalogTruncated) ||
 			(outcome.Status != agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || len(outcome.CatalogGroups) != 0 || outcome.CatalogTruncated)) ||
-			(grant.Binding.CatalogObjectType == "ALL" && outcome.Status == agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated || !catalogresult.ValidGroups(outcome.CatalogGroups))) ||
+			(grant.Binding.CatalogObjectType == "ALL" && outcome.Status == agentwire.DataSourceConnectionTestSucceeded && (len(outcome.CatalogObjects) != 0 || outcome.CatalogTruncated || !catalogresult.ValidGroupsForMode(outcome.CatalogGroups, grant.Binding.CatalogCompatibilityMode))) ||
 			(grant.Binding.CatalogObjectType != "ALL" && len(outcome.CatalogGroups) != 0) {
 			return false
 		}

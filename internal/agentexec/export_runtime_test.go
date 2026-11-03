@@ -223,5 +223,5 @@ func exportRuntimeLaunch(t *testing.T, mode string) (DirectJavaLaunch, credentia
 	if err := os.WriteFile(filepath.Join(home, "conf", "log4j2.xml"), []byte(`<Configuration><Routing name="synthetic-task.workspace"/></Configuration>`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return DirectJavaLaunch{Tool: "OBDUMPER", Intent: validStartIntent(), BootID: "boot-1", JavaPath: executable, JavaSHA256: hex.EncodeToString(digest[:]), ToolHome: home, SecurityConfiguration: security, BusinessArguments: []string{"--file-path", t.TempDir(), "--csv"}, Environment: []string{"SystemRoot=" + os.Getenv("SystemRoot"), "OBDO_SYNTHETIC_EXPORT_RUNTIME=" + mode}, Output: directJavaOutput(t)}, workspace
+	return DirectJavaLaunch{LeaseExpiresAt: time.Now().Add(time.Minute), Tool: "OBDUMPER", Intent: validStartIntent(), BootID: "boot-1", JavaPath: executable, JavaSHA256: hex.EncodeToString(digest[:]), ToolHome: home, SecurityConfiguration: security, BusinessArguments: []string{"--file-path", t.TempDir(), "--csv"}, Environment: []string{"SystemRoot=" + os.Getenv("SystemRoot"), "OBDO_SYNTHETIC_EXPORT_RUNTIME=" + mode}, Output: directJavaOutput(t)}, workspace
 }

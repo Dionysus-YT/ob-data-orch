@@ -111,7 +111,14 @@ func Test普通导入冻结提交复验写权限风险确认与完整用途(t *t
 			raw, _ := json.Marshal(files)
 			digest := sha256.Sum256(raw)
 			manifest := &importfiles.Manifest{Files: files, FileCount: 1, TotalBytes: 2, Digest: hex.EncodeToString(digest[:])}
-			s.check = &store.NormalImportCheck{CheckKind: "NORMAL_IMPORT_PREFLIGHT", Run: store.PrecheckRun{PrecheckID: "synthetic-check", DraftID: s.item.ID, DraftRevision: 1, ConfigFingerprint: s.item.ConfigFingerprint, Status: "SUCCEEDED", IntegrityStatus: "COMPLETE", ValidUntil: time.Now().Add(time.Minute), CredentialID: "synthetic-credential", CredentialRevision: 1}, InputManifest: manifest}
+			s.check = &store.NormalImportCheck{CheckKind: "NORMAL_IMPORT_PREFLIGHT", Run: store.PrecheckRun{PrecheckID: "synthetic-check", DataSourceID: s.item.DataSourceID, NodeID: s.item.NodeID, DraftID: s.item.ID, DraftRevision: 1, ConfigFingerprint: s.item.ConfigFingerprint, Status: "SUCCEEDED", IntegrityStatus: "COMPLETE", ValidUntil: time.Now().Add(time.Minute), CredentialID: "synthetic-credential", CredentialRevision: 1}, InputManifest: manifest}
+			for _, path := range []string{"/api/v1/normal-import-drafts/" + s.item.ID, "/api/v1/normal-import-prechecks/synthetic-check"} {
+				response := normalImportRequest(h, "GET", path, "", "")
+				if response.Code != 200 || strings.Contains(response.Body.String(), "submittedTaskId") {
+					t.Fatal("未提交响应没有省略可选结果字段", path, response.Code)
+				}
+			}
+
 			if scenario == "文件用途" {
 				s.check.CheckKind = "NORMAL_IMPORT_FILES"
 			}
@@ -152,6 +159,25 @@ func Test普通导入冻结提交复验写权限风险确认与完整用途(t *t
 				if scenario == "已确认" && !strings.HasPrefix(frozen.TaskName, "普通导入-synthetic_db-CSV-") {
 					t.Fatal("未按规则自动生成名称")
 				}
+				s.check.Run.ValidUntil = time.Now().Add(-time.Hour)
+				tasks.lookup = func(input store.TaskSubmissionLookup) (store.TaskSubmissionResult, error) {
+					if input.IdempotencyKey != tasks.submitKey || input.RequestDigest != tasks.submitDigest || input.PrecheckID != s.check.Run.PrecheckID {
+						return store.TaskSubmissionResult{}, store.ErrIdempotencyConflict
+					}
+					return store.TaskSubmissionResult{TaskID: tasks.input.TaskID, Replayed: true}, nil
+				}
+				retried := normalImportRequest(h, "POST", "/api/v1/normal-import-drafts/"+s.item.ID+":submit", requestBody, `"rev-1"`)
+				if retried.Code != 200 || !strings.Contains(retried.Body.String(), `"replayed":true`) || tasks.submitCount != 1 {
+					t.Fatal("过期证明未恢复原回执", retried.Code)
+				}
+				tasks.lookup = func(store.TaskSubmissionLookup) (store.TaskSubmissionResult, error) {
+					return store.TaskSubmissionResult{}, store.ErrClaimIneligible
+				}
+				denied := normalImportRequest(h, "POST", "/api/v1/normal-import-drafts/"+s.item.ID+":submit", requestBody, `"rev-1"`)
+				if denied.Code != 404 || tasks.submitCount != 1 {
+					t.Fatal("回执撤权未失败关闭", denied.Code)
+				}
+
 			} else if tasks.input.TaskID != "" {
 				t.Fatal("未通过门禁仍冻结任务")
 			}

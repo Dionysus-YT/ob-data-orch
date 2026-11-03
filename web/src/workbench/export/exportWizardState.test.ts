@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import type { BrowserApi, ExecutionNodeCandidate, ExportDraft, ExportObjectCatalogQuery, Precheck } from '@/api/browser'
+import { exportObjectTypes } from '@/api/browser'
 import type { ExportRuntime } from './exportRuntime'
 import { DATA_SOURCE_UI_FIXTURES } from '@/workbench/sources/dataSourceUiFixture'
 import { createExportForm } from './exportForm'
@@ -532,6 +533,71 @@ describe('草稿、预检查与提交竞态', () => {
     expect(s.runtime.router.push).not.toHaveBeenCalled()
   })
 
+  it('丢失提交回执后按原键恢复，证明过期也不能换键或发起新检查', async () => {
+    const submit = vi.fn<BrowserApi['submitExportDraft']>().mockRejectedValueOnce(new TypeError('合成响应丢失')).mockResolvedValueOnce('accepted-task')
+    const start = vi.fn<BrowserApi['startPrecheck']>()
+    const read = vi.fn<BrowserApi['getPrecheck']>()
+    const s = await setup({ submitExportDraft: submit, startPrecheck: start, getPrecheck: read })
+    read.mockResolvedValue(s.passed)
+    s.saved(); s.lifecycle.submitTask(); await s.lifecycle.confirmSubmitTask()
+    expect(s.lifecycle.submissionUncertain.value).toBe(true)
+    expect(s.lifecycle.canStartPrecheck.value).toBe(false)
+    const first = submit.mock.calls[0]!
+    expect(first[2]).toMatch(/^[0-9a-f-]{36}$/)
+    s.lifecycle.precheckExpired.value = true
+    await s.lifecycle.startPrecheck(); expect(start).not.toHaveBeenCalled()
+    await s.lifecycle.confirmSubmitTask()
+    expect(submit.mock.calls[1]).toEqual(first)
+    expect(s.lifecycle.submittedTaskID.value).toBe('accepted-task')
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+  })
+
+  it('成功任务的导航失败只重试导航，恢复草稿不再开放提交与预检查', async () => {
+    const submit = vi.fn<BrowserApi['submitExportDraft']>().mockResolvedValue('accepted-task')
+    const s = await setup({ submitExportDraft: submit })
+    vi.mocked(s.runtime.router.push).mockRejectedValueOnce(new Error('合成导航失败')).mockResolvedValue(undefined)
+    s.saved(); await s.lifecycle.confirmSubmitTask()
+    expect(s.lifecycle.submissionFailure.value).toContain('任务已提交')
+    await s.lifecycle.confirmSubmitTask(); await s.lifecycle.openSubmittedTask()
+    expect(submit).toHaveBeenCalledOnce()
+    expect(s.runtime.router.push).toHaveBeenCalledTimes(2)
+    s.lifecycle.clearDraftState()
+    s.lifecycle.currentDraft.value = { ...s.draft, submittedTaskId: 'restored-task' }
+    expect(s.lifecycle.submittedTaskID.value).toBe('restored-task')
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+    expect(s.lifecycle.canStartPrecheck.value).toBe(false)
+  })
+
+  it('通过同绑定证明找回已提交任务，其他绑定的回执不能导航', async () => {
+    const read = vi.fn<BrowserApi['getPrecheck']>()
+    const s = await setup({ submitExportDraft: vi.fn(async () => { throw new TypeError('合成响应丢失') }), getPrecheck: read })
+    s.saved(); read.mockResolvedValueOnce({ ...s.passed, draftRevision: 99, submittedTaskId: 'wrong-task' })
+    await s.lifecycle.confirmSubmitTask()
+    expect(s.runtime.router.push).not.toHaveBeenCalled()
+    expect(s.lifecycle.submissionUncertain.value).toBe(true)
+    read.mockResolvedValueOnce({ ...s.passed, submittedTaskId: 'recovered-task' })
+    await s.lifecycle.confirmSubmitTask()
+    expect(s.lifecycle.submittedTaskID.value).toBe('recovered-task')
+    expect(s.runtime.router.push).toHaveBeenCalledWith('/tasks/recovered-task')
+  })
+
+  it.each(['失权', '卸载', 'A→B→A'] as const)('提交恢复期间%s隔离旧任务、反馈与 finally', async mode => {
+    const held = deferred<Precheck>()
+    const s = await setup({ submitExportDraft: vi.fn(async () => { throw new TypeError('合成响应丢失') }), getPrecheck: vi.fn(() => held.promise) })
+    s.saved(); const pending = s.lifecycle.confirmSubmitTask()
+    await Promise.resolve(); await Promise.resolve()
+    if (mode === '卸载') s.scope.stop()
+    if (mode === 'A→B→A') { const original = s.form.database.value; s.form.database.value = 'B'; s.form.database.value = original }
+    if (mode === '失权') held.reject({ status: 403 })
+    else held.resolve({ ...s.passed, submittedTaskId: 'stale-task' })
+    await pending
+    expect(s.runtime.router.push).not.toHaveBeenCalled()
+    expect(s.lifecycle.submittedTaskID.value).toBe('')
+    expect(s.lifecycle.submissionUncertain.value).toBe(false)
+    expect(s.lifecycle.canSubmit.value).toBe(false)
+    if (mode !== '失权') expect(s.lifecycle.submissionFailure.value).toBe('')
+  })
+
   it('预检查绑定修订、节点、指纹和完整性，任一不符都阻断', async () => {
     const s = await setup()
     for (const change of [{ draftRevision: 2 }, { nodeId: 'synthetic-other' }, { configFingerprint: 'synthetic-other' }, { integrityStatus: 'GAP' }]) {
@@ -587,6 +653,70 @@ describe('会话绑定的刷新恢复', () => {
 })
 
 describe('引用数据与目录请求生命周期', () => {
+  it('Oracle 十类目录可混选，纯数据临时排除非表并在恢复草稿后保留类型', async () => {
+    vi.useFakeTimers()
+    const s = await setup({ searchExportObjects: vi.fn() })
+    s.references.sources.value[0] = { ...s.source, compatibilityMode: 'ORACLE' }
+    s.form.contentKind.value = 'DDL_ONLY'
+    s.form.clearSelectedObjects()
+    await nextTick()
+    vi.mocked(s.runtime.api.searchExportObjects).mockResolvedValue({
+      id: 'synthetic-oracle-query', dataSourceId: s.source.id, nodeId: s.form.selectedNodeID.value, database: s.form.database.value,
+      keyword: '', status: 'SUCCEEDED', objectType: 'ALL', objects: [], truncated: false, validUntil: '2099-01-01T00:00:00Z',
+      groups: exportObjectTypes.map(objectType => ({ objectType, objects: ['synthetic_same_name'], truncated: false, unavailable: false })),
+    })
+    await s.catalog.loadAllCatalogs()
+    expect(s.catalog.visibleObjectCategories.value.map(category => category.type)).toEqual(exportObjectTypes)
+    for (const type of ['PACKAGE', 'TRIGGER', 'SYNONYM', 'PUBLIC_SYNONYM', 'TYPE'] as const) {
+      s.catalog.chooseObjectCategory(type)
+      expect(s.form.objectType.value).toBe(type)
+      s.catalog.toggleCategorySelection(type)
+    }
+    expect(s.form.enteredObjectCount.value).toBe(5)
+    const input = s.parameters.draftInput.value!
+    expect(input.config.objectScope.expressions).toHaveLength(5)
+    s.form.contentKind.value = 'DATA_ONLY'
+    await nextTick()
+    expect(s.form.enteredObjectCount.value).toBe(0)
+    expect(s.catalog.visibleObjectCategories.value.map(category => category.type)).toEqual(['TABLE'])
+    s.form.contentKind.value = 'DDL_AND_DATA'
+    await nextTick()
+    expect(s.form.enteredObjectCount.value).toBe(5)
+    s.form.hydratingDerivedDraft.value = true
+    populateFormFromDraft({ ...s.form, ...s.catalog }, { ...s.draft, ...input })
+    await nextTick()
+    s.form.hydratingDerivedDraft.value = false
+    expect(s.parameters.draftInput.value?.config.objectScope).toEqual(input.config.objectScope)
+  })
+
+  it('Oracle 旧 Agent 缺类响应不伪装为空目录，切库后的新增类响应不回填', async () => {
+    vi.useFakeTimers()
+    const response = deferred<ExportObjectCatalogQuery>()
+    const s = await setup({ searchExportObjects: vi.fn().mockReturnValue(response.promise) })
+    s.references.sources.value[0] = { ...s.source, compatibilityMode: 'ORACLE' }
+    s.form.contentKind.value = 'DDL_ONLY'
+    await nextTick()
+    const query: ExportObjectCatalogQuery = {
+      id: 'synthetic-oracle-query', dataSourceId: s.source.id, nodeId: s.form.selectedNodeID.value, database: s.form.database.value,
+      keyword: '', status: 'SUCCEEDED', objectType: 'ALL', objects: [], truncated: false, validUntil: '2099-01-01T00:00:00Z',
+      groups: (['TABLE', 'VIEW', 'FUNCTION', 'PROCEDURE', 'SEQUENCE'] as const).map(objectType => ({ objectType, objects: [], truncated: false, unavailable: false })),
+    }
+    const first = s.catalog.loadAllCatalogs()
+    response.resolve(query)
+    await first
+    expect(s.catalog.catalogByType.PACKAGE.failure).toContain('分类不完整')
+    expect(s.catalog.catalogByType.PACKAGE.baseLoaded).toBe(false)
+    const late = deferred<ExportObjectCatalogQuery>()
+    vi.mocked(s.runtime.api.searchExportObjects).mockReturnValue(late.promise)
+    const loading = s.catalog.loadCatalog('PACKAGE')
+    s.form.database.value = 'synthetic_other_schema'
+    await nextTick()
+    late.resolve({ ...query, objectType: 'PACKAGE', objects: ['synthetic_stale_package'], groups: [] })
+    await loading
+    expect(s.catalog.catalogByType.PACKAGE.names).toEqual([])
+    expect(s.catalog.catalogByType.PACKAGE.loading).toBe(false)
+  })
+
   it('迟到批量目录不能覆盖新的分类刷新结果', async () => {
     const batch = deferred<ExportObjectCatalogQuery>()
     const category = deferred<ExportObjectCatalogQuery>()

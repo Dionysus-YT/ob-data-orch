@@ -32,5 +32,6 @@ describe('导出与普通导入共用详情的展示边界', () => {
     expect(taskResultText(undefined, false, snapshot.type)).toBe('尚无结果证据')
     expect(taskResultText({ result: 'FAILED' }, true, snapshot.type)).toBe('结果未通过核验')
     expect(taskResultText({ result: 'VERIFIED' }, true, 'OBDUMPER_EXPORT')).toBe('远端对象未逐项核验')
+    expect(taskResultText({ result: 'VERIFIED' }, false, 'OBLOADER_DIRECT_LOAD')).toBe('导入完成证据已核验')
   })
 })

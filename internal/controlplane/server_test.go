@@ -3490,18 +3490,21 @@ func (s *recordingPrecheckStore) CompletePrecheck(_ context.Context, input store
 }
 
 type recordingTaskStore struct {
-	run               store.PrecheckRun
-	input             store.TaskSubmission
-	summary           store.TaskSummary
-	derivationSource  store.TaskDerivationSource
-	resumeInput       store.CheckpointResumeDerivation
-	resumeErr         error
-	listItems         []store.TaskListItem
-	listQuery         store.TaskListQuery
-	countSubject      string
-	countQuery        store.TaskListQuery
-	countErr          error
-	authorizedSubject string
+	submitCount             int
+	submitKey, submitDigest string
+	lookup                  func(store.TaskSubmissionLookup) (store.TaskSubmissionResult, error)
+	run                     store.PrecheckRun
+	input                   store.TaskSubmission
+	summary                 store.TaskSummary
+	derivationSource        store.TaskDerivationSource
+	resumeInput             store.CheckpointResumeDerivation
+	resumeErr               error
+	listItems               []store.TaskListItem
+	listQuery               store.TaskListQuery
+	countSubject            string
+	countQuery              store.TaskListQuery
+	countErr                error
+	authorizedSubject       string
 }
 
 type emptyLogBatchIndex struct{}
@@ -3708,7 +3711,16 @@ func (s *recordingTaskStore) GetPrecheckRun(context.Context, string) (store.Prec
 	return s.run, nil
 }
 
-func (s *recordingTaskStore) SubmitTaskIdempotent(_ context.Context, input store.TaskSubmission, _ string, _ string) (store.TaskSubmissionResult, error) {
+func (s *recordingTaskStore) LookupTaskSubmission(_ context.Context, input store.TaskSubmissionLookup) (store.TaskSubmissionResult, error) {
+	if s.lookup != nil {
+		return s.lookup(input)
+	}
+	return store.TaskSubmissionResult{}, nil
+}
+
+func (s *recordingTaskStore) SubmitTaskIdempotent(_ context.Context, input store.TaskSubmission, key string, digest string) (store.TaskSubmissionResult, error) {
+	s.submitCount++
+	s.submitKey, s.submitDigest = key, digest
 	s.input = input
 	return store.TaskSubmissionResult{TaskID: input.TaskID}, nil
 }
@@ -3723,6 +3735,7 @@ func TestTaskExecutionProjectionIncludesResultSummary(t *testing.T) {
 		TaskID: "task-1", CreatorSubjectID: "subject-1", DataSourceID: "source-allowed", NodeID: "node-1",
 		State: "FAILED", ExecutionID: "execution-1", ReconciliationRequired: false,
 		UpdatedAt: observed, SubmittedAt: observed.Add(-time.Hour),
+		OutputLocation: &store.TaskOutputLocation{Kind: "LOCAL", Redaction: "KIND_ONLY"},
 		ResultSummary: &store.ExecutionResultSummary{
 			Result: "FAILED", FileCount: 3, TotalBytes: 512, CheckpointPresent: true, ObservedAt: observed,
 			Files: []store.ExecutionResultFile{{Path: "data_1.csv", Size: 100}, {Path: "dump.ckpt", Size: 412}},

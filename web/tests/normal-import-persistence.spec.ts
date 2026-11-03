@@ -9,6 +9,45 @@ async function selectOption(page: Page, label: string, option: string) {
   await expect(page.locator('.ant-select-dropdown:visible')).toHaveCount(0)
 }
 
+test('普通导入提交受理后响应中断时找回任务，恢复草稿阻止第二次执行', async ({ page }) => {
+  const errors: string[] = [], submitKeys: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  let submittedTaskId = '', checks = 0, revision = 1
+  let config: NormalImportConfig = { dataSourceId: normalImportSources[0]!.id, nodeId: normalImportNode.id, database: 'synthetic_database', filePath: 'E:\\synthetic-import', content: 'DATA_ONLY', format: 'CSV', scope: 'ALL', objects: {}, parser: {}, execution: {}, cleanup: 'NONE', mapping: { kind: 'POSITION' } }
+  await page.route('**/api/v1/**', async route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (path === '/api/v1/data-sources') return route.fulfill({ json: { items: normalImportSources } })
+    if (path === '/api/v1/execution-nodes') return route.fulfill({ json: { items: [normalImportNode] } })
+    if (path === '/api/v1/normal-import-drafts/recovery-draft') {
+      if (request.method() === 'PATCH') { revision++; config = request.postDataJSON().config }
+      return route.fulfill({ json: { id: 'recovery-draft', revision, configVersion: 'normal-import-v1', config, configFingerprint: 'a'.repeat(64), metadataVersion: 'obloader-4.3.5-normal-v1', capabilityVersion: 'import-odp-local-v1', executionEnabled: true, ...(submittedTaskId ? { submittedTaskId } : {}) } })
+    }
+    if (path.endsWith(':preview-command')) return route.fulfill({ json: { redactedCommand: 'obloader --csv -p ******', configFingerprint: 'a'.repeat(64), executionEnabled: true } })
+    if (path.endsWith(':precheck')) { checks++; return route.fulfill({ status: 202, json: { id: 'recovery-check' } }) }
+    if (path === '/api/v1/normal-import-prechecks/recovery-check') return route.fulfill({ json: {
+      id: 'recovery-check', draftId: 'recovery-draft', draftRevision: revision, configFingerprint: 'a'.repeat(64), checkKind: 'NORMAL_IMPORT_PREFLIGHT', status: 'SUCCEEDED', integrityStatus: 'COMPLETE', executionEnabled: true, validUntil: '2099-01-01T00:00:00Z',
+      results: ['DATABASE_CONNECTIVITY', 'WRITE_ACCESS', 'TOOL_ENVIRONMENT', 'NODE_RESOURCE', 'INPUT_FILES', 'INPUT_MAPPING'].map(check => ({ check, status: 'PASSED', evidenceCode: 'SYNTHETIC_OK' })),
+      inputManifest: { files: [{ path: 'synthetic.csv', kind: 'DATA', object: 'synthetic', size: 2, modified: '1790000000000000000', sha256: 'b'.repeat(64) }], fileCount: 1, totalBytes: 2, digest: 'c'.repeat(64) },
+      ...(submittedTaskId ? { submittedTaskId } : {}),
+    } })
+    if (path.endsWith(':submit')) { submitKeys.push(request.headers()['idempotency-key']!); submittedTaskId = 'synthetic-recovered-import-task'; return route.abort('connectionreset') }
+    return route.fulfill({ status: 404, json: {} })
+  })
+  await page.goto('/imports/normal/new?draft=recovery-draft&step=5')
+  await page.getByRole('button', { name: '提交并启动导入', exact: true }).click()
+  await page.getByRole('dialog', { name: '确认提交普通导入任务', exact: true }).getByRole('button', { name: '确认提交并启动导入', exact: true }).click()
+  await expect(page).toHaveURL(/\/tasks\/synthetic-recovered-import-task$/)
+  expect(submitKeys).toHaveLength(1)
+  expect(submitKeys[0]).toMatch(/^[0-9a-f-]{36}$/)
+  const priorChecks = checks
+  await page.goto('/imports/normal/new?draft=recovery-draft&step=1')
+  await expect(page.getByRole('button', { name: '查看已创建任务', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重新预检查', exact: true })).toBeDisabled()
+  expect(checks).toBe(priorChecks)
+  expect(submitKeys).toHaveLength(1)
+  expect(errors).toEqual([])
+})
+
 test('普通导入保存恢复、第五步统一文件检查、脱敏命令和失败关闭预检查形成闭环', async ({ page }, info) => {
   const errors: string[] = [], writes: { method: string; path: string; revision?: string; config?: Record<string, unknown> }[] = []
   page.on('pageerror', error => errors.push(error.message))

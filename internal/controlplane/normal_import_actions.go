@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -126,7 +127,11 @@ func (s *Server) getNormalImportCheck(w http.ResponseWriter, r *http.Request, p 
 			results = append(results, store.PrecheckCheckResult{Check: check, Status: "UNKNOWN", EvidenceCode: code})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"id": item.Run.PrecheckID, "draftId": item.Run.DraftID, "draftRevision": item.Run.DraftRevision, "configFingerprint": item.Run.ConfigFingerprint, "status": item.Run.Status, "integrityStatus": item.Run.IntegrityStatus, "validUntil": item.Run.ValidUntil, "checkKind": item.CheckKind, "results": results, "inputManifest": item.InputManifest, "executionEnabled": s.normalImportExecutionEnabled})
+	response := map[string]any{"id": item.Run.PrecheckID, "draftId": item.Run.DraftID, "draftRevision": item.Run.DraftRevision, "configFingerprint": item.Run.ConfigFingerprint, "status": item.Run.Status, "integrityStatus": item.Run.IntegrityStatus, "validUntil": item.Run.ValidUntil, "checkKind": item.CheckKind, "results": results, "inputManifest": item.InputManifest, "executionEnabled": s.normalImportExecutionEnabled}
+	if item.SubmittedTaskID != "" {
+		response["submittedTaskId"] = item.SubmittedTaskID
+	}
+	writeJSON(w, 200, response)
 }
 
 func (s *Server) submitNormalImport(w http.ResponseWriter, r *http.Request, p identity.Principal, id string) {
@@ -155,7 +160,7 @@ func (s *Server) submitNormalImport(w http.ResponseWriter, r *http.Request, p id
 		return
 	}
 	check, err := s.normalImports.GetNormalImportCheck(r.Context(), request.PrecheckID, p.ID)
-	if err != nil || check.CheckKind != "NORMAL_IMPORT_PREFLIGHT" || check.Run.DraftID != id || check.Run.DraftRevision != revision || check.Run.Status != "SUCCEEDED" || check.Run.IntegrityStatus != "COMPLETE" || !check.Run.ValidUntil.After(time.Now()) || check.InputManifest == nil {
+	if err != nil || check.CheckKind != "NORMAL_IMPORT_PREFLIGHT" || check.Run.DraftID != id || check.Run.DraftRevision != revision {
 		writeError(w, 422, "PRECHECK_REQUIRED", "需要当前配置的完整普通导入预检查", false)
 		return
 	}
@@ -164,21 +169,33 @@ func (s *Server) submitNormalImport(w http.ResponseWriter, r *http.Request, p id
 		writeError(w, 422, "NORMAL_IMPORT_CONFIG_INVALID", "普通导入配置无效", false)
 		return
 	}
-	preview, source, _, err := s.generateNormalImport(r.Context(), config)
-	if err != nil || preview.ConfigFingerprint != draft.ConfigFingerprint || preview.ConfigFingerprint != check.Run.ConfigFingerprint || !check.InputManifest.Valid(config) {
-		writeError(w, 422, "PRECHECK_REQUIRED", "配置或文件证据已失效，请重新检查", false)
+	source, err := s.dataSource.GetDataSourceSummary(r.Context(), draft.DataSourceID)
+	if err != nil || s.authorizeExpertConfiguration(r.Context(), config.HighRisk()) != nil {
+		notFound(w, r)
 		return
 	}
-	if config.HighRisk() || source.Environment == "PRODUCTION" {
-		// 当前部署的全局管理员承载生产和专家操作；缺失可信角色或冻结确认均失败关闭。
+	if config.HighRisk() || source.Environment == "PRODUCTION" || source.Environment == "PROD" {
+		// 重放也要复验当前高风险权限与原确认，不把已受理事实当作永久授权。
 		if identity.HasRole(r.Context(), s.roles, p, identity.RoleGlobalAdmin) != nil {
 			writeError(w, 403, "IMPORT_OPERATION_FORBIDDEN", "当前身份不能提交该导入操作", false)
 			return
 		}
-		if request.ConfirmedConfigFingerprint != preview.ConfigFingerprint {
+		if request.ConfirmedConfigFingerprint != check.Run.ConfigFingerprint {
 			writeError(w, 422, "IMPORT_CONFIRMATION_REQUIRED", "需确认当前冻结配置的写入与结构影响", false)
 			return
 		}
+	}
+	if s.replayTaskSubmission(w, r, store.TaskSubmissionLookup{SubjectID: p.ID, TaskType: importdomain.TaskType, DraftID: draft.ID, DraftRevision: revision, PrecheckID: check.Run.PrecheckID, IdempotencyKey: key, RequestDigest: normalImportDigest(fmt.Sprintf("%s/%d/%s/%s/%s", draft.ID, revision, check.Run.PrecheckID, check.Run.ConfigFingerprint, strings.TrimSpace(request.TaskName)))}) {
+		return
+	}
+	if check.Run.Status != "SUCCEEDED" || check.Run.IntegrityStatus != "COMPLETE" || !check.Run.ValidUntil.After(time.Now()) || check.InputManifest == nil {
+		writeError(w, 422, "PRECHECK_REQUIRED", "需要当前配置的完整普通导入预检查", false)
+		return
+	}
+	preview, _, _, err := s.generateNormalImport(r.Context(), config)
+	if err != nil || preview.ConfigFingerprint != draft.ConfigFingerprint || preview.ConfigFingerprint != check.Run.ConfigFingerprint || !check.InputManifest.Valid(config) {
+		writeError(w, 422, "PRECHECK_REQUIRED", "配置或文件证据已失效，请重新检查", false)
+		return
 	}
 	argv, _ := json.Marshal(preview.ArgvTemplate)
 	taskID := newOpaqueID()
@@ -194,6 +211,10 @@ func (s *Server) submitNormalImport(w http.ResponseWriter, r *http.Request, p id
 	}
 	snapshot, _ := json.Marshal(store.NormalImportSnapshot{ConfigVersion: importdomain.ConfigVersion, TaskType: importdomain.TaskType, TaskName: name, Config: config, InputManifest: *check.InputManifest})
 	result, err := s.tasks.SubmitTaskIdempotent(r.Context(), store.TaskSubmission{TaskType: importdomain.TaskType, ParentTaskID: draft.SourceTaskID, DerivationKind: draft.SourceDerivation, TaskID: taskID, CreatorSubjectID: p.ID, AuditActorID: p.ID, DataSourceID: draft.DataSourceID, NodeID: draft.NodeID, PrecheckID: check.Run.PrecheckID, CredentialID: check.Run.CredentialID, CredentialRevision: check.Run.CredentialRevision, ConfigFingerprint: preview.ConfigFingerprint, ToolVersion: preview.ToolVersion, MetadataVersion: preview.MetadataVersion, CapabilityVersion: preview.CapabilityVersion, SnapshotVersion: importdomain.ConfigVersion, SnapshotJSON: string(snapshot), PlannedArgvJSON: string(argv), PlannedCommandRedacted: preview.RedactedCommand, RequestID: requestID(w), SubmittedAt: now}, key, normalImportDigest(fmt.Sprintf("%s/%d/%s/%s/%s", draft.ID, revision, check.Run.PrecheckID, preview.ConfigFingerprint, strings.TrimSpace(request.TaskName))))
+	if errors.Is(err, store.ErrTaskSubmissionConflict) || errors.Is(err, store.ErrIdempotencyConflict) {
+		writeError(w, 409, "SUBMISSION_CONFLICT", "当前草稿版本已提交或幂等请求不一致，请查看已提交任务", false)
+		return
+	}
 	if err != nil {
 		writeError(w, 422, "NORMAL_IMPORT_SUBMIT_REJECTED", "提交失败，配置、权限、预检查或幂等绑定已变化", false)
 		return

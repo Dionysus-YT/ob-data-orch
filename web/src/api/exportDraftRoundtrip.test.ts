@@ -7,16 +7,20 @@ const base: GeneralizedExportConfig = {
   outputConfig: { outputKind: 'LOCAL', filePath: '/E:/synthetic/output', logPath: '', skipCheckDir: false, controlFilePath: '', tmpPath: '' },
 }
 
-function draftApi(config: unknown) {
+function draftApi(config: unknown, fields: Record<string, unknown> = {}) {
   const writes: RequestInit[] = []
   const fetcher = (async (_path: string | URL | Request, init?: RequestInit) => {
     if (init?.method === 'PATCH') writes.push(init)
-    return Response.json({ item: { id: 'synthetic-draft', dataSourceId: 'synthetic-source', nodeId: 'synthetic-node', revision: 1, configVersion: 'v6', configFingerprint: 'synthetic-fingerprint', config: { config } } })
+    return Response.json({ item: { id: 'synthetic-draft', dataSourceId: 'synthetic-source', nodeId: 'synthetic-node', revision: 1, configVersion: 'v6', configFingerprint: 'synthetic-fingerprint', config: { config }, ...fields } })
   }) as FetchLike
   return { writes, api: createBrowserApi({ fetcher, csrfToken: () => 'synthetic-csrf', idempotencyKey: () => 'synthetic-idempotency' }) }
 }
 
 describe('导出草稿读取与更新往返', () => {
+  it('恢复已提交草稿仅接受非空任务标识', async () => {
+    expect(await draftApi(base, { submittedTaskId: 'accepted-task' }).api.getExportDraft('synthetic-draft')).toMatchObject({ submittedTaskId: 'accepted-task' })
+    for (const submittedTaskId of [null, 42, '']) await expect(draftApi(base, { submittedTaskId }).api.getExportDraft('synthetic-draft')).rejects.toMatchObject({ code: 'RESPONSE_INVALID' })
+  })
   it.each([
     { name: 'MySQL 值格式与读取/DDL 参数', config: { ...base, dataFormat: { formatKind: 'CSV', timestampFormats: { dateValueFormat: 'yyyy/MM/dd', timeValueFormat: 'HH-mm-ss', datetimeValueFormat: 'yyyy/MM/dd HH:mm:ss', timestampValueFormat: 'yyyy/MM/dd HH:mm:ss', preserveZeroDatetime: true } }, filterConfig: { where: 'id > 0', partition: 'p0', excludeDataTypes: ['BLOB'], enableHiddenPk: true, weakRead: true, includeColumnNames: ['id'], excludeVirtualColumns: true, snapshot: true }, ddlBehavior: { dropObject: true, retainSchema: true, compactSchema: true, addExtraMessage: true }, outputConfig: { ...base.outputConfig, compress: true, compressionAlgo: 'zstd', compressionLevel: 3 } } },
     { name: 'Oracle NLS 与时区格式', config: { ...base, dataFormat: { formatKind: 'CUT', timestampFormats: { dateValueFormat: 'yyyy-MM-dd', timestampValueFormat: 'yyyy-MM-dd HH:mm:ss', timestampTzValueFormat: 'yyyy-MM-dd HH:mm:ss TZD', timestampLtzValueFormat: 'yyyy-MM-dd HH:mm:ss', nlsDateFormat: 'YYYY-MM-DD', nlsTimestampFormat: 'YYYY-MM-DD HH24:MI:SS', nlsTimestampTzFormat: 'YYYY-MM-DD HH24:MI:SS TZR' } }, filterConfig: { flashbackTimestamp: '2026-01-01 00:00:00' }, performanceConfig: { fetchSize: 100 } } },

@@ -1,5 +1,9 @@
 # 普通导入技术契约
 
+> 2026-11-02 模板中心统一接入普通导入自身的候选与独立向导，使用抽屉只重选数据源和节点；列表 availableActions 只表示模板职责，不能替代引用资格和预检查。保存/创建按精确名称/绑定计算幂等摘要，现役页面保留原键并区分结果未知与已创建后的导航失败；本轮没有修改普通导入配置模型、机器信封、参数、load.ckpt 或真实执行门禁。实现与本地检查见[模板中心证据](evidence/template-center-2026-11-02.md)。
+
+> 2026-10-28 提交恢复：同一草稿修订只冻结一个新任务，换键/新预检查返回 `409 SUBMISSION_CONFLICT`。原键、原请求在当前授权复验后可返回原 taskId（HTTP 200、replayed=true），不要求已消费证明仍在有效期；未受理请求仍遵守完整预检查门禁。草稿与检查可选 submittedTaskId 仅用于恢复唯一已受理结果；响应未知时保留原提交意图，导航失败后只恢复导航。
+
 2026-10-20 十九项补齐后，当前72/72定义已有成功真实代表场景，新增十九项19 PASS及八项拒绝反例均经独立数据库事实/持久事件核对；所有本轮夹具已清理，运行二进制与当前源码隔离重建摘要一致。固定协议更新为v11，受控语法、摘要和权限边界见下文；实测范围和历史失败见[十九项补齐证据](evidence/normal-import-capabilities-validation-2026-10-20.md)。不据代表场景声称全取值与所有组合通过。
 
 2026-10-20 API 补验整改：`compatMysql=true` 时新增活动字段 `compatMysqlVersion`，仅接受 `mysql56/mysql57/mysql80` 并原值生成 `--compat-mode`。旧开关缺少版本可恢复为未完成草稿，但完整预览、预检查和提交必须拒绝；关闭开关或模式/内容不适用时清除版本，不改历史快照。CUT 隐式行分隔符按目标平台解析（Windows CRLF、Linux LF），仅作用于检查副本，不改命令/指纹；输入换行不符或未知平台保持 `INPUT_MAPPING/UNKNOWN/IMPORT_INPUT_MAPPING_UNSUPPORTED`。显式 `\n` 可用于 Windows 上的 LF 文件。检查仍只证明有界记录前缀，完整数据保真须独立结果核对。实际结果见[API 全参数验证](evidence/normal-import-full-parameter-validation-2026-10-20.md)。

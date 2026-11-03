@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"ob-data-orch/internal/catalogresult"
+	"ob-data-orch/internal/exportobject"
 )
 
 // ExportObjectCatalogClaimTimeout 限制对象查询在 Agent 未领取时的排队时间；领取后的 JDBC 执行仍使用原租约期限。
@@ -83,12 +84,12 @@ func (s *Store) RequestDataSourceConnectionTest(ctx context.Context, input DataS
                 binding_digest, status, verification_source, lease_id, lease_epoch, lease_expires_at,
                 result_code, safe_summary_json, created_at, completed_at, valid_until,
                 sys_credential_id, sys_credential_revision,
-				operation_kind, catalog_database, catalog_compatibility_mode, catalog_object_type, catalog_extended_object_type, catalog_keyword
+				operation_kind, catalog_database, catalog_compatibility_mode, catalog_object_type, catalog_extended_object_type, catalog_oracle_object_type, catalog_keyword
             )
             SELECT ?, ds.data_source_id, ?, ?, ds.credential_id, ds.current_credential_revision,
                    ?, ?, ?, ?, 'PENDING', ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?,
                    ?, ?,
-				   ?, ?, ?, ?, ?, ?
+				   ?, ?, ?, ?, ?, ?, ?
             FROM data_sources AS ds
             JOIN credential_revisions AS cr
               ON cr.credential_id = ds.credential_id
@@ -109,7 +110,7 @@ func (s *Store) RequestDataSourceConnectionTest(ctx context.Context, input DataS
 			binding.NodeID, binding.BindingAgentID, binding.NodeFactsRevision, binding.BindingDigest,
 			binding.VerificationSource, utcText(input.CreatedAt), utcText(binding.ValidUntil),
 			nullableString(binding.SysCredentialID), nullableInt64(binding.SysCredentialRevision),
-			binding.OperationKind, nullableString(binding.CatalogDatabase), nullableString(binding.CatalogCompatibilityMode), storedCatalogObjectType(binding), storedExtendedCatalogObjectType(binding), nullableString(binding.CatalogKeyword),
+			binding.OperationKind, nullableString(binding.CatalogDatabase), nullableString(binding.CatalogCompatibilityMode), storedCatalogObjectType(binding), storedExtendedCatalogObjectType(binding), storedOracleCatalogObjectType(binding), nullableString(binding.CatalogKeyword),
 			binding.NodeID, binding.BindingAgentID, input.CreatorSubjectID, input.DataSourceID,
 			input.ExpectedDataSourceRevision, binding.NodeFactsRevision,
 		)
@@ -628,7 +629,7 @@ func (s *Store) CompleteAgentDataSourceConnectionTest(ctx context.Context, input
 		}
 		if run.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
 			if input.SysVerificationStatus != "NOT_CONFIGURED" || input.SysResultCode != "" ||
-				!validCatalogResult(input.Status, input.CatalogObjects, input.CatalogGroups, input.CatalogTruncated, run.Binding.CatalogObjectType) {
+				!validCatalogResult(input.Status, input.CatalogObjects, input.CatalogGroups, input.CatalogTruncated, run.Binding.CatalogObjectType, run.Binding.CatalogCompatibilityMode) {
 				return ErrDataSourceConnectionTestLeaseRejected
 			}
 		} else if len(input.CatalogObjects) > 0 || len(input.CatalogGroups) > 0 || input.CatalogTruncated {
@@ -855,7 +856,7 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 	var run storedDataSourceConnectionTest
 	var leaseID, resultCode, safeSummaryJSON sql.NullString
 	var sysCredentialID, sysVerificationStatus, sysResultCode sql.NullString
-	var catalogDatabase, catalogCompatibilityMode, catalogObjectType, catalogExtendedObjectType, catalogKeyword, catalogObjectsJSON sql.NullString
+	var catalogDatabase, catalogCompatibilityMode, catalogObjectType, catalogExtendedObjectType, catalogOracleObjectType, catalogKeyword, catalogObjectsJSON sql.NullString
 	var catalogTruncated int
 	var leaseEpoch sql.NullInt64
 	var sysCredentialRevision sql.NullInt64
@@ -867,7 +868,7 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 		       binding_digest, status, verification_source, lease_id, lease_epoch,
                lease_expires_at, result_code, safe_summary_json, created_at, completed_at, valid_until,
                sys_credential_id, sys_credential_revision, sys_verification_status, sys_result_code,
-		       operation_kind, catalog_database, catalog_compatibility_mode, catalog_object_type, catalog_extended_object_type, catalog_keyword,
+		       operation_kind, catalog_database, catalog_compatibility_mode, catalog_object_type, catalog_extended_object_type, catalog_oracle_object_type, catalog_keyword,
                catalog_objects_json, catalog_truncated
         FROM data_source_connection_test_runs
         WHERE connection_test_id = ?
@@ -878,7 +879,7 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 		&run.Binding.BindingDigest, &run.Status, &run.Binding.VerificationSource, &leaseID, &leaseEpoch,
 		&leaseExpiresAt, &resultCode, &safeSummaryJSON, &createdAt, &completedAt, &validUntil,
 		&sysCredentialID, &sysCredentialRevision, &sysVerificationStatus, &sysResultCode,
-		&run.Binding.OperationKind, &catalogDatabase, &catalogCompatibilityMode, &catalogObjectType, &catalogExtendedObjectType, &catalogKeyword,
+		&run.Binding.OperationKind, &catalogDatabase, &catalogCompatibilityMode, &catalogObjectType, &catalogExtendedObjectType, &catalogOracleObjectType, &catalogKeyword,
 		&catalogObjectsJSON, &catalogTruncated,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -897,8 +898,13 @@ func readStoredDataSourceConnectionTest(ctx context.Context, queryer interface {
 	run.Binding.SysCredentialRevision = sysCredentialRevision.Int64
 	run.SysVerificationStatus, run.SysResultCode = sysVerificationStatus.String, sysResultCode.String
 	run.Binding.CatalogDatabase, run.Binding.CatalogCompatibilityMode, run.Binding.CatalogObjectType, run.Binding.CatalogKeyword = catalogDatabase.String, catalogCompatibilityMode.String, catalogObjectType.String, catalogKeyword.String
-	// 历史 0022 约束只允许 TABLE/VIEW；扩展类型写入 0023 新列，数据库目录仍以空类型表示。
-	if catalogExtendedObjectType.Valid {
+	// Oracle 分类与历史类型列互斥，不能回退成 ALL 或覆盖历史类型。
+	if catalogOracleObjectType.Valid && (catalogObjectType.Valid || catalogExtendedObjectType.Valid) {
+		return storedDataSourceConnectionTest{}, ErrDataSourceConnectionTestLeaseRejected
+	}
+	if catalogOracleObjectType.Valid {
+		run.Binding.CatalogObjectType = catalogOracleObjectType.String
+	} else if catalogExtendedObjectType.Valid {
 		run.Binding.CatalogObjectType = catalogExtendedObjectType.String
 	} else if run.Binding.OperationKind == "EXPORT_OBJECT_CATALOG" && !catalogObjectType.Valid {
 		if run.Binding.CatalogDatabase == "" {
@@ -1028,6 +1034,9 @@ func readCurrentDataSourceConnectionTestBinding(ctx context.Context, tx *sql.Tx,
 	}
 	if input.OperationKind == "EXPORT_OBJECT_CATALOG" {
 		binding.CatalogCompatibilityMode = compatibilityMode
+		if exportobject.Supported(binding.CatalogObjectType) && !exportobject.ValidForMode(binding.CatalogObjectType, compatibilityMode) {
+			return DataSourceConnectionTestBinding{}, ErrDataSourceConnectionTestInvalid
+		}
 	}
 	// G2 合成测试不解析真实秘密，因此不能冻结一个自身无法验证的 sys 槽位。
 	if input.VerificationSource == "AGENT_JDBC" && input.OperationKind == "CONNECTION_TEST" {
@@ -1734,6 +1743,7 @@ func validateDataSourceConnectionTestBinding(binding DataSourceConnectionTestBin
 	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" {
 		if binding.VerificationSource != "AGENT_JDBC" || binding.SysCredentialID != "" ||
 			!validCatalogScope(binding.CatalogDatabase, binding.CatalogObjectType) || !oneOf(binding.CatalogCompatibilityMode, "MYSQL", "ORACLE") ||
+			(exportobject.Supported(binding.CatalogObjectType) && !exportobject.ValidForMode(binding.CatalogObjectType, binding.CatalogCompatibilityMode)) ||
 			!validCatalogText(binding.CatalogKeyword, 100, true) {
 			return ErrDataSourceConnectionTestInvalid
 		}
@@ -1748,12 +1758,12 @@ func validCatalogScope(database, objectType string) bool {
 	if objectType == "DATABASE" {
 		return database == ""
 	}
-	return oneOf(objectType, "ALL", "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") && validCatalogText(database, 256, false)
+	return (objectType == "ALL" || exportobject.Supported(objectType)) && validCatalogText(database, 256, false)
 }
 
 // storedCatalogObjectType 将数据库目录及批量对象目录编码为空对象类型；两者通过数据库名区分。
 func storedCatalogObjectType(binding DataSourceConnectionTestBinding) any {
-	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" && oneOf(binding.CatalogObjectType, "DATABASE", "ALL", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" && binding.CatalogObjectType != "TABLE" && binding.CatalogObjectType != "VIEW" {
 		return nil
 	}
 	return nullableString(binding.CatalogObjectType)
@@ -1762,6 +1772,14 @@ func storedCatalogObjectType(binding DataSourceConnectionTestBinding) any {
 // storedExtendedCatalogObjectType 只把新增 DDL 对象类型写入 0023 新列，保留历史 TABLE/VIEW 编码。
 func storedExtendedCatalogObjectType(binding DataSourceConnectionTestBinding) any {
 	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" && oneOf(binding.CatalogObjectType, "FUNCTION", "PROCEDURE", "SEQUENCE") {
+		return binding.CatalogObjectType
+	}
+	return nil
+}
+
+// storedOracleCatalogObjectType 将 Oracle 新分类写入独立列，不改写历史列的约束。
+func storedOracleCatalogObjectType(binding DataSourceConnectionTestBinding) any {
+	if binding.OperationKind == "EXPORT_OBJECT_CATALOG" && exportobject.OracleOnly(binding.CatalogObjectType) {
 		return binding.CatalogObjectType
 	}
 	return nil
@@ -1781,11 +1799,14 @@ func validCatalogText(value string, maximum int, allowEmpty bool) bool {
 }
 
 // validCatalogResult 限定 Agent 可回传的对象名集合；失败与未知不得携带可发现对象。
-func validCatalogResult(status string, objects []string, groups []catalogresult.Group, truncated bool, objectType string) bool {
+func validCatalogResult(status string, objects []string, groups []catalogresult.Group, truncated bool, objectType string, modes ...string) bool {
 	if status != "SUCCEEDED" {
 		return len(objects) == 0 && len(groups) == 0 && !truncated
 	}
 	if objectType == "ALL" {
+		if len(modes) == 1 {
+			return len(objects) == 0 && !truncated && catalogresult.ValidGroupsForMode(groups, modes[0])
+		}
 		return len(objects) == 0 && !truncated && catalogresult.ValidGroups(groups)
 	}
 	if len(groups) != 0 {

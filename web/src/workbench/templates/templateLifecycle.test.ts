@@ -6,19 +6,21 @@ import { useTemplateCatalog } from './useTemplateCatalog'
 import { useTemplateActions } from './useTemplateActions'
 import { useTemplateDraft } from './useTemplateDraft'
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
-const item = (id = 'synthetic-template'): ConfigTemplateItem => ({ id, taskType: 'OBDUMPER_EXPORT', displayName: id, revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' })
+const item = (id = 'synthetic-template'): ConfigTemplateItem => ({ id, taskType: 'OBDUMPER_EXPORT', displayName: id, revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', availableActions: ['CREATE_DRAFT', 'RENAME', 'DELETE'], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' })
 const scopes: ReturnType<typeof effectScope>[] = []
 afterEach(() => { scopes.splice(0).forEach(scope => scope.stop()) })
 function setup() {
   const api = { listConfigTemplates: vi.fn(async () => [item()]), renameConfigTemplate: vi.fn(async () => 2), deleteConfigTemplate: vi.fn(async () => {}), listDataSources: vi.fn(async (): Promise<DataSourceSummary[]> => [{ ...DATA_SOURCE_UI_FIXTURES[0]!, id: 'synthetic-source' }]), listExportNodeCandidates: vi.fn(async (): Promise<ExecutionNodeCandidate[]> => [{ id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64' }]), listExecutionNodes: vi.fn(async () => []), createTaskDraftFromTemplate: vi.fn(async () => ({ draftId: 'synthetic-draft', taskType: 'OBDUMPER_EXPORT' as const })) }
   const navigate = vi.fn(async () => {}); const scope = effectScope(); scopes.push(scope)
   const value = scope.run(() => { const catalog = useTemplateCatalog(() => api); return { catalog, actions: useTemplateActions(catalog), draft: useTemplateDraft(catalog, navigate) } })!
-  value.draft.selectedTemplate.value = item()
+  value.catalog.templates.value = [item()]
+  value.draft.selectedTemplate.value = value.catalog.templates.value[0]
   return { ...value, api, navigate, scope }
 }
 describe('模板事实、编辑与派生生命周期', () => {
   it('模板 A → B → A 候选只接纳当前代，首次选择即加载且不触发必填错误', async () => {
-    const { draft, api } = setup()
+    const { draft, api, catalog } = setup()
+    catalog.templates.value = [item('A'), item('B')]
     const old = deferred<DataSourceSummary[]>()
     api.listDataSources.mockReturnValueOnce(old.promise)
     draft.selectTemplate(item('A')); draft.selectTemplate(item('B')); draft.selectTemplate(item('A'))
@@ -64,10 +66,10 @@ describe('模板事实、编辑与派生生命周期', () => {
   it('普通列表故障保留输入和确认，过期授权拒绝不能清除最新会话', async () => {
     const { catalog, actions, api } = setup(); await catalog.refresh(); actions.startRename(item()); actions.renameValue.value = '合成未保存改名'; actions.requestDelete(item())
     api.listConfigTemplates.mockRejectedValueOnce({ status: 503 }); await catalog.refresh()
-    expect(actions.renameValue.value).toBe('合成未保存改名'); expect(actions.pendingDelete.value).toEqual(item())
+    expect(actions.renameValue.value).toBe(''); expect(actions.pendingDelete.value).toEqual(item())
     const old = deferred<ConfigTemplateItem[]>(); api.listConfigTemplates.mockImplementationOnce(() => old.promise)
     const pending = catalog.refresh(); await catalog.refresh(); old.reject({ status: 401 }); await pending
-    expect(catalog.accessDenied.value).toBe(false); expect(actions.renameValue.value).toBe('合成未保存改名'); expect(actions.pendingDelete.value).toEqual(item()); expect(catalog.templates.value).toEqual([item()])
+    expect(catalog.accessDenied.value).toBe(false); expect(actions.renameValue.value).toBe(''); expect(actions.pendingDelete.value).toEqual(item()); expect(catalog.templates.value).toEqual([item()])
   })
   it('最新列表胜出，写入前失效旧读取；改名裁剪且保持修订', async () => {
     const { catalog, actions, api } = setup(); await catalog.refresh(); const read = deferred<ConfigTemplateItem[]>(); api.listConfigTemplates.mockImplementationOnce(() => read.promise)
@@ -102,7 +104,7 @@ describe('模板事实、编辑与派生生命周期', () => {
   })
 
   it('刷新候选期间不创建草稿，失败清除引用且可重新加载', async () => {
-    const { draft, api } = setup()
+    const { draft, api, catalog } = setup()
     const source = DATA_SOURCE_UI_FIXTURES[0]!
     api.listDataSources.mockResolvedValue([source])
     api.listExportNodeCandidates.mockResolvedValue([{ id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64' }])
@@ -122,6 +124,9 @@ describe('模板事实、编辑与派生生命周期', () => {
     expect(draft.eligibleSources.value).toEqual([])
     expect(draft.draftSourceID.value).toBe('')
     expect(draft.draftNodeID.value).toBe('')
+    expect(catalog.accessDenied.value).toBe(true)
+    await catalog.refresh()
+    draft.selectTemplate(catalog.templates.value[0]!)
     await draft.loadChoices()
     expect(draft.nodes.value).toHaveLength(1)
     expect(draft.draftNodeID.value).toBe('')
@@ -130,7 +135,7 @@ describe('模板事实、编辑与派生生命周期', () => {
     const { catalog, draft, api, navigate } = setup(); await draft.createDraft(); expect(api.createTaskDraftFromTemplate).not.toHaveBeenCalled()
     await draft.loadChoices(); draft.draftSourceID.value = 'synthetic-source'; draft.draftNodeID.value = 'synthetic-node'; const write = deferred<{ draftId: string; taskType: 'OBDUMPER_EXPORT' }>(); api.createTaskDraftFromTemplate.mockImplementationOnce(() => write.promise)
     const pending = draft.createDraft(); await draft.createDraft(); expect(api.createTaskDraftFromTemplate).toHaveBeenCalledTimes(1); write.resolve({ draftId: 'synthetic-created', taskType: 'OBDUMPER_EXPORT' }); await pending
-    expect(api.createTaskDraftFromTemplate).toHaveBeenCalledWith(item().id, 'synthetic-source', 'synthetic-node', 'OBDUMPER_EXPORT'); expect(navigate).toHaveBeenCalledWith('synthetic-created', 'OBDUMPER_EXPORT'); expect(catalog.actionBusy.value).toBe('')
+    expect(api.createTaskDraftFromTemplate).toHaveBeenCalledWith(item().id, 'synthetic-source', 'synthetic-node', 'OBDUMPER_EXPORT', expect.any(String)); expect(navigate).toHaveBeenCalledWith('synthetic-created', 'OBDUMPER_EXPORT'); expect(catalog.actionBusy.value).toBe('')
   })
   it('改名与删除共享方法锁，取消后的迟到反馈不得进入新输入', async () => {
     const { catalog, actions, api } = setup(); await catalog.refresh(); const write = deferred<number>(); api.renameConfigTemplate.mockImplementationOnce(() => write.promise)

@@ -182,10 +182,7 @@ func (t *normalImportTerminal) verified(config importdomain.Config) bool {
 
 func (w *Worker) finishNormalImport(ctx context.Context, grant agentwire.ExecutionGrant, sequence int64, exitCode int, waitErr error, cancelled, treeObserved bool, terminal *normalImportTerminal, logs *logUploader) (Outcome, bool, error) {
 	outcome := Outcome{TaskID: grant.TaskID, ExecutionID: grant.ExecutionID}
-	complete := !logs.gapped
-	if logs.queue != nil && flushQueuedLogs(ctx, logs.queue, w.Protocol, w.BootID, "") != nil {
-		complete = false
-	}
+	complete := logs.finish(ctx)
 	verified := !cancelled && waitErr == nil && exitCode == 0 && complete && terminal.verified(grant.NormalImport.Config)
 	state, result, code := "FAILED", "FAILED", agentwire.ExecutionErrorToolFailed
 	if verified {

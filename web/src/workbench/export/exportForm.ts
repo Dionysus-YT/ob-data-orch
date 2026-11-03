@@ -1,6 +1,6 @@
 import { ref, reactive, computed, isRef } from 'vue'
 import { type ExportScopeKind, type ExportObjectType, type ExportContentKind, type ExportDataFormatKind, type ExportOutputKind, type CsvQuoteMode, type CompressionAlgo } from '@/api/browser'
-import { objectCategories } from './exportPresentation'
+import { objectCategories, createObjectTypeMap } from './exportPresentation'
 
 // createExportForm 管理当前向导唯一表单状态。
 export function createExportForm() {
@@ -11,7 +11,7 @@ export function createExportForm() {
   const scopeKind = ref<ExportScopeKind>('SPECIFIED')
 
   const objectType = ref<ExportObjectType>('TABLE')
-  const selectedObjectsByType = reactive<Record<ExportObjectType, string[]>>({ TABLE: [], VIEW: [], FUNCTION: [], PROCEDURE: [], SEQUENCE: [] })
+  const selectedObjectsByType = reactive(createObjectTypeMap<string[]>(() => []))
 
   const objectNames = computed({ get: () => selectedObjectsByType[objectType.value], set: (names: string[]) => { selectedObjectsByType[objectType.value] = names.filter(Boolean) } })
   const excludeTablesText = ref('')

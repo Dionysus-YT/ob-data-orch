@@ -3,6 +3,7 @@ package agentlocalpreflight
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"ob-data-orch/internal/agentpreflight"
@@ -160,8 +161,9 @@ func TestStorageAvailableSpaceUsesTmpPathVolume(t *testing.T) {
 	}
 	// 指定 tmp-path：空间检查必须落在该目录（或最近既有父目录），而不是 URI。
 	root := t.TempDir()
-	tmpDir := root + `\tmp`
+	tmpDir := filepath.Join(root, "tmp")
 	request := storageRequest(tmpDir)
+	request.TargetPlatform = testPlatform()
 	request.AllowedRoots = []string{root}
 	probe = Probe{
 		MinimumAvailableBytes: 1 << 30,

@@ -23,6 +23,7 @@ import (
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionargv"
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/logstream"
 	"ob-data-orch/internal/migrate"
@@ -2181,6 +2182,10 @@ func (s *Store) GetExportDraft(ctx context.Context, draftID string) (ExportDraft
 		return ExportDraft{}, fmt.Errorf("parse export draft update time: %w", parseErr)
 	}
 	draft.CreatedAt, draft.UpdatedAt = draft.CreatedAt.UTC(), draft.UpdatedAt.UTC()
+	draft.SubmittedTaskID, err = s.submittedDraftTaskID(ctx, draft.OwnerSubjectID, draft.DraftID, draft.Revision)
+	if err != nil {
+		return ExportDraft{}, err
+	}
 	return draft, nil
 }
 
@@ -3639,7 +3644,7 @@ func readPrecheckExecutionContext(ctx context.Context, tx *sql.Tx, binding Prech
 		return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
 	}
 	for _, objectType := range executionContext.ObjectTypes {
-		if !oneOf(objectType, "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+		if !exportobject.ValidForMode(objectType, compatibilityMode) || executionContext.ContentKind == "DATA_ONLY" && objectType != "TABLE" {
 			return PrecheckExecutionContext{}, ErrPrecheckLeaseRejected
 		}
 	}
@@ -3766,7 +3771,7 @@ func parsePrecheckExecutionContext(configVersion, configJSON string) (PrecheckEx
 				if objectType == "" && len(config.Config.ObjectScope.ObjectTypes) == 1 {
 					objectType = config.Config.ObjectScope.ObjectTypes[0]
 				}
-				if !oneOf(objectType, "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+				if !exportobject.Supported(objectType) || executionContext.ContentKind == "DATA_ONLY" && objectType != "TABLE" {
 					return PrecheckExecutionContext{}, false
 				}
 				executionContext.ObjectTypes = append(executionContext.ObjectTypes, objectType)
@@ -4227,19 +4232,16 @@ func (s *Store) SubmitTaskIdempotent(ctx context.Context, input TaskSubmission, 
 		return TaskSubmissionResult{}, errors.New("task submission idempotency is invalid")
 	}
 	result := TaskSubmissionResult{TaskID: input.TaskID}
-	operation := "SUBMIT_EXPORT_DRAFT"
-	if taskType(input) == importdomain.TaskType {
-		operation = "SUBMIT_NORMAL_IMPORT_DRAFT"
-	}
-	if taskType(input) == directload.TaskType {
-		operation = "SUBMIT_DIRECT_LOAD_DRAFT"
-	}
+	operation := taskSubmissionOperation(taskType(input))
 	err := s.withWrite(ctx, func(tx *sql.Tx) error {
 		var digest, existingID string
 		err := tx.QueryRowContext(ctx, `SELECT request_digest, COALESCE(resource_id, '') FROM request_idempotency WHERE subject_id = ? AND operation = ? AND idempotency_key = ?`, input.CreatorSubjectID, operation, idempotencyKey).Scan(&digest, &existingID)
 		if err == nil {
 			if digest != requestDigest {
 				return ErrIdempotencyConflict
+			}
+			if err := authorizeTaskSubmissionReceipt(ctx, tx, existingID, input.CreatorSubjectID); err != nil {
+				return err
 			}
 			result.TaskID, result.Replayed = existingID, true
 			return nil
@@ -4266,6 +4268,16 @@ func (s *Store) submitTaskTx(ctx context.Context, tx *sql.Tx, input TaskSubmissi
 	}
 	if err != nil {
 		return err
+	}
+	// 普通导入/导出同一草稿修订只能冻结一次；旁路继续使用其独立证明消费规则。
+	if taskType(input) != directload.TaskType {
+		var consumed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks t JOIN precheck_runs p ON p.precheck_id=t.precheck_id WHERE p.draft_id=? AND p.draft_revision=?)`, precheck.Binding.DraftID, precheck.Binding.DraftRevision).Scan(&consumed); err != nil {
+			return err
+		}
+		if consumed {
+			return ErrTaskSubmissionConflict
+		}
 	}
 	sysReference, validSys := snapshotSysCredential(input.SnapshotJSON)
 	if !validSys || sysReference.CredentialID != precheck.Binding.SysCredentialID || sysReference.Revision != precheck.Binding.SysCredentialRevision {
@@ -7769,6 +7781,51 @@ func (s *Store) RotateStorageCredential(ctx context.Context, input StorageCreden
 		if owner != input.ActorSubjectID {
 			return ErrStorageCredentialForbidden
 		}
+		// 回执只属于仍活动的当前所有者；对象已删除或停用账号均不能凭旧键恢复。
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM auth_subjects WHERE subject_id=? AND account_status='ACTIVE')`, input.ActorSubjectID).Scan(&active); err != nil {
+			return err
+		}
+		if !active {
+			return ErrStorageCredentialForbidden
+		}
+		var digest, resource, receiptJSON, completedAt string
+		err := tx.QueryRowContext(ctx, `SELECT request_digest,COALESCE(resource_id,''),response_json,created_at FROM request_idempotency WHERE subject_id=? AND operation='ROTATE_STORAGE_CREDENTIAL' AND idempotency_key=?`, input.ActorSubjectID, input.IdempotencyKey).Scan(&digest, &resource, &receiptJSON, &completedAt)
+		if err == nil {
+			if digest != input.RequestDigest || resource != input.StorageCredentialID {
+				return ErrIdempotencyConflict
+			}
+			var receipt struct {
+				ExpectedRevision int64 `json:"expectedRevision"`
+				Revision         int64 `json:"revision"`
+			}
+			if json.Unmarshal([]byte(receiptJSON), &receipt) != nil {
+				return ErrIdempotencyConflict
+			}
+			if receipt.Revision == 0 {
+				// 历史回执只保存空对象；用同次事务的两个信封修订与时间恢复，不回写历史。
+				var count int
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM storage_credential_revisions WHERE storage_credential_id=? AND revision=? AND created_at=?`, resource, input.ExpectedRevision+1, completedAt).Scan(&count); err != nil {
+					return err
+				}
+				if count != 2 {
+					return ErrIdempotencyConflict
+				}
+				receipt.ExpectedRevision, receipt.Revision = input.ExpectedRevision, input.ExpectedRevision+1
+			}
+			if receipt.ExpectedRevision != input.ExpectedRevision || receipt.Revision != input.ExpectedRevision+1 {
+				return ErrIdempotencyConflict
+			}
+			completed, err := time.Parse(time.RFC3339Nano, completedAt)
+			if err != nil {
+				return err
+			}
+			rotated = StorageCredential{StorageCredentialID: resource, OwnerSubjectID: owner, DisplayName: displayName, Provider: provider, CurrentRevision: receipt.Revision, Revision: receipt.Revision, UpdatedAt: completed}
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		// 乐观锁：ExpectedRevision 是调用方看到的当前版本（与数据源更新同口径）。
 		if currentRevision != input.ExpectedRevision {
 			return ErrStorageCredentialRevision
@@ -7815,8 +7872,8 @@ func (s *Store) RotateStorageCredential(ctx context.Context, input StorageCreden
             INSERT INTO request_idempotency(
                 subject_id, operation, idempotency_key, request_digest, result_status,
                 resource_kind, resource_id, response_json, created_at, expires_at
-            ) VALUES (?, 'ROTATE_STORAGE_CREDENTIAL', ?, ?, 200, 'STORAGE_CREDENTIAL', ?, '{}', ?, ?)
-        `, input.ActorSubjectID, input.IdempotencyKey, input.RequestDigest, input.StorageCredentialID,
+            ) VALUES (?, 'ROTATE_STORAGE_CREDENTIAL', ?, ?, 200, 'STORAGE_CREDENTIAL', ?, ?, ?, ?)
+        `, input.ActorSubjectID, input.IdempotencyKey, input.RequestDigest, input.StorageCredentialID, fmt.Sprintf(`{"expectedRevision":%d,"revision":%d}`, input.ExpectedRevision, newRevision),
 			utcText(input.UpdatedAt), utcText(input.UpdatedAt.Add(24*time.Hour))); err != nil {
 			return fmt.Errorf("write storage credential rotate idempotency: %w", err)
 		}

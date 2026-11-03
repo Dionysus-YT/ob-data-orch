@@ -7,6 +7,17 @@ function check() { return { id: 'check', draftId: 'draft', draftRevision: 1, con
 function apiWith(value: Record<string, unknown>) { const read = vi.fn(async () => value), write = vi.fn(async () => value); return { api: createNormalImportApi({ read, write }), read, write } }
 
 describe('普通导入独立 API 解码与请求', () => {
+  it('提交恢复只接收合法任务标识，透传同一次提交的稳定幂等键', async () => {
+    expect(await apiWith({ ...draft(), submittedTaskId: 'created-task' }).api.getNormalImportDraft('draft')).toMatchObject({ submittedTaskId: 'created-task' })
+    expect(await apiWith({ ...check(), submittedTaskId: 'created-task' }).api.getNormalImportCheck('check')).toMatchObject({ submittedTaskId: 'created-task' })
+    for (const submittedTaskId of [null, 123, '', 'invalid/task']) {
+      await expect(apiWith({ ...draft(), submittedTaskId }).api.getNormalImportDraft('draft')).rejects.toThrow()
+      await expect(apiWith({ ...check(), submittedTaskId }).api.getNormalImportCheck('check')).rejects.toThrow()
+    }
+    const s = apiWith({ id: 'created-task' })
+    await s.api.submitNormalImport(draft(), 'check', undefined, '合成任务', 'fixed-synthetic-intent-key')
+    expect(s.write.mock.calls[0]).toEqual(['/api/v1/normal-import-drafts/draft:submit', { precheckId: 'check', taskName: '合成任务' }, 1, 'POST', 'fixed-synthetic-intent-key'])
+  })
   it('控制文件摘要保留冻结绑定且拒绝无效摘要', async () => {
     const value = check()
     const withControl = { ...value, inputManifest: { ...value.inputManifest, controlDigest: 'd'.repeat(64) } }
@@ -39,9 +50,9 @@ describe('普通导入独立 API 解码与请求', () => {
   it('提交名称是可选平台字段，空值省略且不改写冻结配置', async () => {
     const saved = draft(), s = apiWith({ id: 'task-normal' })
     await s.api.submitNormalImport(saved, 'check', undefined, '  合成名称  ')
-    expect(s.write.mock.calls[0]).toEqual(['/api/v1/normal-import-drafts/draft:submit', { precheckId: 'check', taskName: '合成名称' }, 1])
+    expect(s.write.mock.calls[0]).toEqual(['/api/v1/normal-import-drafts/draft:submit', { precheckId: 'check', taskName: '合成名称' }, 1, 'POST', undefined])
     await s.api.submitNormalImport(saved, 'check', undefined, '  ')
-    expect(s.write.mock.calls[1]).toEqual(['/api/v1/normal-import-drafts/draft:submit', { precheckId: 'check' }, 1])
+    expect(s.write.mock.calls[1]).toEqual(['/api/v1/normal-import-drafts/draft:submit', { precheckId: 'check' }, 1, 'POST', undefined])
     expect(saved.config.taskName).toBeUndefined()
   })
   it('未装配证据只允许用于独立检查的未知状态', async () => {

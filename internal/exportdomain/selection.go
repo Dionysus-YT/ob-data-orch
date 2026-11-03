@@ -3,6 +3,7 @@ package exportdomain
 import (
 	"errors"
 
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/store"
 )
 
@@ -37,7 +38,7 @@ func NormalizeSelection(config *store.ExportConfig, validateObjectName func(stri
 		}
 		selection.ScopeKind = "ALL"
 	case "SPECIFIED":
-		if len(scope.ObjectTypes) == 0 || len(scope.ObjectTypes) > 5 {
+		if len(scope.ObjectTypes) == 0 || len(scope.ObjectTypes) > len(exportobject.Types()) {
 			return Selection{}, errors.New("v6 object scope requires supported object types")
 		}
 		allowed := map[string]bool{}
@@ -140,14 +141,32 @@ func NormalizeSelection(config *store.ExportConfig, validateObjectName func(stri
 	return selection, nil
 }
 
-// supportedObjectType 只开放已纳入指定对象导出范围的五类固定参数。
+// supportedObjectType 只开放已纳入指定对象导出范围的固定参数。
 func supportedObjectType(objectType string) bool {
-	switch objectType {
-	case "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE":
-		return true
-	default:
+	return exportobject.Supported(objectType)
+}
+
+// ValidateObjectCompatibility 校验当前数据源模式，恢复或直接 API 输入也不能绕过 Oracle 边界。
+func ValidateObjectCompatibility(input Draft, mode string) error {
+	for _, kind := range exportobject.Types() {
+		if input.hasObjectType(kind) && input.ScopeKind == "SPECIFIED" && !exportobject.ValidForMode(kind, mode) {
+			return errors.New("export object type is unavailable in this compatibility mode")
+		}
+	}
+	return nil
+}
+
+// NeedsOracleObjectMetadata 只为新增对象选择新版参数目录，历史任务继续使用冻结目录。
+func (n Draft) NeedsOracleObjectMetadata() bool {
+	if n.ScopeKind != "SPECIFIED" {
 		return false
 	}
+	for _, kind := range exportobject.Types() {
+		if exportobject.OracleOnly(kind) && n.hasObjectType(kind) {
+			return true
+		}
+	}
+	return false
 }
 
 // CapabilityFor 按内容与数据格式选择命令生成能力版本。

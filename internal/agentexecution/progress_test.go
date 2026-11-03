@@ -20,6 +20,8 @@ func Test进度随脱敏批次持久化且重放同一摘要(t *testing.T) {
 	if err := uploader.append(record); err != nil {
 		t.Fatal("已持久日志不应因一次上传失败丢弃", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	items, _, err := queue.Pending()
 	if err != nil || len(items) != 1 || items[0].Batch.Records[0].Progress == nil || *items[0].Batch.Records[0].Progress.BPS != 2500 {
 		t.Fatal("进度未随批次持久化", err)

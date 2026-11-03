@@ -37,7 +37,7 @@ func budgetClaim(id string) ExecutionClaimNext {
 
 func submitBudgetTask(t *testing.T, s *Store, id, heap string) {
 	t.Helper()
-	task := validTaskSubmission(id)
+	task := independentTaskProof(t, s, validTaskSubmission(id))
 	if heap != "" {
 		task.PlannedArgvJSON = strings.TrimSuffix(task.PlannedArgvJSON, "]") + `,"--mem","` + heap + `"]`
 	}

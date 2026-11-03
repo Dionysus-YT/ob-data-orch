@@ -16,7 +16,7 @@
 | 任务与详情 | [任务中心设计](task-center-module.md) | [字段](task-center-module.md#field-rules) · [场景](task-center-module.md#business-scenarios) |
 | 执行节点 | [执行节点设计](execution-node-module.md) | [字段](execution-node-module.md#field-rules) · [场景](execution-node-module.md#business-scenarios) |
 | 日志中心 | [日志中心设计](log-center-module.md) | [字段](log-center-module.md#field-rules) · [场景](log-center-module.md#business-scenarios) |
-| 模板中心 | [模板中心设计](template-center-module.md) | [字段](template-center-module.md#field-rules) · [场景](template-center-module.md#business-scenarios) |
+| 模板中心 | [现役能力重设计](template-center-module.md) | [页面 P1](../../design-system/pages/template-center.md) · [字段](template-center-module.md#field-rules) · [场景](template-center-module.md#business-scenarios) · [实现差距](template-center-module.md#implementation-gaps) |
 | 平台设置 / 调度策略 / 安全策略 / 工具与兼容 | [独立配置域设计](system-settings-module.md) | [字段](system-settings-module.md#field-rules) · [场景](system-settings-module.md#business-scenarios) |
 | 权限与安全 | [权限与安全设计](access-control-security-module.md) | [字段](access-control-security-module.md#field-rules) · [场景](access-control-security-module.md#business-scenarios) |
 
@@ -28,3 +28,5 @@
 - [关键决策](../01-product/decisions.md)：已确认取舍及替代关系；产品设计语义收口见 DEC-034。
 
 附录中的原“低保真”内容只保留业务场景语义，不授权恢复旧截图、布局、尺寸或视觉规则。产品规则已确认不等于对应功能已经实现，当前阶段查 [任务地图](../03-technical/development-task-map.md)。
+
+模板中心于 2026-11-02 按现役导出/普通导入复用能力重新定义，当前规则使用 TP2 编号；旧 TP-R、TP-F、TP-FR、TP-LF 保留历史含义，不将旧三类模板全功能规划或已有页面视为本版已完成验收。

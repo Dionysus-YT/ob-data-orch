@@ -46,7 +46,7 @@ func (b *Browser) DevelopmentHandler(api http.Handler, webDirectory, packageDire
 		if csrf == "" {
 			return errors.New("开发页面会话不可用")
 		}
-		content = bytes.ReplaceAll(content, []byte("local-mvp-csrf-v1"), []byte(csrf))
+		content = browserPage(content, csrf)
 		response.Body = io.NopCloser(bytes.NewReader(content))
 		response.ContentLength = int64(len(content))
 		response.Header.Set("Content-Length", strconv.Itoa(len(content)))

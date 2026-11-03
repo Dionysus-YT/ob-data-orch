@@ -169,7 +169,7 @@ for (const scope of ['MINE', 'ALL'] as const) {
     await page.route('**/api/v1/execution-nodes/synthetic-detail', route => { reads++; return route.fulfill({ json: { item: current } }) })
     await page.setViewportSize({ width: 1440, height: 1024 })
     await page.goto('/nodes/synthetic-detail')
-    await expect(page).toHaveTitle('OB Data Orch · 执行节点详情')
+    await expect(page).toHaveTitle('LDP · 执行节点详情')
     const actions = page.getByRole('group', { name: '节点操作', exact: true })
     await expect(actions.getByRole('link', { name: '返回执行节点', exact: true })).toHaveAttribute('href', '/nodes')
     await expect(actions.getByRole('link', { name: '下载 Agent 包', exact: true })).toHaveAttribute('href', '/ob-data-orch-agent-windows-x86_64.zip')

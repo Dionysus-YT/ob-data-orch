@@ -1,5 +1,7 @@
 # SQLite 迁移
 
+> `0043_export_oracle_catalog_types.sql` 为导出目录增加独立受约束列 `catalog_oracle_object_type`，仅允许 PACKAGE/TRIGGER/SYNONYM/PUBLIC_SYNONYM/TYPE；现有 TABLE/VIEW 和 FUNCTION/PROCEDURE/SEQUENCE 编码保留，应用层拒绝类型列冲突和非 Oracle 模式。完整源码链为 43 项迁移、43 张 STRICT 表。只验证隔离 SQLite，不修改现役库或历史迁移。
+
 > `0040_log_query_positions.sql` 为日志中心固定快照新增批次顺序索引；仅回填 batch_id，正文、历史任务和旧迁移不变。新登记与序号同事务，清理级联且水位不重用。当前完整链 40 项迁移、42 张 STRICT 表；2026-10-25 经一致备份后按本机二进制流程安装并验证现役库，身份/授权/配置和原业务数量保留。见[日志查询契约](../docs/03-technical/log-center-task-query-contract.md)。
 
 > `0039_scheduling_candidate_order.sql` 增加独立候选顺序单例，初始 `EXISTING` 保持原顺序，`ONLINE_FIRST` 只稳定提前已确认在线候选；不改写节点、执行或用户选择。当前完整链为 39 项迁移、41 张 STRICT 表。策略、审计与回执同事务，普通/旁路候选先按当前节点权限取同快照事实及预算；隐藏坏节点隔离。仅临时 SQLite 验证，尚未迁移现役库，见[调度契约](../docs/03-technical/scheduling-policy-contract.md)。下条为时间切片时点的历史状态。

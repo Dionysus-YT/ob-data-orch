@@ -27,7 +27,7 @@ export function overviewFixture(at = new Date(), range: OverviewRange = '24h'): 
   })
   return {
     snapshotAt: now, timeZone: 'UTC', timeZoneSource: 'BUILTIN_UTC', range, todayFrom: day.toISOString(), todayTo: new Date(day.getTime() + 86400000).toISOString(),
-    refreshIntervalSeconds: 30, staleAfterSeconds: 90, summary: '当前授权范围内今日失败 2 个、运行中 2 个、等待调度 1 个任务；1 个执行节点当前不能接收新任务。',
+    refreshIntervalSeconds: 30, staleAfterSeconds: 90, summary: '当前授权范围内，今日失败 2 个任务；1 个执行节点当前不能接收新任务；1 个任务等待调度；2 个任务运行中。',
     metrics: { status: 'READY', data: { running: 2, waiting: 1, todaySucceeded: 8, todayFailed: 2 } }, trend: { status: 'READY', data: buckets },
     nodes: { status: 'READY', data: { total: 2, unavailable: 1, items: [
       { id: 'synthetic-offline', displayName: '合成离线执行节点', managementState: 'ENABLED', heartbeatStatus: 'OFFLINE', environmentStatus: 'NORMAL', capacityStatus: 'AVAILABLE', acceptsNewTasks: false,

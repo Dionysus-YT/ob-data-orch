@@ -16,6 +16,16 @@
 .overview-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ob-foundation-space-2) var(--ob-foundation-space-4); min-inline-size: 0; margin: calc(-1 * var(--ob-foundation-space-6)) calc(-1 * var(--ob-foundation-space-6)) var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6); border-bottom: 1px solid var(--ob-color-border); }
 .overview-section-heading p { margin: var(--ob-foundation-space-1) 0 0; color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); }
 .overview-section-alert { margin-top: var(--ob-foundation-space-4); }
+/* 三个摘要区不随快照内容增高；标题和动作留在滚动区外，正文保留全部事实与键盘滚动。 */
+.overview-section.overview-fixed-panel { display: flex; flex-direction: column; block-size: 420px; padding: 0; }
+.overview-section.overview-tasks-panel { block-size: 360px; }
+.overview-fixed-panel > .overview-section-heading { flex: none; margin: 0; }
+.overview-panel-body { display: flex; flex: 1; flex-direction: column; min-block-size: 0; min-inline-size: 0; overflow: auto; scrollbar-gutter: stable; padding: var(--ob-foundation-space-4) var(--ob-foundation-space-6) var(--ob-foundation-space-6); }
+.overview-panel-body > * { flex-shrink: 0; }
+.overview-panel-body > .overview-empty { flex: 1; }
+.overview-empty { display: flex; align-items: center; justify-content: center; min-block-size: 96px; }
+.overview-empty > .ant-empty { margin-block: var(--ob-foundation-space-2); }
+.overview-empty .ant-empty-description { margin-block-end: 0; }
 .overview-object-link { min-inline-size: 0; max-inline-size: 100%; height: auto; padding-inline: 0; white-space: normal; overflow-wrap: anywhere; text-align: start; }
 .overview-meta { margin: var(--ob-foundation-space-1) 0 0; color: var(--ob-color-secondary); font-size: var(--ob-component-table-metadata-size); overflow-wrap: anywhere; }
 .overview-identifier { font-family: var(--ob-foundation-font-mono); overflow-wrap: anywhere; }
@@ -23,4 +33,5 @@
 @container overview (max-width: 760px) {
   .overview-section { padding: var(--ob-foundation-space-4); }
   .overview-section-heading { margin: calc(-1 * var(--ob-foundation-space-4)) calc(-1 * var(--ob-foundation-space-4)) var(--ob-foundation-space-4); padding: var(--ob-foundation-space-4); }
+  .overview-panel-body { padding: var(--ob-foundation-space-4); }
 }

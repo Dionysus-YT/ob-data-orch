@@ -110,7 +110,7 @@ func (s *Server) saveNormalImportTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	now := time.Now().UTC()
-	created, err := s.templates.CreateExportConfigTemplate(r.Context(), store.ExportConfigTemplateCreate{ExportConfigTemplate: store.ExportConfigTemplate{TaskType: importdomain.TaskType, TemplateID: id, OwnerSubjectID: p.ID, DisplayName: name, CapabilityVersion: importdomain.CapabilityVersion, ConfigJSON: raw, ConfigFingerprint: normalImportDigest(raw), SourceTaskID: source.TaskID, CreatedAt: now, UpdatedAt: now}, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: normalImportDigest(source.TaskID + "/SAVE_TEMPLATE/" + name)})
+	created, err := s.templates.CreateExportConfigTemplate(r.Context(), store.ExportConfigTemplateCreate{ExportConfigTemplate: store.ExportConfigTemplate{TaskType: importdomain.TaskType, TemplateID: id, OwnerSubjectID: p.ID, DisplayName: name, CapabilityVersion: importdomain.CapabilityVersion, ConfigJSON: raw, ConfigFingerprint: normalImportDigest(raw), SourceTaskID: source.TaskID, CreatedAt: now, UpdatedAt: now}, RequestID: requestID(w), IdempotencyKey: key, RequestDigest: templateWriteDigest("SAVE_TEMPLATE", source.TaskID, name)})
 	if s.writeNormalImportReuseError(w, r, err) {
 		return
 	}
@@ -136,7 +136,7 @@ func (s *Server) createNormalImportDraftFromTemplate(w http.ResponseWriter, r *h
 		return
 	}
 	raw, _ := json.Marshal(config)
-	digest := normalImportDigest(template.TemplateID + "/CREATE_DRAFT/" + request.DataSourceID + "/" + request.NodeID)
+	digest := templateWriteDigest("CREATE_DRAFT", template.TemplateID, request.DataSourceID, request.NodeID)
 	created, ok := s.persistNormalImportReuse(w, r, p, config, string(raw), fingerprint, key, digest, "", "")
 	if !ok {
 		return

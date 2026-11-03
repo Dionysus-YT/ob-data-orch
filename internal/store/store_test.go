@@ -119,6 +119,24 @@ func Test持久任务日志使用分段文件和稳定游标分页(t *testing.T)
 	if err != nil || len(first) != 200 || firstNext == nil || last == nil || first[0].SourceSeq != 1 || first[199].SourceSeq != 200 {
 		t.Fatalf("ReadPage(first) records=%d next=%#v last=%#v err=%v", len(first), firstNext, last, err)
 	}
+	incremental, incrementalLast, err := persistent.ReadSince(ctx, "task-log-1", last)
+	if err != nil || len(incremental) != 1 || incremental[0].SourceSeq != 201 || incrementalLast == nil {
+		t.Fatal("同一批次的余下记录丢失", len(incremental), err)
+	}
+	empty, emptyLast, err := persistent.ReadSince(ctx, "task-log-1", incrementalLast)
+	if err != nil || len(empty) != 0 || emptyLast == nil || *emptyLast != *incrementalLast {
+		t.Fatal("读完后未保留可靠游标", err)
+	}
+	invalidOffset := *incrementalLast
+	invalidOffset.RecordOffset = 999
+	if _, _, err := persistent.ReadSince(ctx, "task-log-1", &invalidOffset); !errors.Is(err, logstream.ErrStorageCorrupt) {
+		t.Fatal("无效批内位置未失败关闭", err)
+	}
+
+	page, pageNext, _, err := persistent.ReadSincePage(ctx, "task-log-1", nil)
+	if err != nil || len(page) != 200 || pageNext == nil {
+		t.Fatal("增量首读没有续页", err)
+	}
 	second, next, last, err := persistent.ReadPage(ctx, "task-log-1", firstNext)
 	if err != nil || len(second) != 1 || second[0].SourceSeq != 201 || next != nil || last == nil {
 		t.Fatalf("ReadPage(second) records=%#v next=%#v last=%#v err=%v", second, next, last, err)
@@ -851,7 +869,7 @@ func TestSubmitTaskIsImmutableAllowsEqualFingerprintAndRollsBackAuditFailure(t *
 	if err := store.SubmitTask(ctx, validTaskSubmission("task-1")); err != nil {
 		t.Fatalf("SubmitTask(task-1): %v", err)
 	}
-	second := validTaskSubmission("task-2")
+	second := independentTaskProof(t, store, validTaskSubmission("task-2"))
 	second.RequestID = "request-submit-2"
 	if err := store.SubmitTask(ctx, second); err != nil {
 		t.Fatalf("SubmitTask(task-2): %v", err)
@@ -865,7 +883,7 @@ func TestSubmitTaskIsImmutableAllowsEqualFingerprintAndRollsBackAuditFailure(t *
 		t.Fatalf("unsafe planned argv error = %v", err)
 	}
 
-	rollback := validTaskSubmission("task-rollback")
+	rollback := independentTaskProof(t, store, validTaskSubmission("task-rollback"))
 	rollback.RequestID = "request-rollback"
 	if _, err := store.db.ExecContext(ctx, `
         INSERT INTO audit_events(
@@ -1090,7 +1108,7 @@ func TestListTaskSummariesScopesAndPaginatesWithoutSensitiveFields(t *testing.T)
 	if err := store.SubmitTask(ctx, newer); err != nil {
 		t.Fatalf("SubmitTask(newer): %v", err)
 	}
-	older := validTaskSubmission("task-list-older")
+	older := independentTaskProof(t, store, validTaskSubmission("task-list-older"))
 	older.SnapshotJSON = `{"database":"synthetic_db","table":"older_table"}`
 	older.SubmittedAt = testTime.Add(3 * time.Minute)
 	older.RequestID = "request-task-list-older"
@@ -1877,7 +1895,7 @@ func TestExportDraftV6RoundTripAndLegacyCompatibility(t *testing.T) {
 	}
 
 	// 多对象 DDL+CSV 的 v2 快照投影：$.table 存逗号连接清单，$.format 存 DDL_CSV。
-	multiObject := validTaskSubmission("task-v2-multi")
+	multiObject := independentTaskProof(t, store, validTaskSubmission("task-v2-multi"))
 	multiObject.SnapshotVersion = "v2"
 	multiObject.SnapshotJSON = `{"configVersion":"v6","database":"synthetic_db","scopeKind":"SPECIFIED","table":"table_one,table_two","contentKind":"DDL_AND_DATA","format":"DDL_CSV","filePath":"/E:/tmp/output","config":{}}`
 	if err := store.SubmitTask(ctx, multiObject); err != nil {
@@ -2786,7 +2804,7 @@ func TestDeriveTaskFromCheckpointRejectsResumeOfResumeAndMissingCheckpoint(t *te
 		t.Fatalf("pending source error = %v, want ErrCheckpointResumeUnavailable", err)
 	}
 	// 来源任务 argv 已带 --retry（模拟历史继续任务）→ 不能链式继续。
-	withRetry := validTaskSubmission("task-resume-already")
+	withRetry := independentTaskProof(t, store, validTaskSubmission("task-resume-already"))
 	withRetry.PlannedArgvJSON = `["--host","127.0.0.1","--port","2881","--user","synthetic_user@synthetic_tenant","--database","synthetic_db","--table","synthetic_table","--csv","--file-path","/E:/tmp/output","--retry"]`
 	withRetry.ParentTaskID, withRetry.DerivationKind = "task-resume-pending", "CHECKPOINT_RESUME"
 	if err := store.SubmitTask(ctx, withRetry); err != nil {
@@ -3100,7 +3118,7 @@ func TestResolveExecutionStorageCredentialReturnsEnvelopeIDs(t *testing.T) {
 		t.Fatalf("ResolveExecutionStorageCredential() = %#v", resolved)
 	}
 	// 本地输出任务：空结构、无错误，调用方据此跳过存储注入。
-	localSubmission := validTaskSubmission("task-local-1")
+	localSubmission := independentTaskProof(t, s, validTaskSubmission("task-local-1"))
 	if err := s.SubmitTask(ctx, localSubmission); err != nil {
 		t.Fatalf("SubmitTask(local): %v", err)
 	}

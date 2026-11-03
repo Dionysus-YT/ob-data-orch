@@ -29,7 +29,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     await page.setViewportSize(viewport)
     for (const module of modules) {
       await page.goto(module.path)
-      await expect(page).toHaveTitle(/OB Data Orch/)
+      await expect(page).toHaveTitle(/LDP/)
       await expect(page.getByRole('heading', { name: '平台设置', exact: true, level: 1 })).toBeVisible()
       await expect(page.getByRole('heading', { name: module.title, exact: true })).toBeVisible()
       await expect(page.getByRole('tab')).toHaveCount(4)
@@ -57,6 +57,9 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       if (viewport.width > 1280) {
         const group = page.getByRole('region', { name: '系统管理分组', exact: true })
+        const trigger = group.getByRole('button', { name: '系统管理', exact: true })
+        await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+        await trigger.click()
         await expect(group.locator('[aria-current="page"]')).toHaveCount(1)
         await expect(group.getByRole('link')).toHaveCount(3)
         await expect(group.getByRole('link', { name: '平台设置', exact: true })).toHaveAttribute('aria-current', 'page')

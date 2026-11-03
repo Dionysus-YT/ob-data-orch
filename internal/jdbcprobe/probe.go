@@ -24,6 +24,7 @@ import (
 
 	"ob-data-orch/internal/catalogresult"
 	"ob-data-orch/internal/credential"
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/precheckcontract"
 )
 
@@ -184,6 +185,7 @@ func ListObjects(ctx context.Context, runtime Runtime, request CatalogRequest) (
 	}
 	if !validRequest(request.Connection) || !validCompatibilityMode(request.CompatibilityMode) ||
 		!validCatalogRequestScope(request.Database, request.ObjectType) ||
+		(exportobject.Supported(request.ObjectType) && !exportobject.ValidForMode(request.ObjectType, string(request.CompatibilityMode))) ||
 		len(request.Keyword) > 100 || !utf8.ValidString(request.Keyword) || request.Keyword != strings.TrimSpace(request.Keyword) {
 		return CatalogResult{}, ErrInvalidRequest
 	}
@@ -207,7 +209,11 @@ func ListObjects(ctx context.Context, runtime Runtime, request CatalogRequest) (
 		return CatalogResult{}, err
 	}
 	defer zero(output)
-	return parseCatalogResponseForType(output, request.ObjectType)
+	result, err := parseCatalogResponseForType(output, request.ObjectType)
+	if err == nil && request.ObjectType == "ALL" && !catalogresult.ValidGroupsForMode(result.Groups, string(request.CompatibilityMode)) {
+		return CatalogResult{}, ErrProbeFailed
+	}
+	return result, err
 }
 
 // validCatalogRequestScope 与控制面冻结条件保持一致，防止探针接收任意元数据范围。
@@ -215,7 +221,7 @@ func validCatalogRequestScope(database, objectType string) bool {
 	if objectType == "DATABASE" {
 		return database == ""
 	}
-	return (objectType == "ALL" || objectType == "TABLE" || objectType == "VIEW" || objectType == "FUNCTION" || objectType == "PROCEDURE" || objectType == "SEQUENCE") && validObjectIdentifier(database)
+	return (objectType == "ALL" || exportobject.Supported(objectType)) && validObjectIdentifier(database)
 }
 
 func parseCatalogResponse(output []byte) (CatalogResult, error) {
@@ -350,9 +356,7 @@ func validBatchPreflightRequest(request BatchPreflightRequest) bool {
 		if !validObjectIdentifier(object.Name) || strings.ContainsAny(object.Name, "*,") {
 			return false
 		}
-		switch object.Type {
-		case "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE":
-		default:
+		if !exportobject.ValidForMode(object.Type, string(request.CompatibilityMode)) {
 			return false
 		}
 	}

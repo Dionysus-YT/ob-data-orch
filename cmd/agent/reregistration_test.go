@@ -61,9 +61,10 @@ func Test重新注册已删除节点后普通启动复用新身份(t *testing.T)
 	}
 	// 删除只撤销控制面访问，不改变执行机器上保存的旧身份文件。
 	now := time.Now().UTC()
+	_, operatingSystem, architecture := localTLSPlatform(t)
 	if _, err := fixture.state.SendHeartbeat(ctx, agentwire.Heartbeat{
 		BootID: "synthetic-boot", SentAt: now,
-		Facts: agentwire.EnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "synthetic", ObservedAt: now, CapacityTotal: 1},
+		Facts: agentwire.EnvironmentFacts{OperatingSystem: operatingSystem, Architecture: architecture, AgentVersion: "synthetic", ObservedAt: now, CapacityTotal: 1},
 	}); !errors.Is(err, agentwire.ErrAgentAuthenticationDenied) {
 		t.Fatalf("已删除节点的旧身份未拒绝机器认证: %v", err)
 	}
@@ -96,6 +97,9 @@ func Test重新注册已删除节点后普通启动复用新身份(t *testing.T)
 	newNode, err := fixture.database.GetExecutionNode(ctx, newNodeID)
 	if err != nil || newNode.Agent == nil || newNode.Agent.AgentID != newIdentity.AgentID || newNode.Agent.LastHeartbeatAt == nil {
 		t.Fatal("控制面没有收到新身份的心跳")
+	}
+	if newNode.Agent.EnvironmentFacts.OperatingSystem != operatingSystem || newNode.Agent.EnvironmentFacts.Architecture != architecture {
+		t.Fatal("重新注册后的心跳事实与当前执行平台不一致")
 	}
 }
 

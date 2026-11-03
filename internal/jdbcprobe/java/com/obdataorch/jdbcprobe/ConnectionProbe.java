@@ -114,6 +114,14 @@ public final class ConnectionProbe {
                 printCombinedCatalogSuccess(connection, metadata, input);
                 return;
             }
+            if (OracleObjectMetadata.supports(input.objectTypeText())
+                    || input.isOracle() && OracleObjectMetadata.supportsRoutine(input.objectTypeText())) {
+                if (!input.isOracle()) throw new IllegalArgumentException();
+                CatalogRows rows = new CatalogRows();
+                OracleObjectMetadata.readNames(connection, input.objectTypeText(), input.databaseText(), name -> rows.add(name, input.keywordText()));
+                System.out.println("{\"status\":\"SUCCESS\",\"objects\":" + rows.namesJSON() + ",\"truncated\":false}");
+                return;
+            }
             if ("SEQUENCE".equals(input.objectTypeText())) {
                 printSequenceCatalogSuccess(connection, input);
                 return;
@@ -191,9 +199,11 @@ public final class ConnectionProbe {
         return rows;
     }
 
-    /** 五类目录共用一次连接与一次秘密解析；单类失败只标记该类不可用，不伪造为空目录。 */
+    /** 按模式读取完整分类，共用一次连接与秘密解析；单类失败不得伪造为空目录。 */
     private static void printCombinedCatalogSuccess(Connection connection, DatabaseMetaData metadata, ProbeInput input) {
-        String[] types = { "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE" };
+        String[] types = input.isOracle()
+                ? new String[] { "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "PACKAGE", "TRIGGER", "SYNONYM", "PUBLIC_SYNONYM", "TYPE", "SEQUENCE" }
+                : new String[] { "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE" };
         int responseBytes = 256;
         StringBuilder output = new StringBuilder("{\"status\":\"SUCCESS\",\"objects\":[],\"truncated\":false,\"groups\":[");
         for (int index = 0; index < types.length; index++) {
@@ -204,6 +214,10 @@ public final class ConnectionProbe {
             try {
                 if ("SEQUENCE".equals(type)) {
                     rows = sequenceRows(connection, input);
+                } else if (OracleObjectMetadata.supports(type)
+                        || input.isOracle() && OracleObjectMetadata.supportsRoutine(type)) {
+                    CatalogRows oracleRows = rows;
+                    OracleObjectMetadata.readNames(connection, type, input.databaseText(), name -> oracleRows.add(name, ""));
                 } else {
                     String escape = metadata.getSearchStringEscape();
                     String schema = metadataPattern(input.databaseText(), escape);
@@ -242,7 +256,7 @@ public final class ConnectionProbe {
         System.out.println(output.toString());
     }
 
-    /** 字节预算不足与目录不可用分开处理，五类批量查询不得把预算溢出投影为部分成功。 */
+    /** 字节预算不足与目录不可用分开处理，批量查询不得把预算溢出投影为部分成功。 */
     private static final class CatalogBudgetExceeded extends SQLException {
         private static final long serialVersionUID = 1L;
     }
@@ -456,6 +470,10 @@ public final class ConnectionProbe {
         String type = object.typeText();
         String name = object.nameText();
         try {
+            if (OracleObjectMetadata.supports(type)
+                    || input.isOracle() && OracleObjectMetadata.supportsRoutine(type)) {
+                return input.isOracle() ? OracleObjectMetadata.verify(connection, type, input.databaseText(), name) : OBJECT_UNAVAILABLE;
+            }
             if ("SEQUENCE".equals(type)) {
                 return checkSequenceAccess(connection, input, name);
             }
@@ -694,6 +712,7 @@ public final class ConnectionProbe {
                             try {
                                 objectName = readValue(input, MAX_IDENTIFIER_BYTES);
                                 if (!validBatchObjectType(objectType) || !validIdentifier(objectName)
+                                        || (OracleObjectMetadata.supports(new String(objectType, UTF8)) && !"ORACLE".equals(new String(compatibilityMode, UTF8)))
                                         || !validObjectName(new String(objectName, UTF8))) throw new IllegalArgumentException();
                                 objects.add(new ObjectSpec(objectType, objectName));
                             } catch (IOException | IllegalArgumentException exception) {
@@ -724,6 +743,7 @@ public final class ConnectionProbe {
                         || port < 1 || port > 65535 || !validHost(host) || username.length == 0 || password.length == 0
                         || (version == PREFLIGHT_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validIdentifier(database) || !validIdentifier(table)))
 						|| (version == CATALOG_PROTOCOL_VERSION && (!validCompatibilityMode(compatibilityMode) || !validObjectType(table)
+                                || (OracleObjectMetadata.supports(new String(table, UTF8)) && !"ORACLE".equals(new String(compatibilityMode, UTF8)))
 								|| (isDatabaseType(table) ? database.length != 0 : !validIdentifier(database)) || !validKeyword(keyword)))
                         || ((version == BATCH_PREFLIGHT_PROTOCOL_VERSION || version == SELECTION_PREFLIGHT_PROTOCOL_VERSION) && (!validCompatibilityMode(compatibilityMode) || !validIdentifier(database)))
                         || input.read() != -1) {
@@ -820,14 +840,14 @@ public final class ConnectionProbe {
         private static boolean validObjectType(byte[] value) {
             return value != null && ("ALL".equals(new String(value, UTF8)) || "TABLE".equals(new String(value, UTF8)) || "VIEW".equals(new String(value, UTF8))
                     || "FUNCTION".equals(new String(value, UTF8)) || "PROCEDURE".equals(new String(value, UTF8))
-                    || "SEQUENCE".equals(new String(value, UTF8)) || isDatabaseType(value));
+                    || "SEQUENCE".equals(new String(value, UTF8)) || OracleObjectMetadata.supports(new String(value, UTF8)) || isDatabaseType(value));
         }
 
         private static boolean validBatchObjectType(byte[] value) {
             if (value == null) return false;
             String type = new String(value, UTF8);
             return "TABLE".equals(type) || "VIEW".equals(type) || "FUNCTION".equals(type)
-                    || "PROCEDURE".equals(type) || "SEQUENCE".equals(type);
+                    || "PROCEDURE".equals(type) || "SEQUENCE".equals(type) || OracleObjectMetadata.supports(type);
         }
 
         private static boolean isDatabaseType(byte[] value) {

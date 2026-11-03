@@ -4,64 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>登录 · OB Data Orch</title>
+<title>登录 · LDP</title>
+<link rel="icon" type="image/png" href="{{.Mark}}">
 <style>{{.Styles}}</style>
 </head>
 <body>
 <div class="login">
-  <section class="login-brand" aria-labelledby="login-product">
-    <img class="login-brand-logo" src="{{.Logo}}" width="275" height="57" alt="青海农信 QHRC">
-    <div class="login-brand-body">
-      <p class="login-eyebrow">OB Loader / Dumper 4.3.5</p>
-      <h1 id="login-product" class="login-product">OB Data Orch</h1>
-      <p class="login-positioning">OceanBase 数据导入导出编排平台</p>
-      <ul class="login-capabilities" aria-label="平台能力">
-        <li><span class="login-capability-name">导出</span><span class="login-capability-tool">OBDUMPER</span></li>
-        <li><span class="login-capability-name">普通导入</span><span class="login-capability-tool">OBLOADER</span></li>
-        <li><span class="login-capability-name">旁路导入</span><span class="login-capability-tool">DIRECT LOAD</span></li>
-      </ul>
-    </div>
-    <!-- 品牌轨道纹样：取自标识的蓝绿双色圆形，同心环表达数据在节点间的有序流转；纯装饰，不承载信息。 -->
-    <svg class="login-motif" viewBox="0 0 640 640" aria-hidden="true" focusable="false">
-      <g class="login-motif-rings">
-        <path d="M440 640A200 200 0 0 1 640 440"/>
-        <path d="M360 640A280 280 0 0 1 640 360"/>
-        <path d="M280 640A360 360 0 0 1 640 280"/>
-        <path d="M200 640A440 440 0 0 1 640 200"/>
-        <path d="M120 640A520 520 0 0 1 640 120"/>
-        <path d="M40 640A600 600 0 0 1 640 40"/>
-        <path class="login-motif-radial" d="M561.2 539.1L258.3 151.4"/>
-      </g>
-      <path class="login-motif-blue" d="M640 640L556 543.4A128 128 0 0 1 640 512Z"/>
-      <path class="login-motif-green" d="M640 640L512 640A128 128 0 0 1 543.4 556Z"/>
-      <g class="login-motif-tracks">
-        <path class="login-motif-track-blue" d="M399.1 372.5A360 360 0 0 1 589.9 283.5"/>
-        <path class="login-motif-track-green" d="M131.4 531.9A520 520 0 0 1 208.9 349.2"/>
-        <path class="login-motif-track-blue" d="M304.5 142.6A600 600 0 0 1 434.8 76.2"/>
-      </g>
-      <g class="login-motif-nodes">
-        <circle class="login-motif-node-blue" cx="589.9" cy="283.5" r="6"/>
-        <circle class="login-motif-node-green" cx="208.9" cy="349.2" r="6"/>
-        <circle class="login-motif-node-blue" cx="434.8" cy="76.2" r="5"/>
-        <circle class="login-motif-node-hollow" cx="528.2" cy="474.2" r="4"/>
-        <circle class="login-motif-node-hollow" cx="384.2" cy="526.1" r="4"/>
-        <circle class="login-motif-node-hollow" cx="313" cy="345.6" r="4"/>
-      </g>
-    </svg>
-  </section>
-  <main class="login-main">
+  <!-- 场景只表达数据库、文件与执行节点，不承载可操作状态。 -->
+  <div class="login-artwork" aria-hidden="true">
+    <img class="login-illustration" src="{{.Illustration}}" width="1254" height="1254" alt="">
+  </div>
+  <img class="login-customer-logo" src="{{.Logo}}" width="275" height="57" alt="青海农信 QHRC">
+  <main class="login-main" aria-labelledby="login-product">
     <div class="login-panel">
-      <h2 class="login-title">登录</h2>
+      <header class="login-heading">
+        <img class="login-product-mark" src="{{.Mark}}" width="72" height="72" alt="" aria-hidden="true">
+        <h1 id="login-product" class="login-product"><span class="login-product-name">LDP</span><span class="login-product-description">导数平台</span></h1>
+      </header>
       {{if .Message}}<div class="login-alert" role="alert"><svg class="login-icon" viewBox="64 64 896 896" aria-hidden="true" focusable="false"><path d="M512 64c247.4 0 448 200.6 448 448S759.4 960 512 960 64 759.4 64 512 264.6 64 512 64zm127.98 274.82h-.04l-.08.06L512 466.75 384.14 338.88c-.04-.05-.06-.06-.08-.06a.12.12 0 00-.07 0c-.03 0-.05.01-.09.05l-45.02 45.02a.2.2 0 00-.05.09.12.12 0 000 .07v.02a.27.27 0 00.06.06L466.75 512 338.88 639.86c-.05.04-.06.06-.06.08a.12.12 0 000 .07c0 .03.01.05.05.09l45.02 45.02a.2.2 0 00.09.05.12.12 0 00.07 0c.02 0 .04-.01.08-.05L512 557.25l127.86 127.87c.04.04.06.05.08.05a.12.12 0 00.07 0c.03 0 .05-.01.09-.05l45.02-45.02a.2.2 0 00.05-.09.12.12 0 000-.07v-.02a.27.27 0 00-.05-.06L557.25 512l127.87-127.86c.04-.04.05-.06.05-.08a.12.12 0 000-.07c0-.03-.01-.05-.05-.09l-45.02-45.02a.2.2 0 00-.09-.05.12.12 0 00-.07 0z"/></svg><span>{{.Message}}</span></div>{{end}}
-      <form class="login-form" method="post" action="/login" data-login-form>
+      <form class="login-form" aria-label="登录" method="post" action="/login" autocomplete="off" data-login-form>
         <div class="login-field">
           <label class="login-label" for="login-username">账户</label>
-          <input class="login-input" id="login-username" name="username" value="{{.Username}}" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="64" required>
+          <div class="login-input-wrap">
+            <svg class="login-icon login-field-icon" viewBox="64 64 896 896" aria-hidden="true" focusable="false"><path d="M858.5 763.6a374 374 0 00-80.6-119.5 375.63 375.63 0 00-119.5-80.6c-.4-.2-.8-.3-1.2-.5C719.5 518 760 444.7 760 362c0-137-111-248-248-248S264 225 264 362c0 82.7 40.5 156 102.8 201.1-.4.2-.8.3-1.2.5-44.8 18.9-85 46-119.5 80.6a375.63 375.63 0 00-80.6 119.5A371.7 371.7 0 00136 901.8a8 8 0 008 8.2h60c4.4 0 7.9-3.5 8-7.8 2-77.2 33-149.5 87.8-204.3 56.7-56.7 132-87.9 212.2-87.9s155.5 31.2 212.2 87.9C779 752.7 810 825 812 902.2c.1 4.4 3.6 7.8 8 7.8h60a8 8 0 008-8.2c-1-47.8-10.9-94.3-29.5-138.2zM512 534c-45.9 0-89.1-17.9-121.6-50.4S340 407.9 340 362c0-45.9 17.9-89.1 50.4-121.6S466.1 190 512 190s89.1 17.9 121.6 50.4S684 316.1 684 362c0 45.9-17.9 89.1-50.4 121.6S557.9 534 512 534z"/></svg>
+            <input class="login-input" id="login-username" name="username" placeholder="请输入账户" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" required>
+          </div>
         </div>
         <div class="login-field">
           <label class="login-label" for="login-password">密码</label>
-          <div class="login-password">
-            <input class="login-input{{if .Message}} login-input-error{{end}}" id="login-password" type="password" name="password" autocomplete="current-password" maxlength="256" required autofocus{{if .Message}} aria-invalid="true"{{end}} aria-describedby="login-caps">
+          <div class="login-input-wrap login-password">
+            <svg class="login-icon login-field-icon" viewBox="64 64 896 896" aria-hidden="true" focusable="false"><path d="M832 464h-68V240c0-70.7-57.3-128-128-128H388c-70.7 0-128 57.3-128 128v224h-68c-17.7 0-32 14.3-32 32v384c0 17.7 14.3 32 32 32h640c17.7 0 32-14.3 32-32V496c0-17.7-14.3-32-32-32zM332 240c0-30.9 25.1-56 56-56h248c30.9 0 56 25.1 56 56v224H332V240zm460 600H232V536h560v304zM484 701v53c0 4.4 3.6 8 8 8h40c4.4 0 8-3.6 8-8v-53a48.01 48.01 0 10-56 0z"/></svg>
+            <input class="login-input{{if .Message}} login-input-error{{end}}" id="login-password" type="password" name="password" placeholder="请输入密码" autocomplete="off" maxlength="256" required{{if .Message}} aria-invalid="true"{{end}} aria-describedby="login-caps">
             <button class="login-reveal" type="button" aria-label="显示密码" aria-pressed="false" aria-controls="login-password" data-login-reveal hidden>
               <svg class="login-icon" data-icon="show" viewBox="64 64 896 896" aria-hidden="true" focusable="false"><path d="M942.2 486.2C847.4 286.5 704.1 186 512 186c-192.2 0-335.4 100.5-430.2 300.3a60.3 60.3 0 000 51.5C176.6 737.5 319.9 838 512 838c192.2 0 335.4-100.5 430.2-300.3 7.7-16.2 7.7-35 0-51.5zM512 766c-161.3 0-279.4-81.8-362.7-254C232.6 339.8 350.7 258 512 258c161.3 0 279.4 81.8 362.7 254C791.5 684.2 673.4 766 512 766zm-4-430c-97.2 0-176 78.8-176 176s78.8 176 176 176 176-78.8 176-176-78.8-176-176-176zm0 288c-61.9 0-112-50.1-112-112s50.1-112 112-112 112 50.1 112 112-50.1 112-112 112z"/></svg>
               <svg class="login-icon" data-icon="hide" viewBox="64 64 896 896" aria-hidden="true" focusable="false" hidden><path d="M942.2 486.2Q889.47 375.11 816.7 305l-50.88 50.88C807.31 395.53 843.45 447.4 874.7 512 791.5 684.2 673.4 766 512 766q-72.67 0-133.87-22.38L323 798.75Q408 838 512 838q288.3 0 430.2-300.3a60.29 60.29 0 000-51.5zm-63.57-320.64L836 122.88a8 8 0 00-11.32 0L715.31 232.2Q624.86 186 512 186q-288.3 0-430.2 300.3a60.3 60.3 0 000 51.5q56.69 119.4 136.5 191.41L112.48 835a8 8 0 000 11.31L155.17 889a8 8 0 0011.31 0l712.15-712.12a8 8 0 000-11.32zM149.3 512C232.6 339.8 350.7 258 512 258c54.54 0 104.13 9.36 149.12 28.39l-70.3 70.3a176 176 0 00-238.13 238.13l-83.42 83.42C223.1 637.49 183.3 582.28 149.3 512zm246.7 0a112.11 112.11 0 01146.2-106.69L401.31 546.2A112 112 0 01396 512z"/><path d="M508 624c-3.46 0-6.87-.16-10.25-.47l-52.82 52.82a176.09 176.09 0 00227.42-227.42l-52.82 52.82c.31 3.38.47 6.79.47 10.25a111.94 111.94 0 01-112 112z"/></svg>
@@ -74,7 +47,6 @@
           <span data-login-submit-label>登录</span>
         </button>
       </form>
-      <p class="login-note"><svg class="login-icon" viewBox="64 64 896 896" aria-hidden="true" focusable="false"><path d="M866.9 169.9L527.1 54.1C523 52.7 517.5 52 512 52s-11 .7-15.1 2.1L157.1 169.9c-8.3 2.8-15.1 12.4-15.1 21.2v482.4c0 8.8 5.7 20.4 12.6 25.9L499.3 968c3.5 2.7 8 4.1 12.6 4.1s9.2-1.4 12.6-4.1l344.7-268.6c6.9-5.4 12.6-17 12.6-25.9V191.1c.2-8.8-6.6-18.3-14.9-21.2zM810 654.3L512 886.5 214 654.3V226.7l298-101.6 298 101.6v427.6zm-405.8-201c-3-4.1-7.8-6.6-13-6.6H336c-6.5 0-10.3 7.4-6.5 12.7l126.4 174a16.1 16.1 0 0026 0l212.6-292.7c3.8-5.3 0-12.7-6.5-12.7h-55.2c-5.1 0-10 2.5-13 6.6L468.9 542.4l-64.7-89.1z"/></svg><span>HTTPS 加密传输，登录后会话 12 小时内有效</span></p>
     </div>
   </main>
 </div>
@@ -82,19 +54,25 @@
 // 渐进增强：脚本不可用时表单仍按原生方式提交；脚本只改展示，不读取或保存密码值。
 (function () {
   var form = document.querySelector('[data-login-form]')
+  var username = document.getElementById('login-username')
   var password = document.getElementById('login-password')
   var reveal = document.querySelector('[data-login-reveal]')
   var caps = document.getElementById('login-caps')
   var submit = document.querySelector('[data-login-submit]')
-  if (!form || !password || !reveal || !caps || !submit) return
+  if (!form || !username || !password || !reveal || !caps || !submit) return
+  // 表单能完整落在视口内时才初始聚焦；不因聚焦把小窗口强制滚到右侧表单。
+  if (window.matchMedia('(min-width: 900px)').matches) username.focus({ preventScroll: true })
   reveal.hidden = false
-  reveal.addEventListener('click', function () {
-    var visible = password.type === 'password'
+  function setPasswordVisible(visible) {
     password.type = visible ? 'text' : 'password'
     reveal.setAttribute('aria-pressed', String(visible))
     reveal.setAttribute('aria-label', visible ? '隐藏密码' : '显示密码')
-    reveal.querySelector('[data-icon="show"]').hidden = visible
-    reveal.querySelector('[data-icon="hide"]').hidden = !visible
+    // SVG 不反射 HTMLElement.hidden，直接切换属性以保持图标和可访问状态一致。
+    reveal.querySelector('[data-icon="show"]').toggleAttribute('hidden', visible)
+    reveal.querySelector('[data-icon="hide"]').toggleAttribute('hidden', !visible)
+  }
+  reveal.addEventListener('click', function () {
+    setPasswordVisible(password.type === 'password')
     password.focus()
   })
   function updateCaps(event) {
@@ -111,15 +89,24 @@
   form.addEventListener('submit', function (event) {
     // 防重复提交：首次提交后锁定按钮，整页导航完成前不再发送第二次请求。
     if (submit.getAttribute('aria-busy') === 'true') { event.preventDefault(); return }
-    password.type = 'password'
+    setPasswordVisible(false)
     submit.setAttribute('aria-busy', 'true')
-    submit.querySelector('.login-spinner').hidden = false
+    submit.querySelector('.login-spinner').toggleAttribute('hidden', false)
     submit.querySelector('[data-login-submit-label]').textContent = '正在登录'
   })
-  // 浏览器后退恢复页面时解除提交锁定。
-  window.addEventListener('pageshow', function () {
+  // 清除浏览器恢复的表单值并解除提交锁定；不在前端持久化登录输入。
+  window.addEventListener('pageshow', function (event) {
+    form.reset()
+    caps.textContent = ''
+    if (event.persisted) {
+      var alert = document.querySelector('.login-alert')
+      if (alert) alert.remove()
+      password.classList.remove('login-input-error')
+      password.removeAttribute('aria-invalid')
+    }
+    setPasswordVisible(false)
     submit.removeAttribute('aria-busy')
-    submit.querySelector('.login-spinner').hidden = true
+    submit.querySelector('.login-spinner').toggleAttribute('hidden', true)
     submit.querySelector('[data-login-submit-label]').textContent = '登录'
   })
 })()

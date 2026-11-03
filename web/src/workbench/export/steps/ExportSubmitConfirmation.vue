@@ -5,7 +5,7 @@ import { Modal as AModal, Descriptions as ADescriptions, DescriptionsItem as ADe
 import { activateModal } from '@/components/modalFocus'
 
 const props = defineProps<{ model: ExportSubmitConfirmationModel }>()
-const { submitConfirmationOpen, submitting, closeSubmitConfirmation, submitCancelID, confirmSubmitTask, displayedSource, draftScopeSummary, displayedDraftConfig, dropObject, removeNewline, submissionFailure } = toRefs(props.model)
+const { submitConfirmationOpen, submitting, submissionUncertain, closeSubmitConfirmation, submitCancelID, confirmSubmitTask, displayedSource, draftScopeSummary, displayedDraftConfig, dropObject, removeNewline, submissionFailure } = toRefs(props.model)
 
 const cancelButton = ref<{ $el: HTMLButtonElement }>()
 let invoker: HTMLElement | null = null
@@ -29,6 +29,6 @@ watch([submitConfirmationOpen, cancelButton], async ([open], _previous, cleanup)
       <AAlert v-if="displayedSource?.environment === 'PRODUCTION' || dropObject || removeNewline" type="warning" show-icon message="请确认生产环境与高风险参数的影响。" :description="[displayedSource?.environment === 'PRODUCTION' ? '生产数据源' : '', dropObject ? 'DDL 包含前置 DROP' : '', removeNewline ? '删除导出数据中的换行' : ''].filter(Boolean).join('；')" />
       <AAlert v-if="submissionFailure" type="error" show-icon :message="submissionFailure" />
     </div>
-    <template #footer><AButton :id="submitCancelID" ref="cancelButton" :disabled="submitting" @click="closeSubmitConfirmation">返回检查</AButton><AButton type="primary" :loading="submitting" @click="confirmSubmitTask">确认提交并启动导出</AButton></template>
+    <template #footer><AButton :id="submitCancelID" ref="cancelButton" :disabled="submitting" @click="closeSubmitConfirmation">返回检查</AButton><AButton type="primary" :loading="submitting" @click="confirmSubmitTask">{{ submissionUncertain ? '核对原提交结果' : '确认提交并启动导出' }}</AButton></template>
   </AModal>
 </template>

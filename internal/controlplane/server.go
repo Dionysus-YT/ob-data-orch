@@ -298,6 +298,7 @@ type ExportPrecheckStore interface {
 type ExportTaskStore interface {
 	GetPrecheckRun(context.Context, string) (store.PrecheckRun, error)
 	SubmitTaskIdempotent(context.Context, store.TaskSubmission, string, string) (store.TaskSubmissionResult, error)
+	LookupTaskSubmission(context.Context, store.TaskSubmissionLookup) (store.TaskSubmissionResult, error)
 	GetAuthorizedTaskSummary(context.Context, string, string) (store.TaskSummary, error)
 	GetAuthorizedTaskDerivationSource(context.Context, string, string) (store.TaskDerivationSource, error)
 	DeriveTaskFromCheckpoint(context.Context, store.CheckpointResumeDerivation) (store.CheckpointResumeResult, error)
@@ -567,6 +568,9 @@ func (s *Server) rotateStorageCredential(w http.ResponseWriter, r *http.Request,
 			return
 		case errors.Is(err, store.ErrStorageCredentialForbidden):
 			notFound(w, r)
+			return
+		case errors.Is(err, store.ErrIdempotencyConflict):
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同轮换请求", false)
 			return
 		case errors.Is(err, store.ErrStorageCredentialRevision):
 			writeError(w, http.StatusPreconditionFailed, "REVISION_CONFLICT", "凭据版本已变化，请刷新后重试", false)
@@ -2509,6 +2513,9 @@ func (s *Server) updateExportDraft(w http.ResponseWriter, r *http.Request, princ
 			metadataVersion = exportMetadataExpertParameters
 		}
 	}
+	if normalized.NeedsOracleObjectMetadata() {
+		metadataVersion = exportMetadataOracleObjects
+	}
 	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, metadataVersion)
 	if errors.Is(err, errGeneralizedGeneratorUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, "API_DEPENDENCY_NOT_CONFIGURED", "当前环境尚未配置泛化导出能力", false)
@@ -2737,10 +2744,15 @@ func (s *Server) getExportPrecheck(w http.ResponseWriter, r *http.Request, princ
 		return
 	}
 	results := browserPrecheckResults(run.Results)
-	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": map[string]any{
+	item := map[string]any{
 		"id": run.PrecheckID, "draftId": run.DraftID, "draftRevision": run.DraftRevision, "configFingerprint": run.ConfigFingerprint,
 		"nodeId": run.NodeID, "status": run.Status, "integrityStatus": run.IntegrityStatus, "results": results, "validUntil": run.ValidUntil.Format(time.RFC3339Nano),
-	}})
+	}
+	// 旧检查不能携带后来草稿修订的任务标识；无唯一受理结果时省略可选字段。
+	if draft.Revision == run.DraftRevision && draft.SubmittedTaskID != "" {
+		item["submittedTaskId"] = draft.SubmittedTaskID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "item": item})
 }
 
 // browserPrecheckResults 为尚未完成的本地预检查提供固定七项未知投影。
@@ -2813,6 +2825,7 @@ const (
 	exportMetadataDDLTextFormats   = "obdumper-4.3.5-slice-v10-ddl-text-formats"
 	exportMetadataExpertParameters = "obdumper-4.3.5-slice-v11-expert-parameters"
 	exportMetadataSchemaBoolean    = "obdumper-4.3.5-slice-v12-schema-boolean"
+	exportMetadataOracleObjects    = "obdumper-4.3.5-slice-v13-oracle-objects"
 )
 
 // errGeneralizedGeneratorUnavailable 表示泛化能力请求缺少对应的生成器依赖，必须失败关闭。
@@ -2833,6 +2846,9 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 	}
 	if source.State != "ENABLED" || source.LastTestStatus != "SUCCEEDED" {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, errors.New("export data source is not eligible")
+	}
+	if err := exportdomain.ValidateObjectCompatibility(input, source.CompatibilityMode); err != nil {
+		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
 	}
 	if input.ScopeKind == "QUERY_RESULT" {
 		if input.QueryResultLimit == nil {
@@ -2912,6 +2928,9 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 		}
 		metadataVersion = exportMetadataSchemaBoolean
 	}
+	if metadataVersion == "" && input.NeedsOracleObjectMetadata() {
+		metadataVersion = exportMetadataOracleObjects
+	}
 	generalizedFields, err := exportdomain.BuildGeneralizedFields(input)
 	if err != nil {
 		return commandgen.Result{}, store.DataSourceSummary{}, ExecutionNodeFact{}, err
@@ -2930,6 +2949,8 @@ func (s *Server) generateExportDraft(ctx context.Context, input normalizedExport
 		}
 	case exportMetadataExpertParameters:
 		requestBase.MetadataVersion = exportMetadataExpertParameters
+	case exportMetadataOracleObjects:
+		requestBase.MetadataVersion = exportMetadataOracleObjects
 	case exportMetadataSchemaBoolean:
 		requestBase.MetadataVersion = exportMetadataSchemaBoolean
 	case exportMetadataV7:
@@ -2960,6 +2981,9 @@ func draftResponse(draft store.ExportDraft) map[string]any {
 	if draft.SourceTaskID != "" {
 		response["sourceTaskId"] = draft.SourceTaskID
 		response["sourceDerivation"] = draft.SourceDerivation
+	}
+	if draft.SubmittedTaskID != "" {
+		response["submittedTaskId"] = draft.SubmittedTaskID
 	}
 	return response
 }
@@ -3337,13 +3361,24 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 		return
 	}
 	run, err := s.tasks.GetPrecheckRun(r.Context(), request.PrecheckID)
-	if err != nil || run.DraftID != draft.DraftID || run.DraftRevision != draft.Revision || run.Status != "SUCCEEDED" || run.IntegrityStatus != "COMPLETE" || !run.ValidUntil.After(time.Now().UTC()) {
+	if err != nil || run.DraftID != draft.DraftID || run.DraftRevision != draft.Revision {
 		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "需要当前草稿的有效成功预检查", false)
 		return
 	}
 	normalized, err := draftNormalized(draft)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DRAFT_CONFIGURATION_UNAVAILABLE", "草稿配置暂时不可用", true)
+		return
+	}
+	if identity.Can(r.Context(), s.authorizer, principal, identity.ScopeDataSourceUse, draft.DataSourceID) != nil || identity.Can(r.Context(), s.authorizer, principal, identity.ScopeNodeUse, draft.NodeID) != nil || s.authorizeExpertConfiguration(r.Context(), normalized.NeedsExpertMetadata()) != nil {
+		notFound(w, r)
+		return
+	}
+	if s.replayTaskSubmission(w, r, store.TaskSubmissionLookup{SubjectID: principal.ID, TaskType: "OBDUMPER_EXPORT", DraftID: draft.DraftID, DraftRevision: draft.Revision, PrecheckID: run.PrecheckID, IdempotencyKey: key, RequestDigest: taskSubmitDigest(draft, run.PrecheckID, run.ConfigFingerprint)}) {
+		return
+	}
+	if run.Status != "SUCCEEDED" || run.IntegrityStatus != "COMPLETE" || !run.ValidUntil.After(time.Now().UTC()) {
+		writeError(w, http.StatusUnprocessableEntity, "PRECHECK_REQUIRED", "需要当前草稿的有效成功预检查", false)
 		return
 	}
 	preview, _, _, err := s.generateExportDraft(r.Context(), normalized, draft.MetadataVersion)
@@ -3442,6 +3477,10 @@ func (s *Server) submitExportDraft(w http.ResponseWriter, r *http.Request, princ
 	}, key, taskSubmitDigest(draft, run.PrecheckID, preview.ConfigFingerprint))
 	if errors.Is(err, store.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同请求", false)
+		return
+	}
+	if errors.Is(err, store.ErrTaskSubmissionConflict) {
+		writeError(w, http.StatusConflict, "SUBMISSION_CONFLICT", "当前草稿版本已提交，请查看已提交任务", false)
 		return
 	}
 	if errors.Is(err, store.ErrPrecheckInvalid) {
@@ -3608,8 +3647,8 @@ type taskOutputLocationResponse struct {
 // taskResultSummaryResponse 是任务级结果摘要的安全投影。
 type taskResultSummaryResponse struct {
 	Result            string                   `json:"result"`
-	FileCount         uint64                   `json:"fileCount"`
-	TotalBytes        uint64                   `json:"totalBytes"`
+	FileCount         *uint64                  `json:"fileCount"`
+	TotalBytes        *uint64                  `json:"totalBytes"`
 	Files             []taskResultFileResponse `json:"files"`
 	CheckpointPresent bool                     `json:"checkpointPresent"`
 	ObservedAt        string                   `json:"observedAt"`
@@ -3621,18 +3660,34 @@ type taskResultFileResponse struct {
 	Size uint64 `json:"size"`
 }
 
-// newTaskResultSummaryResponse 把仓储投影转成浏览器安全响应；空值缺省。
-func newTaskResultSummaryResponse(summary *store.ExecutionResultSummary) *taskResultSummaryResponse {
+// newTaskResultSummaryResponse 只把本地核验结果投影为具体数量；远端当前只证明工具完成。
+// 未知输出类型不展示结果摘要，历史 0/空列表不能被解释成已逐项验证。
+func newTaskResultSummaryResponse(summary *store.ExecutionResultSummary, output *store.TaskOutputLocation, taskType string) *taskResultSummaryResponse {
 	if summary == nil {
 		return nil
 	}
-	files := make([]taskResultFileResponse, 0, len(summary.Files))
-	for _, file := range summary.Files {
-		files = append(files, taskResultFileResponse{Path: file.Path, Size: file.Size})
+	response := &taskResultSummaryResponse{Result: summary.Result, CheckpointPresent: summary.CheckpointPresent, ObservedAt: summary.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	kind := ""
+	if output != nil {
+		kind = output.Kind
 	}
-	return &taskResultSummaryResponse{
-		Result: summary.Result, FileCount: summary.FileCount, TotalBytes: summary.TotalBytes, Files: files,
-		CheckpointPresent: summary.CheckpointPresent, ObservedAt: summary.ObservedAt.UTC().Format(time.RFC3339Nano),
+	// 两类导入不产生导出位置；保留其既有完成证据，浏览器只展示导入结论。
+	if output == nil && (taskType == "OBLOADER_NORMAL_IMPORT" || taskType == "OBLOADER_DIRECT_LOAD") {
+		kind = "LOCAL"
+	}
+	switch kind {
+	case "OSS", "S3", "COS", "OBS":
+		response.CheckpointPresent = false
+		return response
+	case "LOCAL":
+		response.FileCount, response.TotalBytes = &summary.FileCount, &summary.TotalBytes
+		response.Files = make([]taskResultFileResponse, 0, len(summary.Files))
+		for _, file := range summary.Files {
+			response.Files = append(response.Files, taskResultFileResponse{Path: file.Path, Size: file.Size})
+		}
+		return response
+	default:
+		return nil
 	}
 }
 
@@ -3824,7 +3879,7 @@ func (s *Server) getTaskExecution(w http.ResponseWriter, r *http.Request, princi
 		StageEvidence: stage, ProgressEvidence: progress, Progress: summary.Progress, StartedAt: optionalTaskTime(summary.StartedAt),
 		FinishedAt: optionalTaskTime(summary.FinishedAt), UpdatedAt: summary.UpdatedAt.Format(time.RFC3339Nano),
 		ElapsedMilliseconds: executionElapsedMilliseconds(summary.StartedAt, summary.FinishedAt),
-		ResultSummary:       newTaskResultSummaryResponse(summary.ResultSummary),
+		ResultSummary:       newTaskResultSummaryResponse(summary.ResultSummary, summary.OutputLocation, summary.TaskType),
 		CancelAvailable:     s.realExecutionEnabled && !summary.ReconciliationRequired && (summary.State == "WAITING_SCHEDULE" || summary.State == "STARTING" || summary.State == "RUNNING"),
 		CancelRequested:     summary.CancellationRequested || summary.State == "CANCELLING",
 	}
@@ -6060,7 +6115,7 @@ func (s *Server) listSyntheticLogs(w http.ResponseWriter, r *http.Request, princ
 				writeError(w, http.StatusBadRequest, "CURSOR_INVALID", "日志游标无效", false)
 				return
 			}
-			records, last, err = persistent.ReadSince(r.Context(), taskID, after)
+			records, next, last, err = persistent.ReadSincePage(r.Context(), taskID, after)
 		} else {
 			var cursor *logstream.PageCursor
 			if cursorValue != "" {
@@ -7562,15 +7617,17 @@ type templateCreateDraftRequest struct {
 
 // templateResponse 是模板安全投影：绝不包含配置 JSON 原文（配置只在创建草稿时服务端读取）。
 type templateResponse struct {
-	TaskType          string `json:"taskType"`
-	ID                string `json:"id"`
-	DisplayName       string `json:"displayName"`
-	CapabilityVersion string `json:"capabilityVersion"`
-	ConfigFingerprint string `json:"configFingerprint"`
-	SourceTaskID      string `json:"sourceTaskId,omitempty"`
-	Revision          int64  `json:"revision"`
-	CreatedAt         string `json:"createdAt"`
-	UpdatedAt         string `json:"updatedAt"`
+	// AvailableActions 只描述当前模板的操作资格，不授予底层引用权限；每次写入仍须复验。
+	AvailableActions  []string `json:"availableActions"`
+	TaskType          string   `json:"taskType"`
+	ID                string   `json:"id"`
+	DisplayName       string   `json:"displayName"`
+	CapabilityVersion string   `json:"capabilityVersion"`
+	ConfigFingerprint string   `json:"configFingerprint"`
+	SourceTaskID      string   `json:"sourceTaskId,omitempty"`
+	Revision          int64    `json:"revision"`
+	CreatedAt         string   `json:"createdAt"`
+	UpdatedAt         string   `json:"updatedAt"`
 }
 
 func newTemplateResponse(template store.ExportConfigTemplate) templateResponse {
@@ -7609,7 +7666,14 @@ func (s *Server) listExportConfigTemplates(w http.ResponseWriter, r *http.Reques
 	}
 	items := make([]templateResponse, 0, len(templates))
 	for _, template := range templates {
-		items = append(items, newTemplateResponse(template))
+		actions := s.templateActions(r.Context(), principal, template)
+		// 目录读取后再次失去全部职责时，不继续返回旧摘要或数量。
+		if len(actions) == 0 {
+			continue
+		}
+		item := newTemplateResponse(template)
+		item.AvailableActions = actions
+		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID(w), "items": items})
 }
@@ -7685,7 +7749,7 @@ func (s *Server) saveTaskTemplate(w http.ResponseWriter, r *http.Request, princi
 			CapabilityVersion: source.CapabilityVersion, ConfigJSON: configJSON, ConfigFingerprint: source.ConfigFingerprint,
 			SourceTaskID: source.TaskID, CreatedAt: now, UpdatedAt: now,
 		},
-		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: taskDerivationDigest(taskID, "SAVE_TEMPLATE"),
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: templateWriteDigest("SAVE_TEMPLATE", taskID, displayName),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrIdempotencyConflict) {
@@ -7888,7 +7952,7 @@ func (s *Server) createDraftFromTemplate(w http.ResponseWriter, r *http.Request,
 			FilterConfigJSON: structured.FilterConfigJSON, DDLBehaviorJSON: structured.DDLBehaviorJSON,
 			CreatedAt: now, UpdatedAt: now,
 		},
-		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: taskDerivationDigest(templateID, "CREATE_DRAFT"),
+		RequestID: requestID(w), IdempotencyKey: key, RequestDigest: templateWriteDigest("CREATE_DRAFT", templateID, request.DataSourceID, request.NodeID),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrIdempotencyConflict) {

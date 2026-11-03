@@ -52,9 +52,11 @@ func validNormalImportManifest(config importdomain.Config, results []PrecheckChe
 
 // NormalImportCheck 是所有者可见的导入检查事实，文件清单只属于输入证据。
 type NormalImportCheck struct {
-	Run           PrecheckRun
-	CheckKind     string
-	InputManifest *importfiles.Manifest
+	// SubmittedTaskID 是当前修订唯一且仍有权限读取的提交结果。
+	SubmittedTaskID string
+	Run             PrecheckRun
+	CheckKind       string
+	InputManifest   *importfiles.Manifest
 }
 
 // NormalImportSnapshot 冻结独立配置与输入证据；不复制导出快照、结果文件或秘密。
@@ -87,6 +89,10 @@ func (s *Store) GetNormalImportCheck(ctx context.Context, id, owner string) (Nor
 		}
 		item.InputManifest = &manifest
 	}
+	item.SubmittedTaskID, err = s.submittedDraftTaskID(ctx, owner, run.DraftID, run.DraftRevision)
+	if err != nil {
+		return NormalImportCheck{}, err
+	}
 	return item, nil
 }
 
@@ -100,6 +106,8 @@ func (s *Store) CreateNormalImportPrecheck(ctx context.Context, input PrecheckCr
 
 // NormalImportDraft 是普通导入独立的非敏感持久化记录，不使用导出配置模型。
 type NormalImportDraft struct {
+	// SubmittedTaskID 用于页面刷新后的结果恢复，不允许重新执行。
+	SubmittedTaskID string `json:"submittedTaskId,omitempty"`
 	// Replayed 只描述本次创建事务是否重放，不持久化为草稿或执行事实。
 	Replayed          bool      `json:"-"`
 	ID                string    `json:"id"`
@@ -247,6 +255,10 @@ func (s *Store) GetNormalImportDraft(ctx context.Context, id, owner string) (Nor
 	}
 	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	item.SubmittedTaskID, err = s.submittedDraftTaskID(ctx, owner, id, item.Revision)
+	if err != nil {
+		return NormalImportDraft{}, err
+	}
 	return item, nil
 }
 

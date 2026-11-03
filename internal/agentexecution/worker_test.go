@@ -3,6 +3,7 @@ package agentexecution
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,12 +11,12 @@ import (
 	"ob-data-orch/internal/agentlogqueue"
 	"ob-data-orch/internal/agentwire"
 	"ob-data-orch/internal/logstream"
-	"ob-data-orch/internal/outputpath"
 )
 
 // TestWorker启动前取消不解析秘密也不启动工具验证领取后的最小取消闭环。
 func TestWorker启动前取消不解析秘密也不启动工具(t *testing.T) {
 	t.Parallel()
+	root := t.TempDir()
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	protocol := &executionWorkerTestProtocol{
 		grant: agentwire.ExecutionGrant{
@@ -36,12 +37,12 @@ func TestWorker启动前取消不解析秘密也不启动工具(t *testing.T) {
 	worker := &Worker{
 		Protocol: protocol,
 		Runtime: Runtime{
-			TargetPlatform: outputpath.PlatformWindowsAMD64,
-			JavaPath:       `C:\Java\bin\java.exe`,
-			ToolHome:       `C:\OBDUMPER`,
-			WorkspaceRoot:  `C:\OBDataOrch\workspace`,
+			TargetPlatform: testNativePlatform(root),
+			JavaPath:       filepath.Join(root, "java.exe"),
+			ToolHome:       root,
+			WorkspaceRoot:  filepath.Join(root, "workspace"),
 			Environment:    []string{"PATH=C:\\Windows\\System32"},
-			AllowedRoots:   []string{`C:\exports`},
+			AllowedRoots:   []string{root},
 		},
 		Clock:  func() time.Time { return now },
 		BootID: "boot-cancel-before-start",
@@ -105,6 +106,8 @@ func Test日志上传器在入队前后只暴露安全位置(t *testing.T) {
 	if err := uploader.append(queueTestRecord()); err != nil {
 		t.Fatalf("追加日志失败: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	if len(observed) != 3 {
 		t.Fatalf("观测次数错误: got %d want 3", len(observed))
 	}
@@ -155,6 +158,8 @@ func Test日志上传器记录失败重试和确认且不删除待确认批次(t
 	if err := uploader.append(queueTestRecord()); err != nil {
 		t.Fatalf("网络暂不可达不能阻断日志接收: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	entries, _, err := queue.Pending()
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("上传失败后必须保留待确认批次: entries=%d err=%v", len(entries), err)
@@ -200,6 +205,8 @@ func Test日志上传器在连续不可达后保留批次并重放(t *testing.T)
 	if err := uploader.append(queueTestRecord()); err != nil {
 		t.Fatalf("首次不可达不能阻断日志接收: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := flushQueuedLogs(context.Background(), queue, protocol, "boot-test", ""); err == nil {
 			t.Fatalf("第 %d 次持续不可达意外确认批次", attempt+2)

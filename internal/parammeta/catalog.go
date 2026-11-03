@@ -27,8 +27,9 @@ const (
 	ddlTextFormatsMetadataVersion    = "obdumper-4.3.5-slice-v10-ddl-text-formats"
 	expertParametersMetadataVersion  = "obdumper-4.3.5-slice-v11-expert-parameters"
 	schemaBooleanMetadataVersion     = "obdumper-4.3.5-slice-v12-schema-boolean"
+	oracleObjectsMetadataVersion     = "obdumper-4.3.5-slice-v13-oracle-objects"
 	// maxInheritanceDepth 限制清单继承链深度，避免循环或过长的依赖链。
-	maxInheritanceDepth = 7
+	maxInheritanceDepth = 8
 )
 
 // resourceFiles 只嵌入 resources/ 下已确认可加载的参数元数据。
@@ -160,6 +161,11 @@ func LoadExpertParameters() (*Catalog, error) {
 // LoadSchemaBoolean 加载固定结构策略布尔语法；v11 及之前目录继续原样重放。
 func LoadSchemaBoolean() (*Catalog, error) {
 	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v12-schema-boolean.json")
+}
+
+// LoadOracleObjects 加载 Oracle 十类对象目录，历史 v5～v12 资源和指纹保持不变。
+func LoadOracleObjects() (*Catalog, error) {
+	return loadFromFS(resourceFiles, "resources/obdumper-4.3.5-slice-v13-oracle-objects.json")
 }
 
 // LoadLegacyGeneralized 加载冻结的 v6 泛化目录，只用于重放升级前已经持久化的草稿。
@@ -363,6 +369,10 @@ func decodeManifest(content []byte) (revisionManifest, error) {
 		if manifest.Inherits != "obdumper-4.3.5-slice-v11-expert-parameters.json" || manifest.CapabilityVersion != "" || len(manifest.Overrides) != 1 || len(manifest.Additions) != 0 || len(manifest.SourceDocuments) == 0 {
 			return revisionManifest{}, errors.New("parameter metadata schema boolean revision is invalid")
 		}
+	case oracleObjectsMetadataVersion:
+		if manifest.Inherits != "obdumper-4.3.5-slice-v12-schema-boolean.json" || manifest.CapabilityVersion != "" || len(manifest.Overrides) != 0 || len(manifest.Additions) != 5 || len(manifest.SourceDocuments) == 0 || len(manifest.CategoryOrder) == 0 {
+			return revisionManifest{}, errors.New("parameter metadata oracle objects revision is invalid")
+		}
 	default:
 		return revisionManifest{}, errors.New("parameter metadata revision identity is unsupported")
 	}
@@ -443,7 +453,7 @@ func validateResource(raw resource) error {
 		if len(raw.Definitions) != 18 {
 			return fmt.Errorf("parameter metadata has %d definitions, want 18", len(raw.Definitions))
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion, schemaBooleanMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion, schemaBooleanMetadataVersion, oracleObjectsMetadataVersion:
 		// v6/v7 目录不固定单一能力版本，由生成器按请求能力筛选参数子集。
 		if raw.CapabilityVersion != "" {
 			return errors.New("parameter metadata capability version is unsupported")
@@ -460,8 +470,11 @@ func validateResource(raw resource) error {
 		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion {
 			expectedDefinitions = 75
 		}
-		if raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion {
+		if raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion || raw.MetadataVersion == oracleObjectsMetadataVersion {
 			expectedDefinitions = 79
+		}
+		if raw.MetadataVersion == oracleObjectsMetadataVersion {
+			expectedDefinitions = 84
 		}
 		if len(raw.Definitions) != expectedDefinitions {
 			return fmt.Errorf("parameter metadata has %d definitions, want %d", len(raw.Definitions), expectedDefinitions)
@@ -475,7 +488,7 @@ func validateResource(raw resource) error {
 	shortNames := make(map[string]struct{}, len(raw.Definitions))
 	orders := make(map[string]struct{}, len(raw.Definitions))
 	for _, definition := range raw.Definitions {
-		if definition.ExplicitBoolean && (raw.MetadataVersion != schemaBooleanMetadataVersion || definition.LongName != "--compact-schema" || definition.ValueType != "flag") {
+		if definition.ExplicitBoolean && ((raw.MetadataVersion != schemaBooleanMetadataVersion && raw.MetadataVersion != oracleObjectsMetadataVersion) || definition.LongName != "--compact-schema" || definition.ValueType != "flag") {
 			return errors.New("parameter explicit boolean syntax is unsupported")
 		}
 		if definition.DefinitionID == "" || !strings.HasPrefix(definition.ProductFieldID, "EX-F") {
@@ -574,7 +587,7 @@ func validateResource(raw resource) error {
 		}); err != nil {
 			return err
 		}
-	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion, schemaBooleanMetadataVersion:
+	case legacyGeneralizedMetadataVersion, generalizedMetadataVersion, objectSelectionMetadataVersion, combinedObjectMetadataVersion, ddlTextFormatsMetadataVersion, expertParametersMetadataVersion, schemaBooleanMetadataVersion, oracleObjectsMetadataVersion:
 		// v6 已取证子集：EX-I2 六项 + EX-I3 的 CSV 序列化、压缩、文件布局、筛选与资源参数
 		// + EX-I4 的 CUT/SQL 数据格式及其专属序列化参数
 		// + EX-I4 POS 定版（2026-08-07 实测）的 --pos/--ctl-path 与 CUT 专属 --column-splitter
@@ -594,16 +607,19 @@ func validateResource(raw resource) error {
 			"--query-sql", "--where", "--snapshot", "--include-column-names", "--exclude-column-names", "--exclude-virtual-columns", "--flashback-scn", "--flashback-timestamp",
 			"--thread", "--page-size", "--parallel-macro", "--fetch-size", "--mem", "--block-size",
 		}
-		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || (raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion) {
+		if raw.MetadataVersion == generalizedMetadataVersion || raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || (raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion || raw.MetadataVersion == oracleObjectsMetadataVersion) {
 			// 第二批仅四项已观察到可验收效果：MySQL DATE/DATETIME 格式、分区和类型排除。
 			enabled = append(enabled, "--date-value-format", "--datetime-value-format", "--partition", "--exclude-data-types")
 		}
-		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || (raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion) {
+		if raw.MetadataVersion == objectSelectionMetadataVersion || raw.MetadataVersion == combinedObjectMetadataVersion || raw.MetadataVersion == ddlTextFormatsMetadataVersion || (raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion || raw.MetadataVersion == oracleObjectsMetadataVersion) {
 			enabled = append(enabled, "--function", "--procedure", "--sequence")
 		}
-		if raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion {
+		if raw.MetadataVersion == expertParametersMetadataVersion || raw.MetadataVersion == schemaBooleanMetadataVersion || raw.MetadataVersion == oracleObjectsMetadataVersion {
 			enabled = append(enabled, "--weak-read", "--enable-hidden-pk", "--add-extra-message", "--sequence-policy", "--preserve-zero-datetime", "--sys-user", "--sys-password",
 				"--time-value-format", "--timestamp-value-format", "--timestamp-tz-value-format", "--timestamp-ltz-value-format", "--nls-date-format", "--nls-timestamp-format", "--nls-timestamp-tz-format")
+		}
+		if raw.MetadataVersion == oracleObjectsMetadataVersion {
+			enabled = append(enabled, "--package", "--trigger", "--synonym", "--public-synonym", "--type")
 		}
 		if err := requireNamesByState(raw.Definitions, "ENABLED", enabled); err != nil {
 			return err
@@ -628,7 +644,7 @@ func validateResource(raw resource) error {
 	}
 	for _, definition := range raw.Definitions {
 		if definition.LongName == "--sys-password" {
-			if (raw.MetadataVersion != expertParametersMetadataVersion && raw.MetadataVersion != schemaBooleanMetadataVersion) || definition.ValueType != "secret-slot" || definition.Sensitivity != "SECRET" || definition.EmissionTarget != "SECURITY_FILE" || definition.SecurityProperty != "oceanbase.jdbc.sys.password" || definition.SourcePolicy != "SECURITY" {
+			if (raw.MetadataVersion != expertParametersMetadataVersion && raw.MetadataVersion != schemaBooleanMetadataVersion && raw.MetadataVersion != oracleObjectsMetadataVersion) || definition.ValueType != "secret-slot" || definition.Sensitivity != "SECRET" || definition.EmissionTarget != "SECURITY_FILE" || definition.SecurityProperty != "oceanbase.jdbc.sys.password" || definition.SourcePolicy != "SECURITY" {
 				return errors.New("sys password metadata must target the official security file")
 			}
 			continue
@@ -698,7 +714,7 @@ func validateRule(parameter string, rule Rule, allowed ...string) error {
 // v7 对已登记但尚未观察行为或缺少专用预检查的第二批参数继续失败关闭。
 func gatedNamesByVersion(metadataVersion string) []string {
 	switch metadataVersion {
-	case expertParametersMetadataVersion, schemaBooleanMetadataVersion:
+	case expertParametersMetadataVersion, schemaBooleanMetadataVersion, oracleObjectsMetadataVersion:
 		// 检查点继续仍只走 EX-I8 的冻结继续任务入口，不开放任意 retry 参数。
 		return []string{"--retry"}
 	case legacyGeneralizedMetadataVersion:

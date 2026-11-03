@@ -46,8 +46,8 @@ const sampleExpired = (at?: string) => !at || props.currentTime - Date.parse(at)
         <span v-else-if="column.key === 'capacity'">{{ nodeCapacityLabel(nodeOf(record).capacityStatus) }}<span v-if="nodeOf(record).capacityTotal !== undefined" class="overview-meta">（{{ nodeOf(record).capacityUsed }} / {{ nodeOf(record).capacityTotal }}）</span></span>
         <template v-else-if="column.key === 'runtime'">
           <span class="overview-meta">心跳 {{ overviewTime(nodeOf(record).lastHeartbeatAt) }}</span>
-          <p class="overview-meta">CPU {{ nodeOf(record).cpuUsagePercent === undefined ? '未采集' : `${nodeOf(record).cpuUsagePercent}%` }} · 内存 {{ nodeOf(record).memoryUsagePercent === undefined ? '未采集' : `${nodeOf(record).memoryUsagePercent}%` }}</p>
-          <p class="overview-meta"><template v-if="nodeOf(record).observedAt">采样 {{ overviewTime(nodeOf(record).observedAt) }}</template><template v-if="sampleExpired(nodeOf(record).observedAt)">{{ nodeOf(record).observedAt ? ' · ' : '' }}采样已过期或未知</template></p>
+          <p class="overview-meta"><strong v-if="sampleExpired(nodeOf(record).observedAt)">{{ nodeOf(record).observedAt ? '历史采样（已过期）' : '采样时间未知' }} · </strong>CPU {{ nodeOf(record).cpuUsagePercent === undefined ? '未采集' : `${nodeOf(record).cpuUsagePercent}%` }} · 内存 {{ nodeOf(record).memoryUsagePercent === undefined ? '未采集' : `${nodeOf(record).memoryUsagePercent}%` }}</p>
+          <p v-if="nodeOf(record).observedAt" class="overview-meta">采样 {{ overviewTime(nodeOf(record).observedAt) }}</p>
         </template>
       </template>
     </ATable>

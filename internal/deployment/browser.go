@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -28,10 +29,12 @@ type browserSession struct {
 // Browser 提供单管理员登录与独立的浏览器会话，不接受机器凭据或来源 IP 作为用户身份。
 type Browser struct {
 	settings Settings
-	mu       sync.Mutex
-	sessions map[string]browserSession
-	attempts int
-	window   time.Time
+	// passwordMu 串行化口令核验、会话签发与密码轮换，阻止旧密码在轮换后签发新会话。
+	passwordMu sync.Mutex
+	mu         sync.Mutex
+	sessions   map[string]browserSession
+	attempts   int
+	window     time.Time
 }
 
 // NewBrowser 创建固定管理员的认证边界，重启后浏览器重新登录，Agent 身份不受影响。
@@ -39,6 +42,8 @@ func NewBrowser(settings Settings) (*Browser, error) {
 	if err := validateSettings(settings); err != nil {
 		return nil, err
 	}
+	settings.PasswordSalt = append([]byte(nil), settings.PasswordSalt...)
+	settings.PasswordHash = append([]byte(nil), settings.PasswordHash...)
 	return &Browser{settings: settings, sessions: make(map[string]browserSession)}, nil
 }
 
@@ -136,7 +141,7 @@ func (b *Browser) handler(api http.Handler, webDirectory, packageDirectory, data
 		}
 		session, ok := b.session(r)
 		if !ok {
-			if strings.HasPrefix(r.URL.Path, "/api/") {
+			if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/logout" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "UNAUTHENTICATED", "message": "请登录"}})
@@ -156,6 +161,9 @@ func (b *Browser) handler(api http.Handler, webDirectory, packageDirectory, data
 			b.mu.Unlock()
 			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if b.accountEntry(w, r) {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -188,16 +196,22 @@ func (b *Browser) handler(api http.Handler, webDirectory, packageDirectory, data
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(strings.ReplaceAll(string(index), "local-mvp-csrf-v1", session.csrf)))
+			_, _ = w.Write(browserPage(index, session.csrf))
 		}
 	}), nil
 }
 
-// login 处理固定管理员登录；失败分支保留原状态码，并在同一登录页给出固定中文提示，便于直接重试。
+// browserPage 只注入认证适配器确定的账户事实，不使用客户端名称或主体 ID 猜测登录名。
+func browserPage(index []byte, csrf string) []byte {
+	content := bytes.ReplaceAll(index, []byte("local-mvp-csrf-v1"), []byte(csrf))
+	return bytes.ReplaceAll(content, []byte("local-mvp-username-v1"), []byte("admin"))
+}
+
+// login 处理固定管理员认证；HTML 失败导航由一次性反馈回到 GET，原始客户端保留失败状态码。
 func (b *Browser) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		if !b.sameOrigin(r) {
-			renderLogin(w, http.StatusForbidden, "请求来源无效，请从平台地址重新打开登录页。", "")
+			writeLoginFailure(w, r, loginInvalidOrigin)
 			return
 		}
 		b.mu.Lock()
@@ -210,19 +224,20 @@ func (b *Browser) login(w http.ResponseWriter, r *http.Request) {
 		allowed := b.attempts <= 12
 		b.mu.Unlock()
 		if !allowed {
-			w.Header().Set("Retry-After", "60")
-			renderLogin(w, http.StatusTooManyRequests, "尝试过于频繁，请 1 分钟后再试。", "")
+			writeLoginFailure(w, r, loginRateLimited)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		if r.ParseForm() != nil {
-			renderLogin(w, http.StatusBadRequest, "登录信息无效，请重新输入。", "")
+			writeLoginFailure(w, r, loginInvalidInput)
 			return
 		}
 		username := r.PostForm.Get("username")
 		password := []byte(r.PostForm.Get("password"))
 		r.PostForm.Del("password")
 		r.Form.Del("password")
+		b.passwordMu.Lock()
+		defer b.passwordMu.Unlock()
 		hash, err := passwordKey(password, b.settings.PasswordSalt)
 		credential.Zero(password)
 		valid := err == nil && subtle.ConstantTimeCompare(hash, b.settings.PasswordHash) == 1 && username == "admin"
@@ -230,7 +245,7 @@ func (b *Browser) login(w http.ResponseWriter, r *http.Request) {
 		if valid {
 			token, csrf := randomToken(), randomToken()
 			if token == "" || csrf == "" {
-				renderLogin(w, http.StatusServiceUnavailable, "登录暂时不可用，请稍后重试。", username)
+				writeLoginFailure(w, r, loginUnavailable)
 				return
 			}
 			b.mu.Lock()
@@ -241,23 +256,27 @@ func (b *Browser) login(w http.ResponseWriter, r *http.Request) {
 			}
 			if len(b.sessions) >= 128 {
 				b.mu.Unlock()
-				renderLogin(w, http.StatusServiceUnavailable, "当前有效会话过多，请稍后重试。", username)
+				writeLoginFailure(w, r, loginSessionsFull)
 				return
 			}
 			b.sessions[token] = browserSession{csrf: csrf, expires: now.Add(12 * time.Hour)}
 			b.mu.Unlock()
+			if _, err := r.Cookie(loginFeedbackCookie); err == nil {
+				clearLoginFeedback(w)
+			}
 			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", MaxAge: 43200, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		renderLogin(w, http.StatusUnauthorized, "账户或密码不正确", username)
+		writeLoginFailure(w, r, loginInvalidCredentials)
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	renderLogin(w, http.StatusOK, "", "")
+	status, message := consumeLoginFeedback(w, r)
+	renderLogin(w, status, message)
 }
 
 func randomToken() string {

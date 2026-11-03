@@ -12,6 +12,8 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
   const logStreamStatus = ref<'idle' | 'connected' | 'interrupted'>('idle')
   const lifecycle = createTaskLogStreamLifecycle()
   let pending: { binding: TaskDetailSession; promise: Promise<void> } | undefined
+  // 固定快照尚有后页时先补齐该快照；失败保留页游标，不能用增量跳过未读记录。
+  let nextPageCursor: string | undefined
   let disposed = false
 
   watch(session, () => {
@@ -19,6 +21,7 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
     pending = undefined
     logs.value = []
     logCursor.value = undefined
+    nextPageCursor = undefined
     logFailure.value = ''
     logsExpired.value = false
     logStreamStatus.value = 'idle'
@@ -36,25 +39,31 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
     const binding = session.value
     if (!binding || !accepts(binding)) return Promise.resolve()
     if (pending?.binding === binding) return pending.promise
-    const cursor = logCursor.value
     const promise = (async () => {
       try {
-        const page = await binding.api.getTaskLogs(binding.id, undefined, cursor)
-        if (!accepts(binding)) return
-        if (page.integrity === 'EXPIRED') {
-          logs.value = []
-          logCursor.value = undefined
-          logsExpired.value = true
+        const visited = new Set<string>()
+        do {
+          const pageCursor = nextPageCursor, reliableCursor = logCursor.value
+          if (pageCursor && visited.has(pageCursor)) throw new Error('日志分页游标未推进。')
+          if (pageCursor) visited.add(pageCursor)
+          const page = await binding.api.getTaskLogs(binding.id, pageCursor, pageCursor ? undefined : reliableCursor)
+          if (!accepts(binding)) return
+          if (page.integrity === 'EXPIRED') {
+            logs.value = []
+            logCursor.value = nextPageCursor = undefined
+            logsExpired.value = true
+            logFailure.value = ''
+            lifecycle.close()
+            logStreamStatus.value = 'idle'
+            return
+          }
+          logsExpired.value = false
+          appendLogs(page.items)
+          // 实时流可能已走到更晚游标；游标是不透明值，旧 HTTP 结果不能将它倒退。
+          if (logCursor.value === reliableCursor) logCursor.value = page.lastReliableCursor ?? logCursor.value
+          nextPageCursor = page.nextCursor
           logFailure.value = ''
-          lifecycle.close()
-          logStreamStatus.value = 'idle'
-          return
-        }
-        logsExpired.value = false
-        appendLogs(page.items)
-        // 实时流可能已走到更晚游标；游标是不透明值，旧 HTTP 结果不能将它倒退。
-        if (logCursor.value === cursor) logCursor.value = page.lastReliableCursor ?? logCursor.value
-        logFailure.value = ''
+        } while (nextPageCursor && accepts(binding))
         ensureLogStream()
       } catch (error) {
         if (accepts(binding)) { if (isTaskAuthorizationError(error)) onRestricted(); else logFailure.value = taskDetailErrorMessage(error, '日志暂时不可读取。') }
@@ -68,7 +77,7 @@ export function useTaskLogs(session: Readonly<Ref<TaskDetailSession | null>>, ex
 
   function ensureLogStream() {
     const binding = session.value
-    if (!binding || !accepts(binding) || logsExpired.value || lifecycle.active() || typeof document !== 'undefined' && document.visibilityState === 'hidden' || (execution.value?.state !== 'STARTING' && execution.value?.state !== 'RUNNING')) return
+    if (!binding || !accepts(binding) || nextPageCursor || logsExpired.value || lifecycle.active() || typeof document !== 'undefined' && document.visibilityState === 'hidden' || (execution.value?.state !== 'STARTING' && execution.value?.state !== 'RUNNING')) return
     try {
       const opened = lifecycle.open((onDisconnected, isCurrent) => binding.api.streamTaskLogs(binding.id, logCursor.value, (record, cursor) => {
         if (!accepts(binding) || !isCurrent()) return

@@ -179,7 +179,7 @@ AD-R09 补充以下固定操作，但不改变正式任务的 `ClaimExecution` �
 | `CompletePrecheck` | Agent → 控制面 | 返回结构化检查项、脱敏证据摘要和完整性 | 是；严格 `EXPORT_PREFLIGHT_COMPLETE` 信封，只提交按固定顺序的六项结果，不提交独立 `succeeded` |
 
 - 预检查只执行登记的数据库连接、对象存在/可读取、工具/Java、允许根目录、路径可写/非空和空间检查；`OBJECT_ACCESS` 对冻结的表使用固定 JDBC `DatabaseMetaData.getTables` 确认元数据可见，再以同一连接执行固定 `SELECT 1 FROM <安全引用的库或 Schema>.<安全引用的表> WHERE 1 = 0`，不读取业务行。视图、函数、存储过程、序列仅在 DDL 内容中活动，按冻结的对象类型分别由固定 JDBC 元数据接口精确核对名称；不对它们执行表的零行读取。驱动不提供所需元数据时结果为 UNKNOWN；即使名称来自目录，预检查仍独立核对。MySQL/Oracle 的命名空间位置和引用字符只能由冻结数据源的兼容模式决定，不能由浏览器或 Agent 自由输入 SQL。连接已建立后，对象不可见统一投影为 `FAILED/OBJECT_NOT_ACCESSIBLE`，不区分权限不足、对象不存在或不可见；只有连接中断、超时、探针运行时异常或安全转义无法确认时才投影为 `UNKNOWN/OBJECT_ACCESS_UNAVAILABLE`，且两者都不得携带 SQLState、错误号或异常原文；
-- 一次预检查在私有工作区只安装一次内嵌 JDBC 探针资产，并核对该资产的固定摘要。`SPECIFIED` 范围以固定 v5 帧一次传入全部冻结对象类型与名称，在一个 JVM 进程、一条 JDBC 连接中按顺序核对；表额外执行固定零行读取，五类对象只返回汇总三态，不返回对象名、SQL 或异常原文。`ALL` 范围仍使用数据库级连接探针。探针执行失败时 Agent 本机服务日志只记录固定阶段和错误类别，不记录 JDBC 输出、异常原文、连接输入或对象名；
+- 一次预检查在私有工作区只安装一次内嵌 JDBC 探针资产，并核对该资产的固定摘要。`SPECIFIED` 范围以固定 v5 帧一次传入全部冻结对象类型与名称，在一个 JVM 进程、一条 JDBC 连接中按顺序核对；表额外执行固定零行读取，按兼容模式的固定对象类型只返回汇总三态，不返回对象名、SQL 或异常原文。`ALL` 范围仍使用数据库级连接探针。探针执行失败时 Agent 本机服务日志只记录固定阶段和错误类别，不记录 JDBC 输出、异常原文、连接输入或对象名；
 - 2026-10-13 按用户确认调整依赖：租约确认后仍先完成当前输出类型的本机无秘密检查，但只有工具环境决定是否允许请求 `DATABASE_CONNECTION` 并启动固定 JDBC；路径、空性和空间不再阻断独立数据库检查。工具未通过时，数据库和对象均以 `UNKNOWN/PRECHECK_BLOCKED_BY_TOOL` 收口；连接未通过时对象以 `UNKNOWN/PRECHECK_BLOCKED_BY_DATABASE` 收口。`STORAGE_CONNECTIVITY` 独立于本机和数据库组，仍遵守已有探测授权；其未通过时认证以 `UNKNOWN/PRECHECK_BLOCKED_BY_STORAGE_CONNECTIVITY` 收口，且不得解析存储槽位；其通过后认证仍须冻结存储引用和探测器明确声明需要凭据。无法安全定位本地导出目录时，空性和空间检查使用 `UNKNOWN/PRECHECK_BLOCKED_BY_OUTPUT_PATH`，不会把越界路径交给文件系统探针。已执行但无法确认仍使用原 UNKNOWN 证据码。完成报告保持固定六项和契约顺序，任一非 PASSED 仍使整次预检查失败；
 - 不接受任意 SQL、Shell、自由命令、任意文件路径或 OBDUMPER 启动请求；
 - 预检查短租约由控制面时间控制，结果绑定 precheckId、lease/epoch、Agent、草稿 revision、配置指纹、credential revision 和节点事实版本；对象存储凭据探测还绑定可选的 storageCredentialId/revision，并将其纳入 bindingDigest；
@@ -563,7 +563,7 @@ Agent 在短暂网络中断时继续监管已启动进程并把事件写入本�
 | AS-R15 | 首条切片操作 | 不实现取消、自动重试、检查点继续和并行执行 | 已确认 |
 | AS-R16 | 基础设施 | SQLite 短事务承载领取/状态，不引入队列和调度中间件 | 已确认 |
 
-导出目录短租约的单类与 ALL 五类查询取消对象条数上限；固定 JDBC 探针逐项读取到结束。对象响应预算 16 MiB，完成回执预算 17 MiB，原超时及租约边界不变；超限/超时失败，不回传部分成功。DATABASE 目录仍最多 100 个名称，可标记截断；对象目录与每个分类必须 truncated=false，旧 Agent 的截断结果拒绝入库。单类 unavailable 仍表示该目录读取失败，不能当作空目录。
+导出目录短租约的单类与 ALL 完整分类查询（MySQL 五类、Oracle 十类）取消对象条数上限；固定 JDBC 探针逐项读取到结束。对象响应预算 16 MiB，完成回执预算 17 MiB，原超时及租约边界不变；超限/超时失败，不回传部分成功。DATABASE 目录仍最多 100 个名称，可标记截断；对象目录与每个分类必须 truncated=false，旧 Agent 的截断结果拒绝入库。单类 unavailable 仍表示该目录读取失败，不能当作空目录。
 
 ## 2026-10-13 预检查清单与固定上下文修订
 
@@ -572,3 +572,5 @@ Agent 在短暂网络中断时继续监管已启动进程并把事件写入本�
 机器上下文追加三个受限字面列表 `includeColumnNames/excludeColumnNames/partitions` 和 `resourceRequirement`（heapBytes/requiredBytes/totalBudgetBytes）。控制面只从生成器校验后的冻结配置与绑定事实派生，不传浏览器 SQL、where 或任意命令。Agent 保存不可变上下文副本，不持久化秘密；AUTH 与 WRITE 同步阶段各最多解析一次，离开阶段的令牌与重复阶段均不能再次解析。
 
 控制面和 Agent 必须协同升级：旧六项 Agent 回执被拒绝，不能降级清单。当前源码与合成验证不表示运行服务已替换。
+
+2026-11-02 Oracle 对象补齐：PACKAGE/TRIGGER/SYNONYM/PUBLIC_SYNONYM/TYPE 使用固定只读元数据查询与绑定输入；公共同义词限定 PUBLIC/__public 且 TABLE_OWNER 为当前 Schema。批量目录成功须含该模式完整分类，旧 Oracle 五类响应拒绝，单类无权/不可用保持失败关闭。v5/v7/v8 预检查帧只增加允许类型，不引入 SQL 输入，MySQL 接收 Oracle 类型在控制面、Agent 与探针均拒绝。包体/类型体及真实输出不据此提升，见[本轮证据](evidence/export-oracle-objects-2026-11-02.md)。

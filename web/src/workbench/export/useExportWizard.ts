@@ -11,7 +11,9 @@ import { useExportRecovery } from './useExportRecovery'
 // 只组装导出能力和页面导航；状态在各能力的唯一所有者内创建。
 export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'moveToStep'>) {
   const { route, router } = runtime
+  const submissionStepLocked = ref(false)
   const activeStep = computed(() => {
+    if (submissionStepLocked.value) return 5
     const value = Number(route.query.step ?? '1')
     return Number.isInteger(value) && value >= 1 && value <= 5 ? value : 1
   })
@@ -23,6 +25,7 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   const catalog = useExportCatalog({ ...form, ...references, activeStep, ...runtime })
   const lifecycle = useExportDraftLifecycle({ ...form, ...references, ...parameters, ...runtime, activeStep, moveToStep, hydrateDraft: (draft) => populateFormFromDraft({ ...form, ...catalog }, draft) })
   const recovery = useExportRecovery({ ...form, ...references, ...catalog, ...lifecycle, activeStep, ...runtime })
+  watch(lifecycle.submissionLocked, locked => { submissionStepLocked.value = locked }, { flush: 'sync' })
   const {
     canSubmit, currentDraft, attemptedStep, selectedSource,
     selectedNode, contentInputMessage, objectInputMessage, objectOptionsMessage, ordinaryFormat,
@@ -86,8 +89,13 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   // 第四步具名字段已有 Form.Item 反馈；只有无法归属字段的问题使用步骤级提示。
   const currentStepAlert = computed(() => {
     const result = parameters.draftValidation.value
+    // 第二步已有内容、数据库和结果集原位反馈；步骤提示只承接尚无字段反馈的阻断原因。
+    if (activeStep.value === 2 && selectedSource.value && selectedNode.value && (!form.contentKind.value || objectInputMessage.value && (scopeKind.value === 'QUERY_RESULT' || !database.value.trim()))) return ''
     return activeStep.value === 4 && !result.valid && result.field ? '' : currentStepError.value
   })
+  const showCurrentStepAlert = computed(() => attemptedStep.value === activeStep.value || activeStep.value === 2
+    && !!form.contentKind.value && !draftSessionLoading.value && !references.loadingSources.value && !references.loadingNodes.value
+    && !references.sourceLoadFailure.value && !references.nodeLoadFailure.value)
 
   watch(activeStep, () => { attemptedStep.value = 0; parameters.cancelSourceChange() })
 
@@ -101,6 +109,7 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
     : '例如 /var/ob-data-orch/exports/daily')
 
   function moveToStep(step: number) {
+    if (lifecycle.submissionLocked.value) return
     void router.replace({ query: { ...route.query, step: String(step) } })
   }
 
@@ -171,10 +180,10 @@ export function useExportWizard(runtime: Omit<ExportRuntime, 'activeStep' | 'mov
   }
 
   const draftSessionLoading = computed(() => initializing.value || lifecycle.loadingDraft.value)
-  const canSaveDraft = computed(() => !!references.selectedSource.value && !draftRouteInvalid.value && !draftSessionLoading.value && !lifecycle.creatingDraft.value && !lifecycle.submitting.value && !lifecycle.startingPrecheck.value && !lifecycle.precheckRunning.value && !lifecycle.previewingCommand.value && !lifecycle.draftLoadFailure.value)
+  const canSaveDraft = computed(() => !!references.selectedSource.value && !draftRouteInvalid.value && !draftSessionLoading.value && !lifecycle.creatingDraft.value && !lifecycle.submissionLocked.value && !lifecycle.startingPrecheck.value && !lifecycle.precheckRunning.value && !lifecycle.previewingCommand.value && !lifecycle.draftLoadFailure.value)
   return {
     ...form, ...references, ...parameters, ...catalog, ...lifecycle, ...runtime, activeStep, titles,
-    canAdvance, stepProgressPercent, completedSteps, footerLabel, currentStepError, currentStepAlert, fieldError, validationAttempt, draftRouteInvalid, draftSessionLoading, canSaveDraft,
+    canAdvance, stepProgressPercent, completedSteps, footerLabel, currentStepError, currentStepAlert, showCurrentStepAlert, fieldError, validationAttempt, draftRouteInvalid, draftSessionLoading, canSaveDraft,
     outputPathPlaceholder, moveToStep, previousStep, nextStep,
   }
 }

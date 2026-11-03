@@ -17,7 +17,10 @@ async function choose(page: Page, label: string, collapsed: boolean) {
     await expect(submenu(page).getByRole('menuitem')).toHaveCount(3)
     await submenu(page).getByRole('menuitem', { name: label, exact: true }).click()
     await expect(submenu(page)).toHaveCount(0)
-  } else await group(page).getByRole('link', { name: label, exact: true }).click()
+  } else {
+    if (await trigger(page).getAttribute('aria-expanded') === 'false') await trigger(page).click()
+    await group(page).getByRole('link', { name: label, exact: true }).click()
+  }
 }
 
 for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 1024 }, { width: 1280, height: 720 }]) {
@@ -27,8 +30,13 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
     await page.setViewportSize(viewport)
     await prepare(page)
+    await page.goto('/data-sources?uiFixture=data-sources')
+    await expect(page.getByRole('heading', { name: '数据源管理', exact: true })).toBeVisible()
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
+    await expect(group(page).getByRole('link')).toHaveCount(0)
+    await page.screenshot({ path: info.outputPath(`system-default-collapsed-${viewport.width}.png`), fullPage: false })
     await page.goto('/settings/access-control')
-    await expect(page).toHaveTitle(/OB Data Orch/)
+    await expect(page).toHaveTitle(/LDP/)
     await expect(page.getByRole('heading', { name: '权限配置', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: '返回系统设置', exact: true })).toHaveCount(0)
     const collapsed = viewport.width === 1280
@@ -43,6 +51,10 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
       await expect(trigger(page)).toBeFocused()
       await expect(page.locator('.ant-dropdown:visible')).toHaveCount(0)
     } else {
+      await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
+      await expect(trigger(page)).toHaveClass(/nav-section-current/)
+      await expect(group(page).getByRole('link')).toHaveCount(0)
+      await trigger(page).click()
       await expect(group(page).getByRole('link')).toHaveCount(3)
       await expect(group(page).locator('[aria-current="page"]')).toHaveCount(1)
       await trigger(page).click()
@@ -60,7 +72,8 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
     }
     await page.reload()
     await expect(page.getByRole('heading', { name: '权限配置', exact: true })).toBeVisible()
-    await expect(trigger(page)).toHaveAttribute('aria-expanded', String(!collapsed))
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
+    if (!collapsed) await expect(trigger(page)).toHaveClass(/nav-section-current/)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await expect(page.locator('vite-error-overlay')).toHaveCount(0)
     expect(errors).toEqual([])
@@ -73,6 +86,9 @@ test('系统管理键盘路径与布局变化撤销旧弹层', async ({ page }) 
   await page.setViewportSize({ width: 1440, height: 1024 })
   await page.goto('/settings/access-control')
   await trigger(page).focus()
+  await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
+  await page.keyboard.press('Space')
+  await expect(trigger(page)).toHaveAttribute('aria-expanded', 'true')
   await page.keyboard.press('Space')
   await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
   await page.keyboard.press('ArrowRight')
@@ -109,6 +125,9 @@ test('移动导航内保留系统管理层级，子页面切换关闭导航', as
   await page.goto('/settings/access-control')
   await page.getByRole('button', { name: '打开导航', exact: true }).click()
   await expect(group(page)).toBeVisible()
+  await expect(trigger(page)).toBeFocused()
+  await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false')
+  await page.keyboard.press('ArrowRight')
   await expect(group(page).getByRole('link', { name: '权限配置', exact: true })).toBeFocused()
   await page.screenshot({ path: info.outputPath('system-navigation-mobile.png'), fullPage: false })
   await group(page).getByRole('link', { name: '存储凭据', exact: true }).click()

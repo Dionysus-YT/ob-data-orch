@@ -1,6 +1,6 @@
 import { type ExportContentKind, type ExportScopeKind, type ExportObjectType } from '@/api/browser'
 import { watch, nextTick, onScopeDispose } from 'vue'
-import { objectCategories } from './exportPresentation'
+import { objectCategories, createObjectTypeMap } from './exportPresentation'
 import type { ExportForm } from './exportForm'
 import type { ExportReferences } from './useExportReferences'
 import type { ExportRuntime } from './exportRuntime'
@@ -93,13 +93,7 @@ export function useExportRecovery(deps: Pick<ExportForm, 'selectedDataSourceID' 
         querySql: scopeKind.value === 'QUERY_RESULT' ? querySql.value : undefined,
         queryResultLimit: scopeKind.value === 'QUERY_RESULT' ? queryResultLimit.value : undefined,
         objectType: objectType.value,
-        selectedObjects: {
-          TABLE: [...selectedObjectsByType.TABLE],
-          VIEW: [...selectedObjectsByType.VIEW],
-          FUNCTION: [...selectedObjectsByType.FUNCTION],
-          PROCEDURE: [...selectedObjectsByType.PROCEDURE],
-          SEQUENCE: [...selectedObjectsByType.SEQUENCE],
-        },
+        selectedObjects: createObjectTypeMap((type) => [...selectedObjectsByType[type]]),
       } satisfies Step2Recovery
     }
     try { window.history.replaceState(state, '') } catch { /* 浏览器拒绝保存大型选择时，当前表单仍可继续使用。 */ }

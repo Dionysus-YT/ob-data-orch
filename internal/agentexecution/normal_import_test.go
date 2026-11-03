@@ -12,7 +12,6 @@ import (
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/logstream"
-	"ob-data-orch/internal/outputpath"
 )
 
 func normalImportTestInput(t *testing.T) (*importfiles.ExecutionInput, []string) {
@@ -59,7 +58,7 @@ func Test普通导入严格布尔值与冻结配置一致(t *testing.T) {
 
 func Test普通导入启动前复核输入变化(t *testing.T) {
 	input, argv := normalImportTestInput(t)
-	worker := &Worker{Runtime: Runtime{TargetPlatform: outputpath.PlatformWindowsAMD64, AllowedRoots: []string{input.Config.FilePath}}}
+	worker := &Worker{Runtime: Runtime{TargetPlatform: testNativePlatform(input.Config.FilePath), AllowedRoots: []string{input.Config.FilePath}}}
 	grant := agentwire.ExecutionGrant{NormalImport: input, Argv: argv, ExpiresAt: time.Now().Add(time.Minute)}
 	if _, ok := worker.normalImportPaths(context.Background(), grant); !ok {
 		t.Fatal("原生输入被拒绝")

@@ -1,11 +1,14 @@
 /* P0 Product Shell：固定品牌栏、200px 导航与 48px 图标轨。 */
 .enterprise-shell { display: block; min-height: 100dvh; background: var(--ob-color-page); color: var(--ob-color-text); font: var(--ob-component-control-font-size)/var(--ob-component-control-line-height) var(--ob-foundation-font-ui); }
 .product-header { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: var(--ob-foundation-space-4); width: 100%; height: var(--ob-product-shell-header-height); padding-inline: var(--ob-foundation-space-6); border-bottom: 1px solid var(--ob-foundation-header-divider); background: var(--ob-product-navigation-background); }
-.product-header-brand { flex: none; color: var(--ob-color-form-text); font-size: var(--ob-product-shell-brand-size); font-weight: var(--ob-product-typography-weight); text-decoration: none; white-space: nowrap; }
+.product-header-brand { display: inline-flex; flex: none; align-items: center; gap: var(--ob-foundation-space-2); color: var(--ob-color-form-text); font-size: var(--ob-product-shell-brand-size); font-weight: var(--ob-product-typography-weight); text-decoration: none; white-space: nowrap; }
+.product-header-mark { flex: none; inline-size: var(--ob-component-action-icon-size); block-size: var(--ob-component-action-icon-size); object-fit: contain; }
 .topbar-actions { display: flex; align-items: center; gap: var(--ob-foundation-space-4); margin-left: auto; color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-helper-size); }
 .topbar-divider { width: 1px; height: 18px; margin-inline: var(--ob-foundation-space-1); background: var(--ob-color-border); }
-.enterprise-account { display: flex; align-items: center; gap: var(--ob-foundation-space-2); color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-label-size); text-decoration: none; }
+.enterprise-account { display: flex; align-items: center; gap: var(--ob-foundation-space-2); min-width: 0; color: var(--ob-color-form-secondary); font-size: var(--ob-component-field-label-size); }
+.enterprise-account-name { max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .enterprise-account:hover { color: var(--ob-color-primary); }
+.account-password-body { display: grid; gap: var(--ob-foundation-space-4); }
 .side-nav { position: fixed; inset: var(--ob-product-shell-header-height) auto 0 0; z-index: 40; display: flex; flex-direction: column; width: var(--ob-product-shell-current-navigation-width); padding: 14px 0 var(--ob-foundation-space-4) 14px; background: var(--ob-product-navigation-background); }
 .side-nav > nav { display: block; min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; padding: var(--ob-foundation-space-3) 0 var(--ob-foundation-space-2); }
 .nav-group { min-width: 0; margin: 0; padding-bottom: var(--ob-foundation-space-3); }
@@ -46,7 +49,7 @@
 @media (max-width: 480px) {
   .product-header { padding-inline: var(--ob-foundation-space-4); }
   .topbar-actions { gap: var(--ob-foundation-space-2); }
-  .enterprise-account span { display: none; }
+  .enterprise-account-name { max-width: 5em; }
   .side-nav { width: min(280px, 85vw); visibility: hidden; transform: translateX(-100%); }
   .navigation-open .side-nav { visibility: visible; transform: none; }
   .side-nav > nav { padding: var(--ob-foundation-space-4); }

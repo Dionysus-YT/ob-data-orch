@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,17 @@ import (
 func TestAgentEnrollmentAndHeartbeatOverTLS(t *testing.T) {
 	metadata, _ := openSyntheticStore(t)
 	ctx := context.Background()
+	operatingSystem, architecture := strings.ToUpper(runtime.GOOS), strings.ToUpper(runtime.GOARCH)
+	platform := operatingSystem + "_" + architecture
+	toolHome, javaPath, allowedRoot, updatedToolHome := "/synthetic/ob-loader-dumper", "/synthetic/java8/bin/java", "/synthetic/exports", "/synthetic/updated-tool"
+	// Agent 以本机路径语义验证配置；合成节点、心跳和后续配置更新必须绑定同一受支持平台。
+	switch platform {
+	case "WINDOWS_AMD64":
+		toolHome, javaPath, allowedRoot, updatedToolHome = `E:\synthetic\ob-loader-dumper`, `C:\synthetic\java8\bin\java.exe`, `E:\synthetic\exports`, `E:\synthetic\updated-tool`
+	case "LINUX_AMD64", "LINUX_ARM64":
+	default:
+		t.Fatalf("TLS 关联集成夹具不支持运行平台 %s", platform)
+	}
 	if err := metadata.EnsureAuthSubject(ctx, store.AuthSubject{
 		SubjectID: "node-admin", ExternalSubject: "synthetic-node-admin", DisplayName: "Synthetic Node Admin", AccountStatus: "ACTIVE",
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -34,7 +46,7 @@ func TestAgentEnrollmentAndHeartbeatOverTLS(t *testing.T) {
 	}
 	if _, err := metadata.CreateExecutionNode(ctx, store.ExecutionNodeCreate{
 		NodeID: "node-agent-tls", CreatorSubjectID: "node-admin", DisplayName: "Synthetic TLS Node", NormalizedName: "synthetic tls node",
-		Platform: "WINDOWS_AMD64", ToolHome: `E:\synthetic\ob-loader-dumper`, JavaPath: `C:\synthetic\java8\bin\java.exe`, AllowedRoots: []string{`E:\synthetic\exports`}, RequestID: "node-agent-tls-create",
+		Platform: platform, ToolHome: toolHome, JavaPath: javaPath, AllowedRoots: []string{allowedRoot}, RequestID: "node-agent-tls-create",
 		IdempotencyKey: "node-agent-tls-create-idempotency", RequestDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("CreateExecutionNode() error = %v", err)
@@ -90,14 +102,14 @@ func TestAgentEnrollmentAndHeartbeatOverTLS(t *testing.T) {
 	now := time.Now().UTC()
 	result, err := state.SendHeartbeat(ctx, agentwire.Heartbeat{
 		BootID: "synthetic-tls-boot", SentAt: now,
-		Facts: agentwire.EnvironmentFacts{OperatingSystem: "WINDOWS", Architecture: "AMD64", AgentVersion: "synthetic-agent-v1", ObservedAt: now, CapacityTotal: 1, CapacityUsed: 0},
+		Facts: agentwire.EnvironmentFacts{OperatingSystem: operatingSystem, Architecture: architecture, AgentVersion: "synthetic-agent-v1", ObservedAt: now, CapacityTotal: 1, CapacityUsed: 0},
 	})
 	if err != nil || result.FactsRevision != 1 {
 		t.Fatalf("SendHeartbeat() = %#v, %v", result, err)
 	}
 	node, err := metadata.GetExecutionNode(ctx, "node-agent-tls")
 	if err != nil || node.Agent == nil || node.Agent.AgentID == "" || node.Agent.FactsRevision != 1 || node.Agent.BootID != "synthetic-tls-boot" ||
-		node.Agent.EnvironmentFacts.OperatingSystem != "WINDOWS" || node.Agent.EnvironmentFacts.Architecture != "AMD64" || node.Agent.EnvironmentFacts.AgentVersion != "synthetic-agent-v1" || !node.Agent.EnvironmentFacts.ObservedAt.Equal(now) ||
+		node.Agent.EnvironmentFacts.OperatingSystem != operatingSystem || node.Agent.EnvironmentFacts.Architecture != architecture || node.Agent.EnvironmentFacts.AgentVersion != "synthetic-agent-v1" || !node.Agent.EnvironmentFacts.ObservedAt.Equal(now) ||
 		node.Agent.EnvironmentFacts.CPUUsagePercent != nil || node.Agent.EnvironmentFacts.MemoryUsagePercent != nil || len(node.Agent.EnvironmentFacts.DataRootUsages) != 0 {
 		t.Fatalf("GetExecutionNode() = %#v, %v", node, err)
 	}
@@ -109,7 +121,7 @@ func TestAgentEnrollmentAndHeartbeatOverTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := metadata.UpdateExecutionNode(ctx, store.ExecutionNodeUpdate{NodeID: node.NodeID, ActorSubjectID: "node-admin", ExpectedRevision: node.Revision, DisplayName: node.DisplayName, NormalizedName: "synthetic tls node", Platform: node.Platform, AllowedRoots: node.AllowedRoots, ToolHome: `E:\synthetic\updated-tool`, JavaPath: node.JavaPath, RequestID: "configuration-update", UpdatedAt: time.Now().UTC()}); err != nil {
+	if _, err := metadata.UpdateExecutionNode(ctx, store.ExecutionNodeUpdate{NodeID: node.NodeID, ActorSubjectID: "node-admin", ExpectedRevision: node.Revision, DisplayName: node.DisplayName, NormalizedName: "synthetic tls node", Platform: node.Platform, AllowedRoots: node.AllowedRoots, ToolHome: updatedToolHome, JavaPath: node.JavaPath, RequestID: "configuration-update", UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	release := state.HoldRuntimeConfiguration()
@@ -125,7 +137,7 @@ func TestAgentEnrollmentAndHeartbeatOverTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated, err := state.RuntimeConfiguration()
-	if err != nil || updated.ToolHome != `E:\synthetic\updated-tool` || updated.Digest == configuration.Digest {
+	if err != nil || updated.ToolHome != updatedToolHome || updated.Digest == configuration.Digest {
 		t.Fatal("空闲后配置未应用")
 	}
 	current, err := state.AgentIdentity()

@@ -4,7 +4,8 @@ import { managementTheme } from '@/platform/theme'
 import type { TableColumnsType } from 'ant-design-vue'
 import type { ColumnType } from 'ant-design-vue/es/table'
 
-// 领域层提供已授权的一页事实；产品表格禁止客户端分页、排序或过滤来重解释服务端范围。
+// 领域层提供当前授权范围的一页事实；表格自身不分页、排序或过滤。
+// 完整摘要快照的本地浏览由明确允许该能力的业务所有者负责，不把服务端的一页重解释为全集。
 defineProps<{ rows: readonly T[]; columns: TableColumnsType<T>; label: string; rowKey: string; selectedKey?: string | null; loading?: boolean; minimumWidth?: number }>()
 defineSlots<{ bodyCell(props: { record: T; column: ColumnType<T>; index: number }): unknown; empty(): unknown }>()
 </script>

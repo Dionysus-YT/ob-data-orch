@@ -1,5 +1,9 @@
 # 参数元数据与确定性命令生成契约
 
+> 2026-11-02 Oracle 对象使用独立 v13（84 项），继承 v12，新增 --package / --trigger / --synonym / --public-synonym / --type，均只随 --ddl 和现役四个 DDL 能力发射。历史资源不可变，不增加包体/类型体或自由参数；公共同义词独立参数已离线核对固定 4.3.5 ObjectTypes 注解。服务端按数据源模式复验，Agent 按冻结类型核对元数据，详见[通用契约](export-general-contract.md#2026-11-02-oracle-指定对象补齐)与[验证证据](evidence/export-oracle-objects-2026-11-02.md)。
+
+> 2026-10-28 旁路目录完整性修复：`obloader-4.3.5-direct-v1` 按 Git 保存的 LF 字节冻结 SHA-256，加载时仅将 CRLF 规范化为 LF，再验证摘要。参数语义、103 项定义、版本和历史快照均不改写；额外空白、孤立 CR 或内容变化仍失败关闭。覆盖 Git 原始 blob、LF/CRLF 等价和篡改拒绝的隔离验证见[整体审查修复记录](evidence/project-review-fixes-2026-10-28.md)。
+
 > 2026-10-27 MySQL 保留 Schema 使用新不可变 v12 的显式 compact-schema 布尔语法；旧版本及冻结任务不改变。规则见[本次修订](#2026-10-27-v12-结构策略布尔值)，实际工具证据见[前缀修复验收](evidence/export-retain-schema-2026-10-26.md)。
 
 > 2026-10-24 工具与兼容只读状态使用命令生成器同源的实际目录，区分导出按配置选择、v6/v8 历史重放和普通/旁路固定目录。读取不改变参数资源、生成规则或快照，不宣称全平台单一活动元数据，也不提供目录激活；现役事实与边界见[工具与兼容契约](tool-compatibility-contract.md)。

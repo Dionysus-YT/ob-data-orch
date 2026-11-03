@@ -27,6 +27,8 @@ const SubjectID = "local-mvp-owner"
 
 // Settings 是安装后持久保留的部署配置，密码只保存带盐的派生校验值。
 type Settings struct {
+	// settingsPath 只绑定本次启动读取的配置，不接受浏览器指定持久化位置。
+	settingsPath         string
 	PublicURL            string `json:"publicUrl"`
 	ListenAddress        string `json:"listenAddress"`
 	PasswordSalt         []byte `json:"passwordSalt"`
@@ -54,6 +56,7 @@ func OpenSettings(directory string, input io.Reader, output io.Writer) (Settings
 		if json.Unmarshal(content, &settings) != nil || validateSettings(settings) != nil {
 			return Settings{}, errors.New("安装配置无效，请恢复 settings.json，不要删除身份目录")
 		}
+		settings.settingsPath = path
 		return settings, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -111,6 +114,7 @@ func OpenSettings(directory string, input io.Reader, output io.Writer) (Settings
 	if closeErr != nil {
 		return Settings{}, closeErr
 	}
+	settings.settingsPath = path
 	return settings, nil
 }
 

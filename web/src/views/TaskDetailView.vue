@@ -123,12 +123,12 @@ watch([() => logs.value.length, activeTab], async () => { await nextTick(); if (
                 <ADescriptionsItem label="结果结论">{{ taskResultText(result, remoteResult, overview.type) }}</ADescriptionsItem>
                 <template v-if="normalImport"><ADescriptionsItem label="退出码">{{ execution?.exitCode ?? '—' }}</ADescriptionsItem><ADescriptionsItem label="load.ckpt">尚无可靠证据</ADescriptionsItem></template>
                 <template v-else-if="directLoad"><ADescriptionsItem label="退出码">{{ execution?.exitCode ?? '—' }}</ADescriptionsItem><ADescriptionsItem label="恢复能力">旁路不支持检查点恢复</ADescriptionsItem></template>
-                <template v-else><ADescriptionsItem label="文件数">{{ result && !remoteResult ? result.fileCount : '—' }}</ADescriptionsItem><ADescriptionsItem label="字节数">{{ result && !remoteResult ? formatBytes(result.totalBytes) : '—' }}</ADescriptionsItem><ADescriptionsItem label="dump.ckpt">{{ result ? result.checkpointPresent ? '存在' : '不存在' : '—' }}</ADescriptionsItem></template>
+                <template v-else><ADescriptionsItem label="文件数">{{ result && !remoteResult ? result.fileCount ?? '—' : '—' }}</ADescriptionsItem><ADescriptionsItem label="字节数">{{ result && !remoteResult && result.totalBytes !== null ? formatBytes(result.totalBytes) : '—' }}</ADescriptionsItem><ADescriptionsItem label="dump.ckpt">{{ result ? result.checkpointPresent ? '存在' : '不存在' : '—' }}</ADescriptionsItem></template>
                 <ADescriptionsItem label="观察时间">{{ dateTime(result?.observedAt) }}</ADescriptionsItem>
               </ADescriptions>
               <p v-if="normalImport" class="task-section-note">完成证据不代表目标数据库内容已逐行核验；检查点恢复尚未开放。</p>
               <p v-else-if="directLoad" class="task-section-note">旁路结果须结合独立提交与工具完成证据核验；不会生成导出文件或 load.ckpt。</p>
-              <template v-if="!normalImport && !directLoad && result?.files.length && !remoteResult"><AButton type="link" :aria-expanded="filesExpanded" @click="filesExpanded = !filesExpanded">{{ filesExpanded ? '收起文件清单' : `展开文件清单（${result.files.length}）` }}</AButton><ul v-if="filesExpanded" class="task-result-files"><li v-for="file in result.files" :key="file.path"><code>{{ file.path }}</code><span>{{ formatBytes(file.size) }}</span></li></ul></template>
+              <template v-if="!normalImport && !directLoad && result?.files?.length && !remoteResult"><AButton type="link" :aria-expanded="filesExpanded" @click="filesExpanded = !filesExpanded">{{ filesExpanded ? '收起文件清单' : `展开文件清单（${result.files.length}）` }}</AButton><ul v-if="filesExpanded" class="task-result-files"><li v-for="file in result.files" :key="file.path"><code>{{ file.path }}</code><span>{{ formatBytes(file.size) }}</span></li></ul></template>
             </template>
           </ATabPane>
           <ATabPane key="snapshot" tab="配置快照">

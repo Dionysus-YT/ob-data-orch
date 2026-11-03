@@ -29,9 +29,13 @@ func Test真实Agent队列在持续不可达后按序重放(t *testing.T) {
 	if err := uploader.append(受控测试日志(1)); err != nil {
 		t.Fatalf("首批日志入队失败: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	if err := uploader.append(受控测试日志(2)); err != nil {
 		t.Fatalf("第二批日志入队失败: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	if err := flushQueuedLogs(context.Background(), queue, fixture.store, "boot-fixture", ""); err == nil {
 		t.Fatal("持续不可达不能被当作控制面确认")
 	}
@@ -67,6 +71,8 @@ func Test真实Agent队列对重复确认按幂等重放且拒绝错位回执(t 
 	if err := uploader.append(受控测试日志(1)); err != nil {
 		t.Fatalf("响应丢失时不应阻断已持久化日志接收: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	待确认批次(t, queue, 1)
 	fixture.设置模式(日志错位确认)
 	if err := flushQueuedLogs(context.Background(), queue, fixture.store, "boot-fixture", ""); !errors.Is(err, agentwire.ErrProtocolRejected) {
@@ -106,9 +112,13 @@ func Test真实Agent队列达到缩小上限时保留先前批次并失败关闭
 	if err := uploader.append(受控测试日志(1)); err != nil {
 		t.Fatalf("首批日志入队失败: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	if err := uploader.append(受控测试日志(2)); err != nil {
 		t.Fatalf("队列达到缩小上限后持久化无正文缺口失败: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	items, err := queue.PendingItems()
 	if err != nil || len(items) != 2 || items[0].Entry == nil || items[1].Gap == nil || items[1].Gap.Gap.ReasonCode != "LOCAL_SPOOL_LIMIT" {
 		t.Fatalf("容量失败后未保留批次和无正文缺口: %#v, error=%v", items, err)
@@ -117,9 +127,14 @@ func Test真实Agent队列达到缩小上限时保留先前批次并失败关闭
 		t.Fatalf("容量失败后不应上传未入队的次批: %d", fixture.不可达请求数())
 	}
 	fixture.设置模式(日志正常确认)
+	if err := uploader.flush(context.Background()); err != nil {
+		t.Fatal("容量恢复前必须先确认旧批次和缺口", err)
+	}
 	if err := uploader.append(受控测试日志(3)); err != nil {
 		t.Fatalf("控制面恢复后继续接收日志失败: %v", err)
 	}
+	// 采集与网络发送已解耦，显式驱动一次发送以验证既有回执与重放负例。
+	_ = uploader.flush(context.Background())
 	待确认批次(t, queue, 0)
 	if got := fixture.确认顺序(); strings.Join(got, ",") != "LOG:1,GAP:2,LOG:3" {
 		t.Fatalf("恢复后未按来源序号先确认缺口: %v", got)

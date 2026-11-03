@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -107,14 +108,43 @@ func TestRunWithContext在本机TLS控制面完成Agent关联和心跳(t *testin
 	if node.Agent == nil || node.Agent.AgentID == "" || node.Agent.FactsRevision != 1 {
 		t.Fatal("控制面未保存已关联 Agent 的首次心跳事实")
 	}
-	if node.Agent.EnvironmentFacts.OperatingSystem != "WINDOWS" || node.Agent.EnvironmentFacts.Architecture != "AMD64" || node.Agent.CapacityTotal != 1 || node.Agent.CapacityUsed != 0 {
+	_, operatingSystem, architecture := localTLSPlatform(t)
+	if node.Agent.EnvironmentFacts.OperatingSystem != operatingSystem || node.Agent.EnvironmentFacts.Architecture != architecture || node.Agent.CapacityTotal != 1 || node.Agent.CapacityUsed != 0 {
 		t.Fatal("控制面保存的 Agent 心跳事实不符合本机单次关联预期")
+	}
+}
+
+func localTLSPlatform(t *testing.T) (platform, operatingSystem, architecture string) {
+	t.Helper()
+	// 关联夹具必须与真实运行测试的 Agent 平台一致，且只覆盖项目支持的目标。
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "windows/amd64":
+		return "WINDOWS_AMD64", "WINDOWS", "AMD64"
+	case "linux/amd64":
+		return "LINUX_AMD64", "LINUX", "AMD64"
+	case "linux/arm64":
+		return "LINUX_ARM64", "LINUX", "ARM64"
+	default:
+		t.Fatalf("本机 TLS 关联夹具不支持运行平台 %s/%s", runtime.GOOS, runtime.GOARCH)
+		return "", "", ""
 	}
 }
 
 func createLocalTLSExecutionNode(t *testing.T, ctx context.Context, server *httptest.Server) string {
 	t.Helper()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/execution-nodes", bytes.NewBufferString(`{"displayName":"Local TLS Node","platform":"WINDOWS_AMD64","allowedRoots":["E:\\synthetic\\exports"],"toolHome":"E:\\synthetic\\ob-loader-dumper-4.3.5","javaPath":"C:\\synthetic\\java\\bin\\java.exe"}`))
+	platform, operatingSystem, _ := localTLSPlatform(t)
+	allowedRoot, toolHome, javaPath := "/synthetic/exports", "/synthetic/ob-loader-dumper-4.3.5", "/synthetic/java/bin/java"
+	if operatingSystem == "WINDOWS" {
+		allowedRoot, toolHome, javaPath = `E:\synthetic\exports`, `E:\synthetic\ob-loader-dumper-4.3.5`, `C:\synthetic\java\bin\java.exe`
+	}
+	body, err := json.Marshal(map[string]any{
+		"displayName": "Local TLS Node", "platform": platform,
+		"allowedRoots": []string{allowedRoot}, "toolHome": toolHome, "javaPath": javaPath,
+	})
+	if err != nil {
+		t.Fatalf("编码合成节点请求失败: %v", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/execution-nodes", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("创建节点请求失败: %v", err)
 	}

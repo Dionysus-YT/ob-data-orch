@@ -59,6 +59,8 @@ try {
     }
     & $java -cp $testClasspath com.obdataorch.jdbcprobe.ConnectionProbeObjectCatalogTest
     if ($LASTEXITCODE -ne 0) { throw "JDBC 大对象目录测试失败" }
+    & $java -cp $testClasspath com.obdataorch.jdbcprobe.OracleObjectMetadataTest
+    if ($LASTEXITCODE -ne 0) { throw "JDBC Oracle 对象目录与精确检查测试失败" }
     & $java -cp $testClasspath com.obdataorch.jdbcprobe.ParameterPreflightTest
     if ($LASTEXITCODE -ne 0) { throw "JDBC 参数前置条件测试失败" }
     & $java -cp $testClasspath com.obdataorch.jdbcprobe.SelectionPreflightTest

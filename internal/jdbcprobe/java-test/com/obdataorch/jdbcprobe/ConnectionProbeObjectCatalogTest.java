@@ -12,16 +12,17 @@ import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
-/** 使用合成 JDBC 接口验证单类及五类大目录，不访问数据库或加载驱动。 */
+/** 使用合成 JDBC 接口验证单类及各模式完整分类大目录，不访问数据库或加载驱动。 */
 public final class ConnectionProbeObjectCatalogTest {
     private static final int COUNT = 10000;
     private static final String[] TYPES = { "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE" };
 
     public static void main(String[] args) throws Exception {
         for (String mode : new String[] { "MYSQL", "ORACLE" }) {
-            for (String type : TYPES) verify(query(mode, type), type, false);
+            String[] types = "ORACLE".equals(mode) ? new String[] { "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "PACKAGE", "TRIGGER", "SYNONYM", "PUBLIC_SYNONYM", "TYPE", "SEQUENCE" } : TYPES;
+            for (String type : types) verify(query(mode, type), type, false);
             String combined = query(mode, "ALL");
-            for (String type : TYPES) verify(combined, type, true);
+            for (String type : types) verify(combined, type, true);
         }
         verifyBudget();
     }
@@ -64,8 +65,10 @@ public final class ConnectionProbeObjectCatalogTest {
                 new Class<?>[] { DatabaseMetaData.class }, (proxy, method, args) -> {
                     if ("getSearchStringEscape".equals(method.getName())) return "\\";
                     if ("getTables".equals(method.getName())) return rows(((String[]) args[3])[0]);
-                    if ("getFunctions".equals(method.getName())) return rows("FUNCTION");
-                    if ("getProcedures".equals(method.getName())) return rows("PROCEDURE");
+                    if ("getFunctions".equals(method.getName()) || "getProcedures".equals(method.getName())) {
+                        if ("ORACLE".equals(mode)) throw new AssertionError("Oracle 例程仍依赖驱动 LIKE 和混合过程目录");
+                        return rows("getFunctions".equals(method.getName()) ? "FUNCTION" : "PROCEDURE");
+                    }
                     throw new AssertionError("未授权元数据方法：" + method.getName());
                 });
         Connection connection = (Connection) Proxy.newProxyInstance(ConnectionProbeObjectCatalogTest.class.getClassLoader(),
@@ -73,10 +76,15 @@ public final class ConnectionProbeObjectCatalogTest {
                     if ("getMetaData".equals(method.getName())) return metadata;
                     if (!"prepareStatement".equals(method.getName())) throw new AssertionError("未授权连接方法");
                     String sql = (String) args[0];
-                    if (!sql.contains("SEQUENCES") || !sql.contains("?")) throw new AssertionError("序列查询未绑定数据库");
+                    if (!sql.contains("?")) throw new AssertionError("对象查询未绑定数据库");
+                    String resultType = sql.contains("SEQUENCES") ? "SEQUENCE" : sql.contains("'PACKAGE'") ? "PACKAGE"
+                            : sql.contains("'TYPE'") ? "TYPE" : sql.contains("'FUNCTION'") ? "FUNCTION"
+                            : sql.contains("'PROCEDURE'") ? "PROCEDURE" : sql.contains("ALL_TRIGGERS") ? "TRIGGER"
+                            : sql.contains("TABLE_OWNER") ? "PUBLIC_SYNONYM" : "SYNONYM";
                     return Proxy.newProxyInstance(ConnectionProbeObjectCatalogTest.class.getClassLoader(), new Class<?>[] { PreparedStatement.class },
                             (statement, operation, values) -> {
-                                if ("executeQuery".equals(operation.getName())) return rows("SEQUENCE");
+                                if ("executeQuery".equals(operation.getName())) return rows(resultType);
+                                if ("setString".equals(operation.getName()) && (!Integer.valueOf(1).equals(values[0]) || !"synthetic_db".equals(values[1]))) throw new AssertionError("Schema 绑定不正确");
                                 if ("setString".equals(operation.getName()) || "setQueryTimeout".equals(operation.getName()) || "close".equals(operation.getName())) return null;
                                 throw new AssertionError("未授权语句方法");
                             });

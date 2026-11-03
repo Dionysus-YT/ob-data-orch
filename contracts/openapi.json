@@ -1037,8 +1037,14 @@
         ],
         "description": "仅隔离依赖可验证冻结提交。默认返回 NORMAL_IMPORT_EXECUTION_GATED；尚无真实 OBLOADER 执行与 load.ckpt 恢复，不能进入导出 Worker。",
         "responses": {
+          "200": {
+            "description": "当前授权下重放原提交任务标识与 replayed=true"
+          },
           "201": {
             "description": "隔离冻结任务标识"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -1199,6 +1205,7 @@
     "/api/v1/session": {
       "get": {
         "operationId": "getSession",
+        "description": "现役部署认证适配器返回当前已认证登录名；固定 admin 来自服务端，不从主体 ID 或客户端参数推导。禁止缓存。",
         "tags": [
           "Session"
         ],
@@ -1209,11 +1216,54 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Ok"
+            "description": "当前登录名，不包含会话令牌、密码或授权配置。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["username"],
+                  "properties": { "username": { "type": "string", "minLength": 1, "maxLength": 256 } }
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/api/v1/session/password": {
+      "post": {
+        "operationId": "changeCurrentPassword",
+        "tags": ["Session"],
+        "description": "仅修改当前固定 admin 的登录密码。复验有效会话、同源、CSRF 与当前密码；旧密码尝试与登录共享每分钟 12 次限额。新密码须为 8 至 256 UTF-8 字节且与旧密码不同。持久化成功后撤销全部浏览器会话并清除 Cookie，Agent 身份不变。持久化失败不切换内存凭据；结果未知不得自动重试。",
+        "security": [{ "BrowserSession": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["currentPassword", "newPassword"],
+                "properties": {
+                  "currentPassword": { "type": "string", "writeOnly": true, "minLength": 1, "maxLength": 256 },
+                  "newPassword": { "type": "string", "writeOnly": true, "minLength": 1, "maxLength": 256, "description": "按 UTF-8 字节数校验 8 至 256，不修剪空白；浏览器确认密码不随请求发送。" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "密码已持久化，全部浏览器会话已撤销，客户端返回登录页。" },
+          "400": { "description": "CURRENT_PASSWORD_INVALID 或 PASSWORD_FIELDS_INVALID；不回显输入。" },
+          "401": { "description": "当前会话无效，未执行修改。" },
+          "403": { "description": "同源或 CSRF 校验失败，未执行修改。" },
+          "429": { "description": "PASSWORD_RATE_LIMITED，Retry-After: 60。" },
+          "503": { "description": "PASSWORD_CHANGE_UNAVAILABLE，未提交密码。" }
         }
       }
     },
@@ -2325,6 +2375,7 @@
       },
       "get": {
         "operationId": "getExportDraft",
+        "description": "当前修订已有唯一受理任务时可返回 submittedTaskId；必须复验当前授权，不授予新的执行资格。",
         "tags": [
           "ExportDrafts"
         ],
@@ -2498,7 +2549,7 @@
         ],
         "x-idempotency": "REQUIRED",
         "x-real-execution": "WINDOWS_LOCAL_MVP_EXPLICIT_SUBMIT",
-        "description": "Windows 本机 MVP：仅当冻结草稿绑定的预检查仍完整成功时创建任务。目标契约只要求预检查标识；query-sql 使用普通任务授权，不要求敏感 capability、风险指纹或提交级二次确认。过渡期保留旧确认字段的 schema 解析兼容，但它不得成为新 query-sql 的提交条件。请求不接收命令、路径或密码；关联 Agent 领取后才会按固定 OBDUMPER_EXPORT 信封启动工具。",
+        "description": "同一草稿修订仅冻结一次。换键或新证明重复提交返回409 SUBMISSION_CONFLICT；原键同请求在当前授权复验后返回200原任务，即使已消费证明过期。Windows 本机 MVP：仅当冻结草稿绑定的预检查仍完整成功时创建任务。目标契约只要求预检查标识；query-sql 使用普通任务授权，不要求敏感 capability、风险指纹或提交级二次确认。过渡期保留旧确认字段的 schema 解析兼容，但它不得成为新 query-sql 的提交条件。请求不接收命令、路径或密码；关联 Agent 领取后才会按固定 OBDUMPER_EXPORT 信封启动工具。",
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfToken"
@@ -2514,8 +2565,14 @@
           "$ref": "#/components/requestBodies/ExportTaskSubmit"
         },
         "responses": {
+          "200": {
+            "description": "当前授权下重放原提交任务标识与 replayed=true"
+          },
           "201": {
             "$ref": "#/components/responses/Created"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -2914,7 +2971,7 @@
           }
         ],
         "x-log-content-boundary": "SECRETS_ONLY_WITH_OPERATIONAL_CONTEXT",
-        "description": "只读取当前已授权任务的已持久化双层秘密脱敏日志。正文保留完整非秘密运行上下文，包括连接、对象、路径、非密码命令令牌和工具诊断；密码、令牌、密钥和安全材料继续遮蔽。cursor 继续固定快照；after 从最后可靠游标创建新快照增量读取；两者不能同时提供。响应不含总数、段路径、SQLite 行号或来源内部标识。 已登记普通日志保留清理时返回 200、items 为空、integrity 为 EXPIRED；未授权对象不获得清理事实。缺失或损坏仍按完整性错误处理。",
+        "description": "只读取当前已授权任务的已持久化双层秘密脱敏日志。正文保留完整非秘密运行上下文，包括连接、对象、路径、非密码命令令牌和工具诊断；密码、令牌、密钥和安全材料继续遮蔽。cursor 继续固定快照；after 从最后可靠游标的批次与记录 offset 创建新快照增量读取，同一批次余下记录不可跳过；有余页时返回 nextCursor，继续用 cursor 补齐此固定快照，读尽后保留 lastReliableCursor；两者不能同时提供。响应不含总数、段路径、SQLite 行号或来源内部标识。 已登记普通日志保留清理时返回 200、items 为空、integrity 为 EXPIRED；未授权对象不获得清理事实。缺失或损坏仍按完整性错误处理。",
         "parameters": [
           {
             "$ref": "#/components/parameters/Cursor"
@@ -3159,7 +3216,7 @@
         ],
         "x-optimistic-lock": "REQUIRED",
         "x-idempotency": "REQUIRED",
-        "description": "同时轮换 access-key 与 secret-key 并递增修订；旧修订标记 SUPERSEDED，已冻结任务快照只保留引用标识。越权或不存在凭据一律 404。",
+        "description": "同时轮换 access-key 与 secret-key 并递增修订；旧修订标记 SUPERSEDED，已冻结任务快照只保留引用标识。原幂等键、非秘密摘要与原 If-Match 在当前活动所有者授权下返回当次成功修订；不重复写入或审计，后续轮换不改变旧回执。异键内容或版本返回409；越权或不存在凭据一律404。",
         "parameters": [
           {
             "$ref": "#/components/parameters/CsrfToken"
@@ -4690,9 +4747,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "已授权且二次脱敏的固定快照投影",
             "headers": {
@@ -4710,6 +4764,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -4801,9 +4858,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "已授权且二次脱敏的固定快照投影",
             "headers": {
@@ -4821,6 +4875,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -4849,9 +4906,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "UTF-8 脱敏日志文件",
             "headers": {
@@ -4876,6 +4930,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -4908,9 +4965,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "已授权且二次脱敏的固定快照投影",
             "headers": {
@@ -4928,6 +4982,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -4960,9 +5017,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "已授权且二次脱敏的固定快照投影",
             "headers": {
@@ -4980,6 +5034,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -5108,9 +5165,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "已授权且二次脱敏的固定快照投影",
             "headers": {
@@ -5128,6 +5182,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": []
@@ -5146,9 +5203,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "已授权且二次脱敏的固定快照投影",
             "headers": {
@@ -5166,6 +5220,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -5194,9 +5251,6 @@
           }
         ],
         "responses": {
-          "default": {
-            "$ref": "#/components/responses/Error"
-          },
           "200": {
             "description": "UTF-8 脱敏日志文件",
             "headers": {
@@ -5221,6 +5275,9 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "parameters": [
@@ -6757,9 +6814,16 @@
           "configFingerprint",
           "revision",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "availableActions"
         ],
         "properties": {
+          "availableActions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "enum": ["CREATE_DRAFT", "RENAME", "DELETE"] },
+            "description": "当前主体在此模板上的操作资格；不授予数据源或节点权限，写入时重新复验。"
+          },
           "id": {
             "$ref": "#/components/schemas/OpaqueId"
           },
@@ -7563,6 +7627,11 @@
               "VIEW",
               "FUNCTION",
               "PROCEDURE",
+              "PACKAGE",
+              "TRIGGER",
+              "SYNONYM",
+              "PUBLIC_SYNONYM",
+              "TYPE",
               "SEQUENCE"
             ]
           },
@@ -7641,6 +7710,11 @@
               "VIEW",
               "FUNCTION",
               "PROCEDURE",
+              "PACKAGE",
+              "TRIGGER",
+              "SYNONYM",
+              "PUBLIC_SYNONYM",
+              "TYPE",
               "SEQUENCE"
             ]
           },
@@ -7657,7 +7731,7 @@
           },
           "groups": {
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 10,
             "items": {
               "$ref": "#/components/schemas/ExportObjectCatalogGroup"
             }
@@ -7708,6 +7782,11 @@
               "VIEW",
               "FUNCTION",
               "PROCEDURE",
+              "PACKAGE",
+              "TRIGGER",
+              "SYNONYM",
+              "PUBLIC_SYNONYM",
+              "TYPE",
               "SEQUENCE"
             ]
           },
@@ -8140,6 +8219,12 @@
           "validUntil"
         ],
         "properties": {
+          "submittedTaskId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "当前修订唯一且仍获授权的已受理任务；仅用于恢复结果。"
+          },
           "id": {
             "$ref": "#/components/schemas/OpaqueId"
           },
@@ -9788,7 +9873,7 @@
           },
           "catalogGroups": {
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 10,
             "items": {
               "$ref": "#/components/schemas/ExportObjectCatalogGroup"
             }
@@ -9862,6 +9947,11 @@
               "VIEW",
               "FUNCTION",
               "PROCEDURE",
+              "PACKAGE",
+              "TRIGGER",
+              "SYNONYM",
+              "PUBLIC_SYNONYM",
+              "TYPE",
               "SEQUENCE"
             ]
           },
@@ -10253,6 +10343,11 @@
                 "VIEW",
                 "FUNCTION",
                 "PROCEDURE",
+                "PACKAGE",
+                "TRIGGER",
+                "SYNONYM",
+                "PUBLIC_SYNONYM",
+                "TYPE",
                 "SEQUENCE"
               ]
             },
@@ -12276,6 +12371,7 @@
       "ExecutionResultSummary": {
         "type": "object",
         "additionalProperties": false,
+        "description": "LOCAL 保持准确文件数、字节数与清单；OSS/S3/COS/OBS 三字段必须为 null，VERIFIED 仅表示受控工具成功，不能声称远端文件已逐项核验。导出未知输出类型省略整个结果摘要；普通/旁路导入没有 outputLocation，保留其既有结果结论，不能展示为导出文件核验证明。",
         "required": [
           "result",
           "fileCount",
@@ -12293,15 +12389,24 @@
             ]
           },
           "fileCount": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0
           },
           "totalBytes": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0
           },
           "files": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "maxItems": 100,
             "items": {
               "$ref": "#/components/schemas/ExecutionResultFile"
@@ -13782,13 +13887,18 @@
               },
               "objectTypes": {
                 "type": "array",
-                "maxItems": 5,
+                "maxItems": 10,
                 "items": {
                   "enum": [
                     "TABLE",
                     "VIEW",
                     "FUNCTION",
                     "PROCEDURE",
+                    "PACKAGE",
+                    "TRIGGER",
+                    "SYNONYM",
+                    "PUBLIC_SYNONYM",
+                    "TYPE",
                     "SEQUENCE"
                   ]
                 }
@@ -13814,6 +13924,11 @@
                         "VIEW",
                         "FUNCTION",
                         "PROCEDURE",
+                        "PACKAGE",
+                        "TRIGGER",
+                        "SYNONYM",
+                        "PUBLIC_SYNONYM",
+                        "TYPE",
                         "SEQUENCE"
                       ],
                       "description": "混合分类时必填；单一分类的历史草稿可缺省。"

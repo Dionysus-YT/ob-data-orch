@@ -3,12 +3,23 @@ import { mockFacts } from './fixtures/facts'
 import { DATA_SOURCE_UI_FIXTURES } from '../src/workbench/sources/dataSourceUiFixture'
 const time = '2026-01-01T00:00:00Z'
 const credential = (revision = 1) => ({ id: 'synthetic-credential', displayName: '合成凭据', provider: 'OSS', revision, currentRevision: revision, updatedAt: time })
-const template = { id: 'synthetic-template', taskType: 'OBDUMPER_EXPORT', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', createdAt: '2026-01-01T00:00:00Z', updatedAt: time }
+const template = { id: 'synthetic-template', taskType: 'OBDUMPER_EXPORT', displayName: '合成模板', revision: 1, capabilityVersion: 'synthetic-capability', configFingerprint: 'synthetic-fingerprint', availableActions: ['CREATE_DRAFT', 'RENAME', 'DELETE'], createdAt: '2026-01-01T00:00:00Z', updatedAt: time }
 async function navigate(page: Page, path: string) {
   // 通过当前应用的导航链接切换，避免 HMR 后重新导入模块得到第二个路由实例。
-  await page.locator(`a[href="${path === '/settings' ? '/settings/platform' : path}"]`).first().dispatchEvent('click')
-  await expect(page).toHaveURL(path === '/settings' ? '/settings/platform' : path)
+  const target = path === '/settings' ? '/settings/platform' : path
+  const link = page.locator('a[href="' + target + '"]').first()
+  // 完整导航使用链接；48px 图标轨使用原生 Ant 菜单项，不假设弹出项也是链接。
+  if (target.startsWith('/settings/')) {
+    const system = page.getByRole('button', { name: '系统管理', exact: true })
+    if (await system.getAttribute('aria-expanded') !== 'true') await system.dispatchEvent('click')
+    if (await system.getAttribute('aria-haspopup') === 'menu') {
+      const label = target === '/settings/storage-credentials' ? '存储凭据' : target === '/settings/access-control' ? '权限配置' : '平台设置'
+      await page.getByRole('menuitem', { name: label, exact: true }).dispatchEvent('click')
+    } else await link.dispatchEvent('click')
+  } else await link.dispatchEvent('click')
+  await expect(page).toHaveURL(target)
 }
+async function templateMenu(page: Page, name: string) { await page.getByRole('button', { name: /^更多操作 / }).first().click(); await page.getByRole('menuitem', { name, exact: true }).click() }
 async function fill(page: Page) { await page.getByLabel('凭据名称', { exact: true }).fill('合成凭据'); await page.getByLabel('AccessKey', { exact: true }).fill('synthetic-access'); await page.getByLabel('SecretKey', { exact: true }).fill('synthetic-secret') }
 
 for (const status of [401, 403]) {
@@ -32,9 +43,9 @@ for (const status of [401, 403]) {
     await mockFacts(page); let delayRead = false; const held: Route[] = []; let writes = 0
     await page.route('**/api/v1/config-templates', route => delayRead ? void held.push(route) : route.fulfill({ json: { items: [template] } }))
     await page.route('**/api/v1/config-templates/synthetic-template', route => { writes++; return route.fulfill({ status: 204 }) })
-    await page.goto('/templates'); await page.getByRole('button', { name: '改名', exact: true }).click(); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill('合成未保存改名')
-    delayRead = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await expect.poll(() => held.length).toBe(1)
-    await page.getByRole('button', { name: '删除', exact: true }).dispatchEvent('click'); await expect(page.getByRole('dialog')).toContainText('合成模板')
+    await page.goto('/templates'); await templateMenu(page, '改名'); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill('合成未保存改名')
+    delayRead = true; await page.getByRole('button', { name: '刷新', exact: true }).dispatchEvent('click'); await expect.poll(() => held.length).toBe(1)
+    await expect(page.getByRole('dialog')).toContainText('合成模板')
     await held[0]!.fulfill({ status, json: { code: 'SYNTHETIC_DENIED' } })
     await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveCount(0)
     delayRead = false
@@ -42,7 +53,7 @@ for (const status of [401, 403]) {
     else await page.getByRole('button', { name: '刷新', exact: true }).click()
     await expect(page.getByRole('region', { name: '模板列表' })).toContainText('合成模板')
     await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: '改名', exact: true }).click(); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveValue('合成模板'); expect(writes).toBe(0)
+    await templateMenu(page, '改名'); await expect(page.getByRole('textbox', { name: '模板名称', exact: true })).toHaveValue('合成模板'); expect(writes).toBe(0)
   })
 }
 
@@ -90,9 +101,15 @@ test('模板改名、选择引用与新建草稿保持语义，离开后迟到�
   const source = DATA_SOURCE_UI_FIXTURES.find(item => item.state === 'ENABLED' && item.lastTestStatus === 'SUCCEEDED')!
   await page.route('**/api/v1/data-sources', route => route.fulfill({ json: { items: [source], total: 1, nextCursor: '' } }))
   await page.route('**/api/v1/execution-nodes?eligibleFor=OBDUMPER_EXPORT', route => route.fulfill({ json: { items: [{ id: 'synthetic-node', displayName: '合成节点', platform: 'WINDOWS_AMD64' }] } }))
-  await page.goto('/templates'); await page.getByRole('button', { name: '改名', exact: true }).click(); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill(' 合成改名 '); await page.getByRole('button', { name: '保存', exact: true }).click(); await expect(page.getByText('合成改名', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '用模板新建草稿', exact: true }).click(); await expect(page.getByRole('button', { name: '创建草稿', exact: true })).toBeDisabled(); await expect(page.getByText('请选择数据源与执行节点。', { exact: true })).toHaveCount(0)
-  await page.getByRole('combobox', { name: /^数据源/ }).focus(); await page.keyboard.press('ArrowDown'); await page.getByText(source.displayName, { exact: true }).last().click(); await page.getByRole('combobox', { name: /^执行节点/ }).focus(); await page.keyboard.press('ArrowDown'); await page.getByText('合成节点 · Windows · x86_64', { exact: true }).click()
+  await page.goto('/templates'); await templateMenu(page, '改名'); await page.getByRole('textbox', { name: '模板名称', exact: true }).fill(' 合成改名 '); await page.getByRole('button', { name: '保存', exact: true }).click(); await expect(page.getByText('合成改名', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: /^使用模板 / }).click(); await expect(page.getByRole('button', { name: '创建草稿', exact: true })).toBeDisabled(); await expect(page.getByText('请选择数据源与执行节点。', { exact: true })).toHaveCount(0)
+  const dialog = page.getByRole('dialog', { name: '使用模板', exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('combobox', { name: /数据源/ })).toBeEnabled()
+  await dialog.getByRole('combobox', { name: /数据源/ }).focus(); await page.keyboard.press('ArrowDown')
+  await page.locator('.ant-select-dropdown:visible').getByText(source.displayName, { exact: true }).last().click()
+  await dialog.getByRole('combobox', { name: /执行节点/ }).focus(); await page.keyboard.press('ArrowDown')
+  await page.locator('.ant-select-dropdown:visible').getByText('合成节点 · Windows · x86_64', { exact: true }).last().click()
   await page.getByRole('button', { name: '创建草稿', exact: true }).click(); await expect.poll(() => drafts.length).toBe(1)
   expect(drafts[0]!.request().postDataJSON()).toEqual({ dataSourceId: source.id, nodeId: 'synthetic-node' }); await navigate(page, '/settings'); await drafts[0]!.fulfill({ json: { draftId: 'synthetic-late', templateId: 'synthetic-template', taskType: 'OBDUMPER_EXPORT' } }).catch(() => {})
   await expect(page).toHaveURL(/\/settings\/platform$/); expect(drafts).toHaveLength(1); expect(errors).toEqual([])

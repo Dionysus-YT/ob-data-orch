@@ -36,6 +36,78 @@ function report(draft: NormalImportDraft, filesOnly = false): NormalImportCheck 
 }
 
 describe('普通导入草稿与冻结事务', () => {
+  async function readyToSubmit() {
+    const s = setup(), draft = await s.draft.saveDraft()
+    draft!.executionEnabled = true
+    vi.mocked(s.api.getNormalImportCheck).mockResolvedValue(report(draft!))
+    await s.review.startCheck(); await s.review.submitTask()
+    return { ...s, savedDraft: draft! }
+  }
+
+  it('提交回执丢失后保留原键、名称和证明，过期后仍可核对且不能重新预检查', async () => {
+    const s = await readyToSubmit()
+    s.review.taskNameInput.value = '原合成名称'
+    vi.mocked(s.api.submitNormalImport).mockRejectedValueOnce(new TypeError('合成响应丢失')).mockResolvedValueOnce('same-task')
+    await s.review.submitTask(true)
+    expect(s.review.submissionUncertain.value).toBe(true)
+    expect(s.review.canStartPrecheck.value).toBe(false)
+    const first = vi.mocked(s.api.submitNormalImport).mock.calls[0]!
+    expect(first[4]).toMatch(/^[0-9a-f-]{36}$/)
+    s.review.checkExpired.value = true; s.review.taskNameInput.value = '不能覆盖原名'
+    await s.review.startCheck(); expect(s.api.startNormalImportCheck).toHaveBeenCalledOnce()
+    await s.review.submitTask(true)
+    expect(vi.mocked(s.api.submitNormalImport).mock.calls[1]).toEqual(first)
+    expect(s.review.submittedTaskID.value).toBe('same-task')
+    expect(s.navigateTask).toHaveBeenCalledWith('same-task')
+    expect(s.review.canSubmit.value).toBe(false)
+  })
+
+  it('提交成功但导航失败仅重试导航，恢复已提交草稿也不发起新检查', async () => {
+    const s = await readyToSubmit()
+    vi.mocked(s.api.submitNormalImport).mockResolvedValue('accepted-task')
+    s.navigateTask.mockRejectedValueOnce(new Error('合成导航失败')).mockResolvedValue(undefined)
+    await s.review.submitTask(true)
+    expect(s.review.reviewFailure.value).toContain('任务已提交')
+    await s.review.submitTask(true); await s.review.openSubmittedTask()
+    expect(s.api.submitNormalImport).toHaveBeenCalledOnce()
+    expect(s.navigateTask).toHaveBeenCalledTimes(2)
+    s.draft.resetDraft()
+    vi.mocked(s.api.getNormalImportDraft).mockResolvedValue({ ...s.savedDraft, submittedTaskId: 'restored-task' })
+    await s.draft.loadDraft(s.savedDraft.id)
+    expect(s.review.submittedTaskID.value).toBe('restored-task')
+    expect(s.review.canStartPrecheck.value).toBe(false)
+  })
+
+  it('未知提交通过同绑定的授权证明找回任务，不采用其他草稿回执', async () => {
+    const s = await readyToSubmit()
+    vi.mocked(s.api.submitNormalImport).mockRejectedValue(new TypeError('合成响应丢失'))
+    vi.mocked(s.api.getNormalImportCheck).mockResolvedValueOnce({ ...report(s.savedDraft), draftId: 'other-draft', submittedTaskId: 'wrong-task' })
+    await s.review.submitTask(true)
+    expect(s.navigateTask).not.toHaveBeenCalled()
+    expect(s.review.submissionUncertain.value).toBe(true)
+    vi.mocked(s.api.getNormalImportCheck).mockResolvedValueOnce({ ...report(s.savedDraft), submittedTaskId: 'recovered-task' })
+    await s.review.submitTask(true)
+    expect(s.review.submittedTaskID.value).toBe('recovered-task')
+    expect(s.navigateTask).toHaveBeenCalledWith('recovered-task')
+  })
+
+  it.each(['失权', '卸载', 'A→B→A'] as const)('提交恢复期间%s不接纳旧任务或重放旧反馈', async mode => {
+    const s = await readyToSubmit(), held = deferred<NormalImportCheck>()
+    vi.mocked(s.api.submitNormalImport).mockRejectedValue(new TypeError('合成响应丢失'))
+    vi.mocked(s.api.getNormalImportCheck).mockReturnValueOnce(held.promise)
+    const pending = s.review.submitTask(true)
+    await Promise.resolve(); await Promise.resolve()
+    if (mode === '卸载') s.scope.stop()
+    if (mode === 'A→B→A') { const original = s.form.database; s.form.database = 'B'; s.form.database = original }
+    if (mode === '失权') held.reject({ status: 403 })
+    else held.resolve({ ...report(s.savedDraft), submittedTaskId: 'stale-task' })
+    await pending
+    expect(s.navigateTask).not.toHaveBeenCalled()
+    expect(s.review.submittedTaskID.value).toBe('')
+    expect(s.review.submissionUncertain.value).toBe(false)
+    expect(s.review.canSubmit.value).toBe(false)
+    if (mode !== '失权') expect(s.review.reviewFailure.value).toBe('')
+  })
   it('源兼容版本恢复原值，旧草稿不猜测版本，关闭后不恢复残留版本', () => {
     const form = createNormalImportForm()
     const base: NormalImportConfig = { dataSourceId: 'source', nodeId: 'node', database: 'synthetic_db', filePath: 'E:\\input', content: 'DDL_ONLY', scope: 'ALL', cleanup: 'NONE', parser: {}, mapping: { kind: 'POSITION' }, execution: {}, compatMysql: true }
@@ -182,7 +254,7 @@ describe('普通导入草稿与冻结事务', () => {
     s.review.taskNameInput.value = '  自定义合成任务  '
     const pending = deferred<string>(); vi.mocked(s.api.submitNormalImport).mockReturnValue(pending.promise)
     const submitting = s.review.submitTask(true); await s.review.submitTask(true)
-    expect(s.api.submitNormalImport).toHaveBeenCalledExactlyOnceWith(draft, 'check-normal', undefined, '自定义合成任务')
+    expect(s.api.submitNormalImport).toHaveBeenCalledExactlyOnceWith(draft, 'check-normal', undefined, '自定义合成任务', expect.any(String))
     expect(s.review.activePrecheck.value?.id).toBe('check-normal'); expect(s.draft.draftDirty.value).toBe(false)
     pending.resolve('task-normal'); await submitting; expect(s.navigateTask).toHaveBeenCalledWith('task-normal')
   })
@@ -191,7 +263,7 @@ describe('普通导入草稿与冻结事务', () => {
     vi.mocked(s.api.getNormalImportCheck).mockResolvedValue(report(draft!)); await s.review.startCheck()
     vi.mocked(s.api.submitNormalImport).mockRejectedValue(new Error('合成提交失败'))
     await s.review.submitTask(); s.review.taskNameInput.value = '   '; await s.review.submitTask(true)
-    expect(s.api.submitNormalImport).toHaveBeenCalledWith(draft, 'check-normal', undefined, undefined)
+    expect(s.api.submitNormalImport).toHaveBeenCalledWith(draft, 'check-normal', undefined, undefined, expect.any(String))
     expect(s.review.submitConfirmationOpen.value).toBe(true)
     s.form.filePath = 'E:\\changed'; expect(s.review.submitConfirmationOpen.value).toBe(false); expect(s.review.taskNameInput.value).toBe('')
   })

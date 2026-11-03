@@ -51,7 +51,7 @@ func main() {
 }
 
 func run() error {
-	action := flag.String("action", "catalog", "catalog/create/augment/exercise-sequence/inspect/cleanup")
+	action := flag.String("action", "catalog", "固定 catalog、MySQL/Oracle 夹具及 oracle-export-* 验证动作；见 scripts/export-e2e/README.md")
 	dataRoot := flag.String("data-root", "var/dev/control-plane/data", "控制面现有数据目录，只读")
 	databaseName := flag.String("database", "", "本次独立夹具库")
 	runID := flag.String("run-id", "", "本次夹具所有权标识")
@@ -68,13 +68,15 @@ func run() error {
 		}{catalog.MetadataVersion(), catalog.Definitions()})
 	}
 	capabilityAction := oneOf(*action, "import-capabilities-create", "import-capabilities-inspect", "import-capabilities-repair", "import-capabilities-cleanup", "import-oracle-capabilities-create", "import-oracle-capabilities-inspect", "import-oracle-capabilities-cleanup")
+	oracleExportComponentAction := oneOf(*action, "oracle-export-component-package", "oracle-export-component-trigger", "oracle-export-component-synonym", "oracle-export-component-public-synonym", "oracle-export-component-type", "oracle-export-component-mixed-ddl", "oracle-export-component-mixed-csv")
+	oracleExportAction := oracleExportComponentAction || oneOf(*action, "oracle-export-create", "oracle-export-inspect", "oracle-export-cleanup", "oracle-export-jdbc")
 	oracleDirectAction := oneOf(*action, "direct-oracle-probe", "direct-oracle-create", "direct-oracle-inspect", "direct-oracle-cleanup", "direct-oracle-source-request", "direct-oracle-audit", "direct-oracle-compatibility", "direct-oracle-jdbc", "direct-oracle-execution-create", "direct-oracle-execution-inspect", "direct-oracle-execution-cleanup")
-	if !regexp.MustCompile(`^odo_e2e_[0-9]{8}_[a-f0-9]{12}$`).MatchString(*databaseName) || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(*runID) || !strings.HasSuffix(*databaseName, (*runID)[:12]) || !capabilityAction && !oracleDirectAction && !oneOf(*action, "create", "augment", "exercise-sequence", "inspect", "cleanup", "audit", "import-create", "import-extend", "import-inspect", "import-cleanup", "import-parameters-create", "import-parameters-inspect", "import-parameters-repair", "import-oracle-probe", "import-oracle-audit", "import-oracle-remaining-probe", "import-oracle-remaining-create", "import-oracle-remaining-inspect", "import-oracle-remaining-cleanup", "direct-probe", "direct-create", "direct-inspect", "direct-cleanup", "direct-jdbc", "direct-compatibility", "direct-source-request") || !oneOf(*action, "audit", "import-oracle-audit", "direct-oracle-audit") && *python == "" {
+	if !regexp.MustCompile(`^odo_e2e_[0-9]{8}_[a-f0-9]{12}$`).MatchString(*databaseName) || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(*runID) || !strings.HasSuffix(*databaseName, (*runID)[:12]) || !capabilityAction && !oracleDirectAction && !oracleExportAction && !oneOf(*action, "create", "augment", "exercise-sequence", "inspect", "cleanup", "audit", "import-create", "import-extend", "import-inspect", "import-cleanup", "import-parameters-create", "import-parameters-inspect", "import-parameters-repair", "import-oracle-probe", "import-oracle-audit", "import-oracle-remaining-probe", "import-oracle-remaining-create", "import-oracle-remaining-inspect", "import-oracle-remaining-cleanup", "direct-probe", "direct-create", "direct-inspect", "direct-cleanup", "direct-jdbc", "direct-compatibility", "direct-source-request") || !oracleExportAction && !oneOf(*action, "audit", "import-oracle-audit", "direct-oracle-audit") && *python == "" {
 		return errors.New("夹具范围不匹配")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	payload, err := connection(ctx, *dataRoot, strings.HasPrefix(*action, "import-oracle-") || oracleDirectAction)
+	payload, err := connection(ctx, *dataRoot, strings.HasPrefix(*action, "import-oracle-") || oracleDirectAction || oracleExportAction)
 	if err != nil {
 		return err
 	}
@@ -99,6 +101,15 @@ func run() error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "AUDITED", "plaintextOrRecoverableEncodingPresent": present})
 	}
 	payload.Action, payload.Database, payload.RunID = *action, *databaseName, *runID
+	if oracleExportAction {
+		if oracleExportComponentAction {
+			return oracleExportComponent(ctx, payload)
+		}
+		if *action == "oracle-export-jdbc" {
+			return oracleExportJDBC(ctx, payload)
+		}
+		return oracleExportFixture(ctx, payload)
+	}
 	if oneOf(*action, "direct-source-request", "direct-oracle-source-request") {
 		return directSourceRequest(payload)
 	}

@@ -13,6 +13,7 @@ import (
 	"ob-data-orch/internal/credential"
 	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/outputpath"
@@ -943,7 +944,7 @@ func validPrecheckExecutionContext(context PrecheckExecutionContext) bool {
 		return false
 	}
 	for _, objectType := range context.ObjectTypes {
-		if objectType != "TABLE" && objectType != "VIEW" && objectType != "FUNCTION" && objectType != "PROCEDURE" && objectType != "SEQUENCE" {
+		if !exportobject.ValidForMode(objectType, context.CompatibilityMode) || context.ContentKind == "DATA_ONLY" && objectType != "TABLE" {
 			return false
 		}
 		if context.EnableHiddenPk && objectType != "TABLE" {

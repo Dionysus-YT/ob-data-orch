@@ -1,12 +1,43 @@
 package parammeta
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+func Test旁路目录换行兼容且内容篡改失败关闭(t *testing.T) {
+	raw, err := directLoadFiles.ReadFile("direct/obloader-4.3.5-direct-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	for name, content := range map[string][]byte{
+		"Git_LF":       lf,
+		"Windows_CRLF": bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			catalog, err := loadDirectLoad(content)
+			if err != nil || len(catalog.Definitions()) != 103 {
+				t.Fatalf("受控换行资源应正常加载: %v", err)
+			}
+		})
+	}
+	for name, content := range map[string][]byte{
+		"参数内容篡改": bytes.Replace(lf, []byte("OBLOADER"), []byte("OBDUMPER"), 1),
+		"额外空白":   append(bytes.Clone(lf), ' '),
+		"孤立回车":   bytes.Replace(lf, []byte("\n"), []byte("\r"), 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if catalog, err := loadDirectLoad(content); err == nil || catalog != nil {
+				t.Fatal("非换行规范化变化不得通过完整性校验")
+			}
+		})
+	}
+}
 
 func Test旁路目录完整性处置与冻结隔离(t *testing.T) {
 	catalog, err := LoadDirectLoad()

@@ -1,5 +1,11 @@
 # 导出向导维护索引
 
+2026-11-02 Oracle 对象选择补齐为十类。`exportPresentation.objectCategories` 是前端唯一分类/模式/图标目录，`createObjectTypeMap` 初始化表单、缓存和恢复集合；`useExportCatalog` 持有按模式的完整目录及迟到防护，步骤继续只呈现操作意图。新增类型由既有 selectedObjectsByType 触发草稿/预检失效，不新增状态副本或 API 请求所有者。MySQL 五类、DATA_ONLY 仅表；Oracle 缺类响应提示更新 Agent。新增类型草稿、目录、精确检查和 v13 命令链路见[本轮证据](../../../../docs/03-technical/evidence/export-oracle-objects-2026-11-02.md)。
+
+2026-10-28 浏览器回归补查：第二步禁用推进时，在引用事实加载完成且用户已选择导出内容后，展示尚无原位反馈的确定阻断原因；数据库、空内容和结果集沿用自身反馈，第四步仍按具名字段处理。`reference-pages.spec.ts` 同时按现役 MySQL retain-schema/compact-schema 互斥契约核验清值、禁用与保存的 false，Oracle 仍保留 true；对象存储第四步验证必填临时目录，第五步沿用独立写权限证据禁提交用例。
+
+2026-10-28 提交恢复：`useExportDraftLifecycle` 独占绑定草稿修订、证明与幂等键的提交意图。响应丢失先读取同绑定证明的 `submittedTaskId`，未找回则保留原键核对，证明过期不改键；结果未知期间禁止保存和新预检查。已接受任务的导航失败只重试导航，恢复草稿的提交投影同样锁定第五步。页面仅装配状态、动作和既有离开确认，不持有第二份提交事实。`exportWizardState.test.ts` 与 `tests/export-review-step.spec.ts` 覆盖未知结果、失权、A → B → A、卸载、导航失败及刷新恢复；服务端同草稿修订防重与当前授权重放不可由前端替代。
+
 2026-10-27 两条普通向导体验补查：底栏只保留步骤动作，移除通用说明；第四步具名字段错误由既有 Form.Item 原位反馈，`useExportWizard.currentStepAlert` 仅保留无法归属字段的步骤问题，`currentStepError` 继续用于阻断、展开和焦点定位。第五步保留唯一检查总览与逐项证据，不重复自动检查机制。专家参数用例显式选择导出内容，并使用现役节点控件及预检查入口，不依赖已取消的默认选择；验证记录见[产品体验整改](../../../../docs/03-technical/evidence/product-experience-fixes-2026-10-27.md)。
 
 2026-10-27 Schema 策略修复：`useExportParameters` 独占 MySQL retain/native 正常交互清值，hydration 保留历史冲突供校验；`exportDraftInput` 校验互斥并派生 compactSchema=false；`ExportFormatStep` 只消费唯一表单、禁用态和提示。服务端 `exportdomain/schema_strategy.go` 复验组合，唯一生成器负责 v12 等号令牌，步骤不发请求或改写 DDL。没有增加表单副本或全局状态，已有字段继续触发配置失效。97 项受影响单测、实际恢复/切换与三项 API 拒绝反例见[前缀修复验收](../../../../docs/03-technical/evidence/export-retain-schema-2026-10-26.md)；只读历史预览与冻结任务不升级。
@@ -30,7 +36,7 @@
 | `useExportReferences.ts` | 授权数据源、节点、凭据引用列表；新建时不默认选择节点，只有一个候选也由用户手选；节点下拉展开重读名称与候选，同 ID 改名保留绑定、失效 ID 清选择且不自动改派；各请求独立 epoch，旧响应/卸载拒绝写回 |
 | `exportDataSourceEligibility.ts` | 导出候选资格；其他模块如模板中心直接引用该业务规则 |
 | `useExportObjectViewport.ts` | 对象列表可见窗口、滚动与尺寸观察；仅持有视口坐标，不拥有表单或目录副本 |
-| `useExportCatalog.ts` | 数据库/五类对象目录与缓存、搜索/选择交互、轮询/debounce、绑定失效及过期响应 |
+| `useExportCatalog.ts` | 数据库/按模式的完整对象目录与缓存、搜索/选择交互、轮询/debounce、绑定失效及过期响应 |
 | `exportFormMapping.ts` | 冻结配置回填与受控存储 URI 解析；调用方控制 hydration，不执行网络或事务 |
 | `useExportDraftPersistence.ts` | 草稿读写、修订/dirty、会话与 URL 绑定；保存期间继续编辑只接纳对应修订、不覆盖表单或重放成功；通过回调撤销旧执行准备 |
 | `useExportDraftLifecycle.ts` | 组合持久化能力并持有命令、预检、确认与提交；第五步自动预检、防重/轮询/有效期及迟到防护；步骤不执行业务请求 |

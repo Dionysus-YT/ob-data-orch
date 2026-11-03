@@ -11,7 +11,7 @@ import './platform/components.css'
 
 router.afterEach((to) => {
   const pageTitle = typeof to.meta.title === 'string' ? to.meta.title : ''
-  document.title = pageTitle ? `OB Data Orch · ${pageTitle}` : 'OB Data Orch'
+  document.title = pageTitle ? `LDP · ${pageTitle}` : 'LDP'
 })
 
 createApp(App).use(router).mount('#app')

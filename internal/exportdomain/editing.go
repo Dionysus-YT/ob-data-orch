@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/store"
 )
 
@@ -19,12 +20,12 @@ func ValidateEditingConfig(config *store.ExportConfig) error {
 		return errors.New("导出编辑草稿结构无效")
 	}
 	for _, kind := range config.ObjectScope.ObjectTypes {
-		if !editingOneOf(kind, "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+		if !exportobject.Supported(kind) {
 			return errors.New("导出编辑草稿对象类型无效")
 		}
 	}
 	for _, expression := range config.ObjectScope.Expressions {
-		if expression.RawInput != "" || !editingOneOf(expression.ObjectType, "", "TABLE", "VIEW", "FUNCTION", "PROCEDURE", "SEQUENCE") {
+		if expression.RawInput != "" || expression.ObjectType != "" && !exportobject.Supported(expression.ObjectType) {
 			return errors.New("导出编辑草稿对象表达无效")
 		}
 	}

@@ -1,6 +1,7 @@
 package parammeta
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
@@ -19,7 +20,13 @@ func LoadDirectLoad() (*Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	if digest := sha256.Sum256(raw); fmt.Sprintf("%x", digest) != "0cdc8c49f6058d5c6c1519aa6eb2a82c0897b7da41c19d0b0337c372b12fa6fa" {
+	return loadDirectLoad(raw)
+}
+
+func loadDirectLoad(raw []byte) (*Catalog, error) {
+	// Git 资源以 LF 冻结；仅容忍 Windows 检出产生的 CRLF，其他字节变化仍须失败关闭。
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	if digest := sha256.Sum256(raw); fmt.Sprintf("%x", digest) != "59d57321264c4ed3aa1c20a3d3c18075957122806cf90ab82d8a5edcd1795930" {
 		return nil, errors.New("旁路参数目录摘要不匹配")
 	}
 	var source resource

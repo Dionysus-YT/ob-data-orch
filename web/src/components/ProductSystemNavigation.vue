@@ -12,7 +12,8 @@ const items = [
   { label: '存储凭据', to: '/settings/storage-credentials' },
 ]
 const activeItem = computed(() => items.find(item => (item.paths ?? [item.to]).some(path => route.path === path || route.path.startsWith(`${path}/`))))
-const expanded = ref(true), popupOpen = ref(false)
+// 初次打开与刷新均收起；展开由显式操作决定，当前项高亮独立于展开状态。
+const expanded = ref(false), popupOpen = ref(false)
 const trigger = ref<{ $el: HTMLButtonElement }>(), menu = ref<HTMLElement>(), children = ref<HTMLElement>()
 let openIntent = false, disposed = false, sequence = 0, frame: number | undefined
 
@@ -67,7 +68,7 @@ async function focusChild() {
   entry?.focus()
 }
 function closeChildren() { expanded.value = false; trigger.value?.$el.focus() }
-watch(() => route.fullPath, () => { if (activeItem.value) expanded.value = true; void closePopup(false) })
+watch(() => route.fullPath, () => { void closePopup(false) })
 watch(() => props.collapsed, () => { void closePopup(false) })
 onBeforeUnmount(() => { disposed = true; sequence++; if (frame !== undefined) cancelAnimationFrame(frame) })
 </script>

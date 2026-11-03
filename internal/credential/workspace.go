@@ -15,6 +15,7 @@ import (
 
 var executionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
+// CreateWorkspace 创建排他私有目录，并在写入秘密前持久化清理护栏。
 func CreateWorkspace(root, executionID string) (Workspace, error) {
 	if root == "" || !executionIDPattern.MatchString(executionID) {
 		return Workspace{}, errors.New("execution security workspace identity is invalid")
@@ -22,6 +23,9 @@ func CreateWorkspace(root, executionID string) (Workspace, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return Workspace{}, fmt.Errorf("resolve security root: %w", err)
+	}
+	if err := CheckWorkspaceRoot(absRoot); err != nil {
+		return Workspace{}, err
 	}
 	if err := ensurePrivateDirectory(absRoot); err != nil {
 		return Workspace{}, err
@@ -31,11 +35,8 @@ func CreateWorkspace(root, executionID string) (Workspace, error) {
 		return Workspace{}, err
 	}
 	executionRoot := filepath.Join(executionsRoot, executionID)
-	if err := os.Mkdir(executionRoot, 0o700); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return Workspace{}, ErrWorkspaceExists
-		}
-		return Workspace{}, fmt.Errorf("create execution security workspace: %w", err)
+	if err := registerWorkspaceGuard(executionRoot); err != nil {
+		return Workspace{}, err
 	}
 	workspace := Workspace{
 		executionRoot: executionRoot,
@@ -213,15 +214,57 @@ func (w Workspace) WriteStorageConfiguration(content []byte) (string, error) {
 	if err := os.Mkdir(confDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", errors.New("create storage configuration directory failed")
 	}
+	if err := securePrivatePath(confDir, true); err != nil {
+		return "", err
+	}
 	if err := writePrivateFile(filepath.Join(confDir, "core-site.xml"), content); err != nil {
 		return "", err
 	}
 	return confDir, nil
 }
 
-func (w Workspace) Cleanup() error {
+// Cleanup 删除已停止使用的私有材料；任何失败都会保留护栏并阻断后续任务。
+// 调用方必须先核实进程退出及终态证据，不可用此方法清理仍在使用的材料。
+func (w Workspace) Cleanup() (cleanupErr error) {
 	if !w.valid() {
 		return errors.New("security workspace cleanup target is invalid")
+	}
+	defer func() {
+		if cleanupErr != nil {
+			w.Isolate()
+		}
+	}()
+	if err := w.CleanupMaterials(); err != nil {
+		return err
+	}
+	for _, directory := range []string{w.securityDir, w.runtimeDir, w.rawLogDir, w.evidenceDir, w.executionRoot} {
+		if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("security workspace cleanup failed")
+		}
+	}
+	return releaseWorkspaceGuard(w.executionRoot)
+}
+
+// CleanupMaterials 在已确认进程停止后精确清除秘密和原始私有产物，同时保留恢复证据。
+// 日志网络回执不能延长秘密生命周期；不能确认进程树已退出时不得调用。
+func (w Workspace) CleanupMaterials() (cleanupErr error) {
+	if !w.valid() {
+		return errors.New("security workspace cleanup target is invalid")
+	}
+	defer func() {
+		if cleanupErr != nil {
+			w.Isolate()
+		}
+	}()
+	// 固定目录本身被替换为链接时不能沿链接删除外部文件；未知布局直接隔离。
+	for _, directory := range []string{w.executionRoot, w.securityDir} {
+		info, err := os.Lstat(directory)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("security cleanup directory is invalid")
+		}
 	}
 	for _, target := range []string{
 		filepath.Join(w.securityDir, "security.properties"),
@@ -232,7 +275,14 @@ func (w Workspace) Cleanup() error {
 			return errors.New("security material cleanup failed")
 		}
 	}
-	// 原始工具日志和运行时资产都只能位于 execution 私有目录；终态证据完成后的清理必须先移除其内容，
+	// Hadoop XML 含明文存储凭据，必须与数据库私钥一并回收。
+	if err := clearPrivateDirectory(filepath.Join(w.securityDir, "hadoop-conf"), "storage material cleanup failed"); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(w.securityDir, "hadoop-conf")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("storage material cleanup failed")
+	}
+	// 原始工具日志和运行时资产都只能位于 execution 私有目录；受控进程停止后的清理必须先移除其内容，
 	// 否则目录非空会永久阻断材料回收，并留下原始输出或可替换的受控子进程资产。
 	if err := clearPrivateDirectory(w.rawLogDir, "raw log cleanup failed"); err != nil {
 		return err
@@ -240,15 +290,17 @@ func (w Workspace) Cleanup() error {
 	if err := clearPrivateDirectory(w.runtimeDir, "runtime asset cleanup failed"); err != nil {
 		return err
 	}
-	for _, directory := range []string{w.securityDir, w.runtimeDir, w.rawLogDir, w.evidenceDir, w.executionRoot} {
-		if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return errors.New("security workspace cleanup failed")
-		}
-	}
 	return nil
 }
 
 func clearPrivateDirectory(directory, failureMessage string) error {
+	info, err := os.Lstat(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New(failureMessage)
+	}
 	entries, err := os.ReadDir(directory)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.New(failureMessage)

@@ -14,4 +14,4 @@ export type ExportReviewStepModel = Pick<UnwrapNestedRefs<ExportWizard>, 'fieldP
 
 export type ExportSummaryModel = Pick<UnwrapNestedRefs<ExportWizard>, 'titles' | 'activeStep' | 'displayedSource' | 'displayedDraftConfig' | 'draftScopeSummary' | 'draftContentLabel' | 'draftDeliverySummary' | 'draftFileSummary' | 'database' | 'scopeKind' | 'contentKind' | 'formatKind' | 'displayedNode' | 'activePrecheck'>
 
-export type ExportSubmitConfirmationModel = Pick<UnwrapNestedRefs<ExportWizard>, 'submitConfirmationOpen' | 'submitting' | 'closeSubmitConfirmation' | 'submitCancelID' | 'confirmSubmitTask' | 'displayedSource' | 'draftScopeSummary' | 'displayedDraftConfig' | 'dropObject' | 'removeNewline' | 'submissionFailure'>
+export type ExportSubmitConfirmationModel = Pick<UnwrapNestedRefs<ExportWizard>, 'submitConfirmationOpen' | 'submitting' | 'submissionUncertain' | 'closeSubmitConfirmation' | 'submitCancelID' | 'confirmSubmitTask' | 'displayedSource' | 'draftScopeSummary' | 'displayedDraftConfig' | 'dropObject' | 'removeNewline' | 'submissionFailure'>

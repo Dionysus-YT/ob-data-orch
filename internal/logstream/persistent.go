@@ -297,32 +297,40 @@ func (store *PersistentStore) readPageLimit(ctx context.Context, taskID string, 
 
 // ReadSince 以最后可靠位置为起点建立新快照，供 SSE 连接和断线后的 REST 增量补读使用。
 func (store *PersistentStore) ReadSince(ctx context.Context, taskID string, after *PageCursor) ([]Record, *PageCursor, error) {
+	items, _, last, err := store.ReadSincePage(ctx, taskID, after)
+	return items, last, err
+}
+
+// ReadSincePage 建立增量快照并保留续页游标；相同批次中尚未读取的 offset 也必须送达。
+func (store *PersistentStore) ReadSincePage(ctx context.Context, taskID string, after *PageCursor) ([]Record, *PageCursor, *PageCursor, error) {
 	if store == nil || strings.TrimSpace(taskID) == "" {
-		return nil, nil, ErrInvalidInput
+		return nil, nil, nil, ErrInvalidInput
 	}
 	if err := store.retentionError(ctx, taskID); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := store.ensureRecovered(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if after == nil {
-		items, _, last, err := store.readPageLimit(ctx, taskID, nil, persistedLogPageSize)
-		return items, last, err
+		return store.readPageLimit(ctx, taskID, nil, persistedLogPageSize)
 	}
 	snapshot, found, err := store.index.LatestTaskLogPosition(ctx, taskID)
 	if err != nil || !found {
 		if err == nil {
 			err = store.retentionError(ctx, taskID)
 		}
-		return []Record{}, nil, err
+		return []Record{}, nil, nil, err
 	}
-	if comparePosition(snapshot, after.Position) <= 0 {
-		return []Record{}, after, nil
+	if comparePosition(snapshot, after.Position) < 0 {
+		return []Record{}, nil, after, nil
 	}
 	cursor := &PageCursor{Snapshot: snapshot, Position: after.Position, RecordOffset: after.RecordOffset}
-	items, _, last, err := store.readPageLimit(ctx, taskID, cursor, persistedLogPageSize)
-	return items, last, err
+	items, next, last, err := store.readPageLimit(ctx, taskID, cursor, persistedLogPageSize)
+	if err == nil && last == nil {
+		last = after
+	}
+	return items, next, last, err
 }
 
 // ReadNextSince 以单条事件粒度推进最后可靠游标，避免 SSE 在半页断开时静默跨过未送达记录。

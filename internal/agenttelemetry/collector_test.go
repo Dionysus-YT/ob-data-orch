@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -24,10 +25,14 @@ func Test采集器上报固定目录空间且不暴露路径(t *testing.T) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
+	platform, javaName := "LINUX_"+strings.ToUpper(runtime.GOARCH), "java"
+	if runtime.GOOS == "windows" {
+		platform, javaName = "WINDOWS_AMD64", "java.exe"
+	}
 	configuration := agentwire.RuntimeConfiguration{
-		Platform:     "WINDOWS_AMD64",
+		Platform:     platform,
 		ToolHome:     root,
-		JavaPath:     filepath.Join(root, "bin", "java.exe"),
+		JavaPath:     filepath.Join(root, "bin", javaName),
 		AllowedRoots: []string{root},
 		Revision:     1,
 		Digest:       strings.Repeat("a", 64),

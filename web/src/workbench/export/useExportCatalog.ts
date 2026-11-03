@@ -1,6 +1,6 @@
 import { ref, reactive, computed, watch, onScopeDispose } from 'vue'
-import { type ExportObjectType, exportCatalogErrorMessage, type ExportObjectCatalogQuery } from '@/api/browser'
-import { objectCategories } from './exportPresentation'
+import { type ExportObjectType, isExportObjectType, exportCatalogErrorMessage, type ExportObjectCatalogQuery } from '@/api/browser'
+import { objectCategories, createObjectTypeMap } from './exportPresentation'
 import type { ExportForm } from './exportForm'
 import type { ExportReferences } from './useExportReferences'
 import type { ExportRuntime } from './exportRuntime'
@@ -41,7 +41,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
 
   function emptyObjectCatalog(): ObjectCatalogState { return { names: [], baseNames: [], keyword: '', loading: false, loaded: false, baseLoaded: false, truncated: false, baseTruncated: false, failure: '' } }
 
-  const catalogByType = reactive<Record<ExportObjectType, ObjectCatalogState>>({ TABLE: emptyObjectCatalog(), VIEW: emptyObjectCatalog(), FUNCTION: emptyObjectCatalog(), PROCEDURE: emptyObjectCatalog(), SEQUENCE: emptyObjectCatalog() })
+  const catalogByType = reactive(createObjectTypeMap(emptyObjectCatalog))
   const candidateObjectNames = computed({ get: () => catalogByType[objectType.value].names, set: (names: string[]) => {
     const catalog = catalogByType[objectType.value]
     catalog.names = names
@@ -49,7 +49,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
   } })
 
   const candidateGroupExpanded = ref(false)
-  const selectedGroupExpanded = reactive<Record<ExportObjectType, boolean>>({ TABLE: true, VIEW: true, FUNCTION: true, PROCEDURE: true, SEQUENCE: true })
+  const selectedGroupExpanded = reactive(createObjectTypeMap(() => true))
 
   const candidateObjectKeyword = ref('')
   const catalogKeywordTooLong = computed(() => new TextEncoder().encode(candidateObjectKeyword.value.trim()).length > 100)
@@ -60,7 +60,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
   const catalogTruncated = computed(() => catalogByType[objectType.value].truncated)
   const catalogFailure = computed(() => catalogByType[objectType.value].failure)
 
-  const catalogEpoch: Record<ExportObjectType, number> = { TABLE: 0, VIEW: 0, FUNCTION: 0, PROCEDURE: 0, SEQUENCE: 0 }
+  const catalogEpoch = createObjectTypeMap(() => 0)
   const catalogTimers = new Map<ExportObjectType, ReturnType<typeof setTimeout>>()
 
   const catalogWaitResolves = new Map<ExportObjectType, () => void>()
@@ -88,7 +88,8 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
     const keyword = candidateObjectKeyword.value.trim().toLocaleLowerCase()
     return keyword ? candidateObjectNames.value.filter((name) => name.toLocaleLowerCase().includes(keyword)) : candidateObjectNames.value
   })
-  const visibleObjectCategories = computed(() => !contentKind.value ? [] : contentKind.value === 'DATA_ONLY' ? objectCategories.filter((category) => category.type === 'TABLE') : objectCategories)
+  const availableObjectCategories = computed(() => objectCategories.filter((category) => !category.oracleOnly || selectedSource.value?.compatibilityMode === 'ORACLE'))
+  const visibleObjectCategories = computed(() => !contentKind.value ? [] : contentKind.value === 'DATA_ONLY' ? availableObjectCategories.value.filter((category) => category.type === 'TABLE') : availableObjectCategories.value)
 
   const candidateTotalCount = computed(() => visibleObjectCategories.value.reduce((total, category) => total + catalogByType[category.type].baseNames.length, 0))
 
@@ -155,10 +156,10 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
     }
   }
 
-  // 首轮固定查询一次读取五类；分类展开和内容模式切换只使用本地缓存。
+  // 首轮按兼容模式一次读取完整分类；分类展开和内容模式切换只使用本地缓存。
   async function loadAllCatalogs() {
     if (disposed) return
-    if (batchCatalogLoading || objectCategories.every((category) => catalogByType[category.type].baseLoaded)) return
+    if (batchCatalogLoading || availableObjectCategories.value.every((category) => catalogByType[category.type].baseLoaded)) return
     const source = selectedSource.value
     const nodeID = selectedNodeID.value
     const schema = database.value.trim()
@@ -183,6 +184,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
       if (epoch !== batchCatalogEpoch) return
       if (query.dataSourceId !== source.id || query.nodeId !== nodeID || query.database !== schema || query.objectType !== 'ALL' || query.keyword !== '') throw new Error('对象目录与当前查询条件不一致。')
       if (query.status !== 'SUCCEEDED') throw new Error(query.status === 'EXPIRED' ? '执行节点未及时完成对象查询，请重试。' : '执行节点未能读取对象目录，请重试。')
+      if (availableObjectCategories.value.some((category) => !query.groups.some((group) => group.objectType === category.type))) throw new Error('执行节点返回的对象分类不完整，请更新 Agent 后重试。')
       for (const group of query.groups) {
         if (catalogEpoch[group.objectType] !== typeEpochs[group.objectType]) continue
         const catalog = catalogByType[group.objectType]
@@ -457,7 +459,7 @@ export function useExportCatalog(deps: Pick<ExportForm, 'objectType' | 'applicab
   }
 
   function chooseObjectCategory(type: string) {
-    if (type !== 'TABLE' && type !== 'VIEW' && type !== 'FUNCTION' && type !== 'PROCEDURE' && type !== 'SEQUENCE') return
+    if (!isExportObjectType(type) || !visibleObjectCategories.value.some((category) => category.type === type)) return
     if (type === objectType.value) {
       candidateGroupExpanded.value = !candidateGroupExpanded.value
       return

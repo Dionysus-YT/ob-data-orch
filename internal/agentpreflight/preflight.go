@@ -11,6 +11,7 @@ import (
 	"ob-data-orch/internal/commandgen"
 	"ob-data-orch/internal/directload"
 	"ob-data-orch/internal/executionbudget"
+	"ob-data-orch/internal/exportobject"
 	"ob-data-orch/internal/importdomain"
 	"ob-data-orch/internal/importfiles"
 	"ob-data-orch/internal/outputpath"
@@ -431,7 +432,7 @@ func validateRequest(request Request) error {
 		return ErrInvalidRequest
 	}
 	for _, objectType := range request.ObjectTypes {
-		if objectType != "TABLE" && objectType != "VIEW" && objectType != "FUNCTION" && objectType != "PROCEDURE" && objectType != "SEQUENCE" {
+		if !exportobject.ValidForMode(objectType, request.CompatibilityMode) {
 			return ErrInvalidRequest
 		}
 		if objectType != "TABLE" && request.ContentKind == "DATA_ONLY" {

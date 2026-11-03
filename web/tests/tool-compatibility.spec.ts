@@ -15,7 +15,7 @@ for (const viewport of [{ width: 1920, height: 1080 }, { width: 1440, height: 10
   test(`工具目录分组、只读边界与键盘刷新 ${viewport.width}×${viewport.height}`, async ({ page }, info) => {
     const model = await toolsFixture(page), errors: string[] = []; page.on('pageerror', error => errors.push(error.message)); page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
     await page.setViewportSize(viewport); await page.goto('/settings/tools')
-    await expect(page).toHaveTitle(/OB Data Orch/); await expect(page.getByRole('heading', { name: '工具与兼容', exact: true })).toBeVisible(); await expect(page.getByRole('heading', { name: 'OBDUMPER', exact: true })).toBeVisible()
+    await expect(page).toHaveTitle(/LDP/); await expect(page.getByRole('heading', { name: '工具与兼容', exact: true })).toBeVisible(); await expect(page.getByRole('heading', { name: 'OBDUMPER', exact: true })).toBeVisible()
     await expect(page.getByText('按任务配置选择，不设全平台单一活动版本', { exact: true })).toBeVisible()
     await expandCatalogs(page); await expect(page.getByText('obloader-4.3.5-normal-v1', { exact: true })).toBeVisible(); await expect(page.getByText('obloader-4.3.5-direct-v1', { exact: true })).toBeVisible()
     const historical = page.locator('.ant-descriptions-item').filter({ has: page.getByText('仅历史重放', { exact: true }) }); await expect(historical.getByText('obdumper-4.3.5-slice-v6', { exact: true })).toBeVisible(); await expect(historical.getByText('obdumper-4.3.5-slice-v8-object-selection', { exact: true })).toBeVisible()

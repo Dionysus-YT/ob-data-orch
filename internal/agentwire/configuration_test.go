@@ -8,12 +8,20 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestConfigurationRejectsDigestRollbackAndCrossPlatform(t *testing.T) {
 	initial := RuntimeConfiguration{Platform: "WINDOWS_AMD64", ToolHome: `E:\synthetic\tools`, JavaPath: `C:\synthetic\java\bin\java.exe`, AllowedRoots: []string{`E:\synthetic\exports`}, Revision: 2}
+	opposite := RuntimeConfiguration{Platform: "LINUX_AMD64", ToolHome: "/synthetic/tools", JavaPath: "/synthetic/java/bin/java", AllowedRoots: []string{"/synthetic/exports"}}
+	if runtime.GOOS != "windows" {
+		initial, opposite = opposite, initial
+		initial.Platform = "LINUX_" + strings.ToUpper(runtime.GOARCH)
+		initial.Revision = 2
+	}
 	initial.Digest = runtimeConfigurationDigest(initial)
 	configuration := initial
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,18 +46,18 @@ func TestConfigurationRejectsDigestRollbackAndCrossPlatform(t *testing.T) {
 		configuration.Revision = 3
 		switch kind {
 		case "digest":
-			configuration.ToolHome = `E:\synthetic\changed`
+			configuration.ToolHome = filepath.Join(initial.ToolHome, "changed")
 		case "rollback":
 			configuration.Revision = 1
 		case "platform":
-			configuration.Platform = "LINUX_AMD64"
-			configuration.ToolHome = "/synthetic/tools"
-			configuration.JavaPath = "/synthetic/java/bin/java"
-			configuration.AllowedRoots = []string{"/synthetic/exports"}
+			configuration.Platform = opposite.Platform
+			configuration.ToolHome = opposite.ToolHome
+			configuration.JavaPath = opposite.JavaPath
+			configuration.AllowedRoots = opposite.AllowedRoots
 			configuration.Digest = runtimeConfigurationDigest(configuration)
 		case "same-version":
 			configuration.Revision = 2
-			configuration.ToolHome = `E:\synthetic\changed`
+			configuration.ToolHome = filepath.Join(initial.ToolHome, "changed")
 			configuration.Digest = runtimeConfigurationDigest(configuration)
 		}
 		if err := state.SyncRuntimeConfiguration(context.Background()); err == nil {

@@ -269,7 +269,11 @@ func (s *Server) writeNormalImportIssues(w http.ResponseWriter, issues []importd
 
 func (s *Server) normalImportResponse(item store.NormalImportDraft) map[string]any {
 	config, _ := importdomain.Decode(item.ConfigJSON)
-	return map[string]any{"id": item.ID, "revision": item.Revision, "configVersion": importdomain.ConfigVersion, "config": config, "configFingerprint": item.ConfigFingerprint, "metadataVersion": importdomain.MetadataVersion, "capabilityVersion": importdomain.CapabilityVersion, "executionEnabled": s.normalImportExecutionEnabled, "updatedAt": item.UpdatedAt, "sourceTaskId": item.SourceTaskID, "sourceDerivation": item.SourceDerivation}
+	response := map[string]any{"id": item.ID, "revision": item.Revision, "configVersion": importdomain.ConfigVersion, "config": config, "configFingerprint": item.ConfigFingerprint, "metadataVersion": importdomain.MetadataVersion, "capabilityVersion": importdomain.CapabilityVersion, "executionEnabled": s.normalImportExecutionEnabled, "updatedAt": item.UpdatedAt, "sourceTaskId": item.SourceTaskID, "sourceDerivation": item.SourceDerivation}
+	if item.SubmittedTaskID != "" {
+		response["submittedTaskId"] = item.SubmittedTaskID
+	}
+	return response
 }
 func (s *Server) writeNormalImport(w http.ResponseWriter, item store.NormalImportDraft) {
 	w.Header().Set("ETag", fmt.Sprintf(`"rev-%d"`, item.Revision))

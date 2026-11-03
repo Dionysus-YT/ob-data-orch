@@ -49,7 +49,7 @@ async function advance() {
   error?.querySelector<HTMLInputElement>('input:not([disabled]):not([type="hidden"]), textarea:not([disabled])')?.focus({ preventScroll: true })
 }
 function guardLeave() {
-  if (!wizard.hasInputs) return true
+  if ((!wizard.hasInputs && !wizard.submitting && !wizard.submissionUncertain) || wizard.submittedTaskID) return true
   resolveLeave?.(false)
   confirmLeave.value = true
   return new Promise<boolean>(resolve => { resolveLeave = resolve })
@@ -61,7 +61,7 @@ function finishLeave(leave: boolean) {
   resolve?.(leave)
 }
 const logoutCommitted = useLogoutGuard(guardLeave)
-function beforeUnload(event: BeforeUnloadEvent) { if (wizard.hasInputs && !logoutCommitted.value) { event.preventDefault(); event.returnValue = '' } }
+function beforeUnload(event: BeforeUnloadEvent) { if ((wizard.hasInputs || wizard.submitting || wizard.submissionUncertain) && !wizard.submittedTaskID && !logoutCommitted.value) { event.preventDefault(); event.returnValue = '' } }
 onBeforeRouteLeave(guardLeave)
 onBeforeRouteUpdate((to, from) => !(wizard.bindingDraftRoute && to.query.draft === wizard.currentDraft?.id) && to.query.draft !== from.query.draft ? guardLeave() : true)
 window.addEventListener('beforeunload', beforeUnload)
@@ -71,7 +71,7 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
 <template>
   <MessageContext />
   <section class="page-heading"><h1>新建普通导入任务</h1><Tag :color="wizard.draftDirty ? 'warning' : wizard.currentDraft ? 'success' : 'default'">{{ wizard.draftDirty ? '草稿有未保存更改' : wizard.currentDraft ? '草稿已保存' : '草稿尚未创建' }}</Tag></section>
-  <WizardFrame ref="frame" kind="normal" :active-step="wizard.activeStep" :step-titles="wizard.titles" :progress-percent="wizard.stepProgressPercent" :completed-steps="wizard.completedSteps" :navigation-locked="wizard.rerunLocked" class="normal-import-builder" @step-change="wizard.moveToStep">
+  <WizardFrame ref="frame" kind="normal" :active-step="wizard.activeStep" :step-titles="wizard.titles" :progress-percent="wizard.stepProgressPercent" :completed-steps="wizard.completedSteps" :navigation-locked="wizard.rerunLocked || wizard.submissionLocked" class="normal-import-builder" @step-change="wizard.moveToStep">
     <template #actions><Button @click="catalogOpen = true">全部参数</Button><Button :loading="wizard.savingDraft" :disabled="wizard.rerunLocked || !wizard.selectedSource || wizard.loadingDraft || !!wizard.draftLoadFailure || wizard.reviewBusy" @click="wizard.saveDraft">保存草稿</Button></template>
     <template #default>
       <Alert v-if="wizard.rerunLocked" type="info" show-icon message="从头重新执行：保留原配置并重新预检查。"><template #description>如需调整参数，请返回<RouterLink :to="`/tasks/${encodeURIComponent(wizard.currentDraft?.sourceTaskId ?? '')}`">来源任务</RouterLink>，选择“基于原配置新建”。</template></Alert>
@@ -90,15 +90,15 @@ onBeforeUnmount(() => { focusGeneration++; finishLeave(false); window.removeEven
     <template #summary><NormalImportSummary :model="wizard" /></template>
     <template #footer>
       <footer class="wizard-footer">
-        <Button :disabled="wizard.rerunLocked || wizard.activeStep === 1 || wizard.navigating" @click="wizard.previousStep">上一步</Button>
+        <Button :disabled="wizard.rerunLocked || wizard.submissionLocked || wizard.activeStep === 1 || wizard.navigating" @click="wizard.previousStep">上一步</Button>
         <span class="footer-grow" />
         <Button v-if="wizard.activeStep < wizard.steps.review" type="primary" :loading="wizard.navigating" :disabled="wizard.loadingDraft || wizard.unsupportedDraft || !!wizard.draftLoadFailure || wizard.loadingSources && wizard.activeStep === wizard.steps.source || wizard.loadingNodes && wizard.activeStep === wizard.steps.input" @click="advance">{{ wizard.footerLabel }}</Button>
-        <div v-else class="footer-actions"><Button :loading="wizard.checking || wizard.previewingCommand" :disabled="!wizard.canStartPrecheck" @click="wizard.retryReview">重新预检查</Button><Button type="primary" :loading="wizard.submitting" :disabled="!wizard.canSubmit" :aria-describedby="wizard.fieldPrefix + '-precheck-status'" @click="wizard.submitTask()">提交并启动导入</Button></div>
+        <div v-else class="footer-actions"><Button :loading="wizard.checking || wizard.previewingCommand" :disabled="!wizard.canStartPrecheck" @click="wizard.retryReview">重新预检查</Button><Button v-if="wizard.submittedTaskID" type="primary" :loading="wizard.openingSubmittedTask" @click="wizard.openSubmittedTask">查看已创建任务</Button><Button v-else type="primary" :loading="wizard.submitting" :disabled="!wizard.canSubmit" :aria-describedby="wizard.fieldPrefix + '-precheck-status'" @click="wizard.submitTask()">{{ wizard.submissionUncertain ? '核对提交结果' : '提交并启动导入' }}</Button></div>
       </footer>
     </template>
   </WizardFrame>
   <NormalImportParameterCatalog :open="catalogOpen" :model="wizard" @close="catalogOpen = false" />
-  <OrchDangerConfirm :open="confirmLeave" title="离开普通导入配置？" confirm-label="放弃配置并离开" cancel-label="继续配置" @cancel="finishLeave(false)" @confirm="finishLeave(true)"><p>当前配置尚未保存，离开后无法恢复。页面内步骤切换会保留配置。</p></OrchDangerConfirm>
+  <OrchDangerConfirm :open="confirmLeave" title="离开普通导入配置？" :confirm-label="wizard.submitting || wizard.submissionUncertain ? '确认离开' : '放弃配置并离开'" cancel-label="继续配置" @cancel="finishLeave(false)" @confirm="finishLeave(true)"><p v-if="wizard.submitting || wizard.submissionUncertain">提交结果尚未确认，离开不会撤销已接受的任务。返回后请核对该草稿或任务中心，避免重复执行。</p><p v-else>当前配置尚未保存，离开后无法恢复。页面内步骤切换会保留配置。</p></OrchDangerConfirm>
   <NormalImportSubmitConfirmation :model="wizard" />
   <OrchDangerConfirm :open="wizard.pendingSourceId !== null" title="更换目标数据源？" confirm-label="更换并清除关联配置" cancel-label="保留当前配置" @cancel="wizard.cancelSourceChange" @confirm="wizard.confirmSourceChange"><p>更换后会回填新数据源的默认数据库，并清除对象、排除表、Oracle 会话格式和高风险数据行为。各数据格式的暂存输入会保留，原风险说明确认失效。</p></OrchDangerConfirm>
   <OrchDangerConfirm :open="wizard.pendingScope !== null" title="改为全部对象？" confirm-label="清除指定对象并切换" cancel-label="保留指定对象" @cancel="wizard.cancelScopeChange" @confirm="wizard.confirmScopeChange"><p>将清除已填写的指定对象表达式。全部对象与具体对象不会同时生效，风险范围将重新计算。</p></OrchDangerConfirm>

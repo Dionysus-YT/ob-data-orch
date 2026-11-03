@@ -73,6 +73,6 @@ const activeNavigation = computed(() => navGroups.flatMap((group) => group.items
     <div class="page-frame">
       <main id="main-workspace" class="page-content" :class="{ 'page-content-wide': wideContent }" tabindex="-1"><slot /></main>
     </div>
-    <Modal :open="helpOpen" title="OB Data Orch" :footer="null" @cancel="helpOpen = false"><p>OB Loader / Dumper 4.3.5 的轻量可视化编排平台。</p><p>从数据源开始配置任务，在预检查后核对脱敏命令；执行状态与失败原因在任务中心查看。</p><p>数据源保存与连接测试相互独立，页面不会直接连接数据库。</p><Button @click="helpOpen = false">关闭</Button></Modal>
+    <Modal :open="helpOpen" title="LDP" :footer="null" @cancel="helpOpen = false"><p>OB Loader / Dumper 4.3.5 的轻量可视化编排平台。</p><p>从数据源开始配置任务，在预检查后核对脱敏命令；执行状态与失败原因在任务中心查看。</p><p>数据源保存与连接测试相互独立，页面不会直接连接数据库。</p><Button @click="helpOpen = false">关闭</Button></Modal>
   </div>
 </template>

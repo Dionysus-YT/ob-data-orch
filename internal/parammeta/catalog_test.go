@@ -83,6 +83,7 @@ func TestEmbeddedResourceInventoryIsLoadable(t *testing.T) {
 		"obdumper-4.3.5-slice-v10-ddl-text-formats.json":         {},
 		"obdumper-4.3.5-slice-v11-expert-parameters.json":        {},
 		"obdumper-4.3.5-slice-v12-schema-boolean.json":           {},
+		"obdumper-4.3.5-slice-v13-oracle-objects.json":           {},
 	}
 	for _, entry := range entries {
 		if _, ok := known[entry.Name()]; !ok {

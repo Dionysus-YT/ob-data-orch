@@ -7,6 +7,53 @@ import (
 	"time"
 )
 
+func Test运行摘要省略零计数且不从有限异常列表推算总量(t *testing.T) {
+	base := func() Snapshot {
+		return Snapshot{Metrics: Ready(Metrics{}), Nodes: Ready(Nodes{Total: 1}), Trend: Ready([]Bucket{}), MyTasks: Ready([]Task{}), Attention: Ready(Attention{})}
+	}
+	t.Run("零任务时直接表达节点阻断", func(t *testing.T) {
+		view := base()
+		view.Nodes.Data.Unavailable = 1
+		if got := Describe(view); got != "当前授权范围内，1 个执行节点当前不能接收新任务。" {
+			t.Fatalf("摘要未聚焦现有阻断：%s", got)
+		}
+	})
+	t.Run("异常优先于等待和运行", func(t *testing.T) {
+		view := base()
+		view.Metrics = Ready(Metrics{Running: 3, Waiting: 2, TodayFailed: 1})
+		view.Nodes.Data.Unavailable = 1
+		want := "当前授权范围内，今日失败 1 个任务；1 个执行节点当前不能接收新任务；2 个任务等待调度；3 个任务运行中。"
+		if got := Describe(view); got != want {
+			t.Fatalf("摘要事实或顺序错误：%s", got)
+		}
+	})
+	t.Run("今日零失败不抹去最近一天的失败", func(t *testing.T) {
+		view := base()
+		view.Attention.Data.Items = []AttentionItem{{Kind: "TASK_FAILED"}, {Kind: "TASK_FAILED"}}
+		if got := Describe(view); got != "当前授权范围内，最近 24 小时存在失败任务。" {
+			t.Fatalf("有限异常被遗漏或伪造总量：%s", got)
+		}
+	})
+	t.Run("不可用与受限不被省略为正常", func(t *testing.T) {
+		view := base()
+		view.Metrics = Section[Metrics]{Status: "RESTRICTED", Data: &Metrics{TodayFailed: 999}}
+		view.Nodes = Section[Nodes]{Status: "RESTRICTED", Data: &Nodes{Unavailable: 999}}
+		view.Trend = Section[[]Bucket]{Status: "UNAVAILABLE"}
+		got := Describe(view)
+		if !strings.Contains(got, "不完整") || !strings.Contains(got, "任务指标范围不可见") || !strings.Contains(got, "执行节点范围不可见") || strings.Contains(got, "999") || strings.Contains(got, "未发现") {
+			t.Fatalf("摘要泄露受限事实或抹去未知：%s", got)
+		}
+	})
+	t.Run("可信空结果只说明当前可见事实", func(t *testing.T) {
+		if got := Describe(base()); got != "当前可见事实中未发现最近任务失败或节点接收异常。" {
+			t.Fatalf("空事实摘要错误：%s", got)
+		}
+		if got := Describe(Snapshot{}); strings.Contains(got, "未发现") {
+			t.Fatalf("不完整对象被描述为无异常：%s", got)
+		}
+	})
+}
+
 func Test权限受限分区不携带旧事实或可信零值(t *testing.T) {
 	q, _ := NewQuery("synthetic-subject", false, time.Now().UTC(), "24h")
 	metrics := Metrics{Running: 7}
